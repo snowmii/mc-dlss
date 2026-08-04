@@ -5,6 +5,9 @@
 	"mixins": [
 		"ExampleMixin"
 	],
+	"client": [
+		"VulkanDeviceContextMixin"
+	],
 	"injectors": {
 		"defaultRequire": 1
 	},
