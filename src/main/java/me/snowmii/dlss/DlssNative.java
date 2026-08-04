@@ -12,7 +12,7 @@ import java.util.Objects;
 
 /** Flat Java 25 FFM binding. NGX types and ownership stay inside mc_dlss_native. */
 public final class DlssNative implements AutoCloseable, DlssNativeApi {
-	private static final int SUCCESS = 1;
+	private static final int SUCCESS = DlssNativeApi.SUCCESS_RESULT;
 	private static final ValueLayout.OfInt JAVA_INT = ValueLayout.JAVA_INT;
 	private static final ValueLayout.OfLong JAVA_LONG = ValueLayout.JAVA_LONG;
 	private static final ValueLayout.OfFloat JAVA_FLOAT = ValueLayout.JAVA_FLOAT;
@@ -190,23 +190,23 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 	}
 
 	@Override
-	public void close() {
+	public synchronized void close() {
 		if (this.closed) {
 			return;
 		}
 
-		this.closed = true;
 		try {
 			final int result = (int)this.close.invokeExact();
 			if (result != SUCCESS) {
+				// Keep arena and downcall handles alive so native shutdown can be retried.
 				throw new DlssNativeException("close", result);
 			}
+			this.closed = true;
+			this.arena.close();
 		} catch (DlssNativeException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("close", error);
-		} finally {
-			this.arena.close();
 		}
 	}
 
