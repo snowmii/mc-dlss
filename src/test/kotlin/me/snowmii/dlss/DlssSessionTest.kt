@@ -162,6 +162,52 @@ class DlssSessionTest {
 		assertEquals(1, native.evaluateCalls)
 	}
 
+	@Test
+	fun evaluateForwardsCompleteResourceMetadata() {
+		val native = FakeNative()
+		val session = DlssSession(config())
+		val adapter = DlssLifecycleAdapter(session, native)
+		assertTrue(adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) != null)
+		val request = DlssEvaluationRequest(
+			commandBuffer = 10L,
+			colorView = 11L,
+			colorImage = 12L,
+			colorFormat = 13,
+			colorAspectMask = 14,
+			colorBaseMipLevel = 15,
+			colorLevelCount = 16,
+			colorBaseArrayLayer = 17,
+			colorLayerCount = 18,
+			depthView = 21L,
+			depthImage = 22L,
+			depthFormat = 23,
+			depthAspectMask = 24,
+			depthBaseMipLevel = 25,
+			depthLevelCount = 26,
+			depthBaseArrayLayer = 27,
+			depthLayerCount = 28,
+			motionView = 31L,
+			motionImage = 32L,
+			motionFormat = 33,
+			motionAspectMask = 34,
+			motionBaseMipLevel = 35,
+			motionLevelCount = 36,
+			motionBaseArrayLayer = 37,
+			motionLayerCount = 38,
+			outputView = 41L,
+			outputImage = 42L,
+			outputFormat = 43,
+			outputAspectMask = 44,
+			outputBaseMipLevel = 45,
+			outputLevelCount = 46,
+			outputBaseArrayLayer = 47,
+			outputLayerCount = 48,
+		)
+
+		assertTrue(adapter.evaluate(request))
+		assertEquals(request, native.lastEvaluation)
+	}
+
 	private class FakeNative(
 		private val initializeResult: Int = 1,
 		private val queryResult: Int? = null,
@@ -172,7 +218,7 @@ class DlssSessionTest {
 		var queryCalls = 0
 		var configureCalls = 0
 		var evaluateCalls = 0
-
+		var lastEvaluation: DlssEvaluationRequest? = null
 		override fun initialize(
 			vkInstance: Long,
 			vkPhysicalDevice: Long,
@@ -208,9 +254,37 @@ class DlssSessionTest {
 		override fun evaluate(
 			commandBuffer: Long,
 			colorView: Long,
+			colorImage: Long,
+			colorFormat: Int,
+			colorAspectMask: Int,
+			colorBaseMipLevel: Int,
+			colorLevelCount: Int,
+			colorBaseArrayLayer: Int,
+			colorLayerCount: Int,
 			depthView: Long,
+			depthImage: Long,
+			depthFormat: Int,
+			depthAspectMask: Int,
+			depthBaseMipLevel: Int,
+			depthLevelCount: Int,
+			depthBaseArrayLayer: Int,
+			depthLayerCount: Int,
 			motionView: Long,
+			motionImage: Long,
+			motionFormat: Int,
+			motionAspectMask: Int,
+			motionBaseMipLevel: Int,
+			motionLevelCount: Int,
+			motionBaseArrayLayer: Int,
+			motionLayerCount: Int,
 			outputView: Long,
+			outputImage: Long,
+			outputFormat: Int,
+			outputAspectMask: Int,
+			outputBaseMipLevel: Int,
+			outputLevelCount: Int,
+			outputBaseArrayLayer: Int,
+			outputLayerCount: Int,
 			renderWidth: Int,
 			renderHeight: Int,
 			outputWidth: Int,
@@ -223,6 +297,41 @@ class DlssSessionTest {
 			resetHistory: Boolean,
 		): Int {
 			evaluateCalls++
+			lastEvaluation = DlssEvaluationRequest(
+				commandBuffer = commandBuffer,
+				colorView = colorView,
+				colorImage = colorImage,
+				colorFormat = colorFormat,
+				colorAspectMask = colorAspectMask,
+				colorBaseMipLevel = colorBaseMipLevel,
+				colorLevelCount = colorLevelCount,
+				colorBaseArrayLayer = colorBaseArrayLayer,
+				colorLayerCount = colorLayerCount,
+				depthView = depthView,
+				depthImage = depthImage,
+				depthFormat = depthFormat,
+				depthAspectMask = depthAspectMask,
+				depthBaseMipLevel = depthBaseMipLevel,
+				depthLevelCount = depthLevelCount,
+				depthBaseArrayLayer = depthBaseArrayLayer,
+				depthLayerCount = depthLayerCount,
+				motionView = motionView,
+				motionImage = motionImage,
+				motionFormat = motionFormat,
+				motionAspectMask = motionAspectMask,
+				motionBaseMipLevel = motionBaseMipLevel,
+				motionLevelCount = motionLevelCount,
+				motionBaseArrayLayer = motionBaseArrayLayer,
+				motionLayerCount = motionLayerCount,
+				outputView = outputView,
+				outputImage = outputImage,
+				outputFormat = outputFormat,
+				outputAspectMask = outputAspectMask,
+				outputBaseMipLevel = outputBaseMipLevel,
+				outputLevelCount = outputLevelCount,
+				outputBaseArrayLayer = outputBaseArrayLayer,
+				outputLayerCount = outputLayerCount,
+			)
 			return evaluateResult
 		}
 	}

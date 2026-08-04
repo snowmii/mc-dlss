@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 
 #include <nvsdk_ngx.h>
+#include <nvsdk_ngx_helpers_vk.h>
 #include <nvsdk_ngx_vk.h>
 
 #include <cstdint>
@@ -129,6 +130,39 @@ int32_t shutdown_state() noexcept {
 int32_t cleanup_after_initialize_failure(const int32_t primaryFailure) noexcept {
     const int32_t cleanupResult = shutdown_state();
     return cleanupResult == kSuccess ? primaryFailure : cleanupResult;
+}
+
+struct DlssImageResourceInput {
+    uint64_t imageView;
+    uint64_t image;
+    uint32_t format;
+    uint32_t aspectMask;
+    uint32_t baseMipLevel;
+    uint32_t levelCount;
+    uint32_t baseArrayLayer;
+    uint32_t layerCount;
+};
+
+bool valid_image_resource(const DlssImageResourceInput& resource) noexcept {
+    return resource.imageView != 0 && resource.image != 0 &&
+           resource.format != static_cast<uint32_t>(VK_FORMAT_UNDEFINED) &&
+           resource.aspectMask != 0 && resource.levelCount != 0 && resource.layerCount != 0;
+}
+
+NVSDK_NGX_Resource_VK make_image_view_resource(const DlssImageResourceInput& resource,
+                                                const uint32_t width,
+                                                const uint32_t height,
+                                                const bool readWrite) noexcept {
+    const VkImageSubresourceRange subresourceRange{
+        static_cast<VkImageAspectFlags>(resource.aspectMask),
+        resource.baseMipLevel,
+        resource.levelCount,
+        resource.baseArrayLayer,
+        resource.layerCount,
+    };
+    return NVSDK_NGX_Create_ImageView_Resource_VK(
+        from_uint64<VkImageView>(resource.imageView), from_uint64<VkImage>(resource.image),
+        subresourceRange, static_cast<VkFormat>(resource.format), width, height, readWrite);
 }
 
 int32_t query_optimal_dimensions(const uint32_t outputWidth, const uint32_t outputHeight,
@@ -316,13 +350,69 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
     }
 }
 
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const uint64_t, const uint64_t, const uint64_t,
-                                                   const uint64_t, const uint64_t, const uint32_t,
-                                                   const uint32_t, const uint32_t, const uint32_t,
-                                                   const float, const float, const float, const float,
-                                                   const float, const int32_t) {
-    // ABI remains stable; feature evaluation belongs to later renderer slice.
-    return kFeatureNotSupported;
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
+    const uint64_t command_buffer, const uint64_t color_view, const uint64_t color_image,
+    const uint32_t color_format, const uint32_t color_aspect_mask,
+    const uint32_t color_base_mip_level, const uint32_t color_level_count,
+    const uint32_t color_base_array_layer, const uint32_t color_layer_count,
+    const uint64_t depth_view, const uint64_t depth_image, const uint32_t depth_format,
+    const uint32_t depth_aspect_mask, const uint32_t depth_base_mip_level,
+    const uint32_t depth_level_count, const uint32_t depth_base_array_layer,
+    const uint32_t depth_layer_count, const uint64_t motion_view, const uint64_t motion_image,
+    const uint32_t motion_format, const uint32_t motion_aspect_mask,
+    const uint32_t motion_base_mip_level, const uint32_t motion_level_count,
+    const uint32_t motion_base_array_layer, const uint32_t motion_layer_count,
+    const uint64_t output_view, const uint64_t output_image, const uint32_t output_format,
+    const uint32_t output_aspect_mask, const uint32_t output_base_mip_level,
+    const uint32_t output_level_count, const uint32_t output_base_array_layer,
+    const uint32_t output_layer_count, const uint32_t render_width,
+    const uint32_t render_height, const uint32_t output_width, const uint32_t output_height,
+    const float, const float, const float, const float, const float, const int32_t reset_history) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_state.bootstrapComplete) {
+            return kNotInitialized;
+        }
+        if (command_buffer == 0 || reset_history < 0.0F || reset_history > 1.0F ||
+            !valid_dimensions(output_width, output_height, render_width, render_height)) {
+            return kInvalidParameter;
+        }
+
+        const DlssImageResourceInput colorResourceInput{
+            color_view, color_image, color_format, color_aspect_mask, color_base_mip_level,
+            color_level_count, color_base_array_layer, color_layer_count};
+        const DlssImageResourceInput depthResourceInput{
+            depth_view, depth_image, depth_format, depth_aspect_mask, depth_base_mip_level,
+            depth_level_count, depth_base_array_layer, depth_layer_count};
+        const DlssImageResourceInput motionResourceInput{
+            motion_view, motion_image, motion_format, motion_aspect_mask, motion_base_mip_level,
+            motion_level_count, motion_base_array_layer, motion_layer_count};
+        const DlssImageResourceInput outputResourceInput{
+            output_view, output_image, output_format, output_aspect_mask, output_base_mip_level,
+            output_level_count, output_base_array_layer, output_layer_count};
+        if (!valid_image_resource(colorResourceInput) || !valid_image_resource(depthResourceInput) ||
+            !valid_image_resource(motionResourceInput) || !valid_image_resource(outputResourceInput)) {
+            return kInvalidParameter;
+        }
+
+        // Resource construction is deliberately isolated until renderer recording supplies a
+        // valid command buffer and the next slice invokes NGX evaluation.
+        const auto colorResource = make_image_view_resource(
+            colorResourceInput, render_width, render_height, false);
+        const auto depthResource = make_image_view_resource(
+            depthResourceInput, render_width, render_height, false);
+        const auto motionResource = make_image_view_resource(
+            motionResourceInput, render_width, render_height, false);
+        const auto outputResource = make_image_view_resource(
+            outputResourceInput, output_width, output_height, true);
+        (void)colorResource;
+        (void)depthResource;
+        (void)motionResource;
+        (void)outputResource;
+        return kFeatureNotSupported;
+    } catch (...) {
+        return kFailure;
+    }
 }
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {

@@ -49,15 +49,43 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 			"mc_dlss_evaluate",
 			FunctionDescriptor.of(
 				JAVA_INT,
-				JAVA_LONG,
-				JAVA_LONG,
-				JAVA_LONG,
-				JAVA_LONG,
-				JAVA_LONG,
-				JAVA_INT,
-				JAVA_INT,
-				JAVA_INT,
-				JAVA_INT,
+				JAVA_LONG, // command_buffer
+				JAVA_LONG, // color_view
+				JAVA_LONG, // color_image
+				JAVA_INT, // color_format
+				JAVA_INT, // color_aspect_mask
+				JAVA_INT, // color_base_mip_level
+				JAVA_INT, // color_level_count
+				JAVA_INT, // color_base_array_layer
+				JAVA_INT, // color_layer_count
+				JAVA_LONG, // depth_view
+				JAVA_LONG, // depth_image
+				JAVA_INT, // depth_format
+				JAVA_INT, // depth_aspect_mask
+				JAVA_INT, // depth_base_mip_level
+				JAVA_INT, // depth_level_count
+				JAVA_INT, // depth_base_array_layer
+				JAVA_INT, // depth_layer_count
+				JAVA_LONG, // motion_view
+				JAVA_LONG, // motion_image
+				JAVA_INT, // motion_format
+				JAVA_INT, // motion_aspect_mask
+				JAVA_INT, // motion_base_mip_level
+				JAVA_INT, // motion_level_count
+				JAVA_INT, // motion_base_array_layer
+				JAVA_INT, // motion_layer_count
+				JAVA_LONG, // output_view
+				JAVA_LONG, // output_image
+				JAVA_INT, // output_format
+				JAVA_INT, // output_aspect_mask
+				JAVA_INT, // output_base_mip_level
+				JAVA_INT, // output_level_count
+				JAVA_INT, // output_base_array_layer
+				JAVA_INT, // output_layer_count
+				JAVA_INT, // render_width
+				JAVA_INT, // render_height
+				JAVA_INT, // output_width
+				JAVA_INT, // output_height
 				JAVA_FLOAT,
 				JAVA_FLOAT,
 				JAVA_FLOAT,
@@ -144,9 +172,37 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 	public int evaluate(
 		final long commandBuffer,
 		final long colorView,
+		final long colorImage,
+		final int colorFormat,
+		final int colorAspectMask,
+		final int colorBaseMipLevel,
+		final int colorLevelCount,
+		final int colorBaseArrayLayer,
+		final int colorLayerCount,
 		final long depthView,
+		final long depthImage,
+		final int depthFormat,
+		final int depthAspectMask,
+		final int depthBaseMipLevel,
+		final int depthLevelCount,
+		final int depthBaseArrayLayer,
+		final int depthLayerCount,
 		final long motionView,
+		final long motionImage,
+		final int motionFormat,
+		final int motionAspectMask,
+		final int motionBaseMipLevel,
+		final int motionLevelCount,
+		final int motionBaseArrayLayer,
+		final int motionLayerCount,
 		final long outputView,
+		final long outputImage,
+		final int outputFormat,
+		final int outputAspectMask,
+		final int outputBaseMipLevel,
+		final int outputLevelCount,
+		final int outputBaseArrayLayer,
+		final int outputLayerCount,
 		final int renderWidth,
 		final int renderHeight,
 		final int outputWidth,
@@ -162,9 +218,37 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 			return (int)this.evaluate.invokeExact(
 				commandBuffer,
 				colorView,
+				colorImage,
+				colorFormat,
+				colorAspectMask,
+				colorBaseMipLevel,
+				colorLevelCount,
+				colorBaseArrayLayer,
+				colorLayerCount,
 				depthView,
+				depthImage,
+				depthFormat,
+				depthAspectMask,
+				depthBaseMipLevel,
+				depthLevelCount,
+				depthBaseArrayLayer,
+				depthLayerCount,
 				motionView,
+				motionImage,
+				motionFormat,
+				motionAspectMask,
+				motionBaseMipLevel,
+				motionLevelCount,
+				motionBaseArrayLayer,
+				motionLayerCount,
 				outputView,
+				outputImage,
+				outputFormat,
+				outputAspectMask,
+				outputBaseMipLevel,
+				outputLevelCount,
+				outputBaseArrayLayer,
+				outputLayerCount,
 				renderWidth,
 				renderHeight,
 				outputWidth,
