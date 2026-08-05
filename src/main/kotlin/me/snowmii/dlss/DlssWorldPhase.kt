@@ -31,11 +31,14 @@ class DlssWorldPhase(
 	private val present: (RenderTarget, RenderTarget) -> Unit,
 	private val onWorldTargetChanged: () -> Unit,
 	private val diagnostics: (String) -> Unit = {},
+	private val probeResolvedTarget: (() -> RenderTarget?)? = null,
 ) : AutoCloseable {
 	private var scene: RenderTarget? = null
 	private var mainTarget: RenderTarget? = null
 	private var lastResolved: RenderTarget? = null
 	private var reportedFirstDecision = false
+	private var sampleStartedAt = 0L
+	private var sampledFrames = 0
 
 	/** True between [begin] and [end]. */
 	var isOpen: Boolean = false
@@ -69,6 +72,7 @@ class DlssWorldPhase(
 
 		val resolved = scene ?: mainTarget
 		reportFirstDecision(mainTarget)
+		sampleWorldFrameRate()
 		if (resolved !== lastResolved) {
 			// SkyRenderer caches the target it was built against and reuses it every frame.
 			lastResolved = resolved
@@ -106,6 +110,39 @@ class DlssWorldPhase(
 	}
 
 	/**
+	 * Counts world phases and reports the rate every few seconds.
+	 *
+	 * This counts the world frames themselves, not Minecraft's own FPS counter, so the same
+	 * number is comparable between a DLSS session and a `mc.dlss.enabled=false` session. Without
+	 * it, "frame rate feels bad" cannot be separated from a dev client simply being slow.
+	 */
+	private fun sampleWorldFrameRate() {
+		val now = System.nanoTime()
+		if (sampleStartedAt == 0L) {
+			sampleStartedAt = now
+			return
+		}
+
+		sampledFrames++
+		val elapsed = now - sampleStartedAt
+		if (elapsed < SAMPLE_INTERVAL_NANOS) {
+			return
+		}
+
+		val fps = sampledFrames * 1_000_000_000.0 / elapsed
+		diagnostics(
+			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s".format(
+				fps,
+				sampledFrames,
+				runtime.activeRoute?.frame?.route ?: DlssFrameRoute.VANILLA,
+				scene?.let { "${it.width}x${it.height}" } ?: "main-target",
+			),
+		)
+		sampleStartedAt = now
+		sampledFrames = 0
+	}
+
+	/**
 	 * Reports the first world phase exactly once.
 	 *
 	 * Without this, an engaged DLSS route and a session that never started look identical from
@@ -120,11 +157,17 @@ class DlssWorldPhase(
 
 		reportedFirstDecision = true
 		val frame = runtime.activeRoute?.frame
+		// What the renderer actually resolves mid-phase. If this is not the scene target, the
+		// route decided correctly but the redirect never reached the frame graph.
+		val resolved = probeResolvedTarget?.invoke()
 		diagnostics(
 			"DLSS first world phase: main=${mainTarget.width}x${mainTarget.height}" +
 				" route=${frame?.route ?: DlssFrameRoute.VANILLA}" +
 				" reason=${frame?.reason ?: "startup-unavailable"}" +
-				" render=${runtime.renderDimensions ?: "none"}",
+				" render=${runtime.renderDimensions ?: "none"}" +
+				" scene=${scene?.let { "${it.width}x${it.height}" } ?: "none"}" +
+				" resolved=${resolved?.let { "${it.width}x${it.height}" } ?: "unprobed"}" +
+				" redirected=${resolved != null && resolved === scene}",
 		)
 	}
 
@@ -141,6 +184,8 @@ class DlssWorldPhase(
 	}
 
 	companion object {
+		private const val SAMPLE_INTERVAL_NANOS = 5_000_000_000L
+
 		/** Production wiring: a real blit and a real sky-renderer reset. */
 		@JvmStatic
 		fun forMinecraft(runtime: DlssRenderRuntime, diagnostics: (String) -> Unit): DlssWorldPhase = DlssWorldPhase(
@@ -150,6 +195,7 @@ class DlssWorldPhase(
 				Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.shouldResetSkyRenderer = true
 			},
 			diagnostics = diagnostics,
+			probeResolvedTarget = { Minecraft.getInstance().gameRenderer.mainRenderTarget() },
 		)
 
 		/**
