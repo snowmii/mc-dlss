@@ -251,7 +251,87 @@ int32_t query_optimal_dimensions(const uint32_t outputWidth, const uint32_t outp
     return kSuccess;
 }
 
+NVSDK_NGX_FeatureDiscoveryInfo make_discovery_info() noexcept {
+    NVSDK_NGX_FeatureDiscoveryInfo dis;
+    std::memset(&dis, 0, sizeof(dis));
+    dis.SDKVersion = NVSDK_NGX_Version_API;
+    dis.FeatureID = NVSDK_NGX_Feature_SuperSampling;
+    dis.Identifier.IdentifierType = NVSDK_NGX_Application_Identifier_Type_Application_Id;
+    dis.Identifier.v.ApplicationId = 0x0023;
+    dis.ApplicationDataPath = L".";
+    return dis;
+}
+
+/* Copy the i-th extension name; returns success with *extensionCount set on both
+ * the count probe (name == nullptr) and a real copy. */
+int32_t copy_extension_name(const uint32_t index, char* name, const uint32_t nameCapacity,
+                            uint32_t* extensionCount, const uint32_t count,
+                            const VkExtensionProperties* properties) noexcept {
+    if (extensionCount == nullptr) {
+        return kInvalidParameter;
+    }
+    *extensionCount = count;
+    if (name == nullptr) {
+        // Pure count probe: report the total count and return success.
+        return kSuccess;
+    }
+    if (index >= count) {
+        return kSuccess;
+    }
+    if (nameCapacity == 0 || properties == nullptr) {
+        return kInvalidParameter;
+    }
+    const size_t length = std::strlen(properties[index].extensionName);
+    if (length + 1 > nameCapacity) {
+        return kInvalidParameter;
+    }
+    std::memcpy(name, properties[index].extensionName, length + 1);
+    return kSuccess;
+}
+
 } // namespace
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
+    const uint32_t index, char* name, const uint32_t name_capacity,
+    uint32_t* extension_count) {
+    try {
+        const NVSDK_NGX_FeatureDiscoveryInfo dis = make_discovery_info();
+        uint32_t count = 0;
+        VkExtensionProperties* properties = nullptr;
+        const NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(
+            &dis, &count, &properties);
+        if (result != NVSDK_NGX_Result_Success) {
+            return static_cast<int32_t>(result);
+        }
+        return copy_extension_name(index, name, name_capacity, extension_count, count, properties);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
+    const uint64_t vk_instance, const uint64_t vk_physical_device,
+    const uint32_t index, char* name, const uint32_t name_capacity,
+    uint32_t* extension_count) {
+    try {
+        if (vk_instance == 0 || vk_physical_device == 0) {
+            return kInvalidParameter;
+        }
+        const NVSDK_NGX_FeatureDiscoveryInfo dis = make_discovery_info();
+        uint32_t count = 0;
+        VkExtensionProperties* properties = nullptr;
+        const NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
+            from_uint64<VkInstance>(vk_instance),
+            from_uint64<VkPhysicalDevice>(vk_physical_device),
+            &dis, &count, &properties);
+        if (result != NVSDK_NGX_Result_Success) {
+            return static_cast<int32_t>(result);
+        }
+        return copy_extension_name(index, name, name_capacity, extension_count, count, properties);
+    } catch (...) {
+        return kFailure;
+    }
+}
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(const uint64_t vk_instance,
                                                      const uint64_t vk_physical_device,

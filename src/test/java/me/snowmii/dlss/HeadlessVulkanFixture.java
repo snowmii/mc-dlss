@@ -4,6 +4,7 @@ import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiFunction;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
@@ -40,6 +41,20 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 	private final List<Long> allocatedCommandBuffers = new ArrayList<>();
 
 	public HeadlessVulkanFixture() {
+		this(List.of(), (ignoredInstance, ignoredDevice) -> List.of());
+	}
+
+	/**
+	 * Builds a real headless Vulkan instance and device injecting the supplied NGX-required
+	 * extensions at creation, mirroring the production bootstrap mixins. Instance extensions are
+	 * known before instance creation; device extensions are queried against the live instance and
+	 * physical device (the same order Minecraft 26.2 uses), supplied by the provider before device
+	 * creation.
+	 */
+	public HeadlessVulkanFixture(
+		final List<String> instanceExtensions,
+		final BiFunction<Long, Long, List<String>> deviceExtensionProvider
+	) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkApplicationInfo appInfo = VkApplicationInfo.calloc(stack)
 				.sType$Default()
@@ -49,9 +64,19 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				.engineVersion(1)
 				.apiVersion(VK10.VK_API_VERSION_1_0);
 
+			PointerBuffer instanceExts = null;
+			if (!instanceExtensions.isEmpty()) {
+				instanceExts = stack.callocPointer(instanceExtensions.size());
+				for (String ext : instanceExtensions) {
+					instanceExts.put(stack.ASCII(ext));
+				}
+				instanceExts.flip();
+			}
+
 			VkInstanceCreateInfo instanceInfo = VkInstanceCreateInfo.calloc(stack)
 				.sType$Default()
-				.pApplicationInfo(appInfo);
+				.pApplicationInfo(appInfo)
+				.ppEnabledExtensionNames(instanceExts);
 
 			PointerBuffer instancePtr = stack.callocPointer(1);
 			checkVk(VK10.vkCreateInstance(instanceInfo, null, instancePtr), "vkCreateInstance");
@@ -84,15 +109,27 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 			}
 			queueFamilyIndex = graphicsFamily;
 
+			List<String> deviceExtensions = deviceExtensionProvider.apply(instance.address(), physicalDevice.address());
+
 			// queueCount derives from pQueuePriorities.remaining(); do NOT flip().
 			VkDeviceQueueCreateInfo.Buffer queueCreateInfo = VkDeviceQueueCreateInfo.calloc(1, stack);
 			queueCreateInfo.get(0).sType$Default();
 			queueCreateInfo.get(0).queueFamilyIndex(queueFamilyIndex);
 			queueCreateInfo.get(0).pQueuePriorities(stack.callocFloat(1).put(0, 1.0f));
 
+			PointerBuffer deviceExts = null;
+			if (deviceExtensions != null && !deviceExtensions.isEmpty()) {
+				deviceExts = stack.callocPointer(deviceExtensions.size());
+				for (String ext : deviceExtensions) {
+					deviceExts.put(stack.ASCII(ext));
+				}
+				deviceExts.flip();
+			}
+
 			VkDeviceCreateInfo deviceCreateInfo = VkDeviceCreateInfo.calloc(stack)
 				.sType$Default()
-				.pQueueCreateInfos(queueCreateInfo);
+				.pQueueCreateInfos(queueCreateInfo)
+				.ppEnabledExtensionNames(deviceExts);
 
 			PointerBuffer devicePtr = stack.callocPointer(1);
 			checkVk(VK10.vkCreateDevice(physicalDevice, deviceCreateInfo, null, devicePtr), "vkCreateDevice");
@@ -123,6 +160,11 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 	/** Raw address of the live device, as Minecraft's VulkanDevice.vkDevice().address() is. */
 	public long deviceAddress() {
 		return device.address();
+	}
+
+	/** Raw address of the live physical device, as Minecraft's VulkanDevice.physicalDevice().address() is. */
+	public long physicalDeviceAddress() {
+		return physicalDevice.address();
 	}
 
 	/** Raw address of the live graphics queue, as Minecraft's VulkanDevice.graphicsQueue().vkQueue().address() is. */

@@ -22,6 +22,31 @@ extern "C" {
  * Every function returns 1 on success and an NGX/native result code otherwise.
  * The bridge owns NGX feature and parameter lifetimes.
  */
+/*
+ * Pre-creation NGX extension requirements. Must be called before the Vulkan
+ * instance and device are created; the returned names are the exact
+ * NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements and
+ * NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements strings.
+ *
+ * First call with index==0 && name==NULL && name_capacity==0 returns the
+ * extension count in *extension_count. Subsequent calls with a valid name
+ * buffer copy the i-th extension name (NUL terminated) and return the count.
+ * Returns an NGX/native result code on failure (e.g. FAIL_InvalidParameter).
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
+    uint32_t index,
+    char* name,
+    uint32_t name_capacity,
+    uint32_t* extension_count);
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
+    uint64_t vk_instance,
+    uint64_t vk_physical_device,
+    uint32_t index,
+    char* name,
+    uint32_t name_capacity,
+    uint32_t* extension_count);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(
     uint64_t vk_instance,
     uint64_t vk_physical_device,

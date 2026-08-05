@@ -155,6 +155,22 @@ class DlssResourceAbiTest {
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_reset() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_close() { return 1; }
+			__declspec(dllexport) int __cdecl mc_dlss_query_instance_extension(
+				uint32_t index, char* name, uint32_t name_capacity, uint32_t* extension_count) {
+				if (extension_count == nullptr) return 0;
+				*extension_count = 1;
+				if (name == nullptr) return 1;
+				if (index == 0 && name_capacity > 3) { name[0]='V'; name[1]='K'; name[2]='_'; name[3]=0; }
+				return 1;
+			}
+			__declspec(dllexport) int __cdecl mc_dlss_query_device_extension(
+				uint64_t, uint64_t, uint32_t index, char* name, uint32_t name_capacity, uint32_t* extension_count) {
+				if (extension_count == nullptr) return 0;
+				*extension_count = 1;
+				if (name == nullptr) return 1;
+				if (index == 0 && name_capacity > 3) { name[0]='V'; name[1]='K'; name[2]='_'; name[3]=0; }
+				return 1;
+			}
 			}
 		""".trimIndent())
 

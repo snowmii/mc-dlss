@@ -8,6 +8,8 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 
 /** Flat Java 25 FFM binding. NGX types and ownership stay inside mc_dlss_native. */
@@ -19,6 +21,8 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 	private static final Linker LINKER = Linker.nativeLinker();
 
 	private final Arena arena;
+	private final MethodHandle queryInstanceExtension;
+	private final MethodHandle queryDeviceExtension;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
@@ -29,6 +33,16 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 
 	private DlssNative(final Arena arena, final SymbolLookup lookup) {
 		this.arena = arena;
+		this.queryInstanceExtension = bind(
+			lookup,
+			"mc_dlss_query_instance_extension",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT, ValueLayout.ADDRESS, JAVA_INT, ValueLayout.ADDRESS)
+		);
+		this.queryDeviceExtension = bind(
+			lookup,
+			"mc_dlss_query_device_extension",
+			FunctionDescriptor.of(JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, ValueLayout.ADDRESS, JAVA_INT, ValueLayout.ADDRESS)
+		);
 		this.initialize = bind(
 			lookup,
 			"mc_dlss_initialize",
@@ -106,6 +120,46 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 		} catch (Throwable error) {
 			arena.close();
 			throw new DlssNativeException("load-library", error);
+		}
+	}
+
+	public List<String> queryInstanceExtensions() {
+		return queryExtensions(0L, 0L, false);
+	}
+
+	public List<String> queryDeviceExtensions(final long vkInstance, final long vkPhysicalDevice) {
+		if (vkInstance == 0L || vkPhysicalDevice == 0L) {
+			throw new IllegalArgumentException("Vulkan instance and physical device must be non-zero");
+		}
+		return queryExtensions(vkInstance, vkPhysicalDevice, true);
+	}
+
+	private List<String> queryExtensions(final long vkInstance, final long vkPhysicalDevice, final boolean device) {
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment count = callArena.allocate(JAVA_INT);
+			int result = device
+				? (int)this.queryDeviceExtension.invokeExact(vkInstance, vkPhysicalDevice, 0, MemorySegment.NULL, 0, count)
+				: (int)this.queryInstanceExtension.invokeExact(0, MemorySegment.NULL, 0, count);
+			if (result != SUCCESS) {
+				throw new DlssNativeException("query-extensions", result);
+			}
+			final int extensionCount = count.get(JAVA_INT, 0);
+			final LinkedHashSet<String> names = new LinkedHashSet<>(extensionCount);
+			for (int index = 0; index < extensionCount; index++) {
+				final MemorySegment name = callArena.allocate(256);
+				result = device
+					? (int)this.queryDeviceExtension.invokeExact(vkInstance, vkPhysicalDevice, index, name, 256, count)
+					: (int)this.queryInstanceExtension.invokeExact(index, name, 256, count);
+				if (result != SUCCESS) {
+					throw new DlssNativeException("query-extensions", result);
+				}
+				names.add(name.getString(0));
+			}
+			return List.copyOf(names);
+		} catch (DlssNativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-extensions", error);
 		}
 	}
 
