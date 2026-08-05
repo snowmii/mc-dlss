@@ -43,6 +43,17 @@ struct DlssState {
     std::wstring sdkPath;
     std::wstring dataPath;
     NVSDK_NGX_Parameter* capabilityParameters = nullptr;
+    NVSDK_NGX_Handle* feature = nullptr;
+    uint32_t outputWidth = 0;
+    uint32_t outputHeight = 0;
+    uint32_t renderWidth = 0;
+    uint32_t renderHeight = 0;
+    uint32_t qualityMode = 0;
+    uint32_t featureOutputWidth = 0;
+    uint32_t featureOutputHeight = 0;
+    uint32_t featureRenderWidth = 0;
+    uint32_t featureRenderHeight = 0;
+    uint32_t featureQualityMode = 0;
 };
 
 DlssState g_state;
@@ -98,6 +109,18 @@ void reset_state() noexcept {
     g_state = DlssState{};
 }
 
+int32_t release_feature() noexcept {
+    if (g_state.feature == nullptr) {
+        return kSuccess;
+    }
+    const int32_t result = static_cast<int32_t>(
+        NVSDK_NGX_VULKAN_ReleaseFeature(g_state.feature));
+    if (result == kSuccess) {
+        g_state.feature = nullptr;
+    }
+    return result;
+}
+
 int32_t destroy_capability_parameters() noexcept {
     if (g_state.capabilityParameters == nullptr) {
         return kSuccess;
@@ -112,8 +135,12 @@ int32_t destroy_capability_parameters() noexcept {
 
 int32_t shutdown_state() noexcept {
     g_state.bootstrapComplete = false;
-    // Parameters are owned by this bridge and must die before NGX shutdown.
-    int32_t result = destroy_capability_parameters();
+    // Feature must die before its parameters and NGX device state.
+    int32_t result = release_feature();
+    if (result != kSuccess) {
+        return result;
+    }
+    result = destroy_capability_parameters();
     if (result != kSuccess) {
         return result;
     }
@@ -335,16 +362,21 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
                                                     const uint32_t render_width,
                                                     const uint32_t render_height,
                                                     const uint32_t quality_mode) {
-    // Keep existing lifecycle ABI usable without allocating feature parameters.
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_state.bootstrapComplete) {
             return kNotInitialized;
         }
-        return valid_dimensions(output_width, output_height, render_width, render_height) &&
-                       valid_quality_mode(quality_mode)
-                   ? kSuccess
-                   : kInvalidParameter;
+        if (!valid_dimensions(output_width, output_height, render_width, render_height) ||
+            !valid_quality_mode(quality_mode)) {
+            return kInvalidParameter;
+        }
+        g_state.outputWidth = output_width;
+        g_state.outputHeight = output_height;
+        g_state.renderWidth = render_width;
+        g_state.renderHeight = render_height;
+        g_state.qualityMode = quality_mode;
+        return kSuccess;
     } catch (...) {
         return kFailure;
     }
@@ -367,14 +399,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
     const uint32_t output_level_count, const uint32_t output_base_array_layer,
     const uint32_t output_layer_count, const uint32_t render_width,
     const uint32_t render_height, const uint32_t output_width, const uint32_t output_height,
-    const float, const float, const float, const float, const float, const int32_t reset_history) {
+    const float jitter_x, const float jitter_y, const float motion_scale_x,
+    const float motion_scale_y, const float frame_time_milliseconds,
+    const int32_t reset_history) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_state.bootstrapComplete) {
             return kNotInitialized;
         }
-        if (command_buffer == 0 || reset_history < 0.0F || reset_history > 1.0F ||
-            !valid_dimensions(output_width, output_height, render_width, render_height)) {
+        if (command_buffer == 0 || reset_history < 0 || reset_history > 1 ||
+            !valid_dimensions(output_width, output_height, render_width, render_height) ||
+            output_width != g_state.outputWidth || output_height != g_state.outputHeight ||
+            render_width != g_state.renderWidth || render_height != g_state.renderHeight) {
             return kInvalidParameter;
         }
 
@@ -395,21 +431,65 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
             return kInvalidParameter;
         }
 
-        // Resource construction is deliberately isolated until renderer recording supplies a
-        // valid command buffer and the next slice invokes NGX evaluation.
-        const auto colorResource = make_image_view_resource(
+        auto colorResource = make_image_view_resource(
             colorResourceInput, render_width, render_height, false);
-        const auto depthResource = make_image_view_resource(
+        auto depthResource = make_image_view_resource(
             depthResourceInput, render_width, render_height, false);
-        const auto motionResource = make_image_view_resource(
+        auto motionResource = make_image_view_resource(
             motionResourceInput, render_width, render_height, false);
-        const auto outputResource = make_image_view_resource(
+        auto outputResource = make_image_view_resource(
             outputResourceInput, output_width, output_height, true);
-        (void)colorResource;
-        (void)depthResource;
-        (void)motionResource;
-        (void)outputResource;
-        return kFeatureNotSupported;
+        const bool featureMatchesConfiguration =
+            g_state.feature != nullptr &&
+            g_state.featureOutputWidth == output_width &&
+            g_state.featureOutputHeight == output_height &&
+            g_state.featureRenderWidth == render_width &&
+            g_state.featureRenderHeight == render_height &&
+            g_state.featureQualityMode == g_state.qualityMode;
+        if (!featureMatchesConfiguration) {
+            int32_t result = release_feature();
+            if (result != kSuccess) {
+                return result;
+            }
+            NVSDK_NGX_DLSS_Create_Params createParams{};
+            createParams.Feature.InWidth = render_width;
+            createParams.Feature.InHeight = render_height;
+            createParams.Feature.InTargetWidth = output_width;
+            createParams.Feature.InTargetHeight = output_height;
+            createParams.Feature.InPerfQualityValue =
+                static_cast<NVSDK_NGX_PerfQuality_Value>(g_state.qualityMode);
+            createParams.InFeatureCreateFlags =
+                NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
+                NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
+            const NVSDK_NGX_Result createResult = NGX_VULKAN_CREATE_DLSS_EXT(
+                from_uint64<VkCommandBuffer>(command_buffer), 1, 1, &g_state.feature,
+                g_state.capabilityParameters, &createParams);
+            if (createResult != NVSDK_NGX_Result_Success) {
+                g_state.feature = nullptr;
+                return static_cast<int32_t>(createResult);
+            }
+            g_state.featureOutputWidth = output_width;
+            g_state.featureOutputHeight = output_height;
+            g_state.featureRenderWidth = render_width;
+            g_state.featureRenderHeight = render_height;
+            g_state.featureQualityMode = g_state.qualityMode;
+        }
+
+        NVSDK_NGX_VK_DLSS_Eval_Params evaluateParams{};
+        evaluateParams.Feature.pInColor = &colorResource;
+        evaluateParams.Feature.pInOutput = &outputResource;
+        evaluateParams.pInDepth = &depthResource;
+        evaluateParams.pInMotionVectors = &motionResource;
+        evaluateParams.InJitterOffsetX = jitter_x;
+        evaluateParams.InJitterOffsetY = jitter_y;
+        evaluateParams.InRenderSubrectDimensions = {render_width, render_height};
+        evaluateParams.InReset = reset_history;
+        evaluateParams.InMVScaleX = motion_scale_x;
+        evaluateParams.InMVScaleY = motion_scale_y;
+        evaluateParams.InFrameTimeDeltaInMsec = frame_time_milliseconds;
+        return static_cast<int32_t>(NGX_VULKAN_EVALUATE_DLSS_EXT(
+            from_uint64<VkCommandBuffer>(command_buffer), g_state.feature,
+            g_state.capabilityParameters, &evaluateParams));
     } catch (...) {
         return kFailure;
     }
@@ -418,7 +498,10 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        return g_state.bootstrapComplete ? kSuccess : kNotInitialized;
+        if (!g_state.bootstrapComplete) {
+            return kNotInitialized;
+        }
+        return release_feature();
     } catch (...) {
         return kFailure;
     }
