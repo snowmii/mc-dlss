@@ -6,7 +6,9 @@
 		"ExampleMixin"
 	],
 	"client": [
-		"VulkanDeviceContextMixin"
+		"VulkanBackendExtensionMixin",
+		"VulkanDeviceContextMixin",
+		"VulkanInstanceExtensionMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
