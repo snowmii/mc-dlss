@@ -30,10 +30,12 @@ class DlssWorldPhase(
 	private val runtime: DlssRenderRuntime,
 	private val present: (RenderTarget, RenderTarget) -> Unit,
 	private val onWorldTargetChanged: () -> Unit,
+	private val diagnostics: (String) -> Unit = {},
 ) : AutoCloseable {
 	private var scene: RenderTarget? = null
 	private var mainTarget: RenderTarget? = null
 	private var lastResolved: RenderTarget? = null
+	private var reportedFirstDecision = false
 
 	/** True between [begin] and [end]. */
 	var isOpen: Boolean = false
@@ -66,6 +68,7 @@ class DlssWorldPhase(
 		isOpen = true
 
 		val resolved = scene ?: mainTarget
+		reportFirstDecision(mainTarget)
 		if (resolved !== lastResolved) {
 			// SkyRenderer caches the target it was built against and reuses it every frame.
 			lastResolved = resolved
@@ -102,6 +105,29 @@ class DlssWorldPhase(
 		runtime.close()
 	}
 
+	/**
+	 * Reports the first world phase exactly once.
+	 *
+	 * Without this, an engaged DLSS route and a session that never started look identical from
+	 * outside: both render a normal-looking frame and log nothing. The line names the measured
+	 * main target, the route actually taken, the session's own reason for it, and the render
+	 * dimensions, which is enough to tell those two apart from the log alone.
+	 */
+	private fun reportFirstDecision(mainTarget: RenderTarget) {
+		if (reportedFirstDecision) {
+			return
+		}
+
+		reportedFirstDecision = true
+		val frame = runtime.activeRoute?.frame
+		diagnostics(
+			"DLSS first world phase: main=${mainTarget.width}x${mainTarget.height}" +
+				" route=${frame?.route ?: DlssFrameRoute.VANILLA}" +
+				" reason=${frame?.reason ?: "startup-unavailable"}" +
+				" render=${runtime.renderDimensions ?: "none"}",
+		)
+	}
+
 	/** Drops an open phase without presenting it. The scene target itself stays owned by the runtime. */
 	private fun discard() {
 		if (!isOpen) {
@@ -117,12 +143,13 @@ class DlssWorldPhase(
 	companion object {
 		/** Production wiring: a real blit and a real sky-renderer reset. */
 		@JvmStatic
-		fun forMinecraft(runtime: DlssRenderRuntime): DlssWorldPhase = DlssWorldPhase(
+		fun forMinecraft(runtime: DlssRenderRuntime, diagnostics: (String) -> Unit): DlssWorldPhase = DlssWorldPhase(
 			runtime = runtime,
 			present = ::blitSceneToMainTarget,
 			onWorldTargetChanged = {
 				Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.shouldResetSkyRenderer = true
 			},
+			diagnostics = diagnostics,
 		)
 
 		/**

@@ -36,12 +36,14 @@ object DlssClientRuntime {
 		initialized = true
 		val session = McDlss.session
 		if (!session.config.enabled) {
+			LOGGER.info("DLSS disabled by {}; every frame renders vanilla", DlssStartupConfig.ENABLED_PROPERTY)
 			return null
 		}
 
 		phase = try {
 			val native = DlssNative.open(DlssExtensionBootstrap.nativeLibrary())
-			DlssWorldPhase.forMinecraft(DlssRenderRuntime.forMinecraft(session, native))
+			val diagnostics: (String) -> Unit = { message -> LOGGER.info(message) }
+			DlssWorldPhase.forMinecraft(DlssRenderRuntime.forMinecraft(session, native, diagnostics), diagnostics)
 		} catch (error: Throwable) {
 			LOGGER.warn("DLSS native bridge unavailable; every frame renders vanilla", error)
 			session.latchFailure(DlssNativeFailure(DlssNativeStage.LOAD_LIBRARY, 0, error.toString()))

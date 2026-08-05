@@ -106,13 +106,25 @@ class DlssRenderRuntime(
 		 * [DlssLifecycleAdapter.initialize] cannot run without either.
 		 */
 		@JvmStatic
-		fun forMinecraft(session: DlssSession, native: DlssNativeApi): DlssRenderRuntime {
+		fun forMinecraft(
+			session: DlssSession,
+			native: DlssNativeApi,
+			diagnostics: (String) -> Unit = {},
+		): DlssRenderRuntime {
 			val adapter = DlssLifecycleAdapter(session, native)
 			return DlssRenderRuntime(session, DlssSceneTarget.forMinecraft()) {
 				val context = VulkanContextRegistry.current
 				val sdkPath = session.config.sdkPath
 				val dataPath = session.config.dataPath
 				if (context == null || sdkPath == null || dataPath == null) {
+					// Each of these silently disables DLSS for the whole session, so name the one
+					// that is actually missing rather than leaving a vanilla-looking frame.
+					diagnostics(
+						"DLSS startup skipped:" +
+							" vulkan-context=${if (context == null) "missing" else "captured"}" +
+							" ${DlssStartupConfig.SDK_PATH_PROPERTY}=${sdkPath ?: "unset"}" +
+							" ${DlssStartupConfig.DATA_PATH_PROPERTY}=${dataPath ?: "unset"}",
+					)
 					null
 				} else {
 					adapter.initialize(
