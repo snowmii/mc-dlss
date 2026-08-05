@@ -27,7 +27,7 @@ bin/
 # local metadata
 
 *.DS_Store
-*:Zone.Identifier
+*Zone.Identifier
 .codegraph/
 
 # fabric
