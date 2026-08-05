@@ -84,6 +84,13 @@ tasks.processResources {
 	filesMatching("fabric.mod.json") {
 		expand("version" to version)
 	}
+
+	// Ship the native bridge under the mod's own namespace, so it resolves the same way
+	// wherever the client runs from. The dev client's working directory is `run/`, which is
+	// why a repository-relative path cannot be used.
+	from(buildNativeDlss) {
+		into("assets/mc-dlss/native") // McDlss.MOD_ID
+	}
 }
 
 tasks.withType<JavaCompile>().configureEach {
