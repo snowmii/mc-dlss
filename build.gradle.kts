@@ -33,6 +33,50 @@ tasks.test {
 	useJUnitPlatform()
 }
 
+val buildNativeDlss by tasks.registering(Exec::class) {
+	group = "build"
+	description = "Builds the workstation-local DLSS native bridge with MSVC."
+
+	val nativeSource = layout.projectDirectory.file("native/mc_dlss.cpp")
+	val nativeHeader = layout.projectDirectory.file("native/mc_dlss.h")
+	val outputDirectory = layout.buildDirectory.dir("native")
+	inputs.files(nativeSource, nativeHeader)
+	outputs.file(outputDirectory.map { it.file("mc_dlss.dll") })
+
+	doFirst {
+		val vsDevCmd = file("C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/Tools/VsDevCmd.bat")
+		val vulkanSdk = providers.environmentVariable("VULKAN_SDK")
+			.orElse("C:/VulkanSDK/1.4.357.0")
+			.get()
+			.let(::file)
+		val ngxSdk = file("C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0")
+		val vulkanHeader = vulkanSdk.resolve("Include/vulkan/vulkan.h")
+		val vulkanLibrary = vulkanSdk.resolve("Lib/vulkan-1.lib")
+		val ngxHeader = ngxSdk.resolve("include/nvsdk_ngx.h")
+		val ngxLibrary = ngxSdk.resolve("lib/Windows_x86_64/x64/nvsdk_ngx_s.lib")
+
+		check(vsDevCmd.isFile) { "Visual Studio 2022 Build Tools missing: $vsDevCmd" }
+		check(vulkanHeader.isFile) { "Vulkan SDK 1.4.357.0 header missing: $vulkanHeader (set VULKAN_SDK or install at C:/VulkanSDK/1.4.357.0)" }
+		check(vulkanLibrary.isFile) { "Vulkan SDK 1.4.357.0 loader library missing: $vulkanLibrary" }
+		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 header missing: $ngxHeader" }
+		check(ngxLibrary.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 library missing: $ngxLibrary" }
+
+		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
+		val output = outputDir.resolve("mc_dlss.dll")
+		commandLine(
+			"cmd.exe", "/d", "/c",
+			"call \"${vsDevCmd.absolutePath}\" -arch=x64 -host_arch=x64 && " +
+				"cl.exe /nologo /std:c++17 /EHsc /LD /O2 /DNOMINMAX /Fo\"${outputDir.resolve("mc_dlss.obj").absolutePath}\" " +
+				"/I\"${vulkanSdk.resolve("Include").absolutePath}\" " +
+				"/I\"${ngxSdk.resolve("include").absolutePath}\" " +
+				"\"${nativeSource.asFile.absolutePath}\" " +
+				"/link /OUT:\"${output.absolutePath}\" " +
+				"/IMPLIB:\"${outputDir.resolve("mc_dlss.lib").absolutePath}\" " +
+				"\"${vulkanLibrary.absolutePath}\" \"${ngxLibrary.absolutePath}\" Advapi32.lib User32.lib"
+		)
+	}
+}
+
 tasks.processResources {
 	val version = version
 	inputs.property("version", version)
