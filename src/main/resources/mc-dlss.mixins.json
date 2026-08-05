@@ -6,6 +6,8 @@
 		"ExampleMixin"
 	],
 	"client": [
+		"GameRendererWorldTargetMixin",
+		"LevelRendererWorldPhaseMixin",
 		"VulkanBackendExtensionMixin",
 		"VulkanDeviceContextMixin",
 		"VulkanInstanceExtensionMixin"

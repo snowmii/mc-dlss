@@ -1,0 +1,181 @@
+package me.snowmii.dlss
+
+import com.mojang.blaze3d.GpuFormat
+import com.mojang.blaze3d.pipeline.RenderTarget
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+
+/**
+ * Proves the render-loop seam the mixins call: what the world renders into while the phase is
+ * open, what every other seam sees, and what reaches the main target when it closes.
+ */
+class DlssWorldPhaseTest {
+	private val output = DlssDimensions(2560, 1440)
+	private val render = DlssDimensions(1707, 960)
+	private val mainTarget = FakeTarget(output.width, output.height)
+
+	private val presented = mutableListOf<Pair<RenderTarget, RenderTarget>>()
+	private var targetChanges = 0
+
+	@Test
+	fun `an eligible phase renders into a render-sized scene target and overrides the world target`() {
+		val phase = phase(readyRuntime())
+
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+
+		assertTrue(phase.isOpen)
+		assertEquals(render.width, worldTarget.width)
+		assertEquals(render.height, worldTarget.height)
+		assertSame(worldTarget, phase.worldTargetOverride)
+	}
+
+	@Test
+	fun `the main target is never resized and is what every seam sees outside the phase`() {
+		val phase = phase(readyRuntime())
+
+		assertNull(phase.worldTargetOverride)
+		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		assertFalse(phase.isOpen)
+		assertNull(phase.worldTargetOverride)
+		assertEquals(output.width, mainTarget.width)
+		assertEquals(output.height, mainTarget.height)
+		assertTrue(mainTarget.releases == 0)
+	}
+
+	@Test
+	fun `closing an eligible phase presents the low-resolution scene into the main target`() {
+		val phase = phase(readyRuntime())
+
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		assertEquals(listOf(worldTarget to mainTarget as RenderTarget), presented)
+	}
+
+	@Test
+	fun `a vanilla frame renders straight into the main target and presents nothing`() {
+		val phase = phase(readyRuntime())
+
+		val worldTarget = phase.begin(normalInWorldFrame = false, mainTarget = mainTarget)
+		assertNull(phase.worldTargetOverride)
+		phase.end()
+
+		assertSame(mainTarget, worldTarget)
+		assertTrue(presented.isEmpty())
+	}
+
+	@Test
+	fun `the sky renderer resets only when the resolved world target changes identity`() {
+		val phase = phase(readyRuntime())
+
+		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+		assertEquals(1, targetChanges)
+
+		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+		assertEquals(1, targetChanges)
+
+		phase.begin(normalInWorldFrame = false, mainTarget = mainTarget)
+		phase.end()
+		assertEquals(2, targetChanges)
+	}
+
+	@Test
+	fun `a session without DLSS keeps every frame on the main target`() {
+		val phase = phase(runtime(session(enabled = false)) { render })
+
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		assertSame(mainTarget, worldTarget)
+		assertNull(phase.worldTargetOverride)
+		assertTrue(presented.isEmpty())
+	}
+
+	@Test
+	fun `a degenerate main target is never measured as output dimensions`() {
+		val phase = phase(readyRuntime())
+		val unsized = FakeTarget(0, 0)
+
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = unsized)
+		phase.end()
+
+		assertSame(unsized, worldTarget)
+		assertTrue(presented.isEmpty())
+	}
+
+	@Test
+	fun `a phase abandoned by a failed frame is discarded rather than crashing the next one`() {
+		val phase = phase(readyRuntime())
+
+		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		// No end(): LevelRenderer.render threw, so its tail never ran.
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		assertTrue(phase.isOpen.not())
+		assertEquals(render.width, worldTarget.width)
+		assertEquals(listOf(worldTarget to mainTarget as RenderTarget), presented)
+	}
+
+	private fun phase(runtime: DlssRenderRuntime) = DlssWorldPhase(
+		runtime = runtime,
+		present = { scene, main -> presented += scene to main },
+		onWorldTargetChanged = { targetChanges++ },
+	)
+
+	private fun readyRuntime(): DlssRenderRuntime {
+		val session = session(enabled = true)
+		return runtime(session) {
+			check(session.markReadyAfterNativeStartup())
+			render
+		}
+	}
+
+	private fun runtime(session: DlssSession, startup: () -> DlssDimensions?) = DlssRenderRuntime(
+		session = session,
+		sceneTarget = DlssSceneTarget(
+			allocate = { width, height -> FakeTarget(width, height) },
+			release = { (it as FakeTarget).releases++ },
+		),
+		startup = startup,
+	)
+
+	private fun session(enabled: Boolean) = DlssSession(
+		DlssStartupConfig(
+			enabled = enabled,
+			qualityMode = DlssQualityMode.QUALITY,
+			outputDimensions = output,
+			sdkPath = null,
+			nativeLibraryPath = null,
+			dataPath = null,
+			warnings = emptyList(),
+		),
+	)
+
+	/** Render target with no GPU buffers, so the phase is testable off the render thread. */
+	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+		var releases = 0
+
+		init {
+			this.width = width
+			this.height = height
+		}
+
+		override fun createBuffers(width: Int, height: Int) {
+			this.width = width
+			this.height = height
+		}
+
+		override fun destroyBuffers() {
+			releases++
+		}
+	}
+}
