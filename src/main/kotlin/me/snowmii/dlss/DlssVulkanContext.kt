@@ -1,6 +1,7 @@
 package me.snowmii.dlss
 
 import com.mojang.blaze3d.vulkan.VulkanDevice
+import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
@@ -17,12 +18,14 @@ import org.lwjgl.vulkan.VkCommandBuffer
  */
 class DlssVulkanContext private constructor(
 	val instanceHandle: Long,
+	val physicalDeviceHandle: Long,
 	val deviceHandle: Long,
 	val graphicsQueueHandle: Long,
 	val commandBufferSource: () -> VkCommandBuffer,
 ) {
 	init {
 		require(instanceHandle != 0L) { "Vulkan instance handle must be non-zero" }
+		require(physicalDeviceHandle != 0L) { "Vulkan physical device handle must be non-zero" }
 		require(deviceHandle != 0L) { "Vulkan device handle must be non-zero" }
 		require(graphicsQueueHandle != 0L) { "Vulkan graphics queue handle must be non-zero" }
 		requireNotNull(commandBufferSource) { "command buffer source must be provided" }
@@ -36,17 +39,21 @@ class DlssVulkanContext private constructor(
 		 * Production seam: capture Minecraft's live Vulkan context from a constructed
 		 * [VulkanDevice] (called at ctor TAIL, all fields final). Returns null if any
 		 * handle is zero, so the mod degrades gracefully.
+		 *
+		 * [VulkanDevice] exposes no physical-device accessor, so the mixin passes the
+		 * constructor argument straight through. NGX initialization needs it.
 		 */
 		@JvmStatic
-		fun fromVulkanDevice(device: VulkanDevice): DlssVulkanContext? {
+		fun fromVulkanDevice(device: VulkanDevice, physicalDevice: VulkanPhysicalDevice): DlssVulkanContext? {
 			val instanceHandle = device.instance().vkInstance().address()
+			val physicalDeviceHandle = physicalDevice.vkPhysicalDevice().address()
 			val deviceHandle = device.vkDevice().address()
 			val queueHandle = device.graphicsQueue().vkQueue().address()
-			if (instanceHandle == 0L || deviceHandle == 0L || queueHandle == 0L) {
+			if (instanceHandle == 0L || physicalDeviceHandle == 0L || deviceHandle == 0L || queueHandle == 0L) {
 				return null
 			}
 			val encoder = device.createCommandEncoder()
-			return DlssVulkanContext(instanceHandle, deviceHandle, queueHandle) {
+			return DlssVulkanContext(instanceHandle, physicalDeviceHandle, deviceHandle, queueHandle) {
 				encoder.allocateAndBeginTransientCommandBuffer()
 			}
 		}
@@ -59,9 +66,11 @@ class DlssVulkanContext private constructor(
 		@JvmStatic
 		fun fromNativeHandles(
 			instance: Long,
+			vkPhysicalDevice: Long,
 			vkDevice: Long,
 			vkQueue: Long,
 			commandBufferSource: () -> VkCommandBuffer,
-		): DlssVulkanContext = DlssVulkanContext(instance, vkDevice, vkQueue, commandBufferSource)
+		): DlssVulkanContext =
+			DlssVulkanContext(instance, vkPhysicalDevice, vkDevice, vkQueue, commandBufferSource)
 	}
 }

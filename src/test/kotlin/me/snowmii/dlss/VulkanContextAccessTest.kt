@@ -21,6 +21,7 @@ class VulkanContextAccessTest {
 		HeadlessVulkanFixture().use { fixture ->
 			val context = DlssVulkanContext.fromNativeHandles(
 				instance = fixture.instanceAddress(),
+				vkPhysicalDevice = fixture.physicalDeviceAddress(),
 				vkDevice = fixture.deviceAddress(),
 				vkQueue = fixture.queueAddress(),
 			) {
@@ -29,9 +30,11 @@ class VulkanContextAccessTest {
 
 			// Handles present and are the real headless context's handles.
 			assertTrue(context.instanceHandle != 0L, "instance handle must be non-zero")
+			assertTrue(context.physicalDeviceHandle != 0L, "physical device handle must be non-zero")
 			assertTrue(context.deviceHandle != 0L, "device handle must be non-zero")
 			assertTrue(context.graphicsQueueHandle != 0L, "graphics queue handle must be non-zero")
 			assertEquals(fixture.instanceAddress(), context.instanceHandle)
+			assertEquals(fixture.physicalDeviceAddress(), context.physicalDeviceHandle)
 			assertEquals(fixture.deviceAddress(), context.deviceHandle)
 			assertEquals(fixture.queueAddress(), context.graphicsQueueHandle)
 
