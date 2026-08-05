@@ -93,6 +93,25 @@ tasks.processResources {
 	}
 }
 
+// Development-only dev-client wiring. Loom's run-config `property(...)` never reaches
+// launch.cfg, so the DLSS startup properties are set on the run task's JVM directly. Every
+// value is overridable, e.g. `./gradlew.bat runClient -Pmc.dlss.mode=performance`.
+tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configureEach {
+	// Directory holding nvngx_dlss.dll; NGX uses it as the feature search path.
+	val ngxRuntime = file("C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0/lib/Windows_x86_64/rel")
+	val dlssData = layout.buildDirectory.dir("dlss-data").get().asFile
+
+	doFirst {
+		dlssData.mkdirs()
+	}
+
+	systemProperty("mc.dlss.sdk-path", providers.gradleProperty("mc.dlss.sdk-path").getOrElse(ngxRuntime.absolutePath))
+	systemProperty("mc.dlss.data-path", providers.gradleProperty("mc.dlss.data-path").getOrElse(dlssData.absolutePath))
+	for (name in listOf("mc.dlss.enabled", "mc.dlss.mode", "mc.dlss.output-width", "mc.dlss.output-height")) {
+		providers.gradleProperty(name).orNull?.let { systemProperty(name, it) }
+	}
+}
+
 tasks.withType<JavaCompile>().configureEach {
 	options.release = 25
 }
