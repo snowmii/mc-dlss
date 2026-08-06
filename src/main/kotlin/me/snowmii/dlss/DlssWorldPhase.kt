@@ -62,8 +62,16 @@ class DlssWorldPhase(
 	 * low-resolution override too. Splitting the decision from the window is what keeps both
 	 * true, and the route is still decided exactly once per frame because [begin] consumes
 	 * this preparation rather than repeating it.
+	 *
+	 * [camera] is the frame's camera as the projection seam sees it, and is what the runtime
+	 * derives camera-only motion from. It is null only when the phase is opened without the
+	 * projection seam having run, which publishes no motion for that frame.
 	 */
-	fun prepare(normalInWorldFrame: Boolean, mainTarget: RenderTarget): DlssJitterOffset? {
+	fun prepare(
+		normalInWorldFrame: Boolean,
+		mainTarget: RenderTarget,
+		camera: DlssCameraSample? = null,
+	): DlssJitterOffset? {
 		// An exception thrown inside LevelRenderer.render skips the tail that closes the phase,
 		// and a frame that prepared but never rendered leaves one unconsumed. Both are dropped
 		// here rather than thrown on, because a stale phase must not turn one render failure
@@ -72,7 +80,11 @@ class DlssWorldPhase(
 
 		this.mainTarget = mainTarget
 		scene = if (mainTarget.width > 0 && mainTarget.height > 0) {
-			runtime.beginWorldPhase(normalInWorldFrame, DlssDimensions(mainTarget.width, mainTarget.height))
+			runtime.beginWorldPhase(
+				normalInWorldFrame,
+				DlssDimensions(mainTarget.width, mainTarget.height),
+				camera,
+			)
 		} else {
 			null
 		}
@@ -197,8 +209,9 @@ class DlssWorldPhase(
 	}
 
 	/**
-	 * Drops a prepared or open phase without presenting it. The scene target itself stays
-	 * owned by the runtime.
+	 * Drops a prepared or open phase without presenting it, and breaks the motion history the
+	 * dropped frame would otherwise have left behind. The scene target itself stays owned by the
+	 * runtime.
 	 */
 	private fun discard() {
 		if (!isOpen && !prepared) {
@@ -210,6 +223,9 @@ class DlssWorldPhase(
 		scene = null
 		mainTarget = null
 		runtime.endWorldPhase()
+		// This frame decided a route and moved the motion predecessor forward, but no image was
+		// ever accumulated from it, so the next frame must start its history again.
+		runtime.resetMotionHistory()
 	}
 
 	companion object {

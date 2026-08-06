@@ -23,10 +23,12 @@ class DlssRenderRuntime(
 	private val session: DlssSession,
 	private val sceneTarget: DlssSceneTarget,
 	private val startup: () -> DlssDimensions?,
+	private val clock: () -> Long = System::nanoTime,
 ) : AutoCloseable {
 	private var startupAttempted = false
 	private var router: WorldTargetRouter? = null
 	private var jitter: DlssJitter? = null
+	private var motion: DlssCameraMotion? = null
 
 	/**
 	 * Target the world phase must render into, or null when the frame renders vanilla
@@ -55,10 +57,25 @@ class DlssRenderRuntime(
 		private set
 
 	/**
+	 * Camera-only motion for the current world phase, or null outside an eligible DLSS phase and
+	 * for an eligible phase that was routed without a camera sample.
+	 */
+	var activeMotion: DlssFrameMotion? = null
+		private set
+
+	/**
 	 * Opens the world phase. Returns the low-resolution scene target for an eligible DLSS
 	 * frame, or null when the frame must use the vanilla main target.
+	 *
+	 * [camera] is this frame's camera as the world projection seam sampled it. A null sample
+	 * still routes the frame; it publishes no motion and breaks the motion chain, because a
+	 * frame whose camera was never observed cannot be reprojected against.
 	 */
-	fun beginWorldPhase(normalInWorldFrame: Boolean, outputDimensions: DlssDimensions): RenderTarget? {
+	fun beginWorldPhase(
+		normalInWorldFrame: Boolean,
+		outputDimensions: DlssDimensions,
+		camera: DlssCameraSample? = null,
+	): RenderTarget? {
 		val activeRouter = ensureStarted()
 		if (activeRouter == null) {
 			// No DLSS this session: release any target held from an earlier eligible frame.
@@ -66,6 +83,7 @@ class DlssRenderRuntime(
 			activeRoute = null
 			activeWorldTarget = null
 			activeJitter = null
+			activeMotion = null
 			return null
 		}
 
@@ -75,10 +93,17 @@ class DlssRenderRuntime(
 		activeWorldTarget = target
 		// A vanilla frame breaks the accumulated history, so it restarts the sequence rather
 		// than consuming a phase no evaluation will ever see.
-		activeJitter = if (target != null) {
+		val offset = if (target != null) {
 			jitter?.advance()
 		} else {
 			jitter?.reset()
+			null
+		}
+		activeJitter = offset
+		activeMotion = if (offset != null && camera != null) {
+			motion?.advance(camera, offset, clock())
+		} else {
+			motion?.reset()
 			null
 		}
 		return target
@@ -89,6 +114,18 @@ class DlssRenderRuntime(
 		activeRoute = null
 		activeWorldTarget = null
 		activeJitter = null
+		activeMotion = null
+	}
+
+	/**
+	 * Forgets the camera the next frame would reproject against.
+	 *
+	 * A frame that decided its route but never finished rendering still moved the predecessor
+	 * forward. Nothing accumulated it, so the frame after it must not measure motion from a
+	 * camera no image was ever produced for.
+	 */
+	fun resetMotionHistory() {
+		motion?.reset()
 	}
 
 	override fun close() {
@@ -96,6 +133,7 @@ class DlssRenderRuntime(
 		sceneTarget.close()
 		router = null
 		jitter = null
+		motion = null
 		renderDimensions = null
 		session.close()
 	}
@@ -118,6 +156,7 @@ class DlssRenderRuntime(
 
 		renderDimensions = dimensions
 		jitter = DlssJitter(dimensions, session.config.outputDimensions)
+		motion = DlssCameraMotion(dimensions)
 		return WorldTargetRouter(session, dimensions).also { router = it }
 	}
 
@@ -135,7 +174,7 @@ class DlssRenderRuntime(
 			diagnostics: (String) -> Unit = {},
 		): DlssRenderRuntime {
 			val adapter = DlssLifecycleAdapter(session, native)
-			return DlssRenderRuntime(session, DlssSceneTarget.forMinecraft()) {
+			return DlssRenderRuntime(session, DlssSceneTarget.forMinecraft(), startup = {
 				val context = VulkanContextRegistry.current
 				val sdkPath = session.config.sdkPath
 				val dataPath = session.config.dataPath
@@ -158,7 +197,7 @@ class DlssRenderRuntime(
 						dataPath = dataPath,
 					)
 				}
-			}
+			})
 		}
 	}
 }

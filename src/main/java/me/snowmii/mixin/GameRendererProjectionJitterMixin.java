@@ -2,12 +2,15 @@ package me.snowmii.mixin;
 
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import me.snowmii.dlss.DlssCameraSample;
 import me.snowmii.dlss.DlssClientRuntime;
 import me.snowmii.dlss.DlssJitterOffset;
 import me.snowmii.dlss.DlssProjectionJitter;
 import me.snowmii.dlss.DlssWorldPhase;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -64,8 +67,20 @@ public class GameRendererProjectionJitterMixin {
 		}
 
 		final GameRenderer self = (GameRenderer)(Object)this;
-		final boolean normalInWorldFrame = !self.gameRenderState().levelRenderState.cameraRenderState.isPanoramicMode;
-		final DlssJitterOffset offset = phase.prepare(normalInWorldFrame, this.mainRenderTarget);
+		final CameraRenderState cameraState = self.gameRenderState().levelRenderState.cameraRenderState;
+		final boolean normalInWorldFrame = !cameraState.isPanoramicMode;
+		// The projection handed to this redirect is the one about to be uploaded, so it already
+		// carries view bob and the portal/nausea skew - camera motion the reprojection must see.
+		// The camera position travels separately because the world is rendered camera-relative.
+		final Vec3 cameraPosition = cameraState.pos;
+		final DlssCameraSample camera = new DlssCameraSample(
+			projectionMatrix,
+			cameraState.viewRotationMatrix,
+			cameraPosition.x,
+			cameraPosition.y,
+			cameraPosition.z
+		);
+		final DlssJitterOffset offset = phase.prepare(normalInWorldFrame, this.mainRenderTarget, camera);
 		if (offset == null) {
 			return buffer.getBuffer(projectionMatrix);
 		}
