@@ -3,6 +3,8 @@ package me.snowmii.dlss
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.FilterMode
+import com.mojang.blaze3d.vulkan.VulkanConst
+import com.mojang.blaze3d.vulkan.VulkanGpuTextureView
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.RenderPipelines
 import java.util.Optional
@@ -32,6 +34,12 @@ class DlssWorldPhase(
 	private val onWorldTargetChanged: () -> Unit,
 	private val diagnostics: (String) -> Unit = {},
 	private val probeResolvedTarget: (() -> RenderTarget?)? = null,
+	/**
+	 * Records this frame's DLSS work against the scene it just rendered. Injected because reaching
+	 * the raw Vulkan handles behind a target needs Minecraft's backend types, and everything else
+	 * here is verifiable off the render thread.
+	 */
+	private val evaluateFrame: (RenderTarget, DlssJitterOffset, DlssFrameMotion) -> Unit = { _, _, _ -> },
 ) : AutoCloseable {
 	private var scene: RenderTarget? = null
 	private var mainTarget: RenderTarget? = null
@@ -128,6 +136,10 @@ class DlssWorldPhase(
 
 		val rendered = scene
 		val destination = mainTarget
+		// Read before the phase closes: closing drops both, and the evaluation needs the same
+		// jitter and motion the world was actually rendered with.
+		val jitter = runtime.activeJitter
+		val motion = runtime.activeMotion
 		isOpen = false
 		prepared = false
 		scene = null
@@ -136,8 +148,26 @@ class DlssWorldPhase(
 
 		// Present only after the phase is closed, so the destination is the vanilla target.
 		if (rendered != null && destination != null) {
+			evaluate(rendered, jitter, motion)
 			present(rendered, destination)
 		}
+	}
+
+	/**
+	 * Records this frame's DLSS work against the scene the world just rendered.
+	 *
+	 * Recorded here, at the tail of the world phase, because that is the first moment the scene
+	 * colour and depth are complete and the last moment before anything else in the frame touches
+	 * them. A frame missing its jitter, its motion, or the handles behind its target is skipped:
+	 * it went through the phase without everything an evaluation needs, and DLSS reading a stale
+	 * or absent input is worse than one frame of the low-resolution present.
+	 */
+	private fun evaluate(rendered: RenderTarget, jitter: DlssJitterOffset?, motion: DlssFrameMotion?) {
+		if (jitter == null || motion == null) {
+			return
+		}
+
+		evaluateFrame(rendered, jitter, motion)
 	}
 
 	override fun close() {
@@ -241,7 +271,35 @@ class DlssWorldPhase(
 			},
 			diagnostics = diagnostics,
 			probeResolvedTarget = { Minecraft.getInstance().gameRenderer.mainRenderTarget() },
+			evaluateFrame = { rendered, jitter, motion ->
+				val evaluation = runtime.frameEvaluation
+				val resources = sceneResourcesOf(rendered)
+				if (evaluation != null && resources != null) {
+					evaluation.evaluateFrame(resources, jitter, motion)
+				}
+			},
 		)
+
+		/**
+		 * Reads the `VkImage` / `VkImageView` handles and formats out of a scene target.
+		 *
+		 * Every target the mod allocates is a [com.mojang.blaze3d.pipeline.TextureTarget] with
+		 * colour and depth, so both views are present and both are Vulkan views - but the backend
+		 * can be OpenGL, and a target can be destroyed between frames, so nothing here assumes it.
+		 * A null result skips the frame's evaluation rather than crashing the render thread.
+		 */
+		private fun sceneResourcesOf(target: RenderTarget): DlssSceneResources? {
+			val color = target.colorTextureView as? VulkanGpuTextureView ?: return null
+			val depth = target.depthTextureView as? VulkanGpuTextureView ?: return null
+			return DlssSceneResources(
+				colorView = color.vkImageView(),
+				colorImage = color.texture().vkImage(),
+				colorFormat = VulkanConst.toVk(color.texture().getFormat()),
+				depthView = depth.vkImageView(),
+				depthImage = depth.texture().vkImage(),
+				depthFormat = VulkanConst.toVk(depth.texture().getFormat()),
+			)
+		}
 
 		/**
 		 * Draws the scene color over the whole main target with the full-screen blit pipeline.

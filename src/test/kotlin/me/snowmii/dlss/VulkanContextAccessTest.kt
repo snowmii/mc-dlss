@@ -24,9 +24,8 @@ class VulkanContextAccessTest {
 				vkPhysicalDevice = fixture.physicalDeviceAddress(),
 				vkDevice = fixture.deviceAddress(),
 				vkQueue = fixture.queueAddress(),
-			) {
-				fixture.allocateAndBeginCommandBuffer()
-			}
+				commandBufferSource = { fixture.allocateAndBeginCommandBuffer() },
+			)
 
 			// Handles present and are the real headless context's handles.
 			assertTrue(context.instanceHandle != 0L, "instance handle must be non-zero")

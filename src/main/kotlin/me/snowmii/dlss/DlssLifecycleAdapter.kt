@@ -79,6 +79,37 @@ class DlssLifecycleAdapter(
 	/** Releases the native-owned images. Safe to call when none are allocated. */
 	fun releaseImages(): Boolean = invokeStatus(DlssNativeStage.RELEASE_IMAGES) { native.releaseImages() }
 
+	/**
+	 * Records the camera-only motion pass that fills the native motion image, on the caller's
+	 * command buffer.
+	 *
+	 * This has to precede [evaluate] on the same buffer: the evaluation reads the image this pass
+	 * writes, and the pass ends with a barrier making its writes visible to it.
+	 */
+	fun writeMotion(request: DlssMotionRequest): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		val dimensions = renderDimensions ?: return false
+		return invokeStatus(DlssNativeStage.WRITE_MOTION) {
+			native.writeMotion(
+				request.commandBuffer,
+				request.depthView,
+				request.depthImage,
+				request.depthFormat,
+				request.depthAspectMask,
+				request.depthBaseMipLevel,
+				request.depthLevelCount,
+				request.depthBaseArrayLayer,
+				request.depthLayerCount,
+				request.reprojection,
+				dimensions.width,
+				dimensions.height,
+			)
+		}
+	}
+
 	fun evaluate(request: DlssEvaluationRequest): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
@@ -179,6 +210,55 @@ class DlssLifecycleAdapter(
 
 	private companion object {
 		const val NATIVE_SUCCESS = DlssNativeApi.SUCCESS_RESULT
+	}
+}
+
+/**
+ * One motion pass, in the units the flat native ABI takes them.
+ *
+ * [reprojection] is the 16 column-major floats of [DlssFrameMotion.reprojection]. The destination
+ * is the native motion image, which the bridge owns, so it never appears here.
+ */
+data class DlssMotionRequest(
+	val commandBuffer: Long = 0,
+	val depthView: Long = 0,
+	val depthImage: Long = 0,
+	val depthFormat: Int = 0,
+	val depthAspectMask: Int = 0,
+	val depthBaseMipLevel: Int = 0,
+	val depthLevelCount: Int = 0,
+	val depthBaseArrayLayer: Int = 0,
+	val depthLayerCount: Int = 0,
+	val reprojection: FloatArray = FloatArray(16),
+) {
+	// FloatArray has identity equals, which a data class would silently inherit.
+	override fun equals(other: Any?): Boolean {
+		if (this === other) return true
+		if (other !is DlssMotionRequest) return false
+		return commandBuffer == other.commandBuffer &&
+			depthView == other.depthView &&
+			depthImage == other.depthImage &&
+			depthFormat == other.depthFormat &&
+			depthAspectMask == other.depthAspectMask &&
+			depthBaseMipLevel == other.depthBaseMipLevel &&
+			depthLevelCount == other.depthLevelCount &&
+			depthBaseArrayLayer == other.depthBaseArrayLayer &&
+			depthLayerCount == other.depthLayerCount &&
+			reprojection.contentEquals(other.reprojection)
+	}
+
+	override fun hashCode(): Int {
+		var result = commandBuffer.hashCode()
+		result = 31 * result + depthView.hashCode()
+		result = 31 * result + depthImage.hashCode()
+		result = 31 * result + depthFormat
+		result = 31 * result + depthAspectMask
+		result = 31 * result + depthBaseMipLevel
+		result = 31 * result + depthLevelCount
+		result = 31 * result + depthBaseArrayLayer
+		result = 31 * result + depthLayerCount
+		result = 31 * result + reprojection.contentHashCode()
+		return result
 	}
 }
 

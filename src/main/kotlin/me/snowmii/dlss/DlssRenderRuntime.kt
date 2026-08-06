@@ -24,6 +24,11 @@ class DlssRenderRuntime(
 	private val sceneTarget: DlssSceneTarget,
 	private val startup: () -> DlssDimensions?,
 	private val clock: () -> Long = System::nanoTime,
+	/**
+	 * Records this frame's DLSS work, or null for a runtime that only routes targets. The world
+	 * phase owns *when* it runs; the runtime owns it because it is scoped to the same session.
+	 */
+	val frameEvaluation: DlssFrameEvaluation? = null,
 ) : AutoCloseable {
 	private var startupAttempted = false
 	private var router: WorldTargetRouter? = null
@@ -130,6 +135,8 @@ class DlssRenderRuntime(
 
 	override fun close() {
 		endWorldPhase()
+		// Before the session closes: releasing the native images needs a session still READY.
+		frameEvaluation?.close()
 		sceneTarget.close()
 		router = null
 		jitter = null
@@ -174,7 +181,11 @@ class DlssRenderRuntime(
 			diagnostics: (String) -> Unit = {},
 		): DlssRenderRuntime {
 			val adapter = DlssLifecycleAdapter(session, native)
-			return DlssRenderRuntime(session, DlssSceneTarget.forMinecraft(), startup = {
+			return DlssRenderRuntime(session, DlssSceneTarget.forMinecraft(), frameEvaluation = DlssFrameEvaluation(
+				adapter,
+				{ VulkanContextRegistry.current },
+				diagnostics,
+			), startup = {
 				val context = VulkanContextRegistry.current
 				val sdkPath = session.config.sdkPath
 				val dataPath = session.config.dataPath

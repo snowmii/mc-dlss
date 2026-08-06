@@ -2,6 +2,7 @@ package me.snowmii.dlss
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
+import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -20,7 +21,9 @@ class DlssWorldPhaseTest {
 	private val mainTarget = FakeTarget(output.width, output.height)
 
 	private val presented = mutableListOf<Pair<RenderTarget, RenderTarget>>()
+	private val evaluated = mutableListOf<Triple<RenderTarget, DlssJitterOffset, DlssFrameMotion>>()
 	private var targetChanges = 0
+	private var presentedWhenEvaluated = -1
 
 	@Test
 	fun `an eligible phase renders into a render-sized scene target and overrides the world target`() {
@@ -187,10 +190,61 @@ class DlssWorldPhaseTest {
 		assertEquals(listOf(worldTarget to mainTarget as RenderTarget), presented)
 	}
 
+	@Test
+	fun `an eligible frame is evaluated with the jitter and motion it rendered with, before it is presented`() {
+		val phase = phase(readyRuntime())
+
+		val jitter = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = camera())
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		val (evaluatedTarget, evaluatedJitter, evaluatedMotion) = evaluated.single()
+		assertSame(worldTarget, evaluatedTarget)
+		assertEquals(jitter, evaluatedJitter)
+		assertTrue(evaluatedMotion.reset, "the first frame of a session has no history to reproject against")
+		// DLSS reads the scene the world rendered; presenting first would hand it the frame after.
+		assertEquals(0, presentedWhenEvaluated)
+		assertEquals(1, presented.size)
+	}
+
+	@Test
+	fun `a vanilla frame is never evaluated`() {
+		val phase = phase(readyRuntime())
+
+		phase.begin(normalInWorldFrame = false, mainTarget = mainTarget)
+		phase.end()
+
+		assertTrue(evaluated.isEmpty())
+	}
+
+	@Test
+	fun `an eligible frame the projection seam never sampled is not evaluated`() {
+		val phase = phase(readyRuntime())
+
+		// No camera means no motion, and a frame DLSS cannot reproject is worse than one it skips.
+		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		assertTrue(evaluated.isEmpty())
+		assertEquals(1, presented.size)
+	}
+
+	private fun camera() = DlssCameraSample(
+		projection = Matrix4f().perspective(1.2f, 16f / 9f, 0.05f, 1000f),
+		viewRotation = Matrix4f(),
+		cameraX = 0.0,
+		cameraY = 0.0,
+		cameraZ = 0.0,
+	)
+
 	private fun phase(runtime: DlssRenderRuntime) = DlssWorldPhase(
 		runtime = runtime,
 		present = { scene, main -> presented += scene to main },
 		onWorldTargetChanged = { targetChanges++ },
+		evaluateFrame = { rendered, jitter, motion ->
+			presentedWhenEvaluated = presented.size
+			evaluated += Triple(rendered, jitter, motion)
+		},
 	)
 
 	private fun readyRuntime(): DlssRenderRuntime {

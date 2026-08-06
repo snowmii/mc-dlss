@@ -28,6 +28,8 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 	private final MethodHandle configure;
 	private final MethodHandle acquireImages;
 	private final MethodHandle releaseImages;
+	/** Per-frame reprojection staging, owned by {@link #arena} so no call allocates one. */
+	private final MemorySegment reprojectionScratch;
 	private final MethodHandle writeMotion;
 	private final MethodHandle evaluate;
 	private final MethodHandle reset;
@@ -146,6 +148,7 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
 		this.close = bind(lookup, "mc_dlss_close", FunctionDescriptor.of(JAVA_INT));
+		this.reprojectionScratch = arena.allocate(JAVA_FLOAT, 16);
 	}
 
 	public static DlssNative open(final Path libraryPath) {
@@ -320,8 +323,11 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 		if (reprojection.length != 16) {
 			throw new IllegalArgumentException("Reprojection must be 16 column-major floats");
 		}
-		try (Arena callArena = Arena.ofConfined()) {
-			final MemorySegment matrix = callArena.allocateFrom(JAVA_FLOAT, reprojection);
+		try {
+			// Written and read once per frame on the render thread, so the matrix lives in one
+			// segment owned by this binding rather than a confined Arena allocated per frame.
+			final MemorySegment matrix = this.reprojectionScratch;
+			MemorySegment.copy(reprojection, 0, matrix, JAVA_FLOAT, 0, reprojection.length);
 			return (int)this.writeMotion.invokeExact(
 				commandBuffer,
 				depthView,

@@ -1,5 +1,6 @@
 package me.snowmii.dlss;
 
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
@@ -17,6 +18,7 @@ import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkApplicationInfo;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkBufferImageCopy;
+import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkClearDepthStencilValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkCommandBufferAllocateInfo;
@@ -472,6 +474,87 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				value,
 				range
 			);
+		}
+	}
+
+	/**
+	 * Clears a colour image to a uniform value, so a test can state exactly what an image held
+	 * before the code under test touched it.
+	 *
+	 * Recorded on the caller's command buffer, and legal in VK_IMAGE_LAYOUT_GENERAL, which is
+	 * where both {@link #createEngineImage} and the native bridge rest their colour images.
+	 */
+	public void recordColorClear(
+		final VkCommandBuffer commandBuffer,
+		final long image,
+		final float red,
+		final float green,
+		final float blue,
+		final float alpha
+	) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkClearColorValue value = VkClearColorValue.calloc(stack);
+			value.float32(0, red).float32(1, green).float32(2, blue).float32(3, alpha);
+			VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+			range.get(0).set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+			VK10.vkCmdClearColorImage(commandBuffer, image, VK10.VK_IMAGE_LAYOUT_GENERAL, value, range);
+		}
+	}
+
+	/**
+	 * Reads back an 8-bit RGBA colour image as normalized floats, four per pixel, in row-major
+	 * order.
+	 *
+	 * The same staging-buffer round trip as {@link #readRg16fImage}, and the same layout
+	 * discipline: taken from VK_IMAGE_LAYOUT_GENERAL and handed straight back to it.
+	 */
+	public float[] readRgba8Image(final long image, final int width, final int height) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			final long byteCount = (long)width * height * 4L;
+			VkBufferCreateInfo bufferInfo = VkBufferCreateInfo.calloc(stack)
+				.sType$Default()
+				.size(byteCount)
+				.usage(VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+				.sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE);
+			LongBuffer bufferPtr = stack.callocLong(1);
+			checkVk(VK10.vkCreateBuffer(device, bufferInfo, null, bufferPtr), "vkCreateBuffer");
+			long buffer = bufferPtr.get(0);
+
+			VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
+			VK10.vkGetBufferMemoryRequirements(device, buffer, requirements);
+			VkMemoryAllocateInfo allocateInfo = VkMemoryAllocateInfo.calloc(stack)
+				.sType$Default()
+				.allocationSize(requirements.size())
+				.memoryTypeIndex(hostVisibleMemoryType(stack, requirements.memoryTypeBits()));
+			LongBuffer memoryPtr = stack.callocLong(1);
+			checkVk(VK10.vkAllocateMemory(device, allocateInfo, null, memoryPtr), "vkAllocateMemory");
+			long memory = memoryPtr.get(0);
+			checkVk(VK10.vkBindBufferMemory(device, buffer, memory, 0), "vkBindBufferMemory");
+
+			VkCommandBuffer copy = allocateAndBeginCommandBuffer();
+			recordColorLayoutTransition(stack, copy, image, VK10.VK_IMAGE_LAYOUT_GENERAL,
+				VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+			VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
+			region.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
+			region.get(0).imageSubresource().set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1);
+			region.get(0).imageOffset().set(0, 0, 0);
+			region.get(0).imageExtent().set(width, height, 1);
+			VK10.vkCmdCopyImageToBuffer(copy, image, VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, region);
+			recordColorLayoutTransition(stack, copy, image, VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				VK10.VK_IMAGE_LAYOUT_GENERAL);
+			endSubmitAndWait(copy);
+
+			PointerBuffer mapped = stack.callocPointer(1);
+			checkVk(VK10.vkMapMemory(device, memory, 0, byteCount, 0, mapped), "vkMapMemory");
+			ByteBuffer bytes = MemoryUtil.memByteBuffer(mapped.get(0), (int)byteCount);
+			float[] values = new float[width * height * 4];
+			for (int index = 0; index < values.length; index++) {
+				values[index] = (bytes.get(index) & 0xFF) / 255.0f;
+			}
+			VK10.vkUnmapMemory(device, memory);
+			VK10.vkDestroyBuffer(device, buffer, null);
+			VK10.vkFreeMemory(device, memory, null);
+			return values;
 		}
 	}
 

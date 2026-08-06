@@ -2,6 +2,7 @@ package me.snowmii.dlss
 
 import com.mojang.blaze3d.vulkan.VulkanDevice
 import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice
+import org.lwjgl.vulkan.VK12
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
@@ -12,9 +13,11 @@ import org.lwjgl.vulkan.VkCommandBuffer
  * Captured once, at [VulkanDevice] construction, by [me.snowmii.mixin.VulkanDeviceContextMixin]
  * and kept reachable through [VulkanContextRegistry].
  *
- * This object never submits GPU work itself. [recordCommandBuffer] only produces a fresh,
- * non-zero recording command buffer through the injected shared-encoder source; it is meant
- * to be called by later renderer slices inside the frame (M-8+, out of this slice's scope).
+ * This object owns no queue submission of its own. [recordCommandBuffer] produces a fresh,
+ * non-zero recording command buffer through the injected shared-encoder source, and
+ * [submitCommandBuffer] hands it back to that same encoder, which carries it out with the
+ * frame Minecraft was already going to submit. Nothing here waits on a fence or idles the
+ * device: the encoder's own timeline is what orders this work.
  */
 class DlssVulkanContext private constructor(
 	val instanceHandle: Long,
@@ -22,6 +25,7 @@ class DlssVulkanContext private constructor(
 	val deviceHandle: Long,
 	val graphicsQueueHandle: Long,
 	val commandBufferSource: () -> VkCommandBuffer,
+	private val commandBufferSink: (VkCommandBuffer) -> Unit,
 ) {
 	init {
 		require(instanceHandle != 0L) { "Vulkan instance handle must be non-zero" }
@@ -33,6 +37,14 @@ class DlssVulkanContext private constructor(
 
 	/** Records a fresh command buffer from the injected source, returning its non-zero handle wrapper. */
 	fun recordCommandBuffer(): VkCommandBuffer = commandBufferSource()
+
+	/**
+	 * Ends [commandBuffer] and enqueues it on the frame Minecraft is already assembling.
+	 *
+	 * The buffer runs after everything the encoder recorded before this call, which is what puts
+	 * DLSS work behind the world render it consumes without a submission of its own.
+	 */
+	fun submitCommandBuffer(commandBuffer: VkCommandBuffer) = commandBufferSink(commandBuffer)
 
 	companion object {
 		/**
@@ -53,9 +65,20 @@ class DlssVulkanContext private constructor(
 				return null
 			}
 			val encoder = device.createCommandEncoder()
-			return DlssVulkanContext(instanceHandle, physicalDeviceHandle, deviceHandle, queueHandle) {
-				encoder.allocateAndBeginTransientCommandBuffer()
-			}
+			return DlssVulkanContext(
+				instanceHandle,
+				physicalDeviceHandle,
+				deviceHandle,
+				queueHandle,
+				commandBufferSource = { encoder.allocateAndBeginTransientCommandBuffer() },
+				// execute() ends whatever the encoder was recording and appends this buffer behind
+				// it, so the buffer has to be closed here first. It is not submitted by this call;
+				// the encoder's next submit carries it with the rest of the frame.
+				commandBufferSink = { commandBuffer ->
+					VK12.vkEndCommandBuffer(commandBuffer)
+					encoder.execute(commandBuffer)
+				},
+			)
 		}
 
 		/**
@@ -70,7 +93,14 @@ class DlssVulkanContext private constructor(
 			vkDevice: Long,
 			vkQueue: Long,
 			commandBufferSource: () -> VkCommandBuffer,
-		): DlssVulkanContext =
-			DlssVulkanContext(instance, vkPhysicalDevice, vkDevice, vkQueue, commandBufferSource)
+			commandBufferSink: (VkCommandBuffer) -> Unit = {},
+		): DlssVulkanContext = DlssVulkanContext(
+			instance,
+			vkPhysicalDevice,
+			vkDevice,
+			vkQueue,
+			commandBufferSource,
+			commandBufferSink,
+		)
 	}
 }
