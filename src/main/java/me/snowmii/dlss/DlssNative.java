@@ -62,7 +62,7 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 		this.configure = bind(
 			lookup,
 			"mc_dlss_configure",
-			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT)
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT)
 		);
 		this.acquireImages = bind(
 			lookup,
@@ -269,10 +269,18 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 		final int outputHeight,
 		final int renderWidth,
 		final int renderHeight,
-		final int qualityMode
+		final int qualityMode,
+		final int renderPreset
 	) {
 		try {
-			return (int)this.configure.invokeExact(outputWidth, outputHeight, renderWidth, renderHeight, qualityMode);
+			return (int)this.configure.invokeExact(
+				outputWidth,
+				outputHeight,
+				renderWidth,
+				renderHeight,
+				qualityMode,
+				renderPreset
+			);
 		} catch (Throwable error) {
 			throw nativeError("configure", error);
 		}

@@ -329,6 +329,7 @@ class EvaluationSubmissionTest {
 			renderWidth: Int,
 			renderHeight: Int,
 			qualityMode: Int,
+			renderPreset: Int,
 		): Int = unreachable()
 
 		override fun acquireImages(): DlssEvaluationImages = unreachable()

@@ -79,6 +79,7 @@ class DlssEvaluationImagesTest {
 				render.width / 2,
 				render.height / 2,
 				DlssQualityMode.PERFORMANCE.ngxValue,
+				DlssQualityMode.PERFORMANCE.defaultPreset.ngxValue,
 			)
 			assertEquals(DlssNativeApi.SUCCESS_RESULT, reconfigured)
 

@@ -252,6 +252,7 @@ class DlssSessionTest {
 			renderWidth: Int,
 			renderHeight: Int,
 			qualityMode: Int,
+			renderPreset: Int,
 		): Int {
 			configureCalls++
 			return configureResult

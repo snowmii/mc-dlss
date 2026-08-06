@@ -41,6 +41,7 @@ class DlssLifecycleAdapter(
 					queriedDimensions.width,
 					queriedDimensions.height,
 					session.config.qualityMode.ngxValue,
+					session.config.renderPreset.ngxValue,
 				)
 			}) {
 			return null

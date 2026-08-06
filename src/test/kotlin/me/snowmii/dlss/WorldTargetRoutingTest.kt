@@ -124,7 +124,15 @@ class WorldTargetRoutingTest {
 			val expectedOutput = DlssDimensions(2560, 1440)
 			fun session(enabled: Boolean = true, ready: Boolean = true): DlssSession {
 				val value = DlssSession(
-					DlssStartupConfig(enabled, DlssQualityMode.QUALITY, expectedOutput, null, null, null, emptyList()),
+					DlssStartupConfig(
+						enabled = enabled,
+						qualityMode = DlssQualityMode.QUALITY,
+						outputDimensions = expectedOutput,
+						sdkPath = null,
+						nativeLibraryPath = null,
+						dataPath = null,
+						warnings = emptyList(),
+					),
 				)
 				if (enabled && ready) check(value.markReadyAfterNativeStartup())
 				return value

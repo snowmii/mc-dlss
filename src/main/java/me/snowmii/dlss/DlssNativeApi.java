@@ -21,12 +21,21 @@ public interface DlssNativeApi {
 		int qualityMode
 	);
 
+	/**
+	 * Stores the dimensions, the NGX performance/quality mode, and the render preset the next
+	 * feature creation uses.
+	 *
+	 * {@code renderPreset} is an {@code NVSDK_NGX_DLSS_Hint_Render_Preset} value. It is written
+	 * onto the capability parameters before the feature is created, because NGX reads the hint
+	 * at creation and ignores it afterwards.
+	 */
 	int configure(
 		int outputWidth,
 		int outputHeight,
 		int renderWidth,
 		int renderHeight,
-		int qualityMode
+		int qualityMode,
+		int renderPreset
 	);
 
 	/**

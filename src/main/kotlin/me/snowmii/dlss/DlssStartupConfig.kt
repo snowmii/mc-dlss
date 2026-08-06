@@ -20,6 +20,8 @@ data class DlssDimensions(
 data class DlssStartupConfig(
 	val enabled: Boolean,
 	val qualityMode: DlssQualityMode,
+	/** Preset this session runs; the mode's own documented default unless one was asked for. */
+	val renderPreset: DlssRenderPreset = qualityMode.defaultPreset,
 	val outputDimensions: DlssDimensions,
 	val sdkPath: Path?,
 	val nativeLibraryPath: Path?,
@@ -29,6 +31,7 @@ data class DlssStartupConfig(
 	companion object {
 		const val ENABLED_PROPERTY = "mc.dlss.enabled"
 		const val MODE_PROPERTY = "mc.dlss.mode"
+		const val PRESET_PROPERTY = "mc.dlss.preset"
 		const val OUTPUT_WIDTH_PROPERTY = "mc.dlss.output-width"
 		const val OUTPUT_HEIGHT_PROPERTY = "mc.dlss.output-height"
 		const val SDK_PATH_PROPERTY = "mc.dlss.sdk-path"
@@ -47,23 +50,49 @@ data class DlssStartupConfig(
 				"quality", "max-quality" -> DlssQualityMode.QUALITY
 				"balanced" -> DlssQualityMode.BALANCED
 				"performance", "max-performance" -> DlssQualityMode.PERFORMANCE
+				"ultra-performance", "ultra-perf", "max-performance-ultra" -> DlssQualityMode.ULTRA_PERFORMANCE
+				"dlaa" -> DlssQualityMode.DLAA
 				else -> {
 					warnings += "$MODE_PROPERTY=$modeValue is invalid; using quality"
 					DlssQualityMode.QUALITY
 				}
 			}
+			val renderPreset = readPreset(properties, qualityMode, warnings)
 			val width = readPositiveInt(properties, OUTPUT_WIDTH_PROPERTY, DEFAULT_OUTPUT_WIDTH, warnings)
 			val height = readPositiveInt(properties, OUTPUT_HEIGHT_PROPERTY, DEFAULT_OUTPUT_HEIGHT, warnings)
 
 			return DlssStartupConfig(
 				enabled = enabled,
 				qualityMode = qualityMode,
+				renderPreset = renderPreset,
 				outputDimensions = DlssDimensions(width, height),
 				sdkPath = readPath(properties, SDK_PATH_PROPERTY, warnings),
 				nativeLibraryPath = readPath(properties, NATIVE_LIBRARY_PROPERTY, warnings),
 				dataPath = readPath(properties, DATA_PATH_PROPERTY, warnings),
 				warnings = warnings.toList(),
 			)
+		}
+
+		/**
+		 * Reads the preset override, falling back to the mode's own default.
+		 *
+		 * An unreadable value degrades to that default rather than to one fixed preset, because
+		 * the default is per mode: silently running Performance on K would be a quieter and worse
+		 * outcome than the invalid value the reviewer typed.
+		 */
+		private fun readPreset(
+			properties: Properties,
+			qualityMode: DlssQualityMode,
+			warnings: MutableList<String>,
+		): DlssRenderPreset {
+			val value = properties.getProperty(PRESET_PROPERTY)?.trim()?.lowercase(Locale.ROOT)
+			if (value.isNullOrEmpty() || value == "default") {
+				return qualityMode.defaultPreset
+			}
+			return DlssRenderPreset.fromPropertyValue(value) ?: run {
+				warnings += "$PRESET_PROPERTY=$value is invalid; using ${qualityMode.defaultPreset.propertyValue}"
+				qualityMode.defaultPreset
+			}
 		}
 
 		private fun readBoolean(

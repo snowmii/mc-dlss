@@ -283,6 +283,7 @@ class EnablementFallbackTest {
 			renderWidth: Int,
 			renderHeight: Int,
 			qualityMode: Int,
+			renderPreset: Int,
 		) = DlssNativeApi.SUCCESS_RESULT
 
 		override fun acquireImages() = DlssEvaluationImages(

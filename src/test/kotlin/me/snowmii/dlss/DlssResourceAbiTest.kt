@@ -128,7 +128,7 @@ class DlssResourceAbiTest {
 			__declspec(dllexport) int __cdecl mc_dlss_query_optimal_dimensions(
 				uint32_t, uint32_t, uint32_t, uint32_t*, uint32_t*) { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_configure(
-				uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 1; }
+				uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_evaluate(
 				uint64_t commandBuffer,
 				uint64_t colorView, uint64_t colorImage, uint32_t colorFormat, uint32_t colorAspectMask,

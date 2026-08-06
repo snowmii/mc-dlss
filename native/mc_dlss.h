@@ -61,12 +61,27 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
     uint32_t* render_width,
     uint32_t* render_height);
 
+/*
+ * Stores the dimensions, the NGX performance/quality mode, and the DLSS render
+ * preset the next feature creation uses. Owns no command buffer and creates no
+ * feature.
+ *
+ * `quality_mode` is an NVSDK_NGX_PerfQuality_Value: MaxPerf, Balanced,
+ * MaxQuality, UltraPerformance, or DLAA. UltraQuality is defined by NGX and not
+ * implemented by it, so it is rejected here rather than passed through.
+ *
+ * `render_preset` is an NVSDK_NGX_DLSS_Hint_Render_Preset. It is written onto
+ * the capability parameters immediately before feature creation, which is the
+ * only point NGX reads it; changing it recreates the feature exactly like a
+ * dimension or mode change.
+ */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(
     uint32_t output_width,
     uint32_t output_height,
     uint32_t render_width,
     uint32_t render_height,
-    uint32_t quality_mode);
+    uint32_t quality_mode,
+    uint32_t render_preset);
 
 /*
  * Native-owned evaluation images.

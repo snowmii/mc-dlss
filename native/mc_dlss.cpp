@@ -118,11 +118,13 @@ struct DlssState {
     uint32_t renderWidth = 0;
     uint32_t renderHeight = 0;
     uint32_t qualityMode = 0;
+    uint32_t renderPreset = 0;
     uint32_t featureOutputWidth = 0;
     uint32_t featureOutputHeight = 0;
     uint32_t featureRenderWidth = 0;
     uint32_t featureRenderHeight = 0;
     uint32_t featureQualityMode = 0;
+    uint32_t featureRenderPreset = 0;
     DlssOwnedImage motionImage;
     DlssOwnedImage outputImage;
     DlssMotionPass motionPass;
@@ -181,7 +183,59 @@ bool utf8_to_wide(const char* input, std::wstring& output) {
 }
 
 bool valid_quality_mode(const uint32_t qualityMode) noexcept {
-    return qualityMode <= static_cast<uint32_t>(NVSDK_NGX_PerfQuality_Value_MaxQuality);
+    switch (static_cast<NVSDK_NGX_PerfQuality_Value>(qualityMode)) {
+        case NVSDK_NGX_PerfQuality_Value_MaxPerf:
+        case NVSDK_NGX_PerfQuality_Value_Balanced:
+        case NVSDK_NGX_PerfQuality_Value_MaxQuality:
+        case NVSDK_NGX_PerfQuality_Value_UltraPerformance:
+        case NVSDK_NGX_PerfQuality_Value_DLAA:
+            return true;
+        // UltraQuality sits between the two the SDK defines and never shipped a model.
+        default:
+            return false;
+    }
+}
+
+/**
+ * The capability parameter naming the preset for one quality mode.
+ *
+ * NGX keys the hint by mode rather than taking one preset, so the value only reaches the model
+ * that is about to run if it is written under the mode's own name.
+ */
+const char* preset_parameter_for(const uint32_t qualityMode) noexcept {
+    switch (static_cast<NVSDK_NGX_PerfQuality_Value>(qualityMode)) {
+        case NVSDK_NGX_PerfQuality_Value_MaxPerf:
+            return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance;
+        case NVSDK_NGX_PerfQuality_Value_Balanced:
+            return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced;
+        case NVSDK_NGX_PerfQuality_Value_MaxQuality:
+            return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality;
+        case NVSDK_NGX_PerfQuality_Value_UltraPerformance:
+            return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance;
+        case NVSDK_NGX_PerfQuality_Value_DLAA:
+            return NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA;
+        default:
+            return nullptr;
+    }
+}
+
+/**
+ * Every preset SDK 310.7.0 documents as usable.
+ *
+ * The removed, deprecated, and reserved values are refused rather than forwarded: NGX answers
+ * them by silently reverting to its own default, which is the one outcome an explicitly chosen
+ * preset exists to prevent.
+ */
+bool valid_render_preset(const uint32_t renderPreset) noexcept {
+    switch (static_cast<NVSDK_NGX_DLSS_Hint_Render_Preset>(renderPreset)) {
+        case NVSDK_NGX_DLSS_Hint_Render_Preset_J:
+        case NVSDK_NGX_DLSS_Hint_Render_Preset_K:
+        case NVSDK_NGX_DLSS_Hint_Render_Preset_L:
+        case NVSDK_NGX_DLSS_Hint_Render_Preset_M:
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool valid_dimensions(const uint32_t outputWidth, const uint32_t outputHeight,
@@ -676,6 +730,17 @@ int32_t query_optimal_dimensions(const uint32_t outputWidth, const uint32_t outp
         return kInvalidParameter;
     }
 
+    // DLAA is anti-aliasing at native resolution: its render size is its output size by
+    // definition, not by query. Asking the optimal-settings callback for it invites a driver
+    // answer this module would then have to second-guess, and a zero would fail a startup that
+    // has nothing wrong with it.
+    if (static_cast<NVSDK_NGX_PerfQuality_Value>(qualityMode) ==
+        NVSDK_NGX_PerfQuality_Value_DLAA) {
+        *renderWidth = outputWidth;
+        *renderHeight = outputHeight;
+        return kSuccess;
+    }
+
     void* callback = nullptr;
     NVSDK_NGX_Result result = NVSDK_NGX_Parameter_GetVoidPointer(
         g_state.capabilityParameters, NVSDK_NGX_Parameter_DLSSOptimalSettingsCallback, &callback);
@@ -914,14 +979,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
                                                     const uint32_t output_height,
                                                     const uint32_t render_width,
                                                     const uint32_t render_height,
-                                                    const uint32_t quality_mode) {
+                                                    const uint32_t quality_mode,
+                                                    const uint32_t render_preset) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_state.bootstrapComplete) {
             return kNotInitialized;
         }
         if (!valid_dimensions(output_width, output_height, render_width, render_height) ||
-            !valid_quality_mode(quality_mode)) {
+            !valid_quality_mode(quality_mode) || !valid_render_preset(render_preset)) {
             return kInvalidParameter;
         }
         g_state.outputWidth = output_width;
@@ -929,6 +995,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
         g_state.renderWidth = render_width;
         g_state.renderHeight = render_height;
         g_state.qualityMode = quality_mode;
+        g_state.renderPreset = render_preset;
         return kSuccess;
     } catch (...) {
         return kFailure;
@@ -1171,12 +1238,22 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
             g_state.featureOutputHeight == output_height &&
             g_state.featureRenderWidth == render_width &&
             g_state.featureRenderHeight == render_height &&
-            g_state.featureQualityMode == g_state.qualityMode;
+            g_state.featureQualityMode == g_state.qualityMode &&
+            g_state.featureRenderPreset == g_state.renderPreset;
         if (!featureMatchesConfiguration) {
             int32_t result = release_feature();
             if (result != kSuccess) {
                 return result;
             }
+            // NGX reads the preset hint when the feature is created and never again, so it is
+            // written here rather than at configure time: a preset stored before the parameters
+            // existed, or written after this creation, is a preset that silently never ran.
+            const char* presetParameter = preset_parameter_for(g_state.qualityMode);
+            if (presetParameter == nullptr) {
+                return kInvalidParameter;
+            }
+            NVSDK_NGX_Parameter_SetUI(g_state.capabilityParameters, presetParameter,
+                                      g_state.renderPreset);
             NVSDK_NGX_DLSS_Create_Params createParams{};
             createParams.Feature.InWidth = render_width;
             createParams.Feature.InHeight = render_height;
@@ -1199,6 +1276,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
             g_state.featureRenderWidth = render_width;
             g_state.featureRenderHeight = render_height;
             g_state.featureQualityMode = g_state.qualityMode;
+            g_state.featureRenderPreset = g_state.renderPreset;
         }
 
         // Inputs into a read state and the output into a storage state, recorded on the
