@@ -79,6 +79,14 @@ class DlssFrameEvaluation(
 	}
 
 	/**
+	 * GPU timings of the last frame that completed every recorded stage, or null when none has.
+	 *
+	 * Asked for when something wants to report them rather than every frame, because the answer
+	 * only changes as fast as frames complete and the call crosses the ABI to read it.
+	 */
+	fun sampleTimings(): DlssFrameTimings? = adapter.frameTimings()
+
+	/**
 	 * Releases the native-owned images.
 	 *
 	 * The next eligible frame acquires them again, which is what a configuration change needs:

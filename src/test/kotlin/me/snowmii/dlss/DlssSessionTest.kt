@@ -276,6 +276,10 @@ class DlssSessionTest {
 			return releaseImagesResult
 		}
 
+		override fun waitDeviceIdle(): Int = DlssNativeApi.SUCCESS_RESULT
+
+		override fun frameTimings(): DlssFrameTimings? = null
+
 		// The session lifecycle never records GPU work, so the motion pass only has to exist
 		// here for the interface to be implemented.
 		override fun writeMotion(

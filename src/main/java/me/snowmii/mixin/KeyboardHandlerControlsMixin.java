@@ -1,7 +1,10 @@
 package me.snowmii.mixin;
 
+import me.snowmii.dlss.DlssChatReadout;
 import me.snowmii.dlss.DlssClientRuntime;
 import me.snowmii.dlss.DlssRuntimeControls;
+import me.snowmii.dlss.DlssStressPass;
+import me.snowmii.dlss.DlssStressRuntime;
 import net.minecraft.client.KeyboardHandler;
 import net.minecraft.client.input.KeyEvent;
 import org.spongepowered.asm.mixin.Mixin;
@@ -10,7 +13,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * The three review keys: F6 toggles DLSS, F7 cycles the quality mode, F8 cycles the preset.
+ * The review keys: F6 toggles DLSS, F7 cycles the quality mode, F8 cycles the preset, and F9
+ * toggles the GPU stress pass the DLSS comparison is measured under.
  *
  * Every acceptance criterion here is closed by a human watching one client, and two of them are
  * comparisons between DLSS on and DLSS off. Without a key, making that comparison means quitting,
@@ -32,10 +36,23 @@ public class KeyboardHandlerControlsMixin {
 	private static final int MC_DLSS_KEY_TOGGLE = 295; // GLFW_KEY_F6
 	private static final int MC_DLSS_KEY_MODE = 296; // GLFW_KEY_F7
 	private static final int MC_DLSS_KEY_PRESET = 297; // GLFW_KEY_F8
+	private static final int MC_DLSS_KEY_STRESS = 298; // GLFW_KEY_F9
 
 	@Inject(method = "keyPress", at = @At("HEAD"))
 	private void mcDlssHandleReviewKeys(final long handle, final int action, final KeyEvent event, final CallbackInfo info) {
 		if (action != MC_DLSS_PRESS) {
+			return;
+		}
+
+		// Handled before the DLSS controls, and separately from them: the stress pass runs in
+		// sessions where DLSS never started, and those are exactly the sessions whose frame rate
+		// the loaded DLSS ones are compared against.
+		if (event.key() == MC_DLSS_KEY_STRESS) {
+			final DlssStressPass stress = DlssStressRuntime.activePass();
+			if (stress != null) {
+				stress.toggle();
+				DlssChatReadout.send(stress.readout());
+			}
 			return;
 		}
 

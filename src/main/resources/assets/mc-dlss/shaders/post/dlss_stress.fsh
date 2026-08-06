@@ -1,0 +1,248 @@
+#version 330
+
+// Volumetric aurora stress pass.
+//
+// Deliberately expensive: a depth-aware raymarch through a domain-warped 3D FBM field, a short
+// secondary march toward the sun for self-shadowing, and a radial screen-space godray gather.
+// The cost is dominated by fragment work, which is exactly the workload DLSS is supposed to move
+// off the critical path - it scales with the *render* resolution, so the same scene costs
+// measurably less when the world phase is rendering into the low-resolution scene target.
+//
+// Nothing here reads or writes vanilla state. It runs on a copy of whatever target the world was
+// rendered into, and everything after the world phase - hand, item, screen effects, HUD - is
+// untouched.
+
+uniform sampler2D InSampler;
+uniform sampler2D InDepthSampler;
+
+layout(std140) uniform StressConfig {
+    mat4 InvViewProj;
+    // xyz: camera world position. w: seconds since the pass started.
+    vec4 CameraPos;
+    // xyz: normalized world-space sun direction. w: effect intensity.
+    vec4 SunDirection;
+    // x: march steps. y: FBM octaves. z: NDC y sign for this backend. w: godray taps.
+    vec4 MarchParams;
+    // xy: render size in pixels. zw: sun position in UV space, or (-1,-1) when off screen.
+    vec4 ScreenParams;
+};
+
+in vec2 texCoord;
+
+out vec4 fragColor;
+
+const int MAX_STEPS = 192;
+const int MAX_OCTAVES = 8;
+const int MAX_SUN_STEPS = 6;
+const int MAX_GODRAY_TAPS = 48;
+
+// The band the aurora occupies, in world Y. Chosen so it sits above terrain in an ordinary
+// overworld and stays visible from the ground.
+const float BAND_CENTER = 130.0;
+const float BAND_WIDTH = 55.0;
+const float MAX_DISTANCE = 480.0;
+
+float hash13(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+float valueNoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+
+    float n000 = hash13(i + vec3(0.0, 0.0, 0.0));
+    float n100 = hash13(i + vec3(1.0, 0.0, 0.0));
+    float n010 = hash13(i + vec3(0.0, 1.0, 0.0));
+    float n110 = hash13(i + vec3(1.0, 1.0, 0.0));
+    float n001 = hash13(i + vec3(0.0, 0.0, 1.0));
+    float n101 = hash13(i + vec3(1.0, 0.0, 1.0));
+    float n011 = hash13(i + vec3(0.0, 1.0, 1.0));
+    float n111 = hash13(i + vec3(1.0, 1.0, 1.0));
+
+    float x00 = mix(n000, n100, f.x);
+    float x10 = mix(n010, n110, f.x);
+    float x01 = mix(n001, n101, f.x);
+    float x11 = mix(n011, n111, f.x);
+
+    return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+}
+
+float fbm(vec3 p, int octaves) {
+    float sum = 0.0;
+    float amplitude = 0.5;
+    float normalization = 0.0;
+
+    for (int o = 0; o < MAX_OCTAVES; o++) {
+        if (o >= octaves) {
+            break;
+        }
+        sum += amplitude * valueNoise(p);
+        normalization += amplitude;
+        p = p * 2.03 + vec3(11.7, 3.1, 7.3);
+        amplitude *= 0.5;
+    }
+
+    return normalization > 0.0 ? sum / normalization : 0.0;
+}
+
+// Domain-warped density. The warp is what turns plain FBM into ribbons rather than clouds, and
+// it costs three extra FBM evaluations per sample, which is most of this shader's price.
+float auroraDensity(vec3 worldPosition, float time, int octaves) {
+    vec3 p = worldPosition * 0.011;
+    p.x += time * 0.035;
+    p.z -= time * 0.021;
+
+    int warpOctaves = max(octaves - 2, 1);
+    vec3 warp = vec3(
+        fbm(p + vec3(0.0, time * 0.05, 0.0), warpOctaves),
+        fbm(p + vec3(5.2, 1.3, time * 0.04), warpOctaves),
+        fbm(p + vec3(-3.7, 2.8, 1.9), warpOctaves)
+    );
+
+    float d = fbm(p + 2.1 * (warp - 0.5), octaves);
+
+    // Vertical band, so the effect reads as a sky feature rather than uniform fog.
+    float height = (worldPosition.y - BAND_CENTER) / BAND_WIDTH;
+    float band = exp(-height * height);
+
+    // Thin sheets: the sharp remap is what makes the ribbons look like curtains.
+    float sheets = smoothstep(0.48, 0.86, d);
+
+    return sheets * band;
+}
+
+vec3 auroraColor(float heightFraction, float density) {
+    vec3 low = vec3(0.06, 0.95, 0.55);
+    vec3 high = vec3(0.22, 0.42, 1.00);
+    vec3 hot = vec3(1.00, 0.28, 0.78);
+
+    vec3 color = mix(low, high, clamp(heightFraction, 0.0, 1.0));
+    return mix(color, hot, pow(clamp(density, 0.0, 1.0), 3.0));
+}
+
+// Henyey-Greenstein phase function.
+float phaseHG(float cosTheta, float g) {
+    float gg = g * g;
+    float denominator = 1.0 + gg - 2.0 * g * cosTheta;
+    return (1.0 - gg) / (4.0 * 3.14159265 * pow(max(denominator, 1e-4), 1.5));
+}
+
+vec3 unproject(vec2 ndc, float depth) {
+    vec4 clip = InvViewProj * vec4(ndc, depth, 1.0);
+    return clip.xyz / clip.w;
+}
+
+vec3 acesToneMap(vec3 color) {
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), 0.0, 1.0);
+}
+
+void main() {
+    vec3 sceneColor = texture(InSampler, texCoord).rgb;
+    float sceneDepth = texture(InDepthSampler, texCoord).r;
+
+    float time = CameraPos.w;
+    int steps = int(clamp(MarchParams.x, 1.0, float(MAX_STEPS)));
+    int octaves = int(clamp(MarchParams.y, 1.0, float(MAX_OCTAVES)));
+    int godrayTaps = int(clamp(MarchParams.w, 0.0, float(MAX_GODRAY_TAPS)));
+
+    vec2 ndc = vec2(texCoord.x * 2.0 - 1.0, (texCoord.y * 2.0 - 1.0) * MarchParams.z);
+
+    // Reversed-Z: 1.0 is the near plane, 0.0 the far plane.
+    vec3 nearPosition = unproject(ndc, 1.0);
+    vec3 farPosition = unproject(ndc, 0.0);
+    vec3 rayDirection = normalize(farPosition - nearPosition);
+
+    // Distance to whatever the world drew here, so the volume is occluded by terrain instead of
+    // painted over it. A depth of exactly 0.0 is the cleared far plane: nothing was drawn.
+    float sceneDistance = MAX_DISTANCE;
+    if (sceneDepth > 0.0) {
+        sceneDistance = min(length(unproject(ndc, sceneDepth) - nearPosition), MAX_DISTANCE);
+    }
+
+    // The world is rendered camera-relative, so unprojected positions are camera-relative too;
+    // adding the camera puts the noise field in absolute world space, which keeps the aurora
+    // anchored to the world rather than dragged along with the player.
+    vec3 origin = CameraPos.xyz + nearPosition;
+    vec3 sunDirection = normalize(SunDirection.xyz);
+
+    float stepSize = sceneDistance / float(steps);
+    // Per-pixel dither, otherwise a low step count bands badly.
+    float dither = hash13(vec3(gl_FragCoord.xy, time * 60.0));
+
+    float transmittance = 1.0;
+    vec3 scattered = vec3(0.0);
+    float cosTheta = dot(rayDirection, sunDirection);
+    float phase = phaseHG(cosTheta, 0.62) + 0.35 * phaseHG(cosTheta, -0.18);
+
+    for (int i = 0; i < MAX_STEPS; i++) {
+        if (i >= steps || transmittance < 0.01) {
+            break;
+        }
+
+        float distanceAlongRay = (float(i) + dither) * stepSize;
+        vec3 samplePosition = origin + rayDirection * distanceAlongRay;
+        float density = auroraDensity(samplePosition, time, octaves);
+        if (density <= 0.002) {
+            continue;
+        }
+
+        // Short secondary march toward the sun, so the curtains shadow themselves.
+        float sunTransmittance = 1.0;
+        for (int s = 1; s <= MAX_SUN_STEPS; s++) {
+            vec3 sunSample = samplePosition + sunDirection * (float(s) * 9.0);
+            float sunDensity = auroraDensity(sunSample, time, max(octaves - 2, 1));
+            sunTransmittance *= exp(-sunDensity * 0.55);
+        }
+
+        float heightFraction = clamp((samplePosition.y - (BAND_CENTER - BAND_WIDTH)) / (2.0 * BAND_WIDTH), 0.0, 1.0);
+        vec3 emission = auroraColor(heightFraction, density) * (0.35 + 3.2 * phase * sunTransmittance);
+
+        float absorbed = 1.0 - exp(-density * stepSize * 0.085);
+        scattered += transmittance * absorbed * emission;
+        transmittance *= 1.0 - absorbed;
+    }
+
+    vec3 color = sceneColor * transmittance + scattered * SunDirection.w;
+
+    // Radial godrays from the sun's screen position over the scene's bright pixels. Screen space,
+    // so it costs another pass over the frame with no relation to the march above.
+    vec2 sunUv = ScreenParams.zw;
+    if (godrayTaps > 0 && sunUv.x >= -0.5 && sunUv.y >= -0.5) {
+        vec2 delta = (texCoord - sunUv) / float(godrayTaps) * 0.85;
+        vec2 sampleUv = texCoord;
+        float decay = 1.0;
+        vec3 rays = vec3(0.0);
+
+        for (int t = 0; t < MAX_GODRAY_TAPS; t++) {
+            if (t >= godrayTaps) {
+                break;
+            }
+            sampleUv -= delta;
+            vec3 tap = texture(InSampler, clamp(sampleUv, 0.0, 1.0)).rgb;
+            float luminance = dot(tap, vec3(0.2126, 0.7152, 0.0722));
+            rays += tap * smoothstep(0.72, 1.0, luminance) * decay;
+            decay *= 0.96;
+        }
+
+        float towardSun = clamp(1.0 - length(texCoord - sunUv), 0.0, 1.0);
+        color += rays / float(godrayTaps) * 1.8 * towardSun * SunDirection.w;
+    }
+
+    // Grade: mild bloom-free exposure lift, ACES, and a vignette that keeps the ribbons the
+    // brightest thing on screen.
+    color = acesToneMap(color * 1.12);
+
+    vec2 centered = texCoord - 0.5;
+    float vignette = 1.0 - 0.55 * dot(centered, centered);
+    color *= vignette;
+
+    fragColor = vec4(color, 1.0);
+}

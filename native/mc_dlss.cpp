@@ -137,6 +137,40 @@ struct DlssState {
 DlssState g_state;
 std::mutex g_mutex;
 
+/*
+ * GPU-side timing of the three stages this module records.
+ *
+ * Frame rate cannot answer where the time goes: a client whose frame length is set by the CPU
+ * shows the same rate whether the DLSS chain costs 0.2ms or 2ms, and the GPU utilization that
+ * does move is a ratio against a wall clock the renderer chose. Timestamps are the only thing
+ * that separates NGX's own cost from the copy and the barriers around it.
+ *
+ * Four stamps per frame - one before the motion pass, one after it, one after the evaluation,
+ * one after the copy - into a ring of slots, so results are read for a frame the GPU finished
+ * several frames ago and no read ever waits. A frame that skips a stage leaves its slot
+ * incomplete and is dropped rather than reported as a fast one.
+ */
+constexpr uint32_t kTimingSlotCount = 4;
+constexpr uint32_t kTimingStampsPerSlot = 4;
+
+struct DlssFrameTiming {
+    VkQueryPool pool = VK_NULL_HANDLE;
+    bool supported = true;
+    float timestampPeriod = 0.0f;
+    uint32_t recordingSlot = 0;
+    uint32_t nextSlot = 0;
+    /** Stamps written into the recording slot so far, which is also the next stamp's index. */
+    uint32_t writtenStamps = 0;
+    bool pending[kTimingSlotCount] = {};
+    bool hasResult = false;
+    float motionMs = 0.0f;
+    float evaluateMs = 0.0f;
+    float presentMs = 0.0f;
+    float totalMs = 0.0f;
+};
+
+DlssFrameTiming g_timing;
+
 template <typename VulkanHandle>
 VulkanHandle from_uint64(const uint64_t value) noexcept {
     if constexpr (std::is_pointer<VulkanHandle>::value) {
@@ -248,10 +282,129 @@ void reset_state() noexcept {
     g_state = DlssState{};
 }
 
+// Destroying a resource the GPU may still be reading is the one Vulkan error nothing
+// reports where it happens: the queued command buffers that reference it keep running,
+// the driver loses the device some frames later, and the crash surfaces in whatever
+// unrelated call waits on a semaphore next. Every destroy path here stalls first, and
+// the stall is affordable because none of them runs per frame - they run when the
+// configuration changes or the session ends.
+void wait_device_idle() noexcept {
+    if (g_state.device != VK_NULL_HANDLE) {
+        // Result deliberately ignored: on a device already lost there is nothing left to
+        // wait for and nothing left to salvage, and the destroys still have to happen.
+        vkDeviceWaitIdle(g_state.device);
+    }
+}
+
+// Creates the query pool on first use, or gives up permanently on a device that cannot
+// timestamp graphics work. Timing is diagnostic, so every failure here disables it rather
+// than failing the frame that asked for it.
+bool ensure_timing_pool() noexcept {
+    if (!g_timing.supported) {
+        return false;
+    }
+    if (g_timing.pool != VK_NULL_HANDLE) {
+        return true;
+    }
+    if (g_state.device == VK_NULL_HANDLE || g_state.physicalDevice == VK_NULL_HANDLE) {
+        return false;
+    }
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(g_state.physicalDevice, &properties);
+    if (properties.limits.timestampComputeAndGraphics == VK_FALSE ||
+        properties.limits.timestampPeriod == 0.0f) {
+        g_timing.supported = false;
+        return false;
+    }
+
+    VkQueryPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    poolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    poolInfo.queryCount = kTimingSlotCount * kTimingStampsPerSlot;
+    VkQueryPool pool = VK_NULL_HANDLE;
+    if (vkCreateQueryPool(g_state.device, &poolInfo, nullptr, &pool) != VK_SUCCESS) {
+        g_timing.supported = false;
+        return false;
+    }
+
+    g_timing.pool = pool;
+    g_timing.timestampPeriod = properties.limits.timestampPeriod;
+    return true;
+}
+
+// Reads one slot's stamps if the GPU is done with them, and never waits: an unfinished slot
+// is left for the next pass around the ring rather than stalling the frame being recorded.
+void collect_timing(const uint32_t slot) noexcept {
+    if (!g_timing.pending[slot] || g_timing.pool == VK_NULL_HANDLE) {
+        return;
+    }
+
+    uint64_t stamps[kTimingStampsPerSlot]{};
+    const VkResult result = vkGetQueryPoolResults(
+        g_state.device, g_timing.pool, slot * kTimingStampsPerSlot, kTimingStampsPerSlot,
+        sizeof(stamps), stamps, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+    if (result != VK_SUCCESS) {
+        return;
+    }
+
+    const float toMilliseconds = g_timing.timestampPeriod / 1000000.0f;
+    g_timing.motionMs = static_cast<float>(stamps[1] - stamps[0]) * toMilliseconds;
+    g_timing.evaluateMs = static_cast<float>(stamps[2] - stamps[1]) * toMilliseconds;
+    g_timing.presentMs = static_cast<float>(stamps[3] - stamps[2]) * toMilliseconds;
+    g_timing.totalMs = static_cast<float>(stamps[3] - stamps[0]) * toMilliseconds;
+    g_timing.hasResult = true;
+    g_timing.pending[slot] = false;
+}
+
+// Opens a slot for the frame about to be recorded, collecting whatever the same slot's frame
+// left behind on its way past.
+void begin_frame_timing(const VkCommandBuffer commandBuffer) noexcept {
+    if (!ensure_timing_pool()) {
+        return;
+    }
+
+    const uint32_t slot = g_timing.nextSlot;
+    collect_timing(slot);
+    g_timing.pending[slot] = false;
+    g_timing.recordingSlot = slot;
+    g_timing.nextSlot = (slot + 1) % kTimingSlotCount;
+    vkCmdResetQueryPool(commandBuffer, g_timing.pool, slot * kTimingStampsPerSlot,
+                        kTimingStampsPerSlot);
+    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g_timing.pool,
+                        slot * kTimingStampsPerSlot);
+    g_timing.writtenStamps = 1;
+}
+
+// Closes one stage. [index] is checked against what the slot already holds, so a frame whose
+// stages did not all run - a failed evaluation, a frame with no destination to copy into -
+// abandons its slot instead of reporting a gap as a duration.
+void mark_frame_timing(const VkCommandBuffer commandBuffer, const uint32_t index) noexcept {
+    if (g_timing.pool == VK_NULL_HANDLE || g_timing.writtenStamps != index) {
+        return;
+    }
+
+    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_timing.pool,
+                        g_timing.recordingSlot * kTimingStampsPerSlot + index);
+    g_timing.writtenStamps = index + 1;
+    if (g_timing.writtenStamps == kTimingStampsPerSlot) {
+        g_timing.pending[g_timing.recordingSlot] = true;
+    }
+}
+
+void destroy_timing() noexcept {
+    if (g_timing.pool != VK_NULL_HANDLE && g_state.device != VK_NULL_HANDLE) {
+        wait_device_idle();
+        vkDestroyQueryPool(g_state.device, g_timing.pool, nullptr);
+    }
+    g_timing = DlssFrameTiming{};
+}
+
 int32_t release_feature() noexcept {
     if (g_state.feature == nullptr) {
         return kSuccess;
     }
+    wait_device_idle();
     const int32_t result = static_cast<int32_t>(
         NVSDK_NGX_VULKAN_ReleaseFeature(g_state.feature));
     if (result == kSuccess) {
@@ -290,6 +443,9 @@ void destroy_owned_image(DlssOwnedImage& owned) noexcept {
 }
 
 void release_images() noexcept {
+    if (g_state.motionImage.image != VK_NULL_HANDLE || g_state.outputImage.image != VK_NULL_HANDLE) {
+        wait_device_idle();
+    }
     destroy_owned_image(g_state.motionImage);
     destroy_owned_image(g_state.outputImage);
     // A destroyed view's handle value can be handed back out by the next creation, so the
@@ -388,7 +544,10 @@ int32_t create_owned_image(const uint32_t width, const uint32_t height, const Vk
 void destroy_motion_pass() noexcept {
     DlssMotionPass& pass = g_state.motionPass;
     if (g_state.device != VK_NULL_HANDLE) {
+        // A fully built pass has been dispatched from; a half-built one never was, and the
+        // stall costs nothing there because nothing referencing it was ever submitted.
         if (pass.pipeline != VK_NULL_HANDLE) {
+            wait_device_idle();
             vkDestroyPipeline(g_state.device, pass.pipeline, nullptr);
         }
         if (pass.pipelineLayout != VK_NULL_HANDLE) {
@@ -589,6 +748,9 @@ VkDescriptorSet bind_motion_descriptors(const uint64_t depthView) noexcept {
 
 int32_t shutdown_state() noexcept {
     g_state.bootstrapComplete = false;
+    // Diagnostic and device-owned, so it goes before anything that could fail and leave the
+    // shutdown half-done.
+    destroy_timing();
     // Pipeline, descriptors, and sampler belong to the device Minecraft is about to destroy,
     // and none of them is known to NGX, so they go first and independently of it.
     destroy_motion_pass();
@@ -1079,6 +1241,39 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_release_images(void) {
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_frame_timings(float* motion_ms, float* evaluate_ms,
+                                                             float* present_ms, float* total_ms) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (motion_ms == nullptr || evaluate_ms == nullptr || present_ms == nullptr ||
+            total_ms == nullptr) {
+            return kInvalidParameter;
+        }
+        if (!g_timing.hasResult) {
+            return kNotInitialized;
+        }
+        *motion_ms = g_timing.motionMs;
+        *evaluate_ms = g_timing.evaluateMs;
+        *present_ms = g_timing.presentMs;
+        *total_ms = g_timing.totalMs;
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_device_idle(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_state.device == VK_NULL_HANDLE) {
+            return kSuccess;
+        }
+        return vkDeviceWaitIdle(g_state.device) == VK_SUCCESS ? kSuccess : kFailure;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(
     const uint64_t command_buffer, const uint64_t depth_view, const uint64_t depth_image,
     const uint32_t depth_format, const uint32_t depth_aspect_mask,
@@ -1118,6 +1313,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(
         // Same recording discipline as the evaluation: transitions and dispatch go onto the
         // engine's command buffer, and nothing here submits, waits, or idles the device.
         const VkCommandBuffer recordingBuffer = from_uint64<VkCommandBuffer>(command_buffer);
+        // The motion pass is the first thing this module records in a frame, so the frame's
+        // timing opens here and everything the chain costs falls inside it.
+        begin_frame_timing(recordingBuffer);
         const VkImageSubresourceRange depthRange = subresource_range_of(depthResourceInput);
         const VkImageLayout depthEntryLayout = current_layout_of(depth_image);
         record_layout_transition(recordingBuffer, from_uint64<VkImage>(depth_image), depthRange,
@@ -1169,6 +1367,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(
         // and where a reader of this module's own image expects to find it.
         record_layout_transition(recordingBuffer, from_uint64<VkImage>(depth_image), depthRange,
                                  kDlssInputLayout, depthEntryLayout);
+        mark_frame_timing(recordingBuffer, 1);
         return kSuccess;
     } catch (...) {
         return kFailure;
@@ -1326,6 +1525,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
         record_layout_transition(recordingBuffer, from_uint64<VkImage>(depth_image),
                                  subresource_range_of(depthResourceInput), kDlssInputLayout,
                                  depthEntryLayout);
+        mark_frame_timing(recordingBuffer, 2);
         return evaluateResult;
     } catch (...) {
         return kFailure;
@@ -1404,6 +1604,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(
         record_layout_transition(recordingBuffer, g_state.outputImage.image, outputRange,
                                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, outputEntryLayout);
         note_layout_after_transition(to_uint64(g_state.outputImage.image), outputEntryLayout);
+        mark_frame_timing(recordingBuffer, 3);
         return kSuccess;
     } catch (...) {
         return kFailure;

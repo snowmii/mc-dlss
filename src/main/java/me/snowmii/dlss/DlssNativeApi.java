@@ -47,6 +47,23 @@ public interface DlssNativeApi {
 	int releaseImages();
 
 	/**
+	 * Blocks until the Vulkan device has finished everything submitted to it.
+	 *
+	 * Called before releasing anything the recorded frames referenced - the engine's low-resolution
+	 * render target as much as the native images - because Minecraft's Vulkan backend keeps frames
+	 * in flight and freeing a resource one of them still reads loses the device.
+	 */
+	int waitDeviceIdle();
+
+	/**
+	 * GPU timings of the last frame that completed all three recorded stages, or null when none
+	 * has yet or the device cannot timestamp graphics work.
+	 *
+	 * Never waits on the GPU: the result describes a frame several frames old.
+	 */
+	DlssFrameTimings frameTimings();
+
+	/**
 	 * Records the camera-only motion pass on the caller's command buffer, filling the
 	 * native motion image from the engine's depth image.
 	 *

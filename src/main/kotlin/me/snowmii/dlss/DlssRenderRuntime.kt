@@ -35,6 +35,18 @@ class DlssRenderRuntime(
 	 * because it must not re-initialize NGX.
 	 */
 	private val reconfigure: ((DlssQualityMode, DlssRenderPreset) -> DlssDimensions?)? = null,
+	/**
+	 * Blocks until the device has finished every frame already submitted, or does nothing for a
+	 * runtime with no device behind it.
+	 *
+	 * Releasing the scene target and the native images frees GPU objects that Minecraft's still
+	 * in-flight frames read from. Nothing on the CPU side observes that: the key that triggered the
+	 * release is polled between frames, the release itself succeeds, and the device is lost several
+	 * frames later inside an unrelated semaphore wait. This is the stall that makes the release
+	 * safe, and it is injected rather than reached through [frameEvaluation] because it has to run
+	 * before the scene target too, which the evaluation knows nothing about.
+	 */
+	private val quiesce: () -> Unit = {},
 ) : AutoCloseable {
 	private var startupAttempted = false
 	private var router: WorldTargetRouter? = null
@@ -117,7 +129,7 @@ class DlssRenderRuntime(
 		val activeRouter = if (runtimeEnabled) ensureStarted() else null
 		if (activeRouter == null) {
 			// No DLSS this session: release any target held from an earlier eligible frame.
-			sceneTarget.close()
+			releaseSceneTarget()
 			activeRoute = null
 			activeWorldTarget = null
 			activeJitter = null
@@ -126,6 +138,14 @@ class DlssRenderRuntime(
 		}
 
 		val route = activeRouter.route(normalInWorldFrame, outputDimensions)
+		// A route that cannot reuse the held target makes the acquire release it, and the frames
+		// that drew into it can still be in flight. Stalled only when a release is actually about
+		// to happen, so the steady state - same route, same size, every frame - never pays for it.
+		val releasesTarget = route.frame.route != DlssFrameRoute.DLSS ||
+			sceneTarget.currentDimensions != route.worldDimensions
+		if (sceneTarget.current != null && releasesTarget) {
+			quiesce()
+		}
 		val target = sceneTarget.acquire(route)
 		activeRoute = route
 		activeWorldTarget = target
@@ -237,6 +257,9 @@ class DlssRenderRuntime(
 
 	override fun close() {
 		endWorldPhase()
+		// Before anything is freed: every frame still in flight reads the images and the target
+		// this is about to destroy.
+		quiesce()
 		// Before the session closes: releasing the native images needs a session still READY.
 		frameEvaluation?.close()
 		sceneTarget.close()
@@ -256,9 +279,21 @@ class DlssRenderRuntime(
 	 */
 	private fun releaseFrameState() {
 		endWorldPhase()
+		// The reviewer's key was polled between frames, but the GPU is not between frames: the
+		// frames that drew into this target and evaluated into these images are still queued, and
+		// freeing what they read is what loses the device. Everything below waits for them first.
+		quiesce()
 		sceneTarget.close()
 		frameEvaluation?.close()
 		resetHistory()
+	}
+
+	/** Releases the scene target, waiting for the frames that drew into it when one is held. */
+	private fun releaseSceneTarget() {
+		if (sceneTarget.current != null) {
+			quiesce()
+		}
+		sceneTarget.close()
 	}
 
 	/**
@@ -314,7 +349,7 @@ class DlssRenderRuntime(
 				adapter,
 				{ VulkanContextRegistry.current },
 				diagnostics,
-			), reconfigure = adapter::reconfigure, startup = {
+			), reconfigure = adapter::reconfigure, quiesce = { adapter.waitDeviceIdle() }, startup = {
 				val context = VulkanContextRegistry.current
 				val sdkPath = session.config.sdkPath
 				val dataPath = session.config.dataPath

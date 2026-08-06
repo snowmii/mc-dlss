@@ -6,6 +6,7 @@ import me.snowmii.dlss.DlssCameraSample;
 import me.snowmii.dlss.DlssClientRuntime;
 import me.snowmii.dlss.DlssJitterOffset;
 import me.snowmii.dlss.DlssProjectionJitter;
+import me.snowmii.dlss.DlssStressRuntime;
 import me.snowmii.dlss.DlssWorldPhase;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
@@ -61,11 +62,6 @@ public class GameRendererProjectionJitterMixin {
 		)
 	)
 	private GpuBufferSlice mcDlssJitterWorldProjection(final ProjectionMatrixBuffer buffer, final Matrix4f projectionMatrix) {
-		final DlssWorldPhase phase = DlssClientRuntime.worldPhase();
-		if (phase == null) {
-			return buffer.getBuffer(projectionMatrix);
-		}
-
 		final GameRenderer self = (GameRenderer)(Object)this;
 		final CameraRenderState cameraState = self.gameRenderState().levelRenderState.cameraRenderState;
 		final boolean normalInWorldFrame = !cameraState.isPanoramicMode;
@@ -80,6 +76,15 @@ public class GameRendererProjectionJitterMixin {
 			cameraPosition.y,
 			cameraPosition.z
 		);
+		// Recorded before the phase is consulted, because the stress pass runs in sessions where
+		// DLSS never starts and the phase is null in exactly those sessions.
+		DlssStressRuntime.recordCamera(camera);
+
+		final DlssWorldPhase phase = DlssClientRuntime.worldPhase();
+		if (phase == null) {
+			return buffer.getBuffer(projectionMatrix);
+		}
+
 		final DlssJitterOffset offset = phase.prepare(normalInWorldFrame, this.mainRenderTarget, camera);
 		if (offset == null) {
 			return buffer.getBuffer(projectionMatrix);

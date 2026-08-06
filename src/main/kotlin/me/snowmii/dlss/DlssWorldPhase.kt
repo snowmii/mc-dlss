@@ -233,12 +233,18 @@ class DlssWorldPhase(
 		}
 
 		val fps = sampledFrames * 1_000_000_000.0 / elapsed
+		// The GPU cost of the chain belongs on the same line as the frame rate: separately they
+		// are two numbers that move for unrelated reasons, and together they are the comparison -
+		// a frame rate that did not change while the chain costs a millisecond is a client whose
+		// frames are bounded by something other than the GPU.
+		val timings = runtime.frameEvaluation?.sampleTimings()
 		diagnostics(
-			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s".format(
+			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s".format(
 				fps,
 				sampledFrames,
 				runtime.activeRoute?.frame?.route ?: DlssFrameRoute.VANILLA,
 				scene?.let { "${it.width}x${it.height}" } ?: "main-target",
+				timings ?: "unmeasured",
 			),
 		)
 		sampleStartedAt = now

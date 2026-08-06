@@ -121,6 +121,30 @@ class DlssLifecycleAdapter(
 	fun releaseImages(): Boolean = invokeStatus(DlssNativeStage.RELEASE_IMAGES) { native.releaseImages() }
 
 	/**
+	 * Blocks until the device has finished every frame already submitted to it.
+	 *
+	 * Unlike every other call here this is not gated on a READY session: it is what makes releasing
+	 * GPU objects safe, and a session that has just latched a failure is releasing them too. A
+	 * device that cannot be waited on has been lost already, so the failure is latched and the
+	 * caller releases anyway - there is nothing left in flight to protect.
+	 */
+	fun waitDeviceIdle(): Boolean = invokeStatus(DlssNativeStage.WAIT_DEVICE_IDLE) { native.waitDeviceIdle() }
+
+	/**
+	 * GPU timings of the last frame that completed every recorded stage, or null when there is no
+	 * measurement yet.
+	 *
+	 * Deliberately outside the latching path: a missing measurement is a diagnostic that has not
+	 * arrived, and a session that stopped rendering DLSS because its profiler had nothing to say
+	 * would be a worse bug than the one this is here to find.
+	 */
+	fun frameTimings(): DlssFrameTimings? = try {
+		native.frameTimings()
+	} catch (_: Throwable) {
+		null
+	}
+
+	/**
 	 * Records the camera-only motion pass that fills the native motion image, on the caller's
 	 * command buffer.
 	 *

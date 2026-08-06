@@ -45,6 +45,32 @@ class RuntimeControlsTest {
 	}
 
 	@Test
+	fun `every control that frees a GPU resource waits for the frames still reading it`() {
+		val fixture = fixture()
+
+		fixture.frame()
+		fixture.events.clear()
+
+		// The three controls, each of which releases the scene target the frames just drawn into.
+		fixture.controls.cycleQualityMode()
+		fixture.frame()
+		fixture.controls.toggleEnabled()
+		fixture.frame()
+
+		assertTrue(fixture.events.contains("release-target"), "the target must actually be released")
+		fixture.events.forEachIndexed { index, event ->
+			if (event == "release-target") {
+				assertEquals(
+					"wait-device-idle",
+					fixture.events.getOrNull(index - 1),
+					"a release that is not preceded by a device wait frees an image the queued " +
+						"frames still read, which loses the device: ${fixture.events}",
+				)
+			}
+		}
+	}
+
+	@Test
 	fun `a session switched off before its first frame never initializes NGX`() {
 		val fixture = fixture()
 
@@ -201,7 +227,8 @@ class RuntimeControlsTest {
 	private inner class Fixture {
 		val diagnostics = mutableListOf<String>()
 		val announced = mutableListOf<String>()
-		val native = FakeNative()
+		val events = mutableListOf<String>()
+		val native = FakeNative().apply { log = events::add }
 		var released = 0
 		var motion: DlssFrameMotion? = null
 		private var now = 0L
@@ -225,7 +252,10 @@ class RuntimeControlsTest {
 			session = session,
 			sceneTarget = DlssSceneTarget(
 				allocate = { width, height -> FakeTarget(width, height) },
-				release = { released++ },
+				release = {
+					released++
+					events.add("release-target")
+				},
 			),
 			startup = { adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) },
 			clock = {
@@ -233,6 +263,7 @@ class RuntimeControlsTest {
 				now
 			},
 			reconfigure = adapter::reconfigure,
+			quiesce = { adapter.waitDeviceIdle() },
 		)
 
 		val controls = DlssRuntimeControls(runtime, announced::add)
@@ -286,6 +317,10 @@ class RuntimeControlsTest {
 	private class FakeNative : DlssNativeApi {
 		var initializeCalls = 0
 		var releaseImageCalls = 0
+		var waitDeviceIdleCalls = 0
+
+		/** Records the calls whose *order* is the invariant, not just their count. */
+		var log: ((String) -> Unit)? = null
 		var configureResult = DlssNativeApi.SUCCESS_RESULT
 		var lastConfiguredRender: DlssDimensions? = null
 		var lastConfiguredPreset: Int? = null
@@ -342,6 +377,15 @@ class RuntimeControlsTest {
 
 		override fun releaseImages(): Int {
 			releaseImageCalls++
+			log?.invoke("release-images")
+			return DlssNativeApi.SUCCESS_RESULT
+		}
+
+		override fun frameTimings(): DlssFrameTimings? = null
+
+		override fun waitDeviceIdle(): Int {
+			waitDeviceIdleCalls++
+			log?.invoke("wait-device-idle")
 			return DlssNativeApi.SUCCESS_RESULT
 		}
 

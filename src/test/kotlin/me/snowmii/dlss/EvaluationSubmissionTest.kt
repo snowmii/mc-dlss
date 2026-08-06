@@ -336,6 +336,10 @@ class EvaluationSubmissionTest {
 
 		override fun releaseImages(): Int = unreachable()
 
+		override fun waitDeviceIdle(): Int = DlssNativeApi.SUCCESS_RESULT
+
+		override fun frameTimings(): DlssFrameTimings? = null
+
 		override fun writeMotion(
 			commandBuffer: Long,
 			depthView: Long,

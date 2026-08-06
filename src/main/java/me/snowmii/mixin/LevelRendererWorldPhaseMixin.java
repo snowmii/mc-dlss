@@ -4,6 +4,7 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import me.snowmii.dlss.DlssClientRuntime;
+import me.snowmii.dlss.DlssStressRuntime;
 import me.snowmii.dlss.DlssWorldPhase;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -61,6 +62,12 @@ public class LevelRendererWorldPhaseMixin {
 		final boolean shouldRenderSky,
 		final CallbackInfo info
 	) {
+		// Still inside the world phase, so this is the low-resolution scene target on a DLSS frame
+		// and the real main target on a vanilla one. The stress pass therefore pays its cost at
+		// whatever resolution the world was actually rendered at, which is the comparison it
+		// exists to make, and DLSS upscales the finished image rather than a pre-effect one.
+		DlssStressRuntime.render(Minecraft.getInstance().gameRenderer.mainRenderTarget());
+
 		final DlssWorldPhase phase = DlssClientRuntime.activeWorldPhase();
 		if (phase != null) {
 			phase.end();

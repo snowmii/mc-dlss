@@ -297,6 +297,10 @@ class EnablementFallbackTest {
 
 		override fun releaseImages() = DlssNativeApi.SUCCESS_RESULT
 
+		override fun waitDeviceIdle() = DlssNativeApi.SUCCESS_RESULT
+
+		override fun frameTimings(): DlssFrameTimings? = null
+
 		override fun writeMotion(
 			commandBuffer: Long,
 			depthView: Long,

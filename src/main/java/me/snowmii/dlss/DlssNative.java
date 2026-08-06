@@ -28,6 +28,8 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 	private final MethodHandle configure;
 	private final MethodHandle acquireImages;
 	private final MethodHandle releaseImages;
+	private final MethodHandle waitDeviceIdle;
+	private final MethodHandle queryFrameTimings;
 	/** Per-frame reprojection staging, owned by {@link #arena} so no call allocates one. */
 	private final MemorySegment reprojectionScratch;
 	private final MethodHandle writeMotion;
@@ -78,6 +80,18 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 			)
 		);
 		this.releaseImages = bind(lookup, "mc_dlss_release_images", FunctionDescriptor.of(JAVA_INT));
+		this.waitDeviceIdle = bind(lookup, "mc_dlss_wait_device_idle", FunctionDescriptor.of(JAVA_INT));
+		this.queryFrameTimings = bind(
+			lookup,
+			"mc_dlss_query_frame_timings",
+			FunctionDescriptor.of(
+				JAVA_INT,
+				ValueLayout.ADDRESS, // motion_ms
+				ValueLayout.ADDRESS, // evaluate_ms
+				ValueLayout.ADDRESS, // present_ms
+				ValueLayout.ADDRESS // total_ms
+			)
+		);
 		this.writeMotion = bind(
 			lookup,
 			"mc_dlss_write_motion",
@@ -327,6 +341,39 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 			return (int)this.releaseImages.invokeExact();
 		} catch (Throwable error) {
 			throw nativeError("release-images", error);
+		}
+	}
+
+	@Override
+	public int waitDeviceIdle() {
+		try {
+			return (int)this.waitDeviceIdle.invokeExact();
+		} catch (Throwable error) {
+			throw nativeError("wait-device-idle", error);
+		}
+	}
+
+	@Override
+	public DlssFrameTimings frameTimings() {
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment motion = callArena.allocate(JAVA_FLOAT);
+			final MemorySegment evaluate = callArena.allocate(JAVA_FLOAT);
+			final MemorySegment present = callArena.allocate(JAVA_FLOAT);
+			final MemorySegment total = callArena.allocate(JAVA_FLOAT);
+			final int result = (int)this.queryFrameTimings.invokeExact(motion, evaluate, present, total);
+			if (result != SUCCESS) {
+				// No completed frame yet, or a device that cannot timestamp. Both mean "no
+				// measurement", which is not a native failure the session should latch.
+				return null;
+			}
+			return new DlssFrameTimings(
+				motion.get(JAVA_FLOAT, 0),
+				evaluate.get(JAVA_FLOAT, 0),
+				present.get(JAVA_FLOAT, 0),
+				total.get(JAVA_FLOAT, 0)
+			);
+		} catch (Throwable error) {
+			throw nativeError("query-frame-timings", error);
 		}
 	}
 

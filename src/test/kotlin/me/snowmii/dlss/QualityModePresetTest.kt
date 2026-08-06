@@ -233,6 +233,10 @@ class QualityModePresetTest {
 
 		override fun releaseImages(): Int = throw UnsupportedOperationException()
 
+		override fun waitDeviceIdle(): Int = DlssNativeApi.SUCCESS_RESULT
+
+		override fun frameTimings(): DlssFrameTimings? = null
+
 		override fun writeMotion(
 			commandBuffer: Long,
 			depthView: Long,

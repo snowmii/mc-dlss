@@ -108,6 +108,38 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_acquire_images(
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_release_images(void);
 
 /*
+ * Blocks until the Vulkan device has finished everything submitted to it.
+ *
+ * The native side already stalls before its own destroys, but the engine's
+ * resources are destroyed by the engine: a render target released because the
+ * DLSS configuration changed is freed by Minecraft while the frames that drew
+ * into it can still be in flight, and the device is lost several frames later
+ * in an unrelated wait. The caller stalls through here before releasing
+ * anything the recorded frames referenced.
+ *
+ * Succeeds when no device has been captured yet, because a session with no
+ * device has nothing in flight to wait for.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_device_idle(void);
+
+/*
+ * GPU milliseconds the last completed frame spent in each recorded stage.
+ *
+ * Measured with device timestamps around the motion pass, the NGX evaluation, and the copy
+ * into the engine target, so the three are separable - frame rate and GPU utilization are
+ * not, and on a CPU-bound client neither one moves when this chain gets cheaper or dearer.
+ *
+ * The result is several frames old and never waits on the GPU. Returns not-initialized until
+ * one frame has completed all three stages, and on a device whose queues cannot timestamp
+ * graphics work, where the measurement is silently unavailable rather than fatal.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_frame_timings(
+    float* motion_ms,
+    float* evaluate_ms,
+    float* present_ms,
+    float* total_ms);
+
+/*
  * Camera-only motion vectors, recorded on the caller's command buffer.
  *
  * DLSS reads motion from an image nothing in Minecraft fills, so the bridge fills it
