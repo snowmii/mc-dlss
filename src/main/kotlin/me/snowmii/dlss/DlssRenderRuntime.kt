@@ -29,11 +29,34 @@ class DlssRenderRuntime(
 	 * phase owns *when* it runs; the runtime owns it because it is scoped to the same session.
 	 */
 	val frameEvaluation: DlssFrameEvaluation? = null,
+	/**
+	 * Re-queries the native render dimensions for a mode and preset chosen while the session
+	 * runs, or null for a runtime whose configuration cannot change. Separate from [startup]
+	 * because it must not re-initialize NGX.
+	 */
+	private val reconfigure: ((DlssQualityMode, DlssRenderPreset) -> DlssDimensions?)? = null,
 ) : AutoCloseable {
 	private var startupAttempted = false
 	private var router: WorldTargetRouter? = null
 	private var jitter: DlssJitter? = null
 	private var motion: DlssCameraMotion? = null
+
+	/** Quality mode this runtime is rendering at, which starts as the configured one. */
+	var qualityMode: DlssQualityMode = session.config.qualityMode
+		private set
+
+	/** Preset this runtime is rendering with, which starts as the configured one. */
+	var renderPreset: DlssRenderPreset = session.config.renderPreset
+		private set
+
+	/**
+	 * Whether DLSS is switched on right now, independent of whether the session could ever use it.
+	 *
+	 * The configuration's own `enabled` decides whether the session has DLSS at all; this decides
+	 * whether the reviewer currently wants it, which is the switch AC-2 and AC-5 are witnessed by.
+	 */
+	var runtimeEnabled: Boolean = true
+		private set
 
 	/**
 	 * Target the world phase must render into, or null when the frame renders vanilla
@@ -89,7 +112,9 @@ class DlssRenderRuntime(
 		outputDimensions: DlssDimensions,
 		camera: DlssCameraSample? = null,
 	): RenderTarget? {
-		val activeRouter = ensureStarted()
+		// Switched off takes effect before startup is ever attempted, so a session that begins
+		// switched off never initializes NGX at all.
+		val activeRouter = if (runtimeEnabled) ensureStarted() else null
 		if (activeRouter == null) {
 			// No DLSS this session: release any target held from an earlier eligible frame.
 			sceneTarget.close()
@@ -155,6 +180,61 @@ class DlssRenderRuntime(
 		motion?.reset()
 	}
 
+	/**
+	 * Switches DLSS on or off for the frames that follow, and reports whether anything changed.
+	 *
+	 * Switching off is the full-resolution path the contract already requires of a failure, minus
+	 * the failure: the low-resolution target is released, the native images go with it, and the
+	 * accumulated history is dropped, because the frames that come back are not continuous with
+	 * the ones that stopped.
+	 */
+	fun setEnabled(enabled: Boolean): Boolean {
+		if (enabled == runtimeEnabled) {
+			return false
+		}
+
+		runtimeEnabled = enabled
+		releaseFrameState()
+		return true
+	}
+
+	/**
+	 * Re-renders at [mode] with [preset] from the next frame on, and reports whether it took.
+	 *
+	 * A mode change is a different render size, so everything sized from that size is rebuilt: the
+	 * jitter sequence whose length is the pixel ratio, the motion reprojection whose scale is the
+	 * render dimensions, the router that decides the scene target's size, the scene target itself,
+	 * and the native images the evaluation writes into. A preset change rebuilds none of that and
+	 * still goes through here, because the native feature is recreated on either one.
+	 *
+	 * A refused reconfiguration leaves the runtime on the configuration it was already running:
+	 * the native side rejected it, so nothing about the frames that follow has changed, and the
+	 * caller reports the mode that is still in effect rather than the one that was asked for.
+	 */
+	fun applyConfiguration(mode: DlssQualityMode, preset: DlssRenderPreset): Boolean {
+		if (mode == qualityMode && preset == renderPreset) {
+			return false
+		}
+
+		// Nothing has started yet, so there is no native configuration to change - the first
+		// frame will start against whatever is chosen here.
+		if (router == null) {
+			qualityMode = mode
+			renderPreset = preset
+			return true
+		}
+
+		val dimensions = reconfigure?.invoke(mode, preset) ?: return false
+		qualityMode = mode
+		renderPreset = preset
+		renderDimensions = dimensions
+		jitter = DlssJitter(dimensions, session.config.outputDimensions)
+		motion = DlssCameraMotion(dimensions)
+		router = WorldTargetRouter(session, dimensions)
+		releaseFrameState()
+		return true
+	}
+
 	override fun close() {
 		endWorldPhase()
 		// Before the session closes: releasing the native images needs a session still READY.
@@ -168,6 +248,20 @@ class DlssRenderRuntime(
 	}
 
 	/**
+	 * Drops everything sized from the configuration that just stopped applying.
+	 *
+	 * The scene target and the native images are released rather than resized: both are acquired
+	 * from the configuration on the next eligible frame, and a frame evaluating into images sized
+	 * for the previous configuration is the failure that silently latches full resolution.
+	 */
+	private fun releaseFrameState() {
+		endWorldPhase()
+		sceneTarget.close()
+		frameEvaluation?.close()
+		resetHistory()
+	}
+
+	/**
 	 * Runs native startup at most once and returns the router, or null when DLSS is not
 	 * available for this session.
 	 */
@@ -178,9 +272,22 @@ class DlssRenderRuntime(
 		}
 
 		startupAttempted = true
-		val dimensions = startup() ?: return null
+		val startupDimensions = startup() ?: return null
 		if (session.state != DlssSessionState.READY) {
 			return null
+		}
+
+		// Startup configures NGX from the session's own configuration, so a mode or preset chosen
+		// before the first frame - which is the only time a change is free - has to be re-applied
+		// once there is a native side to apply it to.
+		val dimensions = if (qualityMode == session.config.qualityMode && renderPreset == session.config.renderPreset) {
+			startupDimensions
+		} else {
+			reconfigure?.invoke(qualityMode, renderPreset) ?: run {
+				qualityMode = session.config.qualityMode
+				renderPreset = session.config.renderPreset
+				startupDimensions
+			}
 		}
 
 		renderDimensions = dimensions
@@ -207,7 +314,7 @@ class DlssRenderRuntime(
 				adapter,
 				{ VulkanContextRegistry.current },
 				diagnostics,
-			), startup = {
+			), reconfigure = adapter::reconfigure, startup = {
 				val context = VulkanContextRegistry.current
 				val sdkPath = session.config.sdkPath
 				val dataPath = session.config.dataPath

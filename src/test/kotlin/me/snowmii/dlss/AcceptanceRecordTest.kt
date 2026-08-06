@@ -16,6 +16,7 @@ class AcceptanceRecordTest {
 			enabled = true,
 			state = DlssSessionState.READY,
 			qualityMode = DlssQualityMode.QUALITY,
+			renderPreset = DlssQualityMode.QUALITY.defaultPreset,
 			outputDimensions = DlssDimensions(2560, 1440),
 			renderDimensions = DlssDimensions(1706, 960),
 		)
@@ -30,6 +31,7 @@ class AcceptanceRecordTest {
 			  dlss-enabled=true
 			  dlss-state=READY
 			  quality-mode=quality
+			  render-preset=k
 			  output-resolution=2560x1440
 			  internal-resolution=1706x960
 			""".trimIndent(),
@@ -44,6 +46,7 @@ class AcceptanceRecordTest {
 			enabled = true,
 			state = DlssSessionState.FALLBACK_LATCHED,
 			qualityMode = DlssQualityMode.PERFORMANCE,
+			renderPreset = DlssQualityMode.PERFORMANCE.defaultPreset,
 			outputDimensions = DlssDimensions(2560, 1440),
 			renderDimensions = null,
 		)
@@ -61,6 +64,7 @@ class AcceptanceRecordTest {
 			enabled = false,
 			state = DlssSessionState.DISABLED,
 			qualityMode = DlssQualityMode.BALANCED,
+			renderPreset = DlssQualityMode.BALANCED.defaultPreset,
 			outputDimensions = DlssDimensions(1920, 1080),
 			renderDimensions = null,
 		)
@@ -75,6 +79,7 @@ class AcceptanceRecordTest {
 			enabled = true,
 			state = DlssSessionState.READY,
 			qualityMode = DlssQualityMode.BALANCED,
+			renderPreset = DlssQualityMode.BALANCED.defaultPreset,
 			outputDimensions = DlssDimensions(2560, 1440),
 			renderDimensions = DlssDimensions(1487, 836),
 		)

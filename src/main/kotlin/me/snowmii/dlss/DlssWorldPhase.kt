@@ -288,7 +288,11 @@ class DlssWorldPhase(
 				minecraftBuild = minecraftBuild(),
 				enabled = runtime.config.enabled,
 				state = runtime.sessionState,
-				qualityMode = runtime.config.qualityMode,
+				// The runtime's mode and preset rather than the configuration's: a reviewer who
+				// switched either one before the first world frame is holding the record for a
+				// session that is not running what it started as.
+				qualityMode = runtime.qualityMode,
+				renderPreset = runtime.renderPreset,
 				outputDimensions = runtime.config.outputDimensions,
 				renderDimensions = runtime.renderDimensions,
 			),

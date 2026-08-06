@@ -56,6 +56,46 @@ class DlssLifecycleAdapter(
 	}
 
 	/**
+	 * Re-queries and re-stores the native configuration for a mode and preset chosen while the
+	 * session is already running, returning the new render dimensions or null when it failed.
+	 *
+	 * This is [initialize] without the initialization: NGX is already up and the device is
+	 * unchanged, so what a mode change actually needs is the render size that mode implies and a
+	 * configuration the next feature creation will disagree with. A failure latches the session
+	 * exactly like any other native stage - a session whose mode change was refused knows nothing
+	 * about what it is now configured to.
+	 */
+	fun reconfigure(qualityMode: DlssQualityMode, renderPreset: DlssRenderPreset): DlssDimensions? {
+		if (session.state != DlssSessionState.READY) {
+			return null
+		}
+
+		val queriedDimensions = invokeDimensions {
+			native.queryOptimalDimensions(
+				session.config.outputDimensions.width,
+				session.config.outputDimensions.height,
+				qualityMode.ngxValue,
+			)
+		} ?: return null
+
+		if (!invokeStatus(DlssNativeStage.CONFIGURE) {
+				native.configure(
+					session.config.outputDimensions.width,
+					session.config.outputDimensions.height,
+					queriedDimensions.width,
+					queriedDimensions.height,
+					qualityMode.ngxValue,
+					renderPreset.ngxValue,
+				)
+			}) {
+			return null
+		}
+
+		renderDimensions = queriedDimensions
+		return queriedDimensions
+	}
+
+	/**
 	 * Returns the native-owned motion and output images, or null when acquisition failed.
 	 *
 	 * A failure here latches the session exactly like any other native stage, because a session

@@ -39,6 +39,7 @@ object DlssAcceptanceRecord {
 		enabled: Boolean,
 		state: DlssSessionState,
 		qualityMode: DlssQualityMode,
+		renderPreset: DlssRenderPreset,
 		outputDimensions: DlssDimensions,
 		renderDimensions: DlssDimensions?,
 	): String = buildString {
@@ -50,6 +51,9 @@ object DlssAcceptanceRecord {
 		appendField("dlss-enabled", enabled.toString())
 		appendField("dlss-state", state.name)
 		appendField("quality-mode", qualityMode.propertyValue)
+		// The model behind the frames. NGX runs a preset whether or not one is asked for, so a
+		// record naming only the mode names half the configuration that produced the image.
+		appendField("render-preset", renderPreset.propertyValue)
 		appendField("output-resolution", outputDimensions.toString())
 		appendField("internal-resolution", renderDimensions?.toString() ?: UNAVAILABLE)
 	}
