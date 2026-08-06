@@ -35,6 +35,7 @@ class DlssWorldPhase(
 ) : AutoCloseable {
 	private var scene: RenderTarget? = null
 	private var mainTarget: RenderTarget? = null
+	private var prepared = false
 	private var lastResolved: RenderTarget? = null
 	private var reportedFirstDecision = false
 	private var sampleStartedAt = 0L
@@ -52,14 +53,21 @@ class DlssWorldPhase(
 		get() = if (isOpen) scene else null
 
 	/**
-	 * Opens the world phase against Minecraft's real main target and returns the target the
-	 * world must render into: the low-resolution scene target for an eligible DLSS frame, or
-	 * [mainTarget] itself for a vanilla frame.
+	 * Decides this frame's route and jitter without opening the phase, and returns the jitter
+	 * an eligible DLSS frame must apply to its world projection, or null for a vanilla frame.
+	 *
+	 * Minecraft uploads the world projection in `GameRenderer.renderLevel`, before
+	 * `LevelRenderer.render` runs, so the route has to be known earlier than the phase can be
+	 * open - opening it that early would put hand, item, and screen effects behind the
+	 * low-resolution override too. Splitting the decision from the window is what keeps both
+	 * true, and the route is still decided exactly once per frame because [begin] consumes
+	 * this preparation rather than repeating it.
 	 */
-	fun begin(normalInWorldFrame: Boolean, mainTarget: RenderTarget): RenderTarget {
-		// An exception thrown inside LevelRenderer.render skips the tail that closes the phase.
-		// Reopening then has to discard the abandoned frame rather than throw, because a stale
-		// phase must not turn one render failure into a permanent one.
+	fun prepare(normalInWorldFrame: Boolean, mainTarget: RenderTarget): DlssJitterOffset? {
+		// An exception thrown inside LevelRenderer.render skips the tail that closes the phase,
+		// and a frame that prepared but never rendered leaves one unconsumed. Both are dropped
+		// here rather than thrown on, because a stale phase must not turn one render failure
+		// into a permanent one.
 		discard()
 
 		this.mainTarget = mainTarget
@@ -67,6 +75,22 @@ class DlssWorldPhase(
 			runtime.beginWorldPhase(normalInWorldFrame, DlssDimensions(mainTarget.width, mainTarget.height))
 		} else {
 			null
+		}
+		prepared = true
+		return if (scene != null) runtime.activeJitter else null
+	}
+
+	/**
+	 * Opens the world phase against Minecraft's real main target and returns the target the
+	 * world must render into: the low-resolution scene target for an eligible DLSS frame, or
+	 * [mainTarget] itself for a vanilla frame.
+	 *
+	 * Consumes a matching [prepare] when one exists, so a frame that went through the
+	 * projection seam routes once rather than twice.
+	 */
+	fun begin(normalInWorldFrame: Boolean, mainTarget: RenderTarget): RenderTarget {
+		if (!prepared || this.mainTarget !== mainTarget) {
+			prepare(normalInWorldFrame, mainTarget)
 		}
 		isOpen = true
 
@@ -93,6 +117,7 @@ class DlssWorldPhase(
 		val rendered = scene
 		val destination = mainTarget
 		isOpen = false
+		prepared = false
 		scene = null
 		mainTarget = null
 		runtime.endWorldPhase()
@@ -171,13 +196,17 @@ class DlssWorldPhase(
 		)
 	}
 
-	/** Drops an open phase without presenting it. The scene target itself stays owned by the runtime. */
+	/**
+	 * Drops a prepared or open phase without presenting it. The scene target itself stays
+	 * owned by the runtime.
+	 */
 	private fun discard() {
-		if (!isOpen) {
+		if (!isOpen && !prepared) {
 			return
 		}
 
 		isOpen = false
+		prepared = false
 		scene = null
 		mainTarget = null
 		runtime.endWorldPhase()

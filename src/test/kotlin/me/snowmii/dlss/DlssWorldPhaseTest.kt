@@ -4,6 +4,7 @@ import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -109,6 +110,67 @@ class DlssWorldPhaseTest {
 
 		assertSame(unsized, worldTarget)
 		assertTrue(presented.isEmpty())
+	}
+
+	@Test
+	fun `preparing decides the route and jitter without opening the phase`() {
+		val phase = phase(readyRuntime())
+
+		val offset = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget)
+
+		assertFalse(phase.isOpen)
+		// The world target override must stay off until begin, or the hand, item, and screen
+		// effects that render after the world would see the low-resolution target too.
+		assertNull(phase.worldTargetOverride)
+		assertEquals(render, offset!!.renderDimensions)
+	}
+
+	@Test
+	fun `beginning consumes a matching preparation instead of routing again`() {
+		val runtime = readyRuntime()
+		val phase = phase(runtime)
+
+		val prepared = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget)
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+
+		assertTrue(phase.isOpen)
+		assertSame(worldTarget, phase.worldTargetOverride)
+		// A second route would have advanced the jitter sequence past the prepared phase.
+		assertEquals(prepared, runtime.activeJitter)
+	}
+
+	@Test
+	fun `beginning without a preparation still routes the frame itself`() {
+		val runtime = readyRuntime()
+		val phase = phase(runtime)
+
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+
+		assertEquals(render.width, worldTarget.width)
+		assertEquals(render, runtime.activeJitter!!.renderDimensions)
+	}
+
+	@Test
+	fun `a vanilla frame prepares no jitter`() {
+		val phase = phase(readyRuntime())
+
+		assertNull(phase.prepare(normalInWorldFrame = false, mainTarget = mainTarget))
+	}
+
+	@Test
+	fun `a preparation the frame never rendered is discarded by the next one`() {
+		val runtime = readyRuntime()
+		val phase = phase(runtime)
+
+		val abandoned = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget)
+		// No begin: renderLevel threw between the projection upload and LevelRenderer.render.
+		val second = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget)
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+
+		assertEquals(second, runtime.activeJitter)
+		assertNotEquals(abandoned, second)
+		phase.end()
+		assertEquals(listOf(worldTarget to mainTarget as RenderTarget), presented)
 	}
 
 	@Test
