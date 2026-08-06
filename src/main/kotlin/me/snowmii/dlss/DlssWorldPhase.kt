@@ -5,6 +5,7 @@ import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.FilterMode
 import com.mojang.blaze3d.vulkan.VulkanConst
 import com.mojang.blaze3d.vulkan.VulkanGpuTextureView
+import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.RenderPipelines
 import java.util.Optional
@@ -44,6 +45,13 @@ class DlssWorldPhase(
 	 */
 	private val evaluateFrame: (RenderTarget, RenderTarget, DlssJitterOffset, DlssFrameMotion) -> Boolean =
 		{ _, _, _, _ -> false },
+	/**
+	 * The Minecraft build the acceptance record names, or null when it cannot be determined.
+	 *
+	 * A supplier rather than a value because reading it needs a running loader, and everything
+	 * else here stays constructible off the render thread.
+	 */
+	private val minecraftBuild: () -> String? = { null },
 ) : AutoCloseable {
 	private var scene: RenderTarget? = null
 	private var mainTarget: RenderTarget? = null
@@ -264,6 +272,27 @@ class DlssWorldPhase(
 				" resolved=${resolved?.let { "${it.width}x${it.height}" } ?: "unprobed"}" +
 				" redirected=${resolved != null && resolved === scene}",
 		)
+		reportAcceptanceRecord()
+	}
+
+	/**
+	 * Reports the environment half of the Sprint acceptance record.
+	 *
+	 * Emitted from the first world phase rather than mod init, because the internal resolution is
+	 * the field the reviewer most needs and NGX does not choose it until startup has run, which
+	 * the first frame that asks for a world target is what drives.
+	 */
+	private fun reportAcceptanceRecord() {
+		diagnostics(
+			DlssAcceptanceRecord.render(
+				minecraftBuild = minecraftBuild(),
+				enabled = runtime.config.enabled,
+				state = runtime.sessionState,
+				qualityMode = runtime.config.qualityMode,
+				outputDimensions = runtime.config.outputDimensions,
+				renderDimensions = runtime.renderDimensions,
+			),
+		)
 	}
 
 	/**
@@ -289,6 +318,22 @@ class DlssWorldPhase(
 	companion object {
 		private const val SAMPLE_INTERVAL_NANOS = 5_000_000_000L
 
+		/**
+		 * The Minecraft build as the loader reports it, or null when it cannot be read.
+		 *
+		 * Asked of the loader rather than `SharedConstants`, whose shape moves between versions.
+		 * A record field is worth no exception on the render thread, so a failure degrades to the
+		 * reviewer filling the line in by hand.
+		 */
+		private fun loaderMinecraftBuild(): String? = try {
+			FabricLoader.getInstance()
+				.getModContainer("minecraft")
+				.map { container -> container.metadata.version.friendlyString }
+				.orElse(null)
+		} catch (_: Throwable) {
+			null
+		}
+
 		/** Production wiring: a real blit and a real sky-renderer reset. */
 		@JvmStatic
 		fun forMinecraft(runtime: DlssRenderRuntime, diagnostics: (String) -> Unit): DlssWorldPhase = DlssWorldPhase(
@@ -298,6 +343,7 @@ class DlssWorldPhase(
 				Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.shouldResetSkyRenderer = true
 			},
 			diagnostics = diagnostics,
+			minecraftBuild = ::loaderMinecraftBuild,
 			probeResolvedTarget = { Minecraft.getInstance().gameRenderer.mainRenderTarget() },
 			evaluateFrame = { rendered, destination, jitter, motion ->
 				val evaluation = runtime.frameEvaluation

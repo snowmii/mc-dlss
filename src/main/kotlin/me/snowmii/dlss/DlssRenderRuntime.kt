@@ -51,6 +51,14 @@ class DlssRenderRuntime(
 	var renderDimensions: DlssDimensions? = null
 		private set
 
+	/** Startup configuration this runtime's session resolved. */
+	val config: DlssStartupConfig
+		get() = session.config
+
+	/** Session state as of now, which the acceptance record reports. */
+	val sessionState: DlssSessionState
+		get() = session.state
+
 	/**
 	 * Sub-pixel jitter for the current world phase, or null outside an eligible DLSS phase.
 	 *
