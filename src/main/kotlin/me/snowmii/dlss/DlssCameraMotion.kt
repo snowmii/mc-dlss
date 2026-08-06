@@ -40,8 +40,9 @@ data class DlssCameraSample(
  * expects to arrive at.
  *
  * [frameTimeMillis] is the wall time since the previous DLSS frame. [reset] marks a frame whose
- * accumulated history is worthless - no predecessor, or a predecessor that never went through
- * DLSS - and its [reprojection] is the identity, because there is no previous frame to point at.
+ * accumulated history is worthless - no predecessor, a predecessor that never went through DLSS,
+ * or a predecessor the camera cannot have reached this frame from by moving - and its
+ * [reprojection] is the identity, because there is no previous frame to point at.
  */
 data class DlssFrameMotion(
 	val reprojection: Matrix4f,
@@ -105,7 +106,8 @@ class DlssCameraMotion(renderDimensions: DlssDimensions) {
 	fun advance(camera: DlssCameraSample, jitter: DlssJitterOffset, nowNanos: Long): DlssFrameMotion {
 		val current = transforms[currentIndex].set(camera.projection).mul(camera.viewRotation)
 		val previous = transforms[1 - currentIndex]
-		val reprojection = if (!hasPrevious) {
+		val continuous = hasPrevious && !jumped(camera, nowNanos)
+		val reprojection = if (!continuous) {
 			Matrix4f()
 		} else {
 			Matrix4f()
@@ -120,14 +122,14 @@ class DlssCameraMotion(renderDimensions: DlssDimensions) {
 				.mul(current.invert(inverse))
 				.translate(-jitter.clipOffsetX, -jitter.clipOffsetY, 0f)
 		}
-		val frameTimeMillis = if (!hasPrevious) {
-			// No predecessor means no interval to report, and reset tells DLSS to ignore history
-			// anyway; a fabricated duration would only be a lie it could act on.
+		val frameTimeMillis = if (!continuous) {
+			// No usable predecessor means no interval to report, and reset tells DLSS to ignore
+			// history anyway; a fabricated duration would only be a lie it could act on.
 			0f
 		} else {
 			(nowNanos - previousNanos) / NANOS_PER_MILLI
 		}
-		val reset = !hasPrevious
+		val reset = !continuous
 
 		currentIndex = 1 - currentIndex
 		hasPrevious = true
@@ -146,6 +148,30 @@ class DlssCameraMotion(renderDimensions: DlssDimensions) {
 	}
 
 	/**
+	 * True when the camera cannot have travelled from its predecessor by moving.
+	 *
+	 * A teleport, a respawn, and a dimension change all leave every frame eligible and every frame
+	 * carrying a camera, so nothing outside this class can see them; the camera's own displacement
+	 * is the whole signal. Reprojecting across one points DLSS at geometry that is no longer
+	 * anywhere in the frame, which is worse than the one restarted accumulation a reset costs.
+	 *
+	 * The bound is a speed rather than a distance, because the same step is ordinary in a long
+	 * frame and impossible in a short one, and it carries a floor so that a very fast frame cannot
+	 * shrink it into ordinary movement. [MAX_CONTINUOUS_SPEED] sits several times above anything
+	 * Minecraft moves a camera at - elytra flight, an ice boat, spectator flight - because a missed
+	 * discontinuity costs a frame of smeared history while a false one costs a frame of
+	 * accumulation.
+	 */
+	private fun jumped(camera: DlssCameraSample, nowNanos: Long): Boolean {
+		val deltaX = camera.cameraX - previousCameraX
+		val deltaY = camera.cameraY - previousCameraY
+		val deltaZ = camera.cameraZ - previousCameraZ
+		val elapsedSeconds = ((nowNanos - previousNanos) / NANOS_PER_SECOND).coerceAtLeast(MIN_INTERVAL_SECONDS)
+		val allowed = MAX_CONTINUOUS_SPEED * elapsedSeconds
+		return deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ > allowed * allowed
+	}
+
+	/**
 	 * Forgets the predecessor, so the next frame reports [DlssFrameMotion.reset].
 	 *
 	 * Any frame DLSS did not accumulate breaks the chain: a vanilla frame, a frame routed
@@ -158,5 +184,12 @@ class DlssCameraMotion(renderDimensions: DlssDimensions) {
 
 	private companion object {
 		const val NANOS_PER_MILLI = 1_000_000f
+		const val NANOS_PER_SECOND = 1_000_000_000.0
+
+		/** Blocks per second no continuous Minecraft camera reaches. */
+		const val MAX_CONTINUOUS_SPEED = 128.0
+
+		/** Interval floor, so a fast frame still allows the step a slow one would. */
+		const val MIN_INTERVAL_SECONDS = 0.05
 	}
 }
