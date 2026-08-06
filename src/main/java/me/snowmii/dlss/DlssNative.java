@@ -31,6 +31,7 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 	/** Per-frame reprojection staging, owned by {@link #arena} so no call allocates one. */
 	private final MemorySegment reprojectionScratch;
 	private final MethodHandle writeMotion;
+	private final MethodHandle presentOutput;
 	private final MethodHandle evaluate;
 	private final MethodHandle reset;
 	private final MethodHandle close;
@@ -94,6 +95,22 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 				ValueLayout.ADDRESS, // reprojection
 				JAVA_INT, // render_width
 				JAVA_INT // render_height
+			)
+		);
+		this.presentOutput = bind(
+			lookup,
+			"mc_dlss_present_output",
+			FunctionDescriptor.of(
+				JAVA_INT,
+				JAVA_LONG, // command_buffer
+				JAVA_LONG, // destination_image
+				JAVA_INT, // destination_aspect_mask
+				JAVA_INT, // destination_base_mip_level
+				JAVA_INT, // destination_level_count
+				JAVA_INT, // destination_base_array_layer
+				JAVA_INT, // destination_layer_count
+				JAVA_INT, // destination_width
+				JAVA_INT // destination_height
 			)
 		);
 		this.evaluate = bind(
@@ -344,6 +361,35 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 			);
 		} catch (Throwable error) {
 			throw nativeError("write-motion", error);
+		}
+	}
+
+	@Override
+	public int presentOutput(
+		final long commandBuffer,
+		final long destinationImage,
+		final int destinationAspectMask,
+		final int destinationBaseMipLevel,
+		final int destinationLevelCount,
+		final int destinationBaseArrayLayer,
+		final int destinationLayerCount,
+		final int destinationWidth,
+		final int destinationHeight
+	) {
+		try {
+			return (int)this.presentOutput.invokeExact(
+				commandBuffer,
+				destinationImage,
+				destinationAspectMask,
+				destinationBaseMipLevel,
+				destinationLevelCount,
+				destinationBaseArrayLayer,
+				destinationLayerCount,
+				destinationWidth,
+				destinationHeight
+			);
+		} catch (Throwable error) {
+			throw nativeError("present-output", error);
 		}
 	}
 

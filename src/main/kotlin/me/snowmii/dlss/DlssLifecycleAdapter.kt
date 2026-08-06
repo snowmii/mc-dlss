@@ -165,6 +165,33 @@ class DlssLifecycleAdapter(
 		}
 	}
 
+	/**
+	 * Records the copy of the upscaled output into [destination], on the caller's command buffer.
+	 *
+	 * The destination size is the session's configured output, not a parameter: the copy is the
+	 * step that makes the upscaled frame visible, and a destination of any other size means the
+	 * caller and the configuration disagree about what "output resolution" is.
+	 */
+	fun presentOutput(destination: DlssPresentTarget): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		return invokeStatus(DlssNativeStage.PRESENT_OUTPUT) {
+			native.presentOutput(
+				destination.commandBuffer,
+				destination.image,
+				destination.aspectMask,
+				destination.baseMipLevel,
+				destination.levelCount,
+				destination.baseArrayLayer,
+				destination.layerCount,
+				session.config.outputDimensions.width,
+				session.config.outputDimensions.height,
+			)
+		}
+	}
+
 	private fun invokeStatus(stage: DlssNativeStage, operation: () -> Int): Boolean {
 		val result = try {
 			operation()
@@ -261,6 +288,22 @@ data class DlssMotionRequest(
 		return result
 	}
 }
+
+/**
+ * The engine image the upscaled frame is copied into, in the units the flat native ABI takes them.
+ *
+ * This is Minecraft's own output-sized target - the one everything after the world phase composes
+ * over - so the source of the copy is the bridge's output image and never appears here.
+ */
+data class DlssPresentTarget(
+	val commandBuffer: Long = 0,
+	val image: Long = 0,
+	val aspectMask: Int = 0,
+	val baseMipLevel: Int = 0,
+	val levelCount: Int = 0,
+	val baseArrayLayer: Int = 0,
+	val layerCount: Int = 0,
+)
 
 data class DlssEvaluationRequest(
 	val commandBuffer: Long = 0,

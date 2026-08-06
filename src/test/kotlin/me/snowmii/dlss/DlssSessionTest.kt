@@ -223,6 +223,7 @@ class DlssSessionTest {
 		var acquireImageCalls = 0
 		var releaseImageCalls = 0
 		var writeMotionCalls = 0
+		var presentOutputCalls = 0
 		var lastEvaluation: DlssEvaluationRequest? = null
 		override fun initialize(
 			vkInstance: Long,
@@ -291,6 +292,21 @@ class DlssSessionTest {
 			renderHeight: Int,
 		): Int {
 			writeMotionCalls++
+			return DlssNativeApi.SUCCESS_RESULT
+		}
+
+		override fun presentOutput(
+			commandBuffer: Long,
+			destinationImage: Long,
+			destinationAspectMask: Int,
+			destinationBaseMipLevel: Int,
+			destinationLevelCount: Int,
+			destinationBaseArrayLayer: Int,
+			destinationLayerCount: Int,
+			destinationWidth: Int,
+			destinationHeight: Int,
+		): Int {
+			presentOutputCalls++
 			return DlssNativeApi.SUCCESS_RESULT
 		}
 

@@ -1254,6 +1254,84 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(
+    const uint64_t command_buffer, const uint64_t destination_image,
+    const uint32_t destination_aspect_mask, const uint32_t destination_base_mip_level,
+    const uint32_t destination_level_count, const uint32_t destination_base_array_layer,
+    const uint32_t destination_layer_count, const uint32_t destination_width,
+    const uint32_t destination_height) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_state.bootstrapComplete) {
+            return kNotInitialized;
+        }
+        if (command_buffer == 0 || destination_image == 0 || destination_level_count == 0 ||
+            destination_layer_count == 0 ||
+            destination_aspect_mask != VK_IMAGE_ASPECT_COLOR_BIT ||
+            destination_width != g_state.outputWidth ||
+            destination_height != g_state.outputHeight) {
+            return kInvalidParameter;
+        }
+        // Nothing to present until the output image exists at the size this call names.
+        if (g_state.outputImage.image == VK_NULL_HANDLE ||
+            g_state.imagesOutputWidth != destination_width ||
+            g_state.imagesOutputHeight != destination_height) {
+            return kNotInitialized;
+        }
+        // Copying an image onto itself would be a caller that passed this module's own
+        // output back as the engine target, and vkCmdCopyImage forbids the overlap.
+        if (destination_image == to_uint64(g_state.outputImage.image)) {
+            return kInvalidParameter;
+        }
+
+        const VkCommandBuffer recordingBuffer = from_uint64<VkCommandBuffer>(command_buffer);
+        const VkImage destination = from_uint64<VkImage>(destination_image);
+        const VkImageSubresourceRange destinationRange{
+            static_cast<VkImageAspectFlags>(destination_aspect_mask), destination_base_mip_level,
+            destination_level_count, destination_base_array_layer, destination_layer_count};
+        const VkImageSubresourceRange outputRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        const VkImageLayout destinationEntryLayout = current_layout_of(destination_image);
+        const VkImageLayout outputEntryLayout = current_layout_of(to_uint64(g_state.outputImage.image));
+
+        // This transition is also what orders the copy behind the evaluation that wrote the
+        // output image: it is a full memory dependency, and it always emits, because the layout
+        // DLSS leaves the output in and TRANSFER_SRC_OPTIMAL cannot be the same layout. The
+        // motion pass, whose entry and exit layouts *can* coincide, owns an explicit barrier
+        // for exactly the case this one cannot reach.
+        record_layout_transition(recordingBuffer, g_state.outputImage.image, outputRange,
+                                 outputEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        note_layout_after_transition(to_uint64(g_state.outputImage.image),
+                                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        record_layout_transition(recordingBuffer, destination, destinationRange,
+                                 destinationEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        // One mip, one layer, same extent: the destination is the engine's output-sized target
+        // and the output image was allocated at exactly those dimensions, so this is a copy
+        // rather than a scale. A blit would silently accept a mismatch this call rejects.
+        VkImageCopy region{};
+        region.srcSubresource = VkImageSubresourceLayers{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.dstSubresource = VkImageSubresourceLayers{
+            static_cast<VkImageAspectFlags>(destination_aspect_mask), destination_base_mip_level,
+            destination_base_array_layer, 1};
+        region.extent = VkExtent3D{destination_width, destination_height, 1};
+        vkCmdCopyImage(recordingBuffer, g_state.outputImage.image,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+        // Both images go back where their owners expect them, in the same recording: the
+        // engine's target to the layout it arrived in, and the output image to the layout the
+        // next evaluation's transitions will start from.
+        record_layout_transition(recordingBuffer, destination, destinationRange,
+                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, destinationEntryLayout);
+        record_layout_transition(recordingBuffer, g_state.outputImage.image, outputRange,
+                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, outputEntryLayout);
+        note_layout_after_transition(to_uint64(g_state.outputImage.image), outputEntryLayout);
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);

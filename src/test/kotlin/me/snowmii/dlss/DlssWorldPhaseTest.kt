@@ -24,6 +24,8 @@ class DlssWorldPhaseTest {
 	private val evaluated = mutableListOf<Triple<RenderTarget, DlssJitterOffset, DlssFrameMotion>>()
 	private var targetChanges = 0
 	private var presentedWhenEvaluated = -1
+	private val evaluatedDestinations = mutableListOf<RenderTarget>()
+	private var composes = false
 
 	@Test
 	fun `an eligible phase renders into a render-sized scene target and overrides the world target`() {
@@ -208,6 +210,33 @@ class DlssWorldPhaseTest {
 	}
 
 	@Test
+	fun `a composed frame reaches the vanilla main target and is not blitted over`() {
+		composes = true
+		val phase = phase(readyRuntime())
+
+		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = camera())
+		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		// The upscaled frame is already in the main target; the low-resolution blit would paint
+		// over it with exactly what DLSS was there to replace.
+		assertSame(mainTarget, evaluatedDestinations.single())
+		assertTrue(presented.isEmpty())
+	}
+
+	@Test
+	fun `a frame whose evaluation composed nothing still shows the low-resolution scene`() {
+		composes = false
+		val phase = phase(readyRuntime())
+
+		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = camera())
+		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		assertEquals(listOf(worldTarget to mainTarget as RenderTarget), presented)
+	}
+
+	@Test
 	fun `a vanilla frame is never evaluated`() {
 		val phase = phase(readyRuntime())
 
@@ -241,9 +270,11 @@ class DlssWorldPhaseTest {
 		runtime = runtime,
 		present = { scene, main -> presented += scene to main },
 		onWorldTargetChanged = { targetChanges++ },
-		evaluateFrame = { rendered, jitter, motion ->
+		evaluateFrame = { rendered, destination, jitter, motion ->
 			presentedWhenEvaluated = presented.size
 			evaluated += Triple(rendered, jitter, motion)
+			evaluatedDestinations += destination
+			composes
 		},
 	)
 

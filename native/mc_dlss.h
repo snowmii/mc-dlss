@@ -121,6 +121,32 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(
     uint32_t render_width,
     uint32_t render_height);
 
+/*
+ * Copies the upscaled DLSS output into an engine image, recorded on the caller's command
+ * buffer.
+ *
+ * The output image belongs to this module and Minecraft has no handle for it, so the
+ * upscaled frame becomes visible only by being copied into the target the rest of the
+ * frame composes over. Recorded after mc_dlss_evaluate on the same command buffer, which
+ * is what orders the copy behind the evaluation that produced the image.
+ *
+ * The destination is handed back in the layout it arrived in. `destination_width` and
+ * `destination_height` must be the configured output dimensions: a destination of any
+ * other size is a caller that has lost track of its own configuration, not something to
+ * scale into. Calling before initialize, before configure, or before the images are
+ * acquired records nothing and fails.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(
+    uint64_t command_buffer,
+    uint64_t destination_image,
+    uint32_t destination_aspect_mask,
+    uint32_t destination_base_mip_level,
+    uint32_t destination_level_count,
+    uint32_t destination_base_array_layer,
+    uint32_t destination_layer_count,
+    uint32_t destination_width,
+    uint32_t destination_height);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
     uint64_t command_buffer,
     uint64_t color_view,

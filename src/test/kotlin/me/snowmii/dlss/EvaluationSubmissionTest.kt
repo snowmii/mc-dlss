@@ -350,6 +350,18 @@ class EvaluationSubmissionTest {
 			renderHeight: Int,
 		): Int = unreachable()
 
+		override fun presentOutput(
+			commandBuffer: Long,
+			destinationImage: Long,
+			destinationAspectMask: Int,
+			destinationBaseMipLevel: Int,
+			destinationLevelCount: Int,
+			destinationBaseArrayLayer: Int,
+			destinationLayerCount: Int,
+			destinationWidth: Int,
+			destinationHeight: Int,
+		): Int = unreachable()
+
 		@Suppress("LongParameterList")
 		override fun evaluate(
 			commandBuffer: Long,

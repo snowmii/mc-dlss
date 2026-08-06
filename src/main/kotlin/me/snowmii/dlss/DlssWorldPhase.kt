@@ -20,10 +20,11 @@ import java.util.Optional
  * that window - post chains, GUI clear, screenshots, hand and item, screen effects, the 3D
  * crosshair, and presentation - keeps seeing the untouched full-size main target.
  *
- * Closing an eligible phase presents the scene color into the main target with a
- * nearest-neighbour full-screen blit. That blit is deliberately *not* an upscale: it is how the
- * low-resolution world becomes visible at all before DLSS evaluation exists, and its blockiness
- * is the point - it is the internal scene resolution, shown directly.
+ * Closing an eligible phase evaluates DLSS and composes the upscaled result into the main target,
+ * which is what everything drawn afterwards renders on top of at output resolution. A frame whose
+ * evaluation produced nothing falls back to the nearest-neighbour blit of the low-resolution scene
+ * instead: deliberately *not* an upscale, so a failed frame is visibly the internal scene
+ * resolution rather than a black screen.
  *
  * Presentation and the sky-renderer reset are injected so the whole phase is verifiable off the
  * render thread; [forMinecraft] supplies the production wiring.
@@ -35,11 +36,14 @@ class DlssWorldPhase(
 	private val diagnostics: (String) -> Unit = {},
 	private val probeResolvedTarget: (() -> RenderTarget?)? = null,
 	/**
-	 * Records this frame's DLSS work against the scene it just rendered. Injected because reaching
-	 * the raw Vulkan handles behind a target needs Minecraft's backend types, and everything else
-	 * here is verifiable off the render thread.
+	 * Records this frame's DLSS work against the scene it just rendered and composes the result
+	 * into the destination, returning true when the destination now holds the upscaled frame.
+	 *
+	 * Injected because reaching the raw Vulkan handles behind a target needs Minecraft's backend
+	 * types, and everything else here is verifiable off the render thread.
 	 */
-	private val evaluateFrame: (RenderTarget, DlssJitterOffset, DlssFrameMotion) -> Unit = { _, _, _ -> },
+	private val evaluateFrame: (RenderTarget, RenderTarget, DlssJitterOffset, DlssFrameMotion) -> Boolean =
+		{ _, _, _, _ -> false },
 ) : AutoCloseable {
 	private var scene: RenderTarget? = null
 	private var mainTarget: RenderTarget? = null
@@ -147,27 +151,38 @@ class DlssWorldPhase(
 		runtime.endWorldPhase()
 
 		// Present only after the phase is closed, so the destination is the vanilla target.
-		if (rendered != null && destination != null) {
-			evaluate(rendered, jitter, motion)
+		if (rendered != null && destination != null && !evaluate(rendered, destination, jitter, motion)) {
+			// No DLSS image reached the target, so the frame still has to show something: the
+			// low-resolution scene, un-upscaled, exactly as it looked before composition existed.
 			present(rendered, destination)
 		}
 	}
 
 	/**
-	 * Records this frame's DLSS work against the scene the world just rendered.
+	 * Records this frame's DLSS work against the scene the world just rendered, and composes the
+	 * upscaled result into [destination]. Returns true when the destination holds it.
 	 *
 	 * Recorded here, at the tail of the world phase, because that is the first moment the scene
 	 * colour and depth are complete and the last moment before anything else in the frame touches
-	 * them. A frame missing its jitter, its motion, or the handles behind its target is skipped:
-	 * it went through the phase without everything an evaluation needs, and DLSS reading a stale
-	 * or absent input is worse than one frame of the low-resolution present.
+	 * them - and because everything the frame draws after this point (hand and item, screen
+	 * effects, the 3D crosshair, HUD, and GUI) renders into that same destination at output
+	 * resolution, on top of the DLSS image.
+	 *
+	 * A frame missing its jitter, its motion, or the handles behind its targets is skipped: it went
+	 * through the phase without everything an evaluation needs, and DLSS reading a stale or absent
+	 * input is worse than one frame of the low-resolution present.
 	 */
-	private fun evaluate(rendered: RenderTarget, jitter: DlssJitterOffset?, motion: DlssFrameMotion?) {
+	private fun evaluate(
+		rendered: RenderTarget,
+		destination: RenderTarget,
+		jitter: DlssJitterOffset?,
+		motion: DlssFrameMotion?,
+	): Boolean {
 		if (jitter == null || motion == null) {
-			return
+			return false
 		}
 
-		evaluateFrame(rendered, jitter, motion)
+		return evaluateFrame(rendered, destination, jitter, motion)
 	}
 
 	override fun close() {
@@ -271,11 +286,16 @@ class DlssWorldPhase(
 			},
 			diagnostics = diagnostics,
 			probeResolvedTarget = { Minecraft.getInstance().gameRenderer.mainRenderTarget() },
-			evaluateFrame = { rendered, jitter, motion ->
+			evaluateFrame = { rendered, destination, jitter, motion ->
 				val evaluation = runtime.frameEvaluation
 				val resources = sceneResourcesOf(rendered)
-				if (evaluation != null && resources != null) {
-					evaluation.evaluateFrame(resources, jitter, motion)
+				val destinationImage = (destination.colorTextureView as? VulkanGpuTextureView)
+					?.texture()
+					?.vkImage()
+				if (evaluation == null || resources == null || destinationImage == null) {
+					false
+				} else {
+					evaluation.evaluateFrame(resources, jitter, motion, destinationImage)
 				}
 			},
 		)

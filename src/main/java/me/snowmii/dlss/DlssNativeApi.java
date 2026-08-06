@@ -59,6 +59,25 @@ public interface DlssNativeApi {
 		int renderHeight
 	);
 
+	/**
+	 * Records the copy of the upscaled output image into an engine target, on the caller's
+	 * command buffer.
+	 *
+	 * This has to follow {@link #evaluate} on the same buffer: it copies the image the
+	 * evaluation writes, and the destination is what the rest of the frame composes over.
+	 */
+	int presentOutput(
+		long commandBuffer,
+		long destinationImage,
+		int destinationAspectMask,
+		int destinationBaseMipLevel,
+		int destinationLevelCount,
+		int destinationBaseArrayLayer,
+		int destinationLayerCount,
+		int destinationWidth,
+		int destinationHeight
+	);
+
 	int evaluate(
 		long commandBuffer,
 		long colorView,

@@ -63,12 +63,14 @@ class DlssFrameEvaluation(
 		scene: DlssSceneResources,
 		jitter: DlssJitterOffset,
 		motion: DlssFrameMotion,
+		destinationImage: Long = NO_DESTINATION,
 	): Boolean {
 		val vulkan = context() ?: return false
 		val held = images ?: adapter.acquireImages()?.also { images = it } ?: return false
 
 		val buffer = vulkan.recordCommandBuffer()
-		val recorded = record(buffer, scene, jitter, motion, held)
+		val recorded = record(buffer, scene, jitter, motion, held) &&
+			(destinationImage == NO_DESTINATION || present(buffer, destinationImage))
 		// Submitted on every path: see the class comment - an abandoned buffer is what actually
 		// breaks the renderer, not a failed evaluation.
 		vulkan.submitCommandBuffer(buffer)
@@ -90,6 +92,24 @@ class DlssFrameEvaluation(
 		images = null
 		adapter.releaseImages()
 	}
+
+	/**
+	 * Records the copy of the upscaled output into the engine target, after the evaluation that
+	 * wrote it and on the same buffer.
+	 *
+	 * Recorded here rather than by the world phase because the ordering is the whole point: the
+	 * copy has to sit behind the evaluation in one recording, and this is the only place holding
+	 * that recording.
+	 */
+	private fun present(buffer: VkCommandBuffer, destinationImage: Long): Boolean = adapter.presentOutput(
+		DlssPresentTarget(
+			commandBuffer = buffer.address(),
+			image = destinationImage,
+			aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			levelCount = 1,
+			layerCount = 1,
+		),
+	)
 
 	private fun record(
 		buffer: VkCommandBuffer,
@@ -180,6 +200,9 @@ class DlssFrameEvaluation(
 	}
 
 	private companion object {
+		/** No engine target: the frame is evaluated and its output is left where DLSS wrote it. */
+		const val NO_DESTINATION = 0L
+
 		/** Raw `VkImageAspectFlagBits`; every Minecraft target is one plain colour or depth image. */
 		const val VK_IMAGE_ASPECT_COLOR_BIT = 0x1
 		const val VK_IMAGE_ASPECT_DEPTH_BIT = 0x2
