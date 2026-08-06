@@ -1,0 +1,376 @@
+package me.snowmii.dlss
+
+import com.mojang.blaze3d.GpuFormat
+import com.mojang.blaze3d.pipeline.RenderTarget
+import org.joml.Matrix4f
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import java.nio.file.Path
+
+/**
+ * M-12's rung: DLSS engages for supported normal in-world frames and nothing else, every
+ * discontinuity resets the accumulated history, a failed native stage restores full-resolution
+ * rendering for the rest of the session, and the failure names its exact native stage and result.
+ *
+ * This is the milestone the candidate rests on, because it is the one that decides what a reviewer
+ * sees when something goes wrong. Every other milestone in this effort makes DLSS work; this one
+ * makes a session that cannot work stay a playable, full-resolution Minecraft with a log line
+ * naming the reason.
+ *
+ * Everything below drives the production seams - the world phase, the runtime, the lifecycle
+ * adapter, and the session - off the render thread. The native side is a double, and the failure
+ * path goes through the adapter, which takes its command buffer and images as plain handles, so
+ * nothing here needs a GPU.
+ */
+class EnablementFallbackTest {
+	private val output = DlssDimensions(2560, 1440)
+	private val render = DlssDimensions(1280, 720)
+
+	private val mainTarget = FakeTarget(output.width, output.height)
+
+	@Test
+	fun `a normal in-world frame renders into the low-resolution scene target`() {
+		val fixture = fixture()
+
+		val resolved = fixture.frame(normalInWorldFrame = true)
+
+		assertEquals(render.width, resolved.width)
+		assertEquals(render.height, resolved.height)
+		assertEquals(DlssFrameRoute.DLSS, fixture.route?.frame?.route)
+	}
+
+	@Test
+	fun `a panoramic frame renders full-resolution into Minecraft's own target`() {
+		val fixture = fixture()
+
+		fixture.frame(normalInWorldFrame = true)
+		val resolved = fixture.frame(normalInWorldFrame = false)
+
+		assertSame(mainTarget, resolved)
+		assertEquals("unsupported-frame", fixture.route?.frame?.reason)
+	}
+
+	@Test
+	fun `a window the configuration does not name renders full-resolution`() {
+		val fixture = fixture()
+		val resized = FakeTarget(1920, 1080)
+
+		val resolved = fixture.frame(normalInWorldFrame = true, target = resized)
+
+		assertSame(resized, resolved)
+		assertEquals("unsupported-output-size", fixture.route?.frame?.reason)
+	}
+
+	@Test
+	fun `a disabled configuration renders every frame full-resolution and never calls native`() {
+		val fixture = fixture(enabled = false)
+
+		assertSame(mainTarget, fixture.frame(normalInWorldFrame = true))
+		assertSame(mainTarget, fixture.frame(normalInWorldFrame = true))
+
+		assertEquals(DlssSessionState.DISABLED, fixture.session.state)
+		assertEquals(0, fixture.native.initializeCalls)
+		assertNull(fixture.runtime.renderDimensions)
+	}
+
+	@Test
+	fun `native startup is attempted once and a failed one is never retried`() {
+		val fixture = fixture(initializeResult = 0xBAD00001.toInt())
+
+		repeat(3) { assertSame(mainTarget, fixture.frame(normalInWorldFrame = true)) }
+
+		assertEquals(1, fixture.native.initializeCalls)
+		assertEquals(DlssSessionState.FALLBACK_LATCHED, fixture.session.state)
+		assertEquals(
+			"DLSS fallback latched: stage=initialize result=0xBAD00001",
+			fixture.latchDiagnostics().single(),
+		)
+	}
+
+	@Test
+	fun `a failed native stage restores full-resolution routing for the rest of the session`() {
+		val fixture = fixture()
+
+		val beforeFailure = fixture.frame(normalInWorldFrame = true)
+		assertEquals(render.width, beforeFailure.width)
+
+		fixture.native.evaluateResult = 0xBAD00005.toInt()
+		assertFalse(fixture.evaluate(), "a failing native stage must report failure")
+
+		repeat(3) { assertSame(mainTarget, fixture.frame(normalInWorldFrame = true)) }
+		assertEquals("latched-fallback", fixture.route?.frame?.reason)
+		assertTrue(fixture.released > 0, "the low-resolution target must not stay allocated")
+		assertEquals(1, fixture.native.evaluateCalls, "a latched session must not evaluate again")
+	}
+
+	@Test
+	fun `a latched failure names its exact native stage and result exactly once`() {
+		val fixture = fixture()
+
+		fixture.frame(normalInWorldFrame = true)
+		fixture.native.evaluateResult = 0xBAD00005.toInt()
+		fixture.evaluate()
+		fixture.evaluate()
+
+		assertEquals(
+			"DLSS fallback latched: stage=evaluate result=0xBAD00005",
+			fixture.latchDiagnostics().single(),
+		)
+		assertEquals(DlssNativeStage.EVALUATE, fixture.session.failure?.stage)
+		assertEquals(0xBAD00005.toInt(), fixture.session.failure?.resultCode)
+	}
+
+	@Test
+	fun `a full-resolution frame between DLSS frames resets the history`() {
+		val fixture = fixture()
+
+		fixture.frame(normalInWorldFrame = true)
+		fixture.frame(normalInWorldFrame = true)
+		fixture.frame(normalInWorldFrame = false)
+
+		fixture.frame(normalInWorldFrame = true)
+		assertTrue(fixture.motion!!.reset)
+	}
+
+	@Test
+	fun `a level change resets the history`() {
+		val fixture = fixture()
+
+		fixture.frame(normalInWorldFrame = true)
+		fixture.frame(normalInWorldFrame = true)
+		fixture.phase.resetHistory()
+
+		fixture.frame(normalInWorldFrame = true)
+		assertTrue(fixture.motion!!.reset)
+	}
+
+	@Test
+	fun `a camera that jumped resets the history`() {
+		val fixture = fixture()
+
+		fixture.frame(normalInWorldFrame = true)
+		fixture.frame(normalInWorldFrame = true)
+		assertFalse(fixture.motion!!.reset)
+
+		fixture.frame(normalInWorldFrame = true, cameraX = 12_000.0)
+		assertTrue(fixture.motion!!.reset)
+	}
+
+	private fun fixture(
+		enabled: Boolean = true,
+		initializeResult: Int = DlssNativeApi.SUCCESS_RESULT,
+	) = Fixture(enabled, initializeResult)
+
+	/** The production stack, wired the way `DlssRenderRuntime.forMinecraft` wires it. */
+	private inner class Fixture(enabled: Boolean, initializeResult: Int) {
+		val diagnostics = mutableListOf<String>()
+		val native = FakeNative(initializeResult, render)
+		var released = 0
+
+		/** This frame's route and motion, captured while the phase was still open. */
+		var route: WorldTargetRoute? = null
+		var motion: DlssFrameMotion? = null
+
+		val session = DlssSession(
+			DlssStartupConfig(
+				enabled = enabled,
+				qualityMode = DlssQualityMode.QUALITY,
+				outputDimensions = output,
+				sdkPath = null,
+				nativeLibraryPath = null,
+				dataPath = null,
+				warnings = emptyList(),
+			),
+			diagnostics::add,
+		)
+
+		private val adapter = DlssLifecycleAdapter(session, native)
+
+		val runtime = DlssRenderRuntime(
+			session = session,
+			sceneTarget = DlssSceneTarget(
+				allocate = { width, height -> FakeTarget(width, height) },
+				release = { released++ },
+			),
+			startup = { adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) },
+			clock = {
+				now += 16_000_000L
+				now
+			},
+		)
+
+		val phase = DlssWorldPhase(
+			runtime = runtime,
+			present = { _, _ -> },
+			onWorldTargetChanged = {},
+			diagnostics = diagnostics::add,
+		)
+
+		private var now = 0L
+
+		/** One world frame through both seams: the projection upload, then the phase itself. */
+		fun frame(
+			normalInWorldFrame: Boolean,
+			target: RenderTarget = mainTarget,
+			cameraX: Double = 0.0,
+		): RenderTarget {
+			phase.prepare(normalInWorldFrame, target, camera(cameraX))
+			val resolved = phase.begin(normalInWorldFrame, target)
+			// Read inside the phase: closing it drops the route, the jitter, and the motion, which
+			// is exactly the window the renderer itself sees them in.
+			route = runtime.activeRoute
+			motion = runtime.activeMotion
+			phase.end()
+			return resolved
+		}
+
+		/** The fallback diagnostics alone; the phase reports its first decision on the same sink. */
+		fun latchDiagnostics() = diagnostics.filter { it.startsWith("DLSS fallback latched") }
+
+		/** One evaluation through the adapter, which takes every handle as a plain value. */
+		fun evaluate(): Boolean = adapter.evaluate(DlssEvaluationRequest(commandBuffer = 0xF00DL))
+
+		private fun camera(x: Double) = DlssCameraSample(
+			projection = Matrix4f().perspective(1.2f, 16f / 9f, 0.05f, 1000f),
+			viewRotation = Matrix4f(),
+			cameraX = x,
+			cameraY = 64.0,
+			cameraZ = 0.0,
+		)
+	}
+
+	/** Render target with no GPU buffers, so the whole stack is testable off the render thread. */
+	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+		init {
+			this.width = width
+			this.height = height
+		}
+
+		override fun createBuffers(width: Int, height: Int) {
+			this.width = width
+			this.height = height
+		}
+
+		override fun destroyBuffers() = Unit
+	}
+
+	/** The native bridge as results, which is all the enablement and fallback paths read of it. */
+	private class FakeNative(private val initializeResult: Int, private val render: DlssDimensions) : DlssNativeApi {
+		var initializeCalls = 0
+		var evaluateCalls = 0
+		var evaluateResult = DlssNativeApi.SUCCESS_RESULT
+
+		override fun initialize(
+			vkInstance: Long,
+			vkPhysicalDevice: Long,
+			vkDevice: Long,
+			sdkPath: Path,
+			dataPath: Path,
+		): Int {
+			initializeCalls++
+			return initializeResult
+		}
+
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) = render
+
+		override fun configure(
+			outputWidth: Int,
+			outputHeight: Int,
+			renderWidth: Int,
+			renderHeight: Int,
+			qualityMode: Int,
+		) = DlssNativeApi.SUCCESS_RESULT
+
+		override fun acquireImages() = DlssEvaluationImages(
+			motionImage = 0x1001,
+			motionView = 0x1002,
+			motionFormat = 83,
+			outputImage = 0x2001,
+			outputView = 0x2002,
+			outputFormat = 37,
+		)
+
+		override fun releaseImages() = DlssNativeApi.SUCCESS_RESULT
+
+		override fun writeMotion(
+			commandBuffer: Long,
+			depthView: Long,
+			depthImage: Long,
+			depthFormat: Int,
+			depthAspectMask: Int,
+			depthBaseMipLevel: Int,
+			depthLevelCount: Int,
+			depthBaseArrayLayer: Int,
+			depthLayerCount: Int,
+			reprojection: FloatArray,
+			renderWidth: Int,
+			renderHeight: Int,
+		) = DlssNativeApi.SUCCESS_RESULT
+
+		override fun presentOutput(
+			commandBuffer: Long,
+			destinationImage: Long,
+			destinationAspectMask: Int,
+			destinationBaseMipLevel: Int,
+			destinationLevelCount: Int,
+			destinationBaseArrayLayer: Int,
+			destinationLayerCount: Int,
+			destinationWidth: Int,
+			destinationHeight: Int,
+		) = DlssNativeApi.SUCCESS_RESULT
+
+		@Suppress("LongParameterList")
+		override fun evaluate(
+			commandBuffer: Long,
+			colorView: Long,
+			colorImage: Long,
+			colorFormat: Int,
+			colorAspectMask: Int,
+			colorBaseMipLevel: Int,
+			colorLevelCount: Int,
+			colorBaseArrayLayer: Int,
+			colorLayerCount: Int,
+			depthView: Long,
+			depthImage: Long,
+			depthFormat: Int,
+			depthAspectMask: Int,
+			depthBaseMipLevel: Int,
+			depthLevelCount: Int,
+			depthBaseArrayLayer: Int,
+			depthLayerCount: Int,
+			motionView: Long,
+			motionImage: Long,
+			motionFormat: Int,
+			motionAspectMask: Int,
+			motionBaseMipLevel: Int,
+			motionLevelCount: Int,
+			motionBaseArrayLayer: Int,
+			motionLayerCount: Int,
+			outputView: Long,
+			outputImage: Long,
+			outputFormat: Int,
+			outputAspectMask: Int,
+			outputBaseMipLevel: Int,
+			outputLevelCount: Int,
+			outputBaseArrayLayer: Int,
+			outputLayerCount: Int,
+			renderWidth: Int,
+			renderHeight: Int,
+			outputWidth: Int,
+			outputHeight: Int,
+			jitterX: Float,
+			jitterY: Float,
+			motionScaleX: Float,
+			motionScaleY: Float,
+			frameTimeMilliseconds: Float,
+			resetHistory: Boolean,
+		): Int {
+			evaluateCalls++
+			return evaluateResult
+		}
+	}
+}
