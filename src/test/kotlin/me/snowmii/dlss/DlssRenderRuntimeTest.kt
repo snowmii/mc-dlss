@@ -100,6 +100,64 @@ class DlssRenderRuntimeTest {
 	}
 
 	@Test
+	fun `each eligible world phase advances the jitter sequence exactly once`() {
+		val session = session(enabled = true)
+		val runtime = runtime(session) { markReady(session); render }
+		val expected = DlssJitter(render, output)
+
+		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
+		val first = runtime.activeJitter
+		runtime.endWorldPhase()
+		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
+		val second = runtime.activeJitter
+
+		assertEquals(expected.advance(), first)
+		assertEquals(expected.advance(), second)
+		assertEquals(render, first!!.renderDimensions)
+	}
+
+	@Test
+	fun `a vanilla frame publishes no jitter and restarts the sequence`() {
+		val session = session(enabled = true)
+		val runtime = runtime(session) { markReady(session); render }
+		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
+		val first = runtime.activeJitter
+		runtime.endWorldPhase()
+
+		runtime.beginWorldPhase(normalInWorldFrame = false, outputDimensions = output)
+		val duringVanilla = runtime.activeJitter
+		runtime.endWorldPhase()
+		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
+
+		assertNull(duringVanilla)
+		assertEquals(first, runtime.activeJitter)
+	}
+
+	@Test
+	fun `ending a world phase drops the published jitter`() {
+		val session = session(enabled = true)
+		val runtime = runtime(session) { markReady(session); render }
+
+		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
+		runtime.endWorldPhase()
+
+		assertNull(runtime.activeJitter)
+	}
+
+	@Test
+	fun `a session without DLSS never publishes jitter`() {
+		val session = session(enabled = true)
+		val runtime = runtime(session) {
+			session.latchFailure(DlssNativeFailure(DlssNativeStage.INITIALIZE, 0xBAD00001.toInt()))
+			null
+		}
+
+		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
+
+		assertNull(runtime.activeJitter)
+	}
+
+	@Test
 	fun `close releases the scene target and closes the session`() {
 		val session = session(enabled = true)
 		val runtime = runtime(session) { markReady(session); render }

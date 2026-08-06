@@ -26,6 +26,7 @@ class DlssRenderRuntime(
 ) : AutoCloseable {
 	private var startupAttempted = false
 	private var router: WorldTargetRouter? = null
+	private var jitter: DlssJitter? = null
 
 	/**
 	 * Target the world phase must render into, or null when the frame renders vanilla
@@ -44,6 +45,16 @@ class DlssRenderRuntime(
 		private set
 
 	/**
+	 * Sub-pixel jitter for the current world phase, or null outside an eligible DLSS phase.
+	 *
+	 * The world projection and the NGX evaluation parameter both have to describe the same
+	 * offset, so the phase advances the sequence exactly once and publishes the single value
+	 * both of them read.
+	 */
+	var activeJitter: DlssJitterOffset? = null
+		private set
+
+	/**
 	 * Opens the world phase. Returns the low-resolution scene target for an eligible DLSS
 	 * frame, or null when the frame must use the vanilla main target.
 	 */
@@ -54,6 +65,7 @@ class DlssRenderRuntime(
 			sceneTarget.close()
 			activeRoute = null
 			activeWorldTarget = null
+			activeJitter = null
 			return null
 		}
 
@@ -61,6 +73,14 @@ class DlssRenderRuntime(
 		val target = sceneTarget.acquire(route)
 		activeRoute = route
 		activeWorldTarget = target
+		// A vanilla frame breaks the accumulated history, so it restarts the sequence rather
+		// than consuming a phase no evaluation will ever see.
+		activeJitter = if (target != null) {
+			jitter?.advance()
+		} else {
+			jitter?.reset()
+			null
+		}
 		return target
 	}
 
@@ -68,12 +88,14 @@ class DlssRenderRuntime(
 	fun endWorldPhase() {
 		activeRoute = null
 		activeWorldTarget = null
+		activeJitter = null
 	}
 
 	override fun close() {
 		endWorldPhase()
 		sceneTarget.close()
 		router = null
+		jitter = null
 		renderDimensions = null
 		session.close()
 	}
@@ -95,6 +117,7 @@ class DlssRenderRuntime(
 		}
 
 		renderDimensions = dimensions
+		jitter = DlssJitter(dimensions, session.config.outputDimensions)
 		return WorldTargetRouter(session, dimensions).also { router = it }
 	}
 
