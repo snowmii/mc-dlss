@@ -6,7 +6,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 class DlssFeatureLifecycleTest {
-	private val source = Files.readString(Path.of("native", "mc_dlss.cpp"))
+	// Newlines are normalized because these assertions match the source text literally, and a
+	// Windows checkout hands the same file back with CRLF.
+	private val source = Files.readString(Path.of("native", "mc_dlss.cpp")).replace("\r\n", "\n")
 
 	@Test
 	fun featureCreationIsDeferredToEvaluationCommandBuffer() {

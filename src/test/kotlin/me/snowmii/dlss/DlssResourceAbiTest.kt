@@ -59,7 +59,9 @@ class DlssResourceAbiTest {
 
 	@Test
 	fun nativeConstructionPreservesEveryResourceMetadataAndDimensions() {
-		val source = Files.readString(Path.of("native", "mc_dlss.cpp"))
+		// Normalized for the same reason as DlssFeatureLifecycleTest: a Windows checkout hands
+		// this file back with CRLF, and these patterns match the source text literally.
+		val source = Files.readString(Path.of("native", "mc_dlss.cpp")).replace("\r\n", "\n")
 
 		listOf("color", "depth", "motion", "output").forEach { resource ->
 			assertTrue(
