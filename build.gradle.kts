@@ -39,8 +39,9 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 
 	val nativeSource = layout.projectDirectory.file("native/mc_dlss.cpp")
 	val nativeHeader = layout.projectDirectory.file("native/mc_dlss.h")
+	val motionShader = layout.projectDirectory.file("native/mc_dlss_motion.comp")
 	val outputDirectory = layout.buildDirectory.dir("native")
-	inputs.files(nativeSource, nativeHeader)
+	inputs.files(nativeSource, nativeHeader, motionShader)
 	outputs.file(outputDirectory.map { it.file("mc_dlss.dll") })
 
 	doFirst {
@@ -54,8 +55,10 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 		val vulkanLibrary = vulkanSdk.resolve("Lib/vulkan-1.lib")
 		val ngxHeader = ngxSdk.resolve("include/nvsdk_ngx.h")
 		val ngxLibrary = ngxSdk.resolve("lib/Windows_x86_64/x64/nvsdk_ngx_s.lib")
+		val glslc = vulkanSdk.resolve("Bin/glslc.exe")
 
 		check(vsDevCmd.isFile) { "Visual Studio 2022 Build Tools missing: $vsDevCmd" }
+		check(glslc.isFile) { "Vulkan SDK 1.4.357.0 shader compiler missing: $glslc" }
 		check(vulkanHeader.isFile) { "Vulkan SDK 1.4.357.0 header missing: $vulkanHeader (set VULKAN_SDK or install at C:/VulkanSDK/1.4.357.0)" }
 		check(vulkanLibrary.isFile) { "Vulkan SDK 1.4.357.0 loader library missing: $vulkanLibrary" }
 		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 header missing: $ngxHeader" }
@@ -63,10 +66,17 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 
 		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
 		val output = outputDir.resolve("mc_dlss.dll")
+		// The motion-vector shader is compiled to SPIR-V and emitted as a C initializer list,
+		// which mc_dlss.cpp #includes into a constant array. Embedding it keeps the bridge a
+		// single loadable file with no runtime search path for a shader blob beside it.
+		val motionSpirV = outputDir.resolve("mc_dlss_motion.spv.h")
 		commandLine(
 			"cmd.exe", "/d", "/c",
 			"call \"${vsDevCmd.absolutePath}\" -arch=x64 -host_arch=x64 && " +
+				"\"${glslc.absolutePath}\" -O --target-env=vulkan1.2 -mfmt=c " +
+				"-o \"${motionSpirV.absolutePath}\" \"${motionShader.asFile.absolutePath}\" && " +
 				"cl.exe /nologo /std:c++17 /EHsc /LD /O2 /DNOMINMAX /Fo\"${outputDir.resolve("mc_dlss.obj").absolutePath}\" " +
+				"/I\"${outputDir.absolutePath}\" " +
 				"/I\"${vulkanSdk.resolve("Include").absolutePath}\" " +
 				"/I\"${ngxSdk.resolve("include").absolutePath}\" " +
 				"\"${nativeSource.asFile.absolutePath}\" " +

@@ -156,6 +156,9 @@ class DlssResourceAbiTest {
 			__declspec(dllexport) int __cdecl mc_dlss_acquire_images(
 				uint64_t*, uint64_t*, uint32_t*, uint64_t*, uint64_t*, uint32_t*) { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_release_images() { return 1; }
+			__declspec(dllexport) int __cdecl mc_dlss_write_motion(
+				uint64_t, uint64_t, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+				const float*, uint32_t, uint32_t) { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_reset() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_close() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_query_instance_extension(

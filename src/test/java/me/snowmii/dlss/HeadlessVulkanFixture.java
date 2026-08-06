@@ -1,17 +1,23 @@
 package me.snowmii.dlss;
 
+import java.nio.ByteOrder;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
+import java.nio.ShortBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.BiFunction;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.EXTDebugUtils;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkApplicationInfo;
+import org.lwjgl.vulkan.VkBufferCreateInfo;
+import org.lwjgl.vulkan.VkBufferImageCopy;
+import org.lwjgl.vulkan.VkClearDepthStencilValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkCommandBufferAllocateInfo;
 import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
@@ -445,6 +451,131 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				barrier
 			);
 		}
+	}
+
+	/**
+	 * Clears a depth image to a uniform value, so a test can state exactly what depth the
+	 * shader under test reads.
+	 *
+	 * Recorded on the caller's command buffer, and legal in VK_IMAGE_LAYOUT_GENERAL, which is
+	 * where {@link #createEngineImage} leaves every image and where Minecraft rests its own.
+	 */
+	public void recordDepthClear(final VkCommandBuffer commandBuffer, final EngineImage image, final float depth) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkClearDepthStencilValue value = VkClearDepthStencilValue.calloc(stack).depth(depth).stencil(0);
+			VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+			range.get(0).set(image.aspectMask(), 0, 1, 0, 1);
+			VK10.vkCmdClearDepthStencilImage(
+				commandBuffer,
+				image.image(),
+				VK10.VK_IMAGE_LAYOUT_GENERAL,
+				value,
+				range
+			);
+		}
+	}
+
+	/**
+	 * Reads back a two-channel half-float colour image as interleaved floats, x then y per
+	 * pixel, in row-major order.
+	 *
+	 * This is the only way to see what a compute dispatch actually wrote: the image is
+	 * device-local, so the contents have to travel through a host-visible staging buffer. The
+	 * image is taken from VK_IMAGE_LAYOUT_GENERAL and handed straight back to it, so whoever
+	 * tracks its layout stays right.
+	 */
+	public float[] readRg16fImage(final long image, final int width, final int height) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			final long byteCount = (long)width * height * 2L * Short.BYTES;
+			VkBufferCreateInfo bufferInfo = VkBufferCreateInfo.calloc(stack)
+				.sType$Default()
+				.size(byteCount)
+				.usage(VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+				.sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE);
+			LongBuffer bufferPtr = stack.callocLong(1);
+			checkVk(VK10.vkCreateBuffer(device, bufferInfo, null, bufferPtr), "vkCreateBuffer");
+			long buffer = bufferPtr.get(0);
+
+			VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
+			VK10.vkGetBufferMemoryRequirements(device, buffer, requirements);
+			VkMemoryAllocateInfo allocateInfo = VkMemoryAllocateInfo.calloc(stack)
+				.sType$Default()
+				.allocationSize(requirements.size())
+				.memoryTypeIndex(hostVisibleMemoryType(stack, requirements.memoryTypeBits()));
+			LongBuffer memoryPtr = stack.callocLong(1);
+			checkVk(VK10.vkAllocateMemory(device, allocateInfo, null, memoryPtr), "vkAllocateMemory");
+			long memory = memoryPtr.get(0);
+			checkVk(VK10.vkBindBufferMemory(device, buffer, memory, 0), "vkBindBufferMemory");
+
+			VkCommandBuffer copy = allocateAndBeginCommandBuffer();
+			recordColorLayoutTransition(stack, copy, image, VK10.VK_IMAGE_LAYOUT_GENERAL,
+				VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+			VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
+			region.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
+			region.get(0).imageSubresource().set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1);
+			region.get(0).imageOffset().set(0, 0, 0);
+			region.get(0).imageExtent().set(width, height, 1);
+			VK10.vkCmdCopyImageToBuffer(copy, image, VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, region);
+			recordColorLayoutTransition(stack, copy, image, VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				VK10.VK_IMAGE_LAYOUT_GENERAL);
+			endSubmitAndWait(copy);
+
+			PointerBuffer mapped = stack.callocPointer(1);
+			checkVk(VK10.vkMapMemory(device, memory, 0, byteCount, 0, mapped), "vkMapMemory");
+			ShortBuffer halves = MemoryUtil.memByteBuffer(mapped.get(0), (int)byteCount)
+				.order(ByteOrder.nativeOrder())
+				.asShortBuffer();
+			float[] values = new float[width * height * 2];
+			for (int index = 0; index < values.length; index++) {
+				values[index] = Float.float16ToFloat(halves.get(index));
+			}
+			VK10.vkUnmapMemory(device, memory);
+			VK10.vkDestroyBuffer(device, buffer, null);
+			VK10.vkFreeMemory(device, memory, null);
+			return values;
+		}
+	}
+
+	private void recordColorLayoutTransition(
+		final MemoryStack stack,
+		final VkCommandBuffer commandBuffer,
+		final long image,
+		final int oldLayout,
+		final int newLayout
+	) {
+		VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack)
+			.sType$Default()
+			.srcAccessMask(VK10.VK_ACCESS_MEMORY_READ_BIT | VK10.VK_ACCESS_MEMORY_WRITE_BIT)
+			.dstAccessMask(VK10.VK_ACCESS_MEMORY_READ_BIT | VK10.VK_ACCESS_MEMORY_WRITE_BIT)
+			.oldLayout(oldLayout)
+			.newLayout(newLayout)
+			.srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED)
+			.dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED)
+			.image(image);
+		barrier.get(0).subresourceRange().set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+		VK10.vkCmdPipelineBarrier(
+			commandBuffer,
+			VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			0,
+			null,
+			null,
+			barrier
+		);
+	}
+
+	private int hostVisibleMemoryType(final MemoryStack stack, final int typeBits) {
+		VkPhysicalDeviceMemoryProperties properties = VkPhysicalDeviceMemoryProperties.calloc(stack);
+		VK10.vkGetPhysicalDeviceMemoryProperties(physicalDevice, properties);
+		int required = VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+		for (int i = 0; i < properties.memoryTypeCount(); i++) {
+			boolean allowed = (typeBits & (1 << i)) != 0;
+			int flags = properties.memoryTypes(i).propertyFlags();
+			if (allowed && (flags & required) == required) {
+				return i;
+			}
+		}
+		throw new IllegalStateException("No host-visible coherent memory type for typeBits " + typeBits);
 	}
 
 	/**

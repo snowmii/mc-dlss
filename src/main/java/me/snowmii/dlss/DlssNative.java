@@ -28,6 +28,7 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 	private final MethodHandle configure;
 	private final MethodHandle acquireImages;
 	private final MethodHandle releaseImages;
+	private final MethodHandle writeMotion;
 	private final MethodHandle evaluate;
 	private final MethodHandle reset;
 	private final MethodHandle close;
@@ -74,6 +75,25 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 			)
 		);
 		this.releaseImages = bind(lookup, "mc_dlss_release_images", FunctionDescriptor.of(JAVA_INT));
+		this.writeMotion = bind(
+			lookup,
+			"mc_dlss_write_motion",
+			FunctionDescriptor.of(
+				JAVA_INT,
+				JAVA_LONG, // command_buffer
+				JAVA_LONG, // depth_view
+				JAVA_LONG, // depth_image
+				JAVA_INT, // depth_format
+				JAVA_INT, // depth_aspect_mask
+				JAVA_INT, // depth_base_mip_level
+				JAVA_INT, // depth_level_count
+				JAVA_INT, // depth_base_array_layer
+				JAVA_INT, // depth_layer_count
+				ValueLayout.ADDRESS, // reprojection
+				JAVA_INT, // render_width
+				JAVA_INT // render_height
+			)
+		);
 		this.evaluate = bind(
 			lookup,
 			"mc_dlss_evaluate",
@@ -279,6 +299,45 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 			return (int)this.releaseImages.invokeExact();
 		} catch (Throwable error) {
 			throw nativeError("release-images", error);
+		}
+	}
+
+	@Override
+	public int writeMotion(
+		final long commandBuffer,
+		final long depthView,
+		final long depthImage,
+		final int depthFormat,
+		final int depthAspectMask,
+		final int depthBaseMipLevel,
+		final int depthLevelCount,
+		final int depthBaseArrayLayer,
+		final int depthLayerCount,
+		final float[] reprojection,
+		final int renderWidth,
+		final int renderHeight
+	) {
+		if (reprojection.length != 16) {
+			throw new IllegalArgumentException("Reprojection must be 16 column-major floats");
+		}
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment matrix = callArena.allocateFrom(JAVA_FLOAT, reprojection);
+			return (int)this.writeMotion.invokeExact(
+				commandBuffer,
+				depthView,
+				depthImage,
+				depthFormat,
+				depthAspectMask,
+				depthBaseMipLevel,
+				depthLevelCount,
+				depthBaseArrayLayer,
+				depthLayerCount,
+				matrix,
+				renderWidth,
+				renderHeight
+			);
+		} catch (Throwable error) {
+			throw nativeError("write-motion", error);
 		}
 	}
 

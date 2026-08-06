@@ -92,6 +92,35 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_acquire_images(
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_release_images(void);
 
+/*
+ * Camera-only motion vectors, recorded on the caller's command buffer.
+ *
+ * DLSS reads motion from an image nothing in Minecraft fills, so the bridge fills it
+ * itself: a compute dispatch reads the engine's depth image, maps every pixel's clip
+ * position through `reprojection`, and stores the normalized-device difference into the
+ * motion image mc_dlss_acquire_images returned. `reprojection` is 16 floats in
+ * column-major order - the same layout GLSL and JOML use - and must be the jitter-free
+ * reprojection, because NGX is told this frame's jitter separately.
+ *
+ * Records and never submits: like mc_dlss_evaluate, the work is ordered by Minecraft's own
+ * graphics submission. The depth image is handed back in the layout it arrived in. Calling
+ * before initialize, before configure, or before the images are acquired records nothing
+ * and fails.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(
+    uint64_t command_buffer,
+    uint64_t depth_view,
+    uint64_t depth_image,
+    uint32_t depth_format,
+    uint32_t depth_aspect_mask,
+    uint32_t depth_base_mip_level,
+    uint32_t depth_level_count,
+    uint32_t depth_base_array_layer,
+    uint32_t depth_layer_count,
+    const float* reprojection,
+    uint32_t render_width,
+    uint32_t render_height);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
     uint64_t command_buffer,
     uint64_t color_view,

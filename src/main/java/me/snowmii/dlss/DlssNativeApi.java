@@ -37,6 +37,28 @@ public interface DlssNativeApi {
 
 	int releaseImages();
 
+	/**
+	 * Records the camera-only motion pass on the caller's command buffer, filling the
+	 * native motion image from the engine's depth image.
+	 *
+	 * {@code reprojection} is the 16 column-major floats of {@code DlssFrameMotion.reprojection},
+	 * which maps a jittered clip position to the previous frame's unjittered one.
+	 */
+	int writeMotion(
+		long commandBuffer,
+		long depthView,
+		long depthImage,
+		int depthFormat,
+		int depthAspectMask,
+		int depthBaseMipLevel,
+		int depthLevelCount,
+		int depthBaseArrayLayer,
+		int depthLayerCount,
+		float[] reprojection,
+		int renderWidth,
+		int renderHeight
+	);
+
 	int evaluate(
 		long commandBuffer,
 		long colorView,

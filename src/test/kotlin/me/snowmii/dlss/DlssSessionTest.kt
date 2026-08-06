@@ -222,6 +222,7 @@ class DlssSessionTest {
 		var evaluateCalls = 0
 		var acquireImageCalls = 0
 		var releaseImageCalls = 0
+		var writeMotionCalls = 0
 		var lastEvaluation: DlssEvaluationRequest? = null
 		override fun initialize(
 			vkInstance: Long,
@@ -271,6 +272,26 @@ class DlssSessionTest {
 		override fun releaseImages(): Int {
 			releaseImageCalls++
 			return releaseImagesResult
+		}
+
+		// The session lifecycle never records GPU work, so the motion pass only has to exist
+		// here for the interface to be implemented.
+		override fun writeMotion(
+			commandBuffer: Long,
+			depthView: Long,
+			depthImage: Long,
+			depthFormat: Int,
+			depthAspectMask: Int,
+			depthBaseMipLevel: Int,
+			depthLevelCount: Int,
+			depthBaseArrayLayer: Int,
+			depthLayerCount: Int,
+			reprojection: FloatArray,
+			renderWidth: Int,
+			renderHeight: Int,
+		): Int {
+			writeMotionCalls++
+			return DlssNativeApi.SUCCESS_RESULT
 		}
 
 		override fun evaluate(

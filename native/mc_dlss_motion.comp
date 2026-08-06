@@ -1,0 +1,46 @@
+#version 450
+
+// Camera-only motion vectors for DLSS, in normalized device units.
+//
+// Every pixel of the rendered frame is a clip position the engine already produced. The
+// reprojection sent down as a push constant maps that jittered position to where the same
+// surface point sat in the previous frame, jitter-free, so the whole per-pixel job is one
+// matrix multiply, one perspective divide, and one subtraction. There is no object motion
+// here by design - this effort reconstructs camera motion only.
+//
+// Depth is read exactly as the engine wrote it. Minecraft 26.2 renders reversed-Z, and
+// nothing below compares, rescales, or reorders it: the value travels through the
+// reprojection as the z of a clip position and comes back out through the divide.
+//
+// The stored vector stays in normalized device units. NGX is told the render-pixel scale
+// separately through InMVScale, which is what keeps this shader free of any dependency on
+// the render size beyond the bounds check.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D depthTexture;
+layout(set = 0, binding = 1, rg16f) uniform writeonly image2D motionImage;
+
+layout(push_constant) uniform MotionPushConstants {
+	mat4 reprojection;
+	ivec2 renderSize;
+} constants;
+
+void main() {
+	ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+	// The dispatch is rounded up to whole workgroups, so the last one runs past the image.
+	if (pixel.x >= constants.renderSize.x || pixel.y >= constants.renderSize.y) {
+		return;
+	}
+
+	float depth = texelFetch(depthTexture, pixel, 0).x;
+	// Vulkan's framebuffer origin is top-left and NDC y is -1 there, so the pixel index maps
+	// straight onto NDC without a flip. Sampling the pixel centre is what makes a still
+	// camera produce exactly zero rather than half a pixel of drift.
+	vec2 ndc = ((vec2(pixel) + 0.5) / vec2(constants.renderSize)) * 2.0 - 1.0;
+	vec4 previous = constants.reprojection * vec4(ndc, depth, 1.0);
+	// A zero w is a point the previous camera cannot see at all; reporting no motion leaves
+	// DLSS with this frame's own colour rather than a division by zero.
+	vec2 motion = previous.w == 0.0 ? vec2(0.0) : previous.xy / previous.w - ndc;
+	imageStore(motionImage, pixel, vec4(motion, 0.0, 0.0));
+}
