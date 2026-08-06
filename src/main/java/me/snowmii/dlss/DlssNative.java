@@ -26,6 +26,8 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
+	private final MethodHandle acquireImages;
+	private final MethodHandle releaseImages;
 	private final MethodHandle evaluate;
 	private final MethodHandle reset;
 	private final MethodHandle close;
@@ -58,6 +60,20 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 			"mc_dlss_configure",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT)
 		);
+		this.acquireImages = bind(
+			lookup,
+			"mc_dlss_acquire_images",
+			FunctionDescriptor.of(
+				JAVA_INT,
+				ValueLayout.ADDRESS, // motion_image
+				ValueLayout.ADDRESS, // motion_view
+				ValueLayout.ADDRESS, // motion_format
+				ValueLayout.ADDRESS, // output_image
+				ValueLayout.ADDRESS, // output_view
+				ValueLayout.ADDRESS // output_format
+			)
+		);
+		this.releaseImages = bind(lookup, "mc_dlss_release_images", FunctionDescriptor.of(JAVA_INT));
 		this.evaluate = bind(
 			lookup,
 			"mc_dlss_evaluate",
@@ -219,6 +235,50 @@ public final class DlssNative implements AutoCloseable, DlssNativeApi {
 			return (int)this.configure.invokeExact(outputWidth, outputHeight, renderWidth, renderHeight, qualityMode);
 		} catch (Throwable error) {
 			throw nativeError("configure", error);
+		}
+	}
+
+	@Override
+	public DlssEvaluationImages acquireImages() {
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment motionImage = callArena.allocate(JAVA_LONG);
+			final MemorySegment motionView = callArena.allocate(JAVA_LONG);
+			final MemorySegment motionFormat = callArena.allocate(JAVA_INT);
+			final MemorySegment outputImage = callArena.allocate(JAVA_LONG);
+			final MemorySegment outputView = callArena.allocate(JAVA_LONG);
+			final MemorySegment outputFormat = callArena.allocate(JAVA_INT);
+			final int result = (int)this.acquireImages.invokeExact(
+				motionImage,
+				motionView,
+				motionFormat,
+				outputImage,
+				outputView,
+				outputFormat
+			);
+			if (result != SUCCESS) {
+				throw new DlssNativeException("acquire-images", result);
+			}
+			return new DlssEvaluationImages(
+				motionImage.get(JAVA_LONG, 0),
+				motionView.get(JAVA_LONG, 0),
+				motionFormat.get(JAVA_INT, 0),
+				outputImage.get(JAVA_LONG, 0),
+				outputView.get(JAVA_LONG, 0),
+				outputFormat.get(JAVA_INT, 0)
+			);
+		} catch (DlssNativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("acquire-images", error);
+		}
+	}
+
+	@Override
+	public int releaseImages() {
+		try {
+			return (int)this.releaseImages.invokeExact();
+		} catch (Throwable error) {
+			throw nativeError("release-images", error);
 		}
 	}
 

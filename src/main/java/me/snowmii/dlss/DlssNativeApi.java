@@ -29,6 +29,14 @@ public interface DlssNativeApi {
 		int qualityMode
 	);
 
+	/**
+	 * Returns the native-owned motion and output images for the configured dimensions,
+	 * creating them on first use and reusing them while that configuration holds.
+	 */
+	DlssEvaluationImages acquireImages();
+
+	int releaseImages();
+
 	int evaluate(
 		long commandBuffer,
 		long colorView,

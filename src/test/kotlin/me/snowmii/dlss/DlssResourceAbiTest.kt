@@ -153,6 +153,9 @@ class DlssResourceAbiTest {
 					jitterX == 0.25f && jitterY == -0.5f && motionScaleX == 1.25f && motionScaleY == 1.5f &&
 					frameTimeMilliseconds == 16.7f && resetHistory == 1;
 			}
+			__declspec(dllexport) int __cdecl mc_dlss_acquire_images(
+				uint64_t*, uint64_t*, uint32_t*, uint64_t*, uint64_t*, uint32_t*) { return 1; }
+			__declspec(dllexport) int __cdecl mc_dlss_release_images() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_reset() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_close() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_query_instance_extension(

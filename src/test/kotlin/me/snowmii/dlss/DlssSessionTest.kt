@@ -213,11 +213,15 @@ class DlssSessionTest {
 		private val queryResult: Int? = null,
 		private val configureResult: Int = 1,
 		private val evaluateResult: Int = 1,
+		private val acquireImagesResult: Int? = null,
+		private val releaseImagesResult: Int = 1,
 	) : DlssNativeApi {
 		var initializeCalls = 0
 		var queryCalls = 0
 		var configureCalls = 0
 		var evaluateCalls = 0
+		var acquireImageCalls = 0
+		var releaseImageCalls = 0
 		var lastEvaluation: DlssEvaluationRequest? = null
 		override fun initialize(
 			vkInstance: Long,
@@ -249,6 +253,24 @@ class DlssSessionTest {
 		): Int {
 			configureCalls++
 			return configureResult
+		}
+
+		override fun acquireImages(): DlssEvaluationImages {
+			acquireImageCalls++
+			acquireImagesResult?.let { throw DlssNativeException("acquire-images", it) }
+			return DlssEvaluationImages(
+				motionImage = 0x1001,
+				motionView = 0x1002,
+				motionFormat = 83,
+				outputImage = 0x2001,
+				outputView = 0x2002,
+				outputFormat = 37,
+			)
+		}
+
+		override fun releaseImages(): Int {
+			releaseImageCalls++
+			return releaseImagesResult
 		}
 
 		override fun evaluate(

@@ -31,6 +31,20 @@ constexpr int32_t kInvalidParameter = static_cast<int32_t>(NVSDK_NGX_Result_FAIL
 constexpr int32_t kNotInitialized = static_cast<int32_t>(NVSDK_NGX_Result_FAIL_NotInitialized);
 constexpr int32_t kFeatureNotSupported = static_cast<int32_t>(NVSDK_NGX_Result_FAIL_FeatureNotSupported);
 
+// R16G16_SFLOAT and R8G8B8A8_UNORM are both mandatory storage-image formats in
+// Vulkan, so neither needs a runtime capability probe. Two half-float channels
+// carry a screen-space motion vector at full precision, and the output matches
+// Minecraft's RGBA8_UNORM main target so the copy back into it is a plain image
+// copy rather than a conversion.
+constexpr VkFormat kMotionFormat = VK_FORMAT_R16G16_SFLOAT;
+constexpr VkFormat kOutputFormat = VK_FORMAT_R8G8B8A8_UNORM;
+
+struct DlssOwnedImage {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+};
+
 struct DlssState {
     bool initialized = false;
     bool bootstrapComplete = false;
@@ -54,6 +68,12 @@ struct DlssState {
     uint32_t featureRenderWidth = 0;
     uint32_t featureRenderHeight = 0;
     uint32_t featureQualityMode = 0;
+    DlssOwnedImage motionImage;
+    DlssOwnedImage outputImage;
+    uint32_t imagesRenderWidth = 0;
+    uint32_t imagesRenderHeight = 0;
+    uint32_t imagesOutputWidth = 0;
+    uint32_t imagesOutputHeight = 0;
 };
 
 DlssState g_state;
@@ -65,6 +85,15 @@ VulkanHandle from_uint64(const uint64_t value) noexcept {
         return reinterpret_cast<VulkanHandle>(static_cast<std::uintptr_t>(value));
     } else {
         return static_cast<VulkanHandle>(value);
+    }
+}
+
+template <typename VulkanHandle>
+uint64_t to_uint64(const VulkanHandle handle) noexcept {
+    if constexpr (std::is_pointer<VulkanHandle>::value) {
+        return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(handle));
+    } else {
+        return static_cast<uint64_t>(handle);
     }
 }
 
@@ -133,8 +162,116 @@ int32_t destroy_capability_parameters() noexcept {
     return result;
 }
 
+// Destroys in the reverse of creation order: the view reads the image, the image
+// owns nothing, and the memory outlives neither.
+void destroy_owned_image(DlssOwnedImage& owned) noexcept {
+    if (g_state.device != VK_NULL_HANDLE) {
+        if (owned.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(g_state.device, owned.view, nullptr);
+        }
+        if (owned.image != VK_NULL_HANDLE) {
+            vkDestroyImage(g_state.device, owned.image, nullptr);
+        }
+        if (owned.memory != VK_NULL_HANDLE) {
+            vkFreeMemory(g_state.device, owned.memory, nullptr);
+        }
+    }
+    owned = DlssOwnedImage{};
+}
+
+void release_images() noexcept {
+    destroy_owned_image(g_state.motionImage);
+    destroy_owned_image(g_state.outputImage);
+    g_state.imagesRenderWidth = 0;
+    g_state.imagesRenderHeight = 0;
+    g_state.imagesOutputWidth = 0;
+    g_state.imagesOutputHeight = 0;
+}
+
+bool find_memory_type(const uint32_t typeBits, const VkMemoryPropertyFlags properties,
+                      uint32_t* index) noexcept {
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+    vkGetPhysicalDeviceMemoryProperties(g_state.physicalDevice, &memoryProperties);
+    for (uint32_t candidate = 0; candidate < memoryProperties.memoryTypeCount; ++candidate) {
+        const bool allowed = (typeBits & (1u << candidate)) != 0;
+        const VkMemoryPropertyFlags flags = memoryProperties.memoryTypes[candidate].propertyFlags;
+        if (allowed && (flags & properties) == properties) {
+            *index = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Any failure here destroys whatever it already made, so a caller never has to
+// distinguish "not created" from "half created".
+int32_t create_owned_image(const uint32_t width, const uint32_t height, const VkFormat format,
+                           const VkImageUsageFlags usage, DlssOwnedImage& owned) noexcept {
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = format;
+    imageInfo.extent = VkExtent3D{width, height, 1};
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = usage;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // Every handle is created into a local and published to `owned` only once the call
+    // succeeded: Vulkan leaves the output undefined on failure, and a half-written
+    // struct would hand the destroy path a garbage handle to free.
+    VkImage image = VK_NULL_HANDLE;
+    if (vkCreateImage(g_state.device, &imageInfo, nullptr, &image) != VK_SUCCESS) {
+        return kFailure;
+    }
+    owned.image = image;
+
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(g_state.device, image, &requirements);
+    uint32_t memoryTypeIndex = 0;
+    if (!find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                          &memoryTypeIndex)) {
+        destroy_owned_image(owned);
+        return kFailure;
+    }
+
+    VkMemoryAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocateInfo.allocationSize = requirements.size;
+    allocateInfo.memoryTypeIndex = memoryTypeIndex;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    if (vkAllocateMemory(g_state.device, &allocateInfo, nullptr, &memory) != VK_SUCCESS) {
+        destroy_owned_image(owned);
+        return kFailure;
+    }
+    owned.memory = memory;
+    if (vkBindImageMemory(g_state.device, image, memory, 0) != VK_SUCCESS) {
+        destroy_owned_image(owned);
+        return kFailure;
+    }
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange = VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageView view = VK_NULL_HANDLE;
+    if (vkCreateImageView(g_state.device, &viewInfo, nullptr, &view) != VK_SUCCESS) {
+        destroy_owned_image(owned);
+        return kFailure;
+    }
+    owned.view = view;
+    return kSuccess;
+}
+
 int32_t shutdown_state() noexcept {
     g_state.bootstrapComplete = false;
+    // Images belong to the device NGX is about to release and Minecraft is about
+    // to destroy, so they die first.
+    release_images();
     // Feature must die before its parameters and NGX device state.
     int32_t result = release_feature();
     if (result != kSuccess) {
@@ -462,6 +599,82 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_acquire_images(
+    uint64_t* motion_image, uint64_t* motion_view, uint32_t* motion_format,
+    uint64_t* output_image, uint64_t* output_view, uint32_t* output_format) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_state.bootstrapComplete) {
+            return kNotInitialized;
+        }
+        if (motion_image == nullptr || motion_view == nullptr || motion_format == nullptr ||
+            output_image == nullptr || output_view == nullptr || output_format == nullptr) {
+            return kInvalidParameter;
+        }
+        // Dimensions come from the last configure and nowhere else, so there is no
+        // second source of truth to disagree with the feature's own size.
+        if (!valid_dimensions(g_state.outputWidth, g_state.outputHeight, g_state.renderWidth,
+                              g_state.renderHeight)) {
+            return kInvalidParameter;
+        }
+
+        const bool matchesConfiguration =
+            g_state.motionImage.view != VK_NULL_HANDLE &&
+            g_state.outputImage.view != VK_NULL_HANDLE &&
+            g_state.imagesRenderWidth == g_state.renderWidth &&
+            g_state.imagesRenderHeight == g_state.renderHeight &&
+            g_state.imagesOutputWidth == g_state.outputWidth &&
+            g_state.imagesOutputHeight == g_state.outputHeight;
+        if (!matchesConfiguration) {
+            release_images();
+            // Motion is written by the engine and read by DLSS; output is written by
+            // DLSS and copied into Minecraft's target.
+            int32_t result = create_owned_image(
+                g_state.renderWidth, g_state.renderHeight, kMotionFormat,
+                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                g_state.motionImage);
+            if (result != kSuccess) {
+                release_images();
+                return result;
+            }
+            result = create_owned_image(
+                g_state.outputWidth, g_state.outputHeight, kOutputFormat,
+                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                g_state.outputImage);
+            if (result != kSuccess) {
+                release_images();
+                return result;
+            }
+            g_state.imagesRenderWidth = g_state.renderWidth;
+            g_state.imagesRenderHeight = g_state.renderHeight;
+            g_state.imagesOutputWidth = g_state.outputWidth;
+            g_state.imagesOutputHeight = g_state.outputHeight;
+        }
+
+        *motion_image = to_uint64(g_state.motionImage.image);
+        *motion_view = to_uint64(g_state.motionImage.view);
+        *motion_format = static_cast<uint32_t>(kMotionFormat);
+        *output_image = to_uint64(g_state.outputImage.image);
+        *output_view = to_uint64(g_state.outputImage.view);
+        *output_format = static_cast<uint32_t>(kOutputFormat);
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_release_images(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        release_images();
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
     const uint64_t command_buffer, const uint64_t color_view, const uint64_t color_image,
     const uint32_t color_format, const uint32_t color_aspect_mask,
@@ -581,6 +794,10 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
         if (!g_state.bootstrapComplete) {
             return kNotInitialized;
         }
+        // The images belong to the feature's configuration, so a reset that drops the
+        // feature drops them with it rather than leaving orphans the next acquire
+        // would have to recognise.
+        release_images();
         return release_feature();
     } catch (...) {
         return kFailure;

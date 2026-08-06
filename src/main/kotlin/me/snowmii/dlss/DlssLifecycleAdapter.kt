@@ -54,6 +54,31 @@ class DlssLifecycleAdapter(
 		return queriedDimensions
 	}
 
+	/**
+	 * Returns the native-owned motion and output images, or null when acquisition failed.
+	 *
+	 * A failure here latches the session exactly like any other native stage, because a session
+	 * that cannot allocate the images DLSS writes into has nothing left to try.
+	 */
+	fun acquireImages(): DlssEvaluationImages? {
+		if (session.state != DlssSessionState.READY) {
+			return null
+		}
+
+		return try {
+			native.acquireImages()
+		} catch (error: DlssNativeException) {
+			latch(DlssNativeStage.ACQUIRE_IMAGES, error)
+			null
+		} catch (error: Throwable) {
+			latch(DlssNativeStage.ACQUIRE_IMAGES, error)
+			null
+		}
+	}
+
+	/** Releases the native-owned images. Safe to call when none are allocated. */
+	fun releaseImages(): Boolean = invokeStatus(DlssNativeStage.RELEASE_IMAGES) { native.releaseImages() }
+
 	fun evaluate(request: DlssEvaluationRequest): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false

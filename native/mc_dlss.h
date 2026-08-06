@@ -68,6 +68,30 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(
     uint32_t render_height,
     uint32_t quality_mode);
 
+/*
+ * Native-owned evaluation images.
+ *
+ * DLSS writes its upscaled result into an image the engine does not own, and
+ * reads camera motion from one the engine has to fill. Both are allocated here,
+ * from the dimensions the last mc_dlss_configure stored: the motion image at
+ * render size and the output image at output size, each storage-capable, backed
+ * by device-local memory, and carrying a full colour image view.
+ *
+ * Acquiring twice against unchanged configuration returns the same handles.
+ * A configuration change destroys and recreates them. Partial failure leaves
+ * nothing allocated, and mc_dlss_reset and mc_dlss_close release them before
+ * the Vulkan device they belong to is destroyed.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_acquire_images(
+    uint64_t* motion_image,
+    uint64_t* motion_view,
+    uint32_t* motion_format,
+    uint64_t* output_image,
+    uint64_t* output_view,
+    uint32_t* output_format);
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_release_images(void);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
     uint64_t command_buffer,
     uint64_t color_view,
