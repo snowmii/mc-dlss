@@ -3,24 +3,44 @@ package me.snowmii.dlss;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.function.BiFunction;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.EXTDebugUtils;
 import org.lwjgl.vulkan.VK10;
+import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkApplicationInfo;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkCommandBufferAllocateInfo;
 import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
 import org.lwjgl.vulkan.VkCommandPoolCreateInfo;
+import org.lwjgl.vulkan.VkDebugUtilsMessengerCallbackDataEXT;
+import org.lwjgl.vulkan.VkDebugUtilsMessengerCallbackEXT;
+import org.lwjgl.vulkan.VkDebugUtilsMessengerCreateInfoEXT;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkDeviceCreateInfo;
 import org.lwjgl.vulkan.VkDeviceQueueCreateInfo;
+import org.lwjgl.vulkan.VkExtensionProperties;
+import org.lwjgl.vulkan.VkFenceCreateInfo;
+import org.lwjgl.vulkan.VkImageCreateInfo;
+import org.lwjgl.vulkan.VkImageMemoryBarrier;
+import org.lwjgl.vulkan.VkImageSubresourceRange;
+import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkInstance;
 import org.lwjgl.vulkan.VkInstanceCreateInfo;
+import org.lwjgl.vulkan.VkLayerProperties;
+import org.lwjgl.vulkan.VkMemoryAllocateInfo;
+import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkPhysicalDevice;
+import org.lwjgl.vulkan.VkPhysicalDeviceFeatures2;
+import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
+import org.lwjgl.vulkan.VkPhysicalDeviceVulkan11Features;
+import org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features;
 import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkQueueFamilyProperties;
+import org.lwjgl.vulkan.VkSubmitInfo;
 
 /**
  * Test-only helper building a real, headless Vulkan instance + device with one graphics
@@ -39,6 +59,11 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 	private final long commandPool;
 	private final int queueFamilyIndex;
 	private final List<Long> allocatedCommandBuffers = new ArrayList<>();
+	private final List<EngineImage> ownedImages = new ArrayList<>();
+	private final List<String> validationErrors = Collections.synchronizedList(new ArrayList<>());
+	private final boolean validationEnabled;
+	private final VkDebugUtilsMessengerCallbackEXT validationCallback;
+	private final long validationMessenger;
 
 	public HeadlessVulkanFixture() {
 		this(List.of(), (ignoredInstance, ignoredDevice) -> List.of());
@@ -55,32 +80,96 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		final List<String> instanceExtensions,
 		final BiFunction<Long, Long, List<String>> deviceExtensionProvider
 	) {
+		this(instanceExtensions, deviceExtensionProvider, false);
+	}
+
+	/**
+	 * As above, additionally enabling the Khronos validation layer when {@code validated} is set
+	 * and the layer plus VK_EXT_debug_utils are installed on this workstation.
+	 *
+	 * Validation is the only oracle for image layouts: a wrong {@code oldLayout} is undefined
+	 * behaviour to the driver and silent without it. Every error-severity message is collected
+	 * for the test to assert on, and {@link #validationEnabled()} reports whether the layer was
+	 * actually there, so a test can say what its evidence was worth.
+	 */
+	public HeadlessVulkanFixture(
+		final List<String> instanceExtensions,
+		final BiFunction<Long, Long, List<String>> deviceExtensionProvider,
+		final boolean validated
+	) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
+			validationEnabled = validated
+				&& hasInstanceLayer(stack, VALIDATION_LAYER)
+				&& hasInstanceExtension(stack, EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 			VkApplicationInfo appInfo = VkApplicationInfo.calloc(stack)
 				.sType$Default()
 				.pApplicationName(stack.UTF8("mc-dlss-vulkan-context-test"))
 				.applicationVersion(1)
 				.pEngineName(stack.UTF8("mc-dlss"))
 				.engineVersion(1)
-				.apiVersion(VK10.VK_API_VERSION_1_0);
+				// Minecraft 26.2 asks for Vulkan 1.2 and refuses any device below it, and NGX's
+				// internals lean on 1.2 features (buffer device address, storage-image writes
+				// without a format) that a 1.0 device silently cannot serve.
+				.apiVersion(VK12.VK_API_VERSION_1_2);
+
+			List<String> requestedExtensions = new ArrayList<>(instanceExtensions);
+			if (validationEnabled && !requestedExtensions.contains(EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
+				requestedExtensions.add(EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+			}
 
 			PointerBuffer instanceExts = null;
-			if (!instanceExtensions.isEmpty()) {
-				instanceExts = stack.callocPointer(instanceExtensions.size());
-				for (String ext : instanceExtensions) {
+			if (!requestedExtensions.isEmpty()) {
+				instanceExts = stack.callocPointer(requestedExtensions.size());
+				for (String ext : requestedExtensions) {
 					instanceExts.put(stack.ASCII(ext));
 				}
 				instanceExts.flip();
 			}
 
+			PointerBuffer layers = null;
+			if (validationEnabled) {
+				layers = stack.callocPointer(1);
+				layers.put(stack.ASCII(VALIDATION_LAYER));
+				layers.flip();
+			}
+
 			VkInstanceCreateInfo instanceInfo = VkInstanceCreateInfo.calloc(stack)
 				.sType$Default()
 				.pApplicationInfo(appInfo)
+				.ppEnabledLayerNames(layers)
 				.ppEnabledExtensionNames(instanceExts);
 
 			PointerBuffer instancePtr = stack.callocPointer(1);
 			checkVk(VK10.vkCreateInstance(instanceInfo, null, instancePtr), "vkCreateInstance");
 			instance = new VkInstance(instancePtr.get(0), instanceInfo);
+
+			if (validationEnabled) {
+				validationCallback = VkDebugUtilsMessengerCallbackEXT.create(
+					(severity, types, callbackData, userData) -> {
+						VkDebugUtilsMessengerCallbackDataEXT data =
+							VkDebugUtilsMessengerCallbackDataEXT.create(callbackData);
+						validationErrors.add(data.pMessageString());
+						return VK10.VK_FALSE;
+					}
+				);
+				VkDebugUtilsMessengerCreateInfoEXT messengerInfo = VkDebugUtilsMessengerCreateInfoEXT.calloc(stack)
+					.sType$Default()
+					.messageSeverity(EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+					.messageType(
+						EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+							| EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
+					)
+					.pfnUserCallback(validationCallback);
+				LongBuffer messengerPtr = stack.callocLong(1);
+				checkVk(
+					EXTDebugUtils.vkCreateDebugUtilsMessengerEXT(instance, messengerInfo, null, messengerPtr),
+					"vkCreateDebugUtilsMessengerEXT"
+				);
+				validationMessenger = messengerPtr.get(0);
+			} else {
+				validationCallback = null;
+				validationMessenger = VK10.VK_NULL_HANDLE;
+			}
 
 			IntBuffer deviceCount = stack.callocInt(1);
 			checkVk(VK10.vkEnumeratePhysicalDevices(instance, deviceCount, null), "vkEnumeratePhysicalDevices");
@@ -126,9 +215,22 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				deviceExts.flip();
 			}
 
+			// Enable every feature this physical device reports, the way a real client enables the
+			// set its renderer needs: NGX's own shaders and allocations require 1.1/1.2 features
+			// (buffer device address, storage-image writes without a format) that an extension
+			// name alone does not turn on, and without them NGX records work the driver cannot run.
+			VkPhysicalDeviceVulkan11Features supported11 = VkPhysicalDeviceVulkan11Features.calloc(stack).sType$Default();
+			VkPhysicalDeviceVulkan12Features supported12 = VkPhysicalDeviceVulkan12Features.calloc(stack).sType$Default();
+			supported11.pNext(supported12.address());
+			VkPhysicalDeviceFeatures2 supportedFeatures = VkPhysicalDeviceFeatures2.calloc(stack).sType$Default();
+			supportedFeatures.pNext(supported11.address());
+			VK12.vkGetPhysicalDeviceFeatures2(physicalDevice, supportedFeatures);
+
 			VkDeviceCreateInfo deviceCreateInfo = VkDeviceCreateInfo.calloc(stack)
 				.sType$Default()
+				.pNext(supportedFeatures.pNext())
 				.pQueueCreateInfos(queueCreateInfo)
+				.pEnabledFeatures(supportedFeatures.features())
 				.ppEnabledExtensionNames(deviceExts);
 
 			PointerBuffer devicePtr = stack.callocPointer(1);
@@ -197,9 +299,232 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		}
 	}
 
+	/** Whether the Khronos validation layer is actually running behind this instance. */
+	public boolean validationEnabled() {
+		return validationEnabled;
+	}
+
+	/** Error-severity validation messages seen so far, in arrival order. */
+	public List<String> validationErrors() {
+		synchronized (validationErrors) {
+			return List.copyOf(validationErrors);
+		}
+	}
+
+	/**
+	 * Validation messages naming one of the supplied Vulkan handles.
+	 *
+	 * Validation reports every handle it complains about in hexadecimal, which is what makes it
+	 * possible to separate errors about resources under test from errors about resources some
+	 * library allocated privately and manages itself.
+	 */
+	public List<String> validationErrorsAbout(final long... handles) {
+		List<String> matching = new ArrayList<>();
+		for (String message : validationErrors()) {
+			for (long handle : handles) {
+				if (message.contains(Long.toHexString(handle))) {
+					matching.add(message);
+					break;
+				}
+			}
+		}
+		return matching;
+	}
+
+	/**
+	 * A device-local image with a full view, standing in for one of Minecraft's GpuTextures.
+	 *
+	 * Handles are raw, in the units the flat native ABI takes them.
+	 */
+	public record EngineImage(long image, long memory, long view, int format, int aspectMask) {
+	}
+
+	/**
+	 * Creates an image the way Minecraft's VulkanGpuTexture does and leaves it in the same place:
+	 * VK_IMAGE_LAYOUT_GENERAL, transitioned once at creation and never moved again by the engine.
+	 */
+	public EngineImage createEngineImage(
+		final int width,
+		final int height,
+		final int format,
+		final int usage,
+		final int aspectMask
+	) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkImageCreateInfo imageInfo = VkImageCreateInfo.calloc(stack)
+				.sType$Default()
+				.imageType(VK10.VK_IMAGE_TYPE_2D)
+				.format(format)
+				.mipLevels(1)
+				.arrayLayers(1)
+				.samples(VK10.VK_SAMPLE_COUNT_1_BIT)
+				.tiling(VK10.VK_IMAGE_TILING_OPTIMAL)
+				.usage(usage)
+				.sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE)
+				.initialLayout(VK10.VK_IMAGE_LAYOUT_UNDEFINED);
+			imageInfo.extent().set(width, height, 1);
+
+			LongBuffer imagePtr = stack.callocLong(1);
+			checkVk(VK10.vkCreateImage(device, imageInfo, null, imagePtr), "vkCreateImage");
+			long image = imagePtr.get(0);
+
+			VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
+			VK10.vkGetImageMemoryRequirements(device, image, requirements);
+			VkMemoryAllocateInfo allocateInfo = VkMemoryAllocateInfo.calloc(stack)
+				.sType$Default()
+				.allocationSize(requirements.size())
+				.memoryTypeIndex(deviceLocalMemoryType(stack, requirements.memoryTypeBits()));
+			LongBuffer memoryPtr = stack.callocLong(1);
+			checkVk(VK10.vkAllocateMemory(device, allocateInfo, null, memoryPtr), "vkAllocateMemory");
+			long memory = memoryPtr.get(0);
+			checkVk(VK10.vkBindImageMemory(device, image, memory, 0), "vkBindImageMemory");
+
+			VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack)
+				.sType$Default()
+				.image(image)
+				.viewType(VK10.VK_IMAGE_VIEW_TYPE_2D)
+				.format(format);
+			viewInfo.subresourceRange().set(aspectMask, 0, 1, 0, 1);
+			LongBuffer viewPtr = stack.callocLong(1);
+			checkVk(VK10.vkCreateImageView(device, viewInfo, null, viewPtr), "vkCreateImageView");
+
+			EngineImage created = new EngineImage(image, memory, viewPtr.get(0), format, aspectMask);
+			ownedImages.add(created);
+
+			VkCommandBuffer transition = allocateAndBeginCommandBuffer();
+			VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack)
+				.sType$Default()
+				.srcAccessMask(0)
+				.dstAccessMask(VK10.VK_ACCESS_MEMORY_READ_BIT | VK10.VK_ACCESS_MEMORY_WRITE_BIT)
+				.oldLayout(VK10.VK_IMAGE_LAYOUT_UNDEFINED)
+				.newLayout(VK10.VK_IMAGE_LAYOUT_GENERAL)
+				.srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED)
+				.dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED)
+				.image(image);
+			VkImageSubresourceRange range = barrier.get(0).subresourceRange();
+			range.set(aspectMask, 0, 1, 0, 1);
+			VK10.vkCmdPipelineBarrier(
+				transition,
+				VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+				0,
+				null,
+				null,
+				barrier
+			);
+			endSubmitAndWait(transition);
+			return created;
+		}
+	}
+
+	/**
+	 * Records a barrier claiming the image is currently in VK_IMAGE_LAYOUT_GENERAL.
+	 *
+	 * Only legal if whoever touched the image last put it back there, which is what makes this
+	 * the assertion for layout restoration when the validation layer is watching.
+	 */
+	public void recordGeneralLayoutBarrier(final VkCommandBuffer commandBuffer, final EngineImage image) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack)
+				.sType$Default()
+				.srcAccessMask(VK10.VK_ACCESS_MEMORY_READ_BIT | VK10.VK_ACCESS_MEMORY_WRITE_BIT)
+				.dstAccessMask(VK10.VK_ACCESS_MEMORY_READ_BIT | VK10.VK_ACCESS_MEMORY_WRITE_BIT)
+				.oldLayout(VK10.VK_IMAGE_LAYOUT_GENERAL)
+				.newLayout(VK10.VK_IMAGE_LAYOUT_GENERAL)
+				.srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED)
+				.dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED)
+				.image(image.image());
+			barrier.get(0).subresourceRange().set(image.aspectMask(), 0, 1, 0, 1);
+			VK10.vkCmdPipelineBarrier(
+				commandBuffer,
+				VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+				VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+				0,
+				null,
+				null,
+				barrier
+			);
+		}
+	}
+
+	/**
+	 * Ends the recording and submits it on the graphics queue, waiting on a fence rather than
+	 * idling the device, which is the wait the production path is forbidden from using.
+	 */
+	public void endSubmitAndWait(final VkCommandBuffer commandBuffer) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			checkVk(VK10.vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
+			LongBuffer fencePtr = stack.callocLong(1);
+			checkVk(
+				VK10.vkCreateFence(device, VkFenceCreateInfo.calloc(stack).sType$Default(), null, fencePtr),
+				"vkCreateFence"
+			);
+			long fence = fencePtr.get(0);
+			VkSubmitInfo submitInfo = VkSubmitInfo.calloc(stack)
+				.sType$Default()
+				.pCommandBuffers(stack.pointers(commandBuffer));
+			checkVk(VK10.vkQueueSubmit(queue, submitInfo, fence), "vkQueueSubmit");
+			checkVk(
+				VK10.vkWaitForFences(device, stack.longs(fence), true, FENCE_TIMEOUT_NANOSECONDS),
+				"vkWaitForFences"
+			);
+			VK10.vkDestroyFence(device, fence, null);
+		}
+	}
+
+	private int deviceLocalMemoryType(final MemoryStack stack, final int typeBits) {
+		VkPhysicalDeviceMemoryProperties properties = VkPhysicalDeviceMemoryProperties.calloc(stack);
+		VK10.vkGetPhysicalDeviceMemoryProperties(physicalDevice, properties);
+		for (int i = 0; i < properties.memoryTypeCount(); i++) {
+			boolean allowed = (typeBits & (1 << i)) != 0;
+			int flags = properties.memoryTypes(i).propertyFlags();
+			if (allowed && (flags & VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
+				return i;
+			}
+		}
+		throw new IllegalStateException("No device-local memory type for typeBits " + typeBits);
+	}
+
+	private static boolean hasInstanceLayer(final MemoryStack stack, final String layer) {
+		IntBuffer count = stack.callocInt(1);
+		checkVk(VK10.vkEnumerateInstanceLayerProperties(count, null), "vkEnumerateInstanceLayerProperties");
+		VkLayerProperties.Buffer layers = VkLayerProperties.calloc(count.get(0), stack);
+		checkVk(VK10.vkEnumerateInstanceLayerProperties(count, layers), "vkEnumerateInstanceLayerProperties");
+		for (int i = 0; i < count.get(0); i++) {
+			if (layer.equals(layers.get(i).layerNameString())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean hasInstanceExtension(final MemoryStack stack, final String extension) {
+		IntBuffer count = stack.callocInt(1);
+		checkVk(
+			VK10.vkEnumerateInstanceExtensionProperties((String) null, count, null),
+			"vkEnumerateInstanceExtensionProperties"
+		);
+		VkExtensionProperties.Buffer extensions = VkExtensionProperties.calloc(count.get(0), stack);
+		checkVk(
+			VK10.vkEnumerateInstanceExtensionProperties((String) null, count, extensions),
+			"vkEnumerateInstanceExtensionProperties"
+		);
+		for (int i = 0; i < count.get(0); i++) {
+			if (extension.equals(extensions.get(i).extensionNameString())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	@Override
 	public void close() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
+			for (EngineImage owned : ownedImages) {
+				VK10.vkDestroyImageView(device, owned.view(), null);
+				VK10.vkDestroyImage(device, owned.image(), null);
+				VK10.vkFreeMemory(device, owned.memory(), null);
+			}
 			if (!allocatedCommandBuffers.isEmpty()) {
 				PointerBuffer buffers = stack.callocPointer(allocatedCommandBuffers.size());
 				for (int i = 0; i < allocatedCommandBuffers.size(); i++) {
@@ -209,7 +534,13 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 			}
 			VK10.vkDestroyCommandPool(device, commandPool, null);
 			VK10.vkDestroyDevice(device, null);
+			if (validationMessenger != VK10.VK_NULL_HANDLE) {
+				EXTDebugUtils.vkDestroyDebugUtilsMessengerEXT(instance, validationMessenger, null);
+			}
 			VK10.vkDestroyInstance(instance, null);
+			if (validationCallback != null) {
+				validationCallback.free();
+			}
 		}
 	}
 
@@ -218,4 +549,7 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 			throw new IllegalStateException(call + " failed with VkResult " + result);
 		}
 	}
+
+	private static final String VALIDATION_LAYER = "VK_LAYER_KHRONOS_validation";
+	private static final long FENCE_TIMEOUT_NANOSECONDS = 10_000_000_000L;
 }

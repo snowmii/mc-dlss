@@ -39,10 +39,25 @@ constexpr int32_t kFeatureNotSupported = static_cast<int32_t>(NVSDK_NGX_Result_F
 constexpr VkFormat kMotionFormat = VK_FORMAT_R16G16_SFLOAT;
 constexpr VkFormat kOutputFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
+// Minecraft 26.2 rests every GpuTexture in VK_IMAGE_LAYOUT_GENERAL: VulkanGpuTexture
+// transitions the freshly created image straight to it, VulkanCommandEncoder binds colour
+// and depth attachments at it, and VulkanRenderPass binds sampled images at it. Nothing in
+// the backend ever moves a texture anywhere else, so this is the layout the engine's colour
+// and depth images arrive in and the one they must be handed back in.
+constexpr VkImageLayout kEngineRestingLayout = VK_IMAGE_LAYOUT_GENERAL;
+// DLSS requires its inputs in a read state ("Sample Image") and its output in a storage
+// state, per the 310.7.0 programming guide's Resource States section, and restores both
+// after the evaluation.
+constexpr VkImageLayout kDlssInputLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+constexpr VkImageLayout kDlssOutputLayout = VK_IMAGE_LAYOUT_GENERAL;
+
 struct DlssOwnedImage {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
+    // Layout the last recorded barrier left this image in. Fresh allocations are
+    // VK_IMAGE_LAYOUT_UNDEFINED until the first evaluation transitions them.
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 
 struct DlssState {
@@ -327,6 +342,73 @@ NVSDK_NGX_Resource_VK make_image_view_resource(const DlssImageResourceInput& res
     return NVSDK_NGX_Create_ImageView_Resource_VK(
         from_uint64<VkImageView>(resource.imageView), from_uint64<VkImage>(resource.image),
         subresourceRange, static_cast<VkFormat>(resource.format), width, height, readWrite);
+}
+
+// One barrier per transition, on the caller's command buffer and nowhere else: the whole
+// point of taking Minecraft's shared VkCommandBuffer is that DLSS work is ordered by the
+// engine's own submission, so this records and never submits, waits, or idles the device.
+//
+// The masks are deliberately broad. Both stages are ALL_COMMANDS and both access masks are
+// MEMORY_READ|MEMORY_WRITE because the engine's colour and depth images arrive from work
+// this module cannot see - a render pass, a blit, a compute dispatch - and NGX's own
+// pipeline stages are private to it. A narrower barrier would encode a guess about
+// somebody else's pipeline; this one is correct for every producer at the cost of ordering
+// against all of them, once per resource per frame.
+void record_layout_transition(const VkCommandBuffer commandBuffer, const VkImage image,
+                              const VkImageSubresourceRange& subresourceRange,
+                              const VkImageLayout oldLayout,
+                              const VkImageLayout newLayout) noexcept {
+    if (oldLayout == newLayout) {
+        return;
+    }
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = subresourceRange;
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &barrier);
+}
+
+VkImageSubresourceRange subresource_range_of(const DlssImageResourceInput& resource) noexcept {
+    return VkImageSubresourceRange{
+        static_cast<VkImageAspectFlags>(resource.aspectMask),
+        resource.baseMipLevel,
+        resource.levelCount,
+        resource.baseArrayLayer,
+        resource.layerCount,
+    };
+}
+
+// The evaluation takes handles, not ownership, so an image is only known to be in a tracked
+// layout when it is one of the two this module allocated. Anything else came from the
+// engine and rests where Minecraft leaves its textures.
+VkImageLayout current_layout_of(const uint64_t image) noexcept {
+    if (g_state.motionImage.image != VK_NULL_HANDLE &&
+        image == to_uint64(g_state.motionImage.image)) {
+        return g_state.motionImage.layout;
+    }
+    if (g_state.outputImage.image != VK_NULL_HANDLE &&
+        image == to_uint64(g_state.outputImage.image)) {
+        return g_state.outputImage.layout;
+    }
+    return kEngineRestingLayout;
+}
+
+void note_layout_after_transition(const uint64_t image, const VkImageLayout layout) noexcept {
+    if (g_state.motionImage.image != VK_NULL_HANDLE &&
+        image == to_uint64(g_state.motionImage.image)) {
+        g_state.motionImage.layout = layout;
+    } else if (g_state.outputImage.image != VK_NULL_HANDLE &&
+               image == to_uint64(g_state.outputImage.image)) {
+        g_state.outputImage.layout = layout;
+    }
 }
 
 int32_t query_optimal_dimensions(const uint32_t outputWidth, const uint32_t outputHeight,
@@ -768,6 +850,26 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
             g_state.featureQualityMode = g_state.qualityMode;
         }
 
+        // Inputs into a read state and the output into a storage state, recorded on the
+        // engine's own command buffer immediately before the evaluation reads them.
+        const VkCommandBuffer recordingBuffer = from_uint64<VkCommandBuffer>(command_buffer);
+        const VkImageLayout colorEntryLayout = current_layout_of(color_image);
+        const VkImageLayout depthEntryLayout = current_layout_of(depth_image);
+        record_layout_transition(recordingBuffer, from_uint64<VkImage>(color_image),
+                                 subresource_range_of(colorResourceInput), colorEntryLayout,
+                                 kDlssInputLayout);
+        record_layout_transition(recordingBuffer, from_uint64<VkImage>(depth_image),
+                                 subresource_range_of(depthResourceInput), depthEntryLayout,
+                                 kDlssInputLayout);
+        record_layout_transition(recordingBuffer, from_uint64<VkImage>(motion_image),
+                                 subresource_range_of(motionResourceInput),
+                                 current_layout_of(motion_image), kDlssInputLayout);
+        note_layout_after_transition(motion_image, kDlssInputLayout);
+        record_layout_transition(recordingBuffer, from_uint64<VkImage>(output_image),
+                                 subresource_range_of(outputResourceInput),
+                                 current_layout_of(output_image), kDlssOutputLayout);
+        note_layout_after_transition(output_image, kDlssOutputLayout);
+
         NVSDK_NGX_VK_DLSS_Eval_Params evaluateParams{};
         evaluateParams.Feature.pInColor = &colorResource;
         evaluateParams.Feature.pInOutput = &outputResource;
@@ -780,9 +882,22 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(
         evaluateParams.InMVScaleX = motion_scale_x;
         evaluateParams.InMVScaleY = motion_scale_y;
         evaluateParams.InFrameTimeDeltaInMsec = frame_time_milliseconds;
-        return static_cast<int32_t>(NGX_VULKAN_EVALUATE_DLSS_EXT(
-            from_uint64<VkCommandBuffer>(command_buffer), g_state.feature,
-            g_state.capabilityParameters, &evaluateParams));
+        const int32_t evaluateResult = static_cast<int32_t>(NGX_VULKAN_EVALUATE_DLSS_EXT(
+            recordingBuffer, g_state.feature, g_state.capabilityParameters, &evaluateParams));
+
+        // The engine's images go back where Minecraft expects to find them, in the same
+        // recording, whether or not the evaluation succeeded: the transitions above were
+        // recorded either way, and a command buffer that is submitted with them half-undone
+        // hands the renderer an image in a layout its next pass does not expect. The two
+        // native images keep the layouts DLSS restores them to, which is where the next
+        // frame's transitions start from.
+        record_layout_transition(recordingBuffer, from_uint64<VkImage>(color_image),
+                                 subresource_range_of(colorResourceInput), kDlssInputLayout,
+                                 colorEntryLayout);
+        record_layout_transition(recordingBuffer, from_uint64<VkImage>(depth_image),
+                                 subresource_range_of(depthResourceInput), kDlssInputLayout,
+                                 depthEntryLayout);
+        return evaluateResult;
     } catch (...) {
         return kFailure;
     }
