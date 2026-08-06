@@ -9,6 +9,7 @@
 		"GameRendererProjectionJitterMixin",
 		"GameRendererWorldTargetMixin",
 		"LevelRendererWorldPhaseMixin",
+		"MinecraftLevelChangeMixin",
 		"VulkanBackendExtensionMixin",
 		"VulkanDeviceContextMixin",
 		"VulkanInstanceExtensionMixin"

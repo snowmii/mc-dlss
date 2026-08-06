@@ -133,6 +133,20 @@ class DlssRenderRuntime(
 		motion?.reset()
 	}
 
+	/**
+	 * Forgets everything this scene accumulated: the camera the next frame would reproject against
+	 * and the jitter phase it would continue.
+	 *
+	 * Used when the scene itself is replaced rather than when one frame was lost. A world load or a
+	 * dimension change can leave the camera exactly where it stood while every surface in the frame
+	 * becomes a different one, so nothing the frames themselves carry distinguishes it from standing
+	 * still - and the accumulated history it would keep describes a world that is gone.
+	 */
+	fun resetHistory() {
+		jitter?.reset()
+		motion?.reset()
+	}
+
 	override fun close() {
 		endWorldPhase()
 		// Before the session closes: releasing the native images needs a session still READY.

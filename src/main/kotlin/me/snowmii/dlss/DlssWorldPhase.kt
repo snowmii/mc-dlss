@@ -185,6 +185,19 @@ class DlssWorldPhase(
 		return evaluateFrame(rendered, destination, jitter, motion)
 	}
 
+	/**
+	 * Breaks the accumulated history because the scene was replaced rather than because a frame
+	 * was lost: a world load, a dimension change, or a disconnect.
+	 *
+	 * Called from the client thread outside the render loop, so it also drops any phase that was
+	 * prepared and never rendered - the frame that prepared it belongs to the previous world and
+	 * must not be closed against the new one.
+	 */
+	fun resetHistory() {
+		discard()
+		runtime.resetHistory()
+	}
+
 	override fun close() {
 		discard()
 		lastResolved = null
