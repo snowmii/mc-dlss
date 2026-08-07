@@ -12,6 +12,7 @@ group = providers.gradleProperty("maven_group").get()
 // environment variable, so a second machine only needs to point these somewhere else rather
 // than patch this file. The defaults are the paths the bridge was developed against.
 val DEFAULT_NGX_SDK = "C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0"
+val DEFAULT_STREAMLINE_SDK = "C:/Users/miuki/Development/NVIDIA/mc-dlss/streamline-sdk-v2.12.0"
 
 fun toolchainRoot(property: String, environment: String, default: String): File =
 	providers.gradleProperty(property)
@@ -58,10 +59,13 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 		)
 		val vulkanSdk = toolchainRoot("mc.dlss.vulkan-sdk", "VULKAN_SDK", "C:/VulkanSDK/1.4.357.0")
 		val ngxSdk = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
+		val streamlineSdk = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", DEFAULT_STREAMLINE_SDK)
 		val vulkanHeader = vulkanSdk.resolve("Include/vulkan/vulkan.h")
 		val vulkanLibrary = vulkanSdk.resolve("Lib/vulkan-1.lib")
 		val ngxHeader = ngxSdk.resolve("include/nvsdk_ngx.h")
 		val ngxLibrary = ngxSdk.resolve("lib/Windows_x86_64/x64/nvsdk_ngx_s.lib")
+		val streamlineHeader = streamlineSdk.resolve("include/sl.h")
+		val streamlineLibrary = streamlineSdk.resolve("lib/x64/sl.interposer.lib")
 		val glslc = vulkanSdk.resolve("Bin/glslc.exe")
 
 		check(vsDevCmd.isFile) { "Visual Studio 2022 Build Tools missing: $vsDevCmd" }
@@ -70,6 +74,8 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 		check(vulkanLibrary.isFile) { "Vulkan SDK 1.4.357.0 loader library missing: $vulkanLibrary" }
 		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 header missing: $ngxHeader" }
 		check(ngxLibrary.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 library missing: $ngxLibrary" }
+		check(streamlineHeader.isFile) { "Pinned Streamline 2.12.0 header missing: $streamlineHeader" }
+		check(streamlineLibrary.isFile) { "Pinned Streamline 2.12.0 interposer library missing: $streamlineLibrary" }
 
 		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
 		val output = outputDir.resolve("mc_dlss.dll")
@@ -99,13 +105,22 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 				"/I\"${outputDir.absolutePath}\" " +
 				"/I\"${vulkanSdk.resolve("Include").absolutePath}\" " +
 				"/I\"${ngxSdk.resolve("include").absolutePath}\" " +
+				"/I\"${streamlineSdk.resolve("include").absolutePath}\" " +
 				sourceArguments + " " +
 				"/link /OUT:\"${output.absolutePath}\" " +
 				"/IMPLIB:\"${outputDir.resolve("mc_dlss.lib").absolutePath}\" " +
-				"\"${vulkanLibrary.absolutePath}\" \"${ngxLibrary.absolutePath}\" Advapi32.lib User32.lib"
+				"\"${vulkanLibrary.absolutePath}\" \"${ngxLibrary.absolutePath}\" " +
+				"\"${streamlineLibrary.absolutePath}\" Advapi32.lib User32.lib"
 		)
 	}
 }
+
+val streamlineRuntime = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", DEFAULT_STREAMLINE_SDK)
+	.resolve("bin/x64")
+val streamlineRuntimeFiles = listOf(
+	"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
+	"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
+)
 
 tasks.processResources {
 	val version = version
@@ -120,6 +135,9 @@ tasks.processResources {
 	// why a repository-relative path cannot be used.
 	from(buildNativeDlss) {
 		into("assets/mc-dlss/native") // McDlss.MOD_ID
+	}
+	from(streamlineRuntimeFiles.map(streamlineRuntime::resolve)) {
+		into("assets/mc-dlss/native/streamline")
 	}
 }
 
