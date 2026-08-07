@@ -20,16 +20,21 @@ public final class ExtensionBootstrap {
 	 * ResourceManager yet and the bootstrap reads it off the classloader instead.
 	 */
 	static final String RESOURCE_PATH = "/assets/mc-dlss/native/mc_dlss.dll";
+	static final String STREAMLINE_RESOURCE_PATH = "/assets/mc-dlss/native/sl.interposer.dll";
 
 	private static final Path RELATIVE_LIBRARY = Path.of("build", "native", "mc_dlss.dll");
+	private static final Path RELATIVE_STREAMLINE = Path.of("build", "resources", "main", "assets", "mc-dlss", "native");
 
 	private static volatile Path extracted;
+	private static volatile boolean streamlineRuntimeLoaded;
 
 	private ExtensionBootstrap() {
 	}
 
 	public static List<String> queryInstanceExtensions() {
+		loadStreamlineRuntime();
 		try (Native nativeBridge = Native.open(nativeLibrary())) {
+			bootstrap(nativeBridge);
 			return nativeBridge.queryInstanceExtensions();
 		}
 	}
@@ -39,9 +44,46 @@ public final class ExtensionBootstrap {
 		final long vkInstance,
 		final long vkPhysicalDevice
 	) {
+		loadStreamlineRuntime();
 		try (Native nativeBridge = Native.open(nativeLibrary())) {
+			bootstrap(nativeBridge);
 			extensions.addAll(nativeBridge.queryDeviceExtensions(vkInstance, vkPhysicalDevice));
 		}
+	}
+
+	private static void loadStreamlineRuntime() {
+		if (streamlineRuntimeLoaded) return;
+		synchronized (ExtensionBootstrap.class) {
+			if (streamlineRuntimeLoaded) return;
+			final Path runtime = streamlineRuntimeDirectory();
+			for (String name : List.of("sl.common.dll", "sl.interposer.dll")) {
+				System.load(runtime.resolve(name).toAbsolutePath().toString());
+			}
+			streamlineRuntimeLoaded = true;
+		}
+	}
+
+	private static void bootstrap(final Native nativeBridge) {
+		final int result = nativeBridge.bootstrapStreamline(streamlineRuntimeDirectory());
+		if (result != NativeApi.SUCCESS_RESULT) {
+			throw new NativeException("bootstrap-streamline", result);
+		}
+	}
+
+	static Path streamlineRuntimeDirectory() {
+		final URL resource = ExtensionBootstrap.class.getResource(STREAMLINE_RESOURCE_PATH);
+		if (resource != null && "file".equals(resource.getProtocol())) {
+			try {
+				return Path.of(resource.toURI()).getParent();
+			} catch (URISyntaxException error) {
+				throw new NativeException("bootstrap-streamline", error);
+			}
+		}
+		for (Path directory = Path.of("").toAbsolutePath(); directory != null; directory = directory.getParent()) {
+			final Path candidate = directory.resolve(RELATIVE_STREAMLINE);
+			if (Files.isRegularFile(candidate.resolve("sl.interposer.dll"))) return candidate;
+		}
+		throw new NativeException("bootstrap-streamline", new IllegalStateException("Staged Streamline runtime not found; run ./gradlew.bat processResources"));
 	}
 
 	/**

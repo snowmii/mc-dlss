@@ -10,6 +10,7 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.VarHandle;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -113,6 +114,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final VarHandle PRESENT_HEIGHT = field(PRESENT_LAYOUT, "height");
 
 	private final Arena arena;
+	private final MethodHandle bootstrapStreamline;
 	private final MethodHandle queryInstanceExtension;
 	private final MethodHandle queryDeviceExtension;
 	private final MethodHandle initialize;
@@ -141,6 +143,11 @@ public final class Native implements AutoCloseable, NativeApi {
 
 	private Native(final Arena arena, final SymbolLookup lookup) {
 		this.arena = arena;
+		this.bootstrapStreamline = bindOptional(
+			lookup,
+			"mc_dlss_bootstrap_streamline",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
+		);
 		this.queryInstanceExtension = bind(
 			lookup,
 			"mc_dlss_query_instance_extension",
@@ -213,12 +220,29 @@ public final class Native implements AutoCloseable, NativeApi {
 
 	public static Native open(final Path libraryPath) {
 		Objects.requireNonNull(libraryPath, "libraryPath");
+		final Path absoluteLibrary = libraryPath.toAbsolutePath();
+		final Path runtime = absoluteLibrary.getParent();
+		if (runtime != null && Files.isRegularFile(runtime.resolve("sl.interposer.dll"))) {
+			for (String name : List.of("sl.common.dll", "sl.interposer.dll")) {
+				System.load(runtime.resolve(name).toString());
+			}
+		}
 		final Arena arena = Arena.ofShared();
 		try {
-			return new Native(arena, SymbolLookup.libraryLookup(libraryPath, arena));
+			return new Native(arena, SymbolLookup.libraryLookup(absoluteLibrary, arena));
 		} catch (Throwable error) {
 			arena.close();
 			throw new NativeException("load-library", error);
+		}
+	}
+
+	public int bootstrapStreamline(final Path pluginPath) {
+		Objects.requireNonNull(pluginPath, "pluginPath");
+		if (bootstrapStreamline == null) throw new NativeException("bootstrap-streamline", new IllegalStateException("Native bridge lacks Streamline bootstrap"));
+		try (Arena callArena = Arena.ofConfined()) {
+			return (int)this.bootstrapStreamline.invokeExact(callArena.allocateFrom(pluginPath.toString()));
+		} catch (Throwable error) {
+			throw nativeError("bootstrap-streamline", error);
 		}
 	}
 
@@ -520,6 +544,14 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup.find(symbol).orElseThrow(() -> new IllegalStateException("Missing native symbol: " + symbol)),
 			descriptor
 		);
+	}
+
+	private static MethodHandle bindOptional(
+		final SymbolLookup lookup,
+		final String symbol,
+		final FunctionDescriptor descriptor
+	) {
+		return lookup.find(symbol).map(segment -> LINKER.downcallHandle(segment, descriptor)).orElse(null);
 	}
 
 	private static NativeException nativeError(final String stage, final Throwable error) {

@@ -66,6 +66,8 @@ typedef struct McDlssVec2 {
  * buffer copy the i-th extension name (NUL terminated) and return the count.
  * Returns an NGX/native result code on failure (e.g. FAIL_InvalidParameter).
  */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin_path);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
     uint32_t index,
     char* name,

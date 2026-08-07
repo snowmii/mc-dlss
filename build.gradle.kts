@@ -110,7 +110,9 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 				"/link /OUT:\"${output.absolutePath}\" " +
 				"/IMPLIB:\"${outputDir.resolve("mc_dlss.lib").absolutePath}\" " +
 				"\"${vulkanLibrary.absolutePath}\" \"${ngxLibrary.absolutePath}\" " +
-				"\"${streamlineLibrary.absolutePath}\" Advapi32.lib User32.lib"
+				"\"${streamlineLibrary.absolutePath}\" Advapi32.lib User32.lib && " +
+				"copy /Y \"${streamlineSdk.resolve("bin/x64/sl.interposer.dll").absolutePath}\" \"${outputDir.absolutePath}\\\" >nul && " +
+				"copy /Y \"${streamlineSdk.resolve("bin/x64/sl.common.dll").absolutePath}\" \"${outputDir.absolutePath}\\\" >nul"
 		)
 	}
 }
@@ -138,6 +140,11 @@ tasks.processResources {
 	}
 	from(streamlineRuntimeFiles.map(streamlineRuntime::resolve)) {
 		into("assets/mc-dlss/native/streamline")
+	}
+	// Windows resolves mc_dlss.dll dependencies beside the bridge before bootstrap can provide
+	// the plugin search path. Keep a colocated generated copy; proprietary binaries remain external.
+	from(streamlineRuntimeFiles.map(streamlineRuntime::resolve)) {
+		into("assets/mc-dlss/native")
 	}
 }
 

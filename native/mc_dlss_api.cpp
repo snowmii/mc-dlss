@@ -18,9 +18,15 @@
 #include "internal/timing.h"
 
 #include <nvsdk_ngx_vk.h>
+#include <sl.h>
+#include <sl_dlss.h>
+#include <sl_dlss_g.h>
+#include <sl_reflex.h>
 
+#include <cstring>
 #include <mutex>
 #include <string>
+#include <vector>
 
 using namespace mc_dlss;
 
@@ -28,6 +34,39 @@ namespace {
 
 constexpr char kProjectId[] = "50f68c51-c7be-49bd-a875-f73045f88d27";
 constexpr char kEngineVersion[] = "Minecraft 26.2";
+constexpr sl::Feature kStreamlineFeatures[] = {sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex};
+bool g_streamlineInitialized = false;
+
+int32_t copy_streamline_extension(const uint32_t index, char* name,
+                                  const uint32_t nameCapacity, uint32_t* count,
+                                  const std::vector<const char*>& extensions) {
+    if (count == nullptr) return kInvalidParameter;
+    *count = static_cast<uint32_t>(extensions.size());
+    if (name == nullptr && nameCapacity == 0) return kSuccess;
+    if (index >= extensions.size() || name == nullptr || nameCapacity == 0) return kInvalidParameter;
+    const size_t length = std::strlen(extensions[index]);
+    if (length + 1 > nameCapacity) return kInvalidParameter;
+    std::memcpy(name, extensions[index], length + 1);
+    return kSuccess;
+}
+
+int32_t collect_streamline_extensions(const bool device, const uint32_t index, char* name,
+                                      const uint32_t nameCapacity, uint32_t* count) {
+    if (!g_streamlineInitialized) return kNotInitialized;
+    std::vector<const char*> extensions;
+    for (const sl::Feature feature : kStreamlineFeatures) {
+        sl::FeatureRequirements requirements{};
+        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) return kFailure;
+        const uint32_t size = device ? requirements.vkNumDeviceExtensions : requirements.vkNumInstanceExtensions;
+        const char* const* values = device ? requirements.vkDeviceExtensions : requirements.vkInstanceExtensions;
+        for (uint32_t i = 0; i < size; ++i) {
+            bool duplicate = false;
+            for (const char* existing : extensions) duplicate |= std::strcmp(existing, values[i]) == 0;
+            if (!duplicate) extensions.push_back(values[i]);
+        }
+    }
+    return copy_streamline_extension(index, name, nameCapacity, count, extensions);
+}
 
 // The recording calls all name the render dimensions they believe are configured. The value is
 // never used as a size - everything is sized from the configuration - so this is purely the
@@ -50,22 +89,45 @@ bool images_match_configuration() noexcept {
 
 } // namespace
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin_path) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_streamlineInitialized) return kSuccess;
+        std::wstring pluginPath;
+        if (!utf8_to_wide(plugin_path, pluginPath)) return kInvalidParameter;
+        const wchar_t* paths[] = {pluginPath.c_str()};
+        sl::Preferences preferences{};
+        preferences.pathsToPlugins = paths;
+        preferences.numPathsToPlugins = 1;
+        preferences.flags = sl::PreferenceFlags::eDisableCLStateTracking |
+                            sl::PreferenceFlags::eUseManualHooking |
+                            sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+        preferences.featuresToLoad = kStreamlineFeatures;
+        preferences.numFeaturesToLoad = static_cast<uint32_t>(std::size(kStreamlineFeatures));
+        preferences.engine = sl::EngineType::eCustom;
+        preferences.engineVersion = kEngineVersion;
+        preferences.projectId = kProjectId;
+        preferences.renderAPI = sl::RenderAPI::eVulkan;
+        if (slInit(preferences) != sl::Result::eOk) return kFailure;
+        g_streamlineInitialized = true;
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
     const uint32_t index, char* name, const uint32_t name_capacity,
     uint32_t* extension_count) {
     try {
+        if (g_streamlineInitialized) return collect_streamline_extensions(false, index, name, name_capacity, extension_count);
         const NVSDK_NGX_FeatureDiscoveryInfo dis = make_discovery_info();
         uint32_t count = 0;
         VkExtensionProperties* properties = nullptr;
-        const NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(
-            &dis, &count, &properties);
-        if (result != NVSDK_NGX_Result_Success) {
-            return static_cast<int32_t>(result);
-        }
+        const NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(&dis, &count, &properties);
+        if (result != NVSDK_NGX_Result_Success) return static_cast<int32_t>(result);
         return copy_extension_name(index, name, name_capacity, extension_count, count, properties);
-    } catch (...) {
-        return kFailure;
-    }
+    } catch (...) { return kFailure; }
 }
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
@@ -73,23 +135,17 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
     const uint32_t index, char* name, const uint32_t name_capacity,
     uint32_t* extension_count) {
     try {
-        if (vk_instance == 0 || vk_physical_device == 0) {
-            return kInvalidParameter;
-        }
+        if (vk_instance == 0 || vk_physical_device == 0) return kInvalidParameter;
+        if (g_streamlineInitialized) return collect_streamline_extensions(true, index, name, name_capacity, extension_count);
         const NVSDK_NGX_FeatureDiscoveryInfo dis = make_discovery_info();
         uint32_t count = 0;
         VkExtensionProperties* properties = nullptr;
         const NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
-            from_uint64<VkInstance>(vk_instance),
-            from_uint64<VkPhysicalDevice>(vk_physical_device),
+            from_uint64<VkInstance>(vk_instance), from_uint64<VkPhysicalDevice>(vk_physical_device),
             &dis, &count, &properties);
-        if (result != NVSDK_NGX_Result_Success) {
-            return static_cast<int32_t>(result);
-        }
+        if (result != NVSDK_NGX_Result_Success) return static_cast<int32_t>(result);
         return copy_extension_name(index, name, name_capacity, extension_count, count, properties);
-    } catch (...) {
-        return kFailure;
-    }
+    } catch (...) { return kFailure; }
 }
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(const uint64_t vk_instance,
