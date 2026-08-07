@@ -1,8 +1,9 @@
 package me.snowmii
 
 import net.fabricmc.api.ModInitializer
-import me.snowmii.dlss.DlssSession
-import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.session.DlssSession
+import me.snowmii.dlss.session.DlssStartupConfig
 import net.minecraft.resources.Identifier
 import org.slf4j.LoggerFactory
 
@@ -10,7 +11,7 @@ object McDlss : ModInitializer {
 	const val MOD_ID: String = "mc-dlss"
 
 	private val LOGGER = LoggerFactory.getLogger(MOD_ID)
-	val startupConfig: DlssStartupConfig = DlssStartupConfig.from()
+	val startupConfig: DlssStartupConfig = ModConfig.from().startupConfig
 	val session: DlssSession = DlssSession(startupConfig) { message -> LOGGER.warn(message) }
 
 	override fun onInitialize() {

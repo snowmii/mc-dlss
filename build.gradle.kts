@@ -2,20 +2,23 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
 	id("net.fabricmc.fabric-loom")
-	`maven-publish`
 	id("org.jetbrains.kotlin.jvm") version "2.4.10"
 }
 
 version = providers.gradleProperty("mod_version").get()
 group = providers.gradleProperty("maven_group").get()
 
-repositories {
-	// Add repositories to retrieve artifacts from in here.
-	// You should only use this when depending on other mods because
-	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
-	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
-	// for more information about repositories.
-}
+// Workstation-local toolchain roots. Every one is overridable by Gradle property first, then
+// environment variable, so a second machine only needs to point these somewhere else rather
+// than patch this file. The defaults are the paths the bridge was developed against.
+val DEFAULT_NGX_SDK = "C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0"
+
+fun toolchainRoot(property: String, environment: String, default: String): File =
+	providers.gradleProperty(property)
+		.orElse(providers.environmentVariable(environment))
+		.orElse(default)
+		.get()
+		.let(::file)
 
 dependencies {
 	// To change the versions see the gradle.properties file
@@ -24,7 +27,7 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
-    implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
+	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 	testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.4")
 }
@@ -37,20 +40,24 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 	group = "build"
 	description = "Builds the workstation-local DLSS native bridge with MSVC."
 
-	val nativeSource = layout.projectDirectory.file("native/mc_dlss.cpp")
-	val nativeHeader = layout.projectDirectory.file("native/mc_dlss.h")
-	val motionShader = layout.projectDirectory.file("native/mc_dlss_motion.comp")
+	val nativeDirectory = layout.projectDirectory.dir("native")
+	// Every translation unit under native/, so adding one to the module split does not also
+	// mean remembering to add it here. The headers are inputs too: they carry the ABI structs
+	// and the shared inline helpers, so a header-only edit still has to rebuild.
+	val nativeSources = nativeDirectory.asFileTree.matching { include("**/*.cpp") }
+	val nativeHeaders = nativeDirectory.asFileTree.matching { include("**/*.h") }
+	val motionShader = nativeDirectory.file("mc_dlss_motion.comp")
 	val outputDirectory = layout.buildDirectory.dir("native")
-	inputs.files(nativeSource, nativeHeader, motionShader)
+	inputs.files(nativeSources, nativeHeaders, motionShader)
 	outputs.file(outputDirectory.map { it.file("mc_dlss.dll") })
 
 	doFirst {
-		val vsDevCmd = file("C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/Tools/VsDevCmd.bat")
-		val vulkanSdk = providers.environmentVariable("VULKAN_SDK")
-			.orElse("C:/VulkanSDK/1.4.357.0")
-			.get()
-			.let(::file)
-		val ngxSdk = file("C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0")
+		val vsDevCmd = toolchainRoot(
+			"mc.dlss.vs-dev-cmd", "VSDEVCMD",
+			"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/Tools/VsDevCmd.bat"
+		)
+		val vulkanSdk = toolchainRoot("mc.dlss.vulkan-sdk", "VULKAN_SDK", "C:/VulkanSDK/1.4.357.0")
+		val ngxSdk = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
 		val vulkanHeader = vulkanSdk.resolve("Include/vulkan/vulkan.h")
 		val vulkanLibrary = vulkanSdk.resolve("Lib/vulkan-1.lib")
 		val ngxHeader = ngxSdk.resolve("include/nvsdk_ngx.h")
@@ -67,19 +74,32 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
 		val output = outputDir.resolve("mc_dlss.dll")
 		// The motion-vector shader is compiled to SPIR-V and emitted as a C initializer list,
-		// which mc_dlss.cpp #includes into a constant array. Embedding it keeps the bridge a
-		// single loadable file with no runtime search path for a shader blob beside it.
+		// which internal/motion.cpp #includes into a constant array. Embedding it keeps the
+		// bridge a single loadable file with no runtime search path for a shader blob beside it.
 		val motionSpirV = outputDir.resolve("mc_dlss_motion.spv.h")
+		// Object directory, not object file: with more than one source, /Fo must name a
+		// directory and must end in a separator, or cl.exe writes every object over the same
+		// name and links only the last one. The separator is a forward slash - which MSVC
+		// accepts in paths - because a trailing backslash would escape the closing quote and
+		// swallow the rest of the command line into one argument.
+		val objectDir = outputDir.resolve("obj").apply { mkdirs() }
+		val objectDirArgument = objectDir.absolutePath.replace('\\', '/') + "/"
+		// Sorted so the command line - and therefore the up-to-date check - does not depend on
+		// the order the file tree happens to walk in.
+		val sourceArguments = nativeSources.files.sorted().joinToString(" ") { "\"${it.absolutePath}\"" }
 		commandLine(
 			"cmd.exe", "/d", "/c",
 			"call \"${vsDevCmd.absolutePath}\" -arch=x64 -host_arch=x64 && " +
 				"\"${glslc.absolutePath}\" -O --target-env=vulkan1.2 -mfmt=c " +
 				"-o \"${motionSpirV.absolutePath}\" \"${motionShader.asFile.absolutePath}\" && " +
-				"cl.exe /nologo /std:c++17 /EHsc /LD /O2 /DNOMINMAX /Fo\"${outputDir.resolve("mc_dlss.obj").absolutePath}\" " +
+				"cl.exe /nologo /std:c++17 /EHsc /LD /O2 /DNOMINMAX /Fo\"${objectDirArgument}\" " +
+				// native/ first: the internal units include each other as "internal/<unit>.h"
+				// and the public header as "mc_dlss.h", both relative to it.
+				"/I\"${nativeDirectory.asFile.absolutePath}\" " +
 				"/I\"${outputDir.absolutePath}\" " +
 				"/I\"${vulkanSdk.resolve("Include").absolutePath}\" " +
 				"/I\"${ngxSdk.resolve("include").absolutePath}\" " +
-				"\"${nativeSource.asFile.absolutePath}\" " +
+				sourceArguments + " " +
 				"/link /OUT:\"${output.absolutePath}\" " +
 				"/IMPLIB:\"${outputDir.resolve("mc_dlss.lib").absolutePath}\" " +
 				"\"${vulkanLibrary.absolutePath}\" \"${ngxLibrary.absolutePath}\" Advapi32.lib User32.lib"
@@ -103,12 +123,27 @@ tasks.processResources {
 	}
 }
 
+// Windows marks every file downloaded or extracted from the internet with a `:Zone.Identifier`
+// NTFS stream (mark of the web). Gradle's copy and archive tasks carry it through, so a
+// downloaded resource silently pollutes the jar with bogus entries named with the sanitized
+// colon (U+F03A). The streams were stripped from the tree; these exclusions keep a future
+// downloaded file from re-polluting the produced jars.
+tasks.withType<AbstractArchiveTask>().configureEach {
+	exclude("**\uF03A*") // Gradle renders the ADS colon as U+F03A in archive entry names
+	exclude("**/*Zone.Identifier")
+}
+
+tasks.processResources {
+	exclude("**/*Zone.Identifier")
+}
+
 // Development-only dev-client wiring. Loom's run-config `property(...)` never reaches
 // launch.cfg, so the DLSS startup properties are set on the run task's JVM directly. Every
 // value is overridable, e.g. `./gradlew.bat runClient -Pmc.dlss.mode=performance`.
 tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configureEach {
 	// Directory holding nvngx_dlss.dll; NGX uses it as the feature search path.
-	val ngxRuntime = file("C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0/lib/Windows_x86_64/rel")
+	val ngxRuntime = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
+		.resolve("lib/Windows_x86_64/rel")
 	val dlssData = layout.buildDirectory.dir("dlss-data").get().asFile
 
 	doFirst {
@@ -151,22 +186,5 @@ tasks.jar {
 
 	from("LICENSE") {
 		rename { "${it}_$projectName" }
-	}
-}
-
-// configure the maven publication
-publishing {
-	publications {
-		register<MavenPublication>("mavenJava") {
-			from(components["java"])
-		}
-	}
-
-	// See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
-	repositories {
-		// Add repositories to publish to here.
-		// Notice: This block does NOT have the same function as the block in the top level.
-		// The repositories here will be used for publishing your artifact, not for
-		// retrieving dependencies.
 	}
 }

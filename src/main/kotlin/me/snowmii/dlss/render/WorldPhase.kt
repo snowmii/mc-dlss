@@ -1,0 +1,319 @@
+package me.snowmii.dlss.render
+import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.dlss.readout.SessionFacts
+import me.snowmii.dlss.readout.SessionReadout
+import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.dlss.session.DlssFrameDecision
+import me.snowmii.dlss.session.DlssFrameRoute
+import com.mojang.blaze3d.pipeline.RenderTarget
+import com.mojang.blaze3d.systems.RenderSystem
+import com.mojang.blaze3d.textures.FilterMode
+import com.mojang.blaze3d.vulkan.VulkanConst
+import com.mojang.blaze3d.vulkan.VulkanGpuTextureView
+import net.minecraft.client.Minecraft
+import net.minecraft.client.renderer.RenderPipelines
+import java.util.Optional
+
+/**
+ * Scopes one world render phase, which is the only window in which the mod's low-resolution
+ * scene target stands in for Minecraft's main target.
+ *
+ * [RenderRuntime] decides *whether* a frame is eligible and *what size* its target is.
+ * This class decides *when* that target is visible to the renderer: the phase is opened at the
+ * head of `LevelRenderer.render` and closed at its tail, and while it is open
+ * [worldTargetOverride] is what `GameRenderer.mainRenderTarget()` answers. Everything outside
+ * that window - post chains, GUI clear, screenshots, hand and item, screen effects, the 3D
+ * crosshair, and presentation - keeps seeing the untouched full-size main target.
+ *
+ * Closing an eligible phase evaluates DLSS and composes the upscaled result into the main target,
+ * which is what everything drawn afterwards renders on top of at output resolution. A frame whose
+ * evaluation produced nothing falls back to the nearest-neighbour blit of the low-resolution scene
+ * instead: deliberately *not* an upscale, so a failed frame is visibly the internal scene
+ * resolution rather than a black screen.
+ *
+ * Presentation and the sky-renderer reset are injected so the whole phase is verifiable off the
+ * render thread; [forMinecraft] supplies the production wiring.
+ */
+class WorldPhase(
+	private val runtime: RenderRuntime,
+	private val present: (RenderTarget, RenderTarget) -> Unit,
+	private val onWorldTargetChanged: () -> Unit,
+	/**
+	 * Records this frame's DLSS work against the scene it just rendered and composes the result
+	 * into the destination, returning true when the destination now holds the upscaled frame.
+	 *
+	 * Injected because reaching the raw Vulkan handles behind a target needs Minecraft's backend
+	 * types, and everything else here is verifiable off the render thread.
+	 */
+	private val evaluateFrame: (RenderTarget, RenderTarget, DlssJitterOffset, DlssFrameMotion) -> Boolean =
+		{ _, _, _, _ -> false },
+	/**
+	 * Formats and emits the session's reporting lines, fed by this phase and by the evaluation.
+	 */
+	private val readout: SessionReadout = SessionReadout.NOOP,
+) : AutoCloseable {
+	private var scene: RenderTarget? = null
+	private var mainTarget: RenderTarget? = null
+	private var prepared = false
+	private var lastResolved: RenderTarget? = null
+
+	/** True between [begin] and [end]. */
+	var isOpen: Boolean = false
+		private set
+
+	/**
+	 * Target `GameRenderer.mainRenderTarget()` must answer with, or null when the caller gets
+	 * the vanilla main target. Non-null only inside an eligible DLSS world phase.
+	 */
+	val worldTargetOverride: RenderTarget?
+		get() = if (isOpen) scene else null
+
+	/**
+	 * Decides this frame's route and jitter without opening the phase, and returns the jitter
+	 * an eligible DLSS frame must apply to its world projection, or null for a vanilla frame.
+	 *
+	 * Minecraft uploads the world projection in `GameRenderer.renderLevel`, before
+	 * `LevelRenderer.render` runs, so the route has to be known earlier than the phase can be
+	 * open - opening it that early would put hand, item, and screen effects behind the
+	 * low-resolution override too. Splitting the decision from the window is what keeps both
+	 * true, and the route is still decided exactly once per frame because [begin] consumes
+	 * this preparation rather than repeating it.
+	 *
+	 * [camera] is the frame's camera as the projection seam sees it, and is what the runtime
+	 * derives camera-only motion from. It is null only when the phase is opened without the
+	 * projection seam having run, which publishes no motion for that frame.
+	 */
+	fun prepare(
+		normalInWorldFrame: Boolean,
+		mainTarget: RenderTarget,
+		camera: DlssCameraSample? = null,
+	): DlssJitterOffset? {
+		// An exception thrown inside LevelRenderer.render skips the tail that closes the phase,
+		// and a frame that prepared but never rendered leaves one unconsumed. Both are dropped
+		// here rather than thrown on, because a stale phase must not turn one render failure
+		// into a permanent one.
+		discard()
+
+		this.mainTarget = mainTarget
+		scene = if (mainTarget.width > 0 && mainTarget.height > 0) {
+			runtime.beginWorldPhase(
+				normalInWorldFrame,
+				DlssDimensions(mainTarget.width, mainTarget.height),
+				camera,
+			)
+		} else {
+			null
+		}
+		prepared = true
+		return if (scene != null) runtime.activeJitter else null
+	}
+
+	/**
+	 * Opens the world phase against Minecraft's real main target and returns the target the
+	 * world must render into: the low-resolution scene target for an eligible DLSS frame, or
+	 * [mainTarget] itself for a vanilla frame.
+	 *
+	 * Consumes a matching [prepare] when one exists, so a frame that went through the
+	 * projection seam routes once rather than twice.
+	 */
+	fun begin(normalInWorldFrame: Boolean, mainTarget: RenderTarget): RenderTarget {
+		if (!prepared || this.mainTarget !== mainTarget) {
+			prepare(normalInWorldFrame, mainTarget)
+		}
+		isOpen = true
+
+		val resolved = scene ?: mainTarget
+		readout.worldPhase(
+			mainTarget = mainTarget,
+			scene = scene,
+			frame = runtime.activeRoute?.frame,
+			facts = SessionFacts(
+				enabled = runtime.config.enabled,
+				state = runtime.sessionState,
+				qualityMode = runtime.qualityMode,
+				renderPreset = runtime.renderPreset,
+				outputDimensions = runtime.config.outputDimensions,
+				renderDimensions = runtime.renderDimensions,
+			),
+			frameTimings = { runtime.frameEvaluation?.sampleTimings() },
+		)
+		if (resolved !== lastResolved) {
+			// SkyRenderer caches the target it was built against and reuses it every frame.
+			lastResolved = resolved
+			onWorldTargetChanged()
+		}
+		return resolved
+	}
+
+	/**
+	 * Closes the world phase, restoring the vanilla main target for the rest of the frame, then
+	 * presents an eligible frame's low-resolution scene into it.
+	 */
+	fun end() {
+		if (!isOpen) {
+			return
+		}
+
+		val rendered = scene
+		val destination = mainTarget
+		// Read before the phase closes: closing drops both, and the evaluation needs the same
+		// jitter and motion the world was actually rendered with.
+		val jitter = runtime.activeJitter
+		val motion = runtime.activeMotion
+		isOpen = false
+		prepared = false
+		scene = null
+		mainTarget = null
+		runtime.endWorldPhase()
+
+		// Present only after the phase is closed, so the destination is the vanilla target.
+		if (rendered != null && destination != null && !evaluate(rendered, destination, jitter, motion)) {
+			// No DLSS image reached the target, so the frame still has to show something: the
+			// low-resolution scene, un-upscaled, exactly as it looked before composition existed.
+			present(rendered, destination)
+		}
+	}
+
+	/**
+	 * Records this frame's DLSS work against the scene the world just rendered, and composes the
+	 * upscaled result into [destination]. Returns true when the destination holds it.
+	 *
+	 * Recorded here, at the tail of the world phase, because that is the first moment the scene
+	 * colour and depth are complete and the last moment before anything else in the frame touches
+	 * them - and because everything the frame draws after this point (hand and item, screen
+	 * effects, the 3D crosshair, HUD, and GUI) renders into that same destination at output
+	 * resolution, on top of the DLSS image.
+	 *
+	 * A frame missing its jitter, its motion, or the handles behind its targets is skipped: it went
+	 * through the phase without everything an evaluation needs, and DLSS reading a stale or absent
+	 * input is worse than one frame of the low-resolution present.
+	 */
+	private fun evaluate(
+		rendered: RenderTarget,
+		destination: RenderTarget,
+		jitter: DlssJitterOffset?,
+		motion: DlssFrameMotion?,
+	): Boolean {
+		if (jitter == null || motion == null) {
+			return false
+		}
+
+		return evaluateFrame(rendered, destination, jitter, motion)
+	}
+
+	/**
+	 * Breaks the accumulated history because the scene was replaced rather than because a frame
+	 * was lost: a world load, a dimension change, or a disconnect.
+	 *
+	 * Called from the client thread outside the render loop, so it also drops any phase that was
+	 * prepared and never rendered - the frame that prepared it belongs to the previous world and
+	 * must not be closed against the new one.
+	 */
+	fun resetHistory() {
+		discard()
+		runtime.resetHistory()
+	}
+
+	override fun close() {
+		discard()
+		lastResolved = null
+		runtime.close()
+	}
+
+	/**
+	 * Drops a prepared or open phase without presenting it, and breaks the motion history the
+	 * dropped frame would otherwise have left behind. The scene target itself stays owned by the
+	 * runtime.
+	 */
+	private fun discard() {
+		if (!isOpen && !prepared) {
+			return
+		}
+
+		isOpen = false
+		prepared = false
+		scene = null
+		mainTarget = null
+		runtime.endWorldPhase()
+		// This frame decided a route and moved the motion predecessor forward, but no image was
+		// ever accumulated from it, so the next frame must start its history again.
+		runtime.resetMotionHistory()
+	}
+
+	companion object {
+		/** Production wiring: a real blit, a real sky-renderer reset, and the session readout. */
+		@JvmStatic
+		fun forMinecraft(runtime: RenderRuntime, readout: SessionReadout): WorldPhase = WorldPhase(
+			runtime = runtime,
+			present = ::blitSceneToMainTarget,
+			onWorldTargetChanged = {
+				Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.shouldResetSkyRenderer = true
+			},
+			readout = readout,
+			evaluateFrame = { rendered, destination, jitter, motion ->
+				val evaluation = runtime.frameEvaluation
+				val resources = sceneResourcesOf(rendered)
+				val destinationImage = (destination.colorTextureView as? VulkanGpuTextureView)
+					?.texture()
+					?.vkImage()
+				if (evaluation == null || resources == null || destinationImage == null) {
+					false
+				} else {
+					evaluation.evaluateFrame(resources, jitter, motion, destinationImage)
+				}
+			},
+		)
+
+		/**
+		 * Reads the `VkImage` / `VkImageView` handles and formats out of a scene target.
+		 *
+		 * Every target the mod allocates is a [com.mojang.blaze3d.pipeline.TextureTarget] with
+		 * colour and depth, so both views are present and both are Vulkan views - but the backend
+		 * can be OpenGL, and a target can be destroyed between frames, so nothing here assumes it.
+		 * A null result skips the frame's evaluation rather than crashing the render thread.
+		 */
+		private fun sceneResourcesOf(target: RenderTarget): SceneResources? {
+			val color = target.colorTextureView as? VulkanGpuTextureView ?: return null
+			val depth = target.depthTextureView as? VulkanGpuTextureView ?: return null
+			return SceneResources(
+				color = ImageBinding(
+					view = color.vkImageView(),
+					image = color.texture().vkImage(),
+					format = VulkanConst.toVk(color.texture().getFormat()),
+				),
+				depth = ImageBinding(
+					view = depth.vkImageView(),
+					image = depth.texture().vkImage(),
+					format = VulkanConst.toVk(depth.texture().getFormat()),
+				),
+			)
+		}
+
+		/**
+		 * Draws the scene color over the whole main target with the full-screen blit pipeline.
+		 *
+		 * `TRACY_BLIT` is the un-blended sibling of `ENTITY_OUTLINE_BLIT`: same screen-quad and
+		 * blit shaders, no blend function, so the world replaces the main target's cleared color
+		 * instead of compositing over it. The sampler is NEAREST on purpose - no filtering means
+		 * the presented image shows the render resolution exactly as DLSS will receive it.
+		 */
+		private fun blitSceneToMainTarget(scene: RenderTarget, main: RenderTarget) {
+			val source = scene.colorTextureView ?: return
+			val destination = main.colorTextureView ?: return
+
+			RenderSystem.getDevice()
+				.createCommandEncoder()
+				.createRenderPass({ "DLSS scene present" }, destination, Optional.empty())
+				.use { pass ->
+					RenderSystem.bindDefaultUniforms(pass)
+					pass.setPipeline(RenderPipelines.TRACY_BLIT)
+					pass.bindTexture(
+						"InSampler",
+						source,
+						RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST),
+					)
+					pass.draw(3, 1, 0, 0)
+				}
+		}
+	}
+}

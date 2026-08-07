@@ -34,6 +34,27 @@ bin/
 
 run/
 
+# native bridge (MSVC / glslc build outputs)
+
+*.obj
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.dll
+*.so
+*.dylib
+*.spv
+*.spv.h
+.vs/
+x64/
+Debug/
+Release/
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+compile_commands.json
+
 # java
 
 hs_err_*.log
@@ -43,3 +64,6 @@ replay_*.log
 
 # pi subagent run artifacts
 .pi-subagents/
+
+# runtime logs
+logs/
