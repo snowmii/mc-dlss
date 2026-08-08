@@ -174,6 +174,10 @@ tasks.processResources {
 // launch.cfg, so the DLSS startup properties are set on the run task's JVM directly. Every
 // value is overridable, e.g. `./gradlew.bat runClient -Pmc.dlss.mode=performance`.
 tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configureEach {
+	// DLSS only supports Minecraft's Vulkan backend. Force it for every dev-client launch so a
+	// persisted OpenGL option cannot produce a misleading waiting-for-vulkan session.
+	args("--graphicsBackend", "vulkan")
+
 	// sdk-path is a compatibility input: the retired direct-NGX path searched it for its
 	// feature DLL, and initialize now validates it and records only the Vulkan tuple.
 	val sdkPath = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
@@ -181,6 +185,9 @@ tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configur
 	val dlssData = layout.buildDirectory.dir("dlss-data").get().asFile
 
 	doFirst {
+		check(args.windowed(2).any { it == listOf("--graphicsBackend", "vulkan") }) {
+			"DLSS runClient requires --graphicsBackend vulkan"
+		}
 		dlssData.mkdirs()
 	}
 

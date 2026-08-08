@@ -40,7 +40,7 @@ public abstract class VulkanBackendExtensionMixin {
 	}
 
 	@Redirect(
-		method = "createDevice",
+		method = "createDevice(JLcom/mojang/blaze3d/shaders/ShaderSource;Lcom/mojang/blaze3d/shaders/GpuDebugOptions;Ljava/lang/Runnable;)Lcom/mojang/blaze3d/systems/GpuDevice;",
 		at = @At(
 			value = "INVOKE",
 			target = "Lcom/mojang/blaze3d/vulkan/VulkanBackend;createDevice(Ljava/util/Collection;Lcom/mojang/blaze3d/vulkan/VulkanPhysicalDevice;Ljava/util/Set;)Lorg/lwjgl/vulkan/VkDevice;"
@@ -78,13 +78,13 @@ public abstract class VulkanBackendExtensionMixin {
 	 * (redirects only apply inside the redirected method).
 	 */
 	@Redirect(
-		method = "createDevice",
+		method = "createDevice(Ljava/util/Collection;Lcom/mojang/blaze3d/vulkan/VulkanPhysicalDevice;Ljava/util/Set;)Lorg/lwjgl/vulkan/VkDevice;",
 		at = @At(
 			value = "INVOKE",
 			target = "Lcom/mojang/blaze3d/vulkan/VulkanPhysicalDevice;queueFamilyCreateInfoMap()Lit/unimi/dsi/fastutil/ints/Int2IntMap;"
 		)
 	)
-	private Int2IntMap mcDlssMergedQueueMap(VulkanPhysicalDevice physicalDevice) {
+	private static Int2IntMap mcDlssMergedQueueMap(VulkanPhysicalDevice physicalDevice) {
 		Int2IntMap original = physicalDevice.queueFamilyCreateInfoMap();
 		Int2IntMap merged = new Int2IntArrayMap(original);
 		SlQueueRequirements requirements = ExtensionBootstrap.queryQueueRequirements();
