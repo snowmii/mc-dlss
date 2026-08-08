@@ -1,6 +1,7 @@
 package me.snowmii.dlss.bridge;
 
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Native lifecycle calls exposed to the session adapter and test doubles.
@@ -107,4 +108,37 @@ public interface NativeApi {
 	 * holds.
 	 */
 	int evaluate(EvaluationRequest request);
+
+	/**
+	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features (DLSS, DLSS-G,
+	 * Reflex) require the device to enable, as {@code slGetFeatureRequirements} reports them
+	 * through {@code mc_dlss_query_device_feature_12}.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a query they never reach; {@link Native} overrides it.
+	 */
+	default List<String> queryDeviceFeatures12() {
+		throw new UnsupportedOperationException("queryDeviceFeatures12");
+	}
+
+	/**
+	 * The deduplicated Vulkan 1.3 feature names Streamline's loaded features require, as
+	 * {@code slGetFeatureRequirements} reports them through {@code mc_dlss_query_device_feature_13}.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #queryDeviceFeatures12()}.
+	 */
+	default List<String> queryDeviceFeatures13() {
+		throw new UnsupportedOperationException("queryDeviceFeatures13");
+	}
+
+	/**
+	 * The extra Vulkan queues Streamline's loaded features require the host to create, summed
+	 * across features as {@code slGetFeatureRequirements} reports them through
+	 * {@code mc_dlss_query_queue_requirements}.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #queryDeviceFeatures12()}.
+	 */
+	default SlQueueRequirements queryQueueRequirements() {
+		throw new UnsupportedOperationException("queryQueueRequirements");
+	}
 }

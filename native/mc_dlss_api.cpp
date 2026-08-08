@@ -46,6 +46,37 @@ uint64_t g_proxyPhysicalDevice = 0;
 uint64_t g_proxyDevice = 0;
 uint32_t g_proxyGraphicsQueueFamily = 0;
 uint32_t g_proxyGraphicsQueueIndex = 0;
+uint32_t g_proxyComputeQueueFamily = 0;
+uint32_t g_proxyComputeQueueIndex = 0;
+
+// The manual-hook Vulkan preferences this module always uses, shared by the bootstrap and by
+// the activation recovery path (which has to re-run slInit after slShutdown). `paths` is the
+// caller-owned one-element array the pointer must stay valid for the duration of slInit.
+sl::Preferences make_streamline_preferences(const std::wstring& plugin_path, const wchar_t** paths) {
+    paths[0] = plugin_path.c_str();
+    sl::Preferences preferences{};
+    preferences.pathsToPlugins = paths;
+    preferences.numPathsToPlugins = 1;
+    preferences.flags = sl::PreferenceFlags::eDisableCLStateTracking |
+                        sl::PreferenceFlags::eUseManualHooking |
+                        sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+    preferences.featuresToLoad = kStreamlineFeatures;
+    preferences.numFeaturesToLoad = static_cast<uint32_t>(std::size(kStreamlineFeatures));
+    preferences.engine = sl::EngineType::eCustom;
+    preferences.engineVersion = kEngineVersion;
+    preferences.projectId = kProjectId;
+    preferences.renderAPI = sl::RenderAPI::eVulkan;
+    return preferences;
+}
+
+// Whether slInit's answer means the runtime is up: eOk, or the two errors it reports when the
+// plugin manager is already initialized by a previous bootstrap (the SL runtime itself stays
+// loaded for the whole process while this module is unloaded with every bridge's arena).
+bool streamline_initialized_after(const sl::Result slInitResult) {
+    return slInitResult == sl::Result::eOk ||
+           slInitResult == sl::Result::eErrorInitNotCalled ||
+           slInitResult == sl::Result::eErrorInvalidState;
+}
 
 int32_t copy_streamline_extension(const uint32_t index, char* name,
                                   const uint32_t nameCapacity, uint32_t* count,
@@ -78,6 +109,53 @@ int32_t collect_streamline_extensions(const bool device, const uint32_t index, c
     return copy_streamline_extension(index, name, nameCapacity, count, extensions);
 }
 
+// The Vulkan 1.2/1.3 feature names the loaded features require, deduplicated across features
+// and copied through the same index/name/capacity/count copier as the extension queries.
+int32_t collect_streamline_feature_names(const bool features13, const uint32_t index, char* name,
+                                         const uint32_t nameCapacity, uint32_t* count) {
+    if (!g_streamlineInitialized) return kNotInitialized;
+    std::vector<const char*> names;
+    for (const sl::Feature feature : kStreamlineFeatures) {
+        sl::FeatureRequirements requirements{};
+        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) return kFailure;
+        const uint32_t size = features13 ? requirements.vkNumFeatures13 : requirements.vkNumFeatures12;
+        const char* const* values = features13 ? requirements.vkFeatures13 : requirements.vkFeatures12;
+        for (uint32_t i = 0; i < size; ++i) {
+            bool duplicate = false;
+            for (const char* existing : names) duplicate |= std::strcmp(existing, values[i]) == 0;
+            if (!duplicate) names.push_back(values[i]);
+        }
+    }
+    return copy_streamline_extension(index, name, nameCapacity, count, names);
+}
+
+// The extra graphics/compute/optical-flow queue counts the loaded features require, summed
+// across features. The host is expected to create these queues itself before the device
+// exists; optical flow is reported but the host may skip it (DLSS-G falls back to interop).
+int32_t collect_streamline_queue_requirements(uint32_t* extra_graphics_queues,
+                                              uint32_t* extra_compute_queues,
+                                              uint32_t* extra_optical_flow_queues) {
+    if (!g_streamlineInitialized) return kNotInitialized;
+    if (extra_graphics_queues == nullptr || extra_compute_queues == nullptr ||
+        extra_optical_flow_queues == nullptr) {
+        return kInvalidParameter;
+    }
+    uint32_t graphics = 0;
+    uint32_t compute = 0;
+    uint32_t opticalFlow = 0;
+    for (const sl::Feature feature : kStreamlineFeatures) {
+        sl::FeatureRequirements requirements{};
+        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) return kFailure;
+        graphics += requirements.vkNumGraphicsQueuesRequired;
+        compute += requirements.vkNumComputeQueuesRequired;
+        opticalFlow += requirements.vkNumOpticalFlowQueuesRequired;
+    }
+    *extra_graphics_queues = graphics;
+    *extra_compute_queues = compute;
+    *extra_optical_flow_queues = opticalFlow;
+    return kSuccess;
+}
+
 // The recording calls all name the render dimensions they believe are configured. The value is
 // never used as a size - everything is sized from the configuration - so this is purely the
 // check that the caller has not lost track of what it configured.
@@ -105,20 +183,16 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin
         if (g_streamlineInitialized) return kSuccess;
         std::wstring pluginPath;
         if (!utf8_to_wide(plugin_path, pluginPath)) return kInvalidParameter;
-        const wchar_t* paths[] = {pluginPath.c_str()};
-        sl::Preferences preferences{};
-        preferences.pathsToPlugins = paths;
-        preferences.numPathsToPlugins = 1;
-        preferences.flags = sl::PreferenceFlags::eDisableCLStateTracking |
-                            sl::PreferenceFlags::eUseManualHooking |
-                            sl::PreferenceFlags::eUseFrameBasedResourceTagging;
-        preferences.featuresToLoad = kStreamlineFeatures;
-        preferences.numFeaturesToLoad = static_cast<uint32_t>(std::size(kStreamlineFeatures));
-        preferences.engine = sl::EngineType::eCustom;
-        preferences.engineVersion = kEngineVersion;
-        preferences.projectId = kProjectId;
-        preferences.renderAPI = sl::RenderAPI::eVulkan;
-        if (slInit(preferences) != sl::Result::eOk) return kFailure;
+        const wchar_t* paths[1] = {pluginPath.c_str()};
+        const sl::Preferences preferences = make_streamline_preferences(pluginPath, paths);
+        const sl::Result slInitResult = slInit(preferences);
+        // The SL runtime itself (sl.interposer.dll) stays loaded for the whole process, but this
+        // module is unloaded with every bridge's arena, so a fresh module instance re-runs slInit
+        // on a runtime that already initialized it. That is not a failure to bootstrap: the two
+        // errors slInit reports in that state both mean the plugin manager is already up, and
+        // every query below works against it. Anything else - a missing plugin, a bad path -
+        // still fails loudly.
+        if (!streamline_initialized_after(slInitResult)) return kFailure;
         g_streamlineInitialized = true;
         return kSuccess;
     } catch (...) {
@@ -128,7 +202,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
     const uint64_t vk_instance, const uint64_t vk_physical_device, const uint64_t vk_device,
-    const uint32_t graphics_queue_family, const uint32_t graphics_queue_index) {
+    const uint32_t graphics_queue_family, const uint32_t graphics_queue_index,
+    const uint32_t compute_queue_family, const uint32_t compute_queue_index) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_streamlineInitialized) return kNotInitialized;
@@ -138,25 +213,30 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
         if (g_proxyDevice != 0 && g_proxyInstance == vk_instance &&
             g_proxyPhysicalDevice == vk_physical_device && g_proxyDevice == vk_device &&
             g_proxyGraphicsQueueFamily == graphics_queue_family &&
-            g_proxyGraphicsQueueIndex == graphics_queue_index) {
+            g_proxyGraphicsQueueIndex == graphics_queue_index &&
+            g_proxyComputeQueueFamily == compute_queue_family &&
+            g_proxyComputeQueueIndex == compute_queue_index) {
             return kSuccess;
         }
         if (g_proxyDevice != 0) {
-            // A different device cannot replace the layout Streamline already hooks without
-            // shutting it down first; the caller must not be silently re-hooking around it.
+            // A different device cannot replace the layout Streamline already hooks: the SL
+            // runtime accepts one device per process (its own slShutdown cannot tear the old
+            // one down reliably once plugins initialized against a live device). The caller
+            // must not be silently re-hooking around it.
             return kInvalidParameter;
         }
         sl::VulkanInfo info{};
         info.device = from_uint64<VkDevice>(vk_device);
         info.instance = from_uint64<VkInstance>(vk_instance);
         info.physicalDevice = from_uint64<VkPhysicalDevice>(vk_physical_device);
-        // Streamline's graphicsQueueIndex is the index at which its own queues start, so the
-        // host passes its queue COUNT in the family, and no compute or optical-flow family is
-        // recorded because the host created none of its own for Streamline to follow.
+        // Streamline's queue indices are the indices at which its own queues start, so the
+        // host passes its queue COUNT in each family - the number of queues the host created
+        // for itself, after which Streamline's extra queues follow. No optical-flow family is
+        // recorded because the host creates none of its own (DLSS-G then runs in interop mode).
         info.graphicsQueueFamily = graphics_queue_family;
         info.graphicsQueueIndex = graphics_queue_index;
-        info.computeQueueIndex = 0;
-        info.computeQueueFamily = 0;
+        info.computeQueueFamily = compute_queue_family;
+        info.computeQueueIndex = compute_queue_index;
         info.opticalFlowQueueIndex = 0;
         info.opticalFlowQueueFamily = 0;
         info.useNativeOpticalFlowMode = false;
@@ -169,6 +249,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
         g_proxyDevice = vk_device;
         g_proxyGraphicsQueueFamily = graphics_queue_family;
         g_proxyGraphicsQueueIndex = graphics_queue_index;
+        g_proxyComputeQueueFamily = compute_queue_family;
+        g_proxyComputeQueueIndex = compute_queue_index;
         return kSuccess;
     } catch (...) {
         return kFailure;
@@ -204,6 +286,32 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
             &dis, &count, &properties);
         if (result != NVSDK_NGX_Result_Success) return static_cast<int32_t>(result);
         return copy_extension_name(index, name, name_capacity, extension_count, count, properties);
+    } catch (...) { return kFailure; }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_feature_12(
+    const uint32_t index, char* name, const uint32_t name_capacity,
+    uint32_t* feature_count) {
+    try {
+        return collect_streamline_feature_names(false, index, name, name_capacity, feature_count);
+    } catch (...) { return kFailure; }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_feature_13(
+    const uint32_t index, char* name, const uint32_t name_capacity,
+    uint32_t* feature_count) {
+    try {
+        return collect_streamline_feature_names(true, index, name, name_capacity, feature_count);
+    } catch (...) { return kFailure; }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_queue_requirements(
+    uint32_t* extra_graphics_queues, uint32_t* extra_compute_queues,
+    uint32_t* extra_optical_flow_queues) {
+    try {
+        return collect_streamline_queue_requirements(extra_graphics_queues,
+                                                     extra_compute_queues,
+                                                     extra_optical_flow_queues);
     } catch (...) { return kFailure; }
 }
 

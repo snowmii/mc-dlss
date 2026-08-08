@@ -181,7 +181,25 @@ class DlssResourceAbiTest {
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_release_images() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_activate_vulkan_proxies(
-				uint64_t, uint64_t, uint64_t, uint32_t, uint32_t) { return 1; }
+				uint64_t, uint64_t, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 1; }
+			__declspec(dllexport) int __cdecl mc_dlss_query_device_feature_12(
+				uint32_t index, char* name, uint32_t name_capacity, uint32_t* feature_count) {
+				if (feature_count == nullptr) return 0;
+				*feature_count = 0;
+				return 1;
+			}
+			__declspec(dllexport) int __cdecl mc_dlss_query_device_feature_13(
+				uint32_t index, char* name, uint32_t name_capacity, uint32_t* feature_count) {
+				if (feature_count == nullptr) return 0;
+				*feature_count = 0;
+				return 1;
+			}
+			__declspec(dllexport) int __cdecl mc_dlss_query_queue_requirements(
+				uint32_t* extra_graphics_queues, uint32_t* extra_compute_queues, uint32_t* extra_optical_flow_queues) {
+				if (extra_graphics_queues == nullptr || extra_compute_queues == nullptr || extra_optical_flow_queues == nullptr) return 0;
+				*extra_graphics_queues = 0; *extra_compute_queues = 0; *extra_optical_flow_queues = 0;
+				return 1;
+			}
 			__declspec(dllexport) int __cdecl mc_dlss_wait_device_idle() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_query_frame_timings(
 				float*, float*, float*, float*) { return 1; }

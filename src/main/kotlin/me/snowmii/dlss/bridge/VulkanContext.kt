@@ -28,6 +28,10 @@ class VulkanContext private constructor(
 	val graphicsQueueFamily: Int,
 	/** Index at which Streamline's own queues start: the number of queues the host created in [graphicsQueueFamily]. */
 	val graphicsQueueIndex: Int,
+	/** Queue family Minecraft's compute queue lives in, for Streamline's manual-hook Vulkan info. */
+	val computeQueueFamily: Int,
+	/** Index at which Streamline's own compute queues start: the number of queues the host created in [computeQueueFamily]. */
+	val computeQueueIndex: Int,
 	val commandBufferSource: () -> VkCommandBuffer,
 	private val commandBufferSink: (VkCommandBuffer) -> Unit,
 ) {
@@ -72,6 +76,8 @@ class VulkanContext private constructor(
 				return null
 			}
 			val encoder = device.createCommandEncoder()
+			val queueFamilyMap = physicalDevice.queueFamilyCreateInfoMap()
+			val computePair = physicalDevice.computeQueueFamilyAndIndex()
 			return VulkanContext(
 				instanceHandle,
 				physicalDeviceHandle,
@@ -81,7 +87,11 @@ class VulkanContext private constructor(
 				// Streamline's graphicsQueueIndex is where its own queues start, which is after the
 				// queues Minecraft created in the family - the host queue COUNT from the create-info
 				// map, not the pair's queue index.
-				graphicsQueueIndex = physicalDevice.queueFamilyCreateInfoMap().get(graphicsPair.leftInt()),
+				graphicsQueueIndex = queueFamilyMap.get(graphicsPair.leftInt()),
+				// Same semantics for compute: the count of host queues in the compute family, and
+				// 0/0 when Minecraft found no compute family (SL then cannot be told one).
+				computeQueueFamily = computePair?.leftInt() ?: 0,
+				computeQueueIndex = if (computePair != null) queueFamilyMap.get(computePair.leftInt()) else 0,
 				commandBufferSource = { encoder.allocateAndBeginTransientCommandBuffer() },
 				// execute() ends whatever the encoder was recording and appends this buffer behind
 				// it, so the buffer has to be closed here first. It is not submitted by this call;
@@ -105,6 +115,8 @@ class VulkanContext private constructor(
 			vkQueue: Long,
 			graphicsQueueFamily: Int = 0,
 			graphicsQueueIndex: Int = 0,
+			computeQueueFamily: Int = 0,
+			computeQueueIndex: Int = 0,
 			commandBufferSource: () -> VkCommandBuffer,
 			commandBufferSink: (VkCommandBuffer) -> Unit = {},
 		): VulkanContext = VulkanContext(
@@ -114,6 +126,8 @@ class VulkanContext private constructor(
 			vkQueue,
 			graphicsQueueFamily,
 			graphicsQueueIndex,
+			computeQueueFamily,
+			computeQueueIndex,
 			commandBufferSource,
 			commandBufferSink,
 		)

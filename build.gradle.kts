@@ -35,6 +35,13 @@ dependencies {
 
 tasks.test {
 	useJUnitPlatform()
+	// Streamline's runtime accepts exactly one Vulkan device per process (its plugin manager
+	// refuses a second slSetVulkanInfo, and slShutdown cannot tear an initialized device down
+	// reliably), and the native bridge module is unloaded with every FFM library arena. Both
+	// make SL-state-dependent tests order- and JVM-lifetime-sensitive, so every test class runs
+	// in its own worker: the Streamline activation tests each get a pristine runtime, and no
+	// earlier class's device leaks into a later one.
+	forkEvery = 1
 }
 
 val buildNativeDlss by tasks.registering(Exec::class) {

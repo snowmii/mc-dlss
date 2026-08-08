@@ -118,6 +118,9 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle activateVulkanProxies;
 	private final MethodHandle queryInstanceExtension;
 	private final MethodHandle queryDeviceExtension;
+	private final MethodHandle queryDeviceFeature12;
+	private final MethodHandle queryDeviceFeature13;
+	private final MethodHandle queryQueueRequirements;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
@@ -152,7 +155,16 @@ public final class Native implements AutoCloseable, NativeApi {
 		this.activateVulkanProxies = bind(
 			lookup,
 			"mc_dlss_activate_vulkan_proxies",
-			FunctionDescriptor.of(JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT)
+			FunctionDescriptor.of(
+				JAVA_INT,
+				JAVA_LONG, // vk_instance
+				JAVA_LONG, // vk_physical_device
+				JAVA_LONG, // vk_device
+				JAVA_INT, // graphics_queue_family
+				JAVA_INT, // graphics_queue_index
+				JAVA_INT, // compute_queue_family
+				JAVA_INT // compute_queue_index
+			)
 		);
 		this.queryInstanceExtension = bind(
 			lookup,
@@ -163,6 +175,21 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_query_device_extension",
 			FunctionDescriptor.of(JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, ValueLayout.ADDRESS, JAVA_INT, ValueLayout.ADDRESS)
+		);
+		this.queryDeviceFeature12 = bind(
+			lookup,
+			"mc_dlss_query_device_feature_12",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT, ValueLayout.ADDRESS, JAVA_INT, ValueLayout.ADDRESS)
+		);
+		this.queryDeviceFeature13 = bind(
+			lookup,
+			"mc_dlss_query_device_feature_13",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT, ValueLayout.ADDRESS, JAVA_INT, ValueLayout.ADDRESS)
+		);
+		this.queryQueueRequirements = bind(
+			lookup,
+			"mc_dlss_query_queue_requirements",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
 		this.initialize = bind(
 			lookup,
@@ -253,18 +280,20 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	/**
-	 * Hands the live instance / physical device / device and graphics queue layout to
-	 * Streamline's manual-hook Vulkan integration (slSetVulkanInfo). {@code graphicsQueueIndex}
-	 * is the index at which Streamline's own queues start - the number of queues the host
-	 * created in {@code graphicsQueueFamily}. Idempotent natively: repeating the same five
-	 * values returns success without re-calling slSetVulkanInfo.
+	 * Hands the live instance / physical device / device and graphics + compute queue layout to
+	 * Streamline's manual-hook Vulkan integration (slSetVulkanInfo). Each queue index is the
+	 * index at which Streamline's own queues start - the number of queues the host created in
+	 * that family. Idempotent natively: repeating the same seven values returns success without
+	 * re-calling slSetVulkanInfo.
 	 */
 	public int activateVulkanProxies(
 		final long vkInstance,
 		final long vkPhysicalDevice,
 		final long vkDevice,
 		final int graphicsQueueFamily,
-		final int graphicsQueueIndex
+		final int graphicsQueueIndex,
+		final int computeQueueFamily,
+		final int computeQueueIndex
 	) {
 		try {
 			return (int)this.activateVulkanProxies.invokeExact(
@@ -272,7 +301,9 @@ public final class Native implements AutoCloseable, NativeApi {
 				vkPhysicalDevice,
 				vkDevice,
 				graphicsQueueFamily,
-				graphicsQueueIndex
+				graphicsQueueIndex,
+				computeQueueFamily,
+				computeQueueIndex
 			);
 		} catch (Throwable error) {
 			throw nativeError("activate-vulkan-proxies", error);
@@ -316,6 +347,68 @@ public final class Native implements AutoCloseable, NativeApi {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-extensions", error);
+		}
+	}
+
+	@Override
+	public List<String> queryDeviceFeatures12() {
+		return queryFeatureNames(this.queryDeviceFeature12);
+	}
+
+	@Override
+	public List<String> queryDeviceFeatures13() {
+		return queryFeatureNames(this.queryDeviceFeature13);
+	}
+
+	/**
+	 * Count-then-name walk over one of the native feature-name queries, the same two-call
+	 * pattern as the extension queries: first call with a null name returns the count, then one
+	 * call per index copies that name.
+	 */
+	private List<String> queryFeatureNames(final MethodHandle query) {
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment count = callArena.allocate(JAVA_INT);
+			int result = (int)query.invokeExact(0, MemorySegment.NULL, 0, count);
+			if (result != SUCCESS) {
+				throw new NativeException("query-device-features", result);
+			}
+			final int featureCount = count.get(JAVA_INT, 0);
+			final LinkedHashSet<String> names = new LinkedHashSet<>(featureCount);
+			for (int index = 0; index < featureCount; index++) {
+				final MemorySegment name = callArena.allocate(256);
+				result = (int)query.invokeExact(index, name, 256, count);
+				if (result != SUCCESS) {
+					throw new NativeException("query-device-features", result);
+				}
+				names.add(name.getString(0));
+			}
+			return List.copyOf(names);
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-device-features", error);
+		}
+	}
+
+	@Override
+	public SlQueueRequirements queryQueueRequirements() {
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment graphics = callArena.allocate(JAVA_INT);
+			final MemorySegment compute = callArena.allocate(JAVA_INT);
+			final MemorySegment opticalFlow = callArena.allocate(JAVA_INT);
+			final int result = (int)this.queryQueueRequirements.invokeExact(graphics, compute, opticalFlow);
+			if (result != SUCCESS) {
+				throw new NativeException("query-queue-requirements", result);
+			}
+			return new SlQueueRequirements(
+				graphics.get(JAVA_INT, 0),
+				compute.get(JAVA_INT, 0),
+				opticalFlow.get(JAVA_INT, 0)
+			);
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-queue-requirements", error);
 		}
 	}
 

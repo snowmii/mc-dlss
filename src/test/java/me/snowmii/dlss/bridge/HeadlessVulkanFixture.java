@@ -5,9 +5,12 @@ import java.nio.ByteOrder;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.nio.ShortBuffer;
+import it.unimi.dsi.fastutil.ints.Int2IntArrayMap;
+import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiFunction;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
@@ -104,6 +107,27 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		final List<String> instanceExtensions,
 		final BiFunction<Long, Long, List<String>> deviceExtensionProvider,
 		final boolean validated
+	) {
+		this(instanceExtensions, deviceExtensionProvider, validated, Map.of());
+	}
+
+	/**
+	 * As {@link #HeadlessVulkanFixture(List, BiFunction, boolean)}, additionally creating
+	 * {@code additionalQueuesPerFamily} extra queues in each named queue family, on top of the
+	 * fixture's base single graphics queue.
+	 *
+	 * The production merge starts from Minecraft's {@code {graphicsFamily: 1}} queue map and
+	 * adds Streamline's required extra graphics/compute queues to it; this overload is what lets
+	 * a test build the device whose queue layout that merge produces. Each family gets one
+	 * {@code VkDeviceQueueCreateInfo} with {@code queueCount = base + additional} and its own
+	 * queue-priorities buffer of that many floats, mirroring how Minecraft's createDevice loop
+	 * builds queue creation infos from its family map.
+	 */
+	public HeadlessVulkanFixture(
+		final List<String> instanceExtensions,
+		final BiFunction<Long, Long, List<String>> deviceExtensionProvider,
+		final boolean validated,
+		final Map<Integer, Integer> additionalQueuesPerFamily
 	) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			validationEnabled = validated
@@ -208,11 +232,25 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 
 			List<String> deviceExtensions = deviceExtensionProvider.apply(instance.address(), physicalDevice.address());
 
-			// queueCount derives from pQueuePriorities.remaining(); do NOT flip().
-			VkDeviceQueueCreateInfo.Buffer queueCreateInfo = VkDeviceQueueCreateInfo.calloc(1, stack);
-			queueCreateInfo.get(0).sType$Default();
-			queueCreateInfo.get(0).queueFamilyIndex(queueFamilyIndex);
-			queueCreateInfo.get(0).pQueuePriorities(stack.callocFloat(1).put(0, 1.0f));
+			// The merged queue layout: the base single graphics queue plus the caller's extra
+			// queues per family, one create info per family - the same shape Minecraft's
+			// createDevice loop builds from its queue-family map.
+			Int2IntMap queuesToCreate = new Int2IntArrayMap();
+			queuesToCreate.put(queueFamilyIndex, 1);
+			for (Map.Entry<Integer, Integer> extra : additionalQueuesPerFamily.entrySet()) {
+				int family = extra.getKey();
+				int additional = extra.getValue();
+				queuesToCreate.put(family, queuesToCreate.get(family) + additional);
+			}
+			VkDeviceQueueCreateInfo.Buffer queueCreateInfo = VkDeviceQueueCreateInfo.calloc(queuesToCreate.size(), stack);
+			int createInfoIndex = 0;
+			for (Int2IntMap.Entry familyQueues : queuesToCreate.int2IntEntrySet()) {
+				// queueCount derives from pQueuePriorities.remaining(); do NOT flip().
+				queueCreateInfo.get(createInfoIndex).sType$Default();
+				queueCreateInfo.get(createInfoIndex).queueFamilyIndex(familyQueues.getIntKey());
+				queueCreateInfo.get(createInfoIndex).pQueuePriorities(stack.callocFloat(familyQueues.getIntValue()));
+				createInfoIndex++;
+			}
 
 			PointerBuffer deviceExts = null;
 			if (deviceExtensions != null && !deviceExtensions.isEmpty()) {
@@ -280,6 +318,11 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 	/** Raw address of the live graphics queue, as Minecraft's VulkanDevice.graphicsQueue().vkQueue().address() is. */
 	public long queueAddress() {
 		return queue.address();
+	}
+
+	/** The queue family the fixture's graphics queue was created in. */
+	public int graphicsQueueFamilyIndex() {
+		return queueFamilyIndex;
 	}
 
 	/**

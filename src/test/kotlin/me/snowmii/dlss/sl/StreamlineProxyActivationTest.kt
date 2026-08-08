@@ -47,7 +47,9 @@ class StreamlineProxyActivationTest {
 
 				val graphicsFamily = graphicsQueueFamilyOf(fixture)
 				// The fixture creates exactly one queue in the graphics family, so Streamline's
-				// own queues start at index 1 - right after the host's.
+				// own queues start at index 1 - right after the host's. The graphics family is
+				// compute-capable on this workstation, so the compute queue layout is the same
+				// family with the same host count.
 				val hostQueueCount = 1
 				val layout = {
 					bridge.activateVulkanProxies(
@@ -56,10 +58,12 @@ class StreamlineProxyActivationTest {
 						fixture.deviceAddress(),
 						graphicsFamily,
 						hostQueueCount,
+						graphicsFamily,
+						hostQueueCount,
 					)
 				}
 				assertEquals(NativeApi.SUCCESS_RESULT, layout(), "first activation must succeed")
-				// Idempotent: the same five values must not re-call slSetVulkanInfo.
+				// Idempotent: the same seven values must not re-call slSetVulkanInfo.
 				assertEquals(NativeApi.SUCCESS_RESULT, layout(), "repeated activation must succeed")
 			}
 		}

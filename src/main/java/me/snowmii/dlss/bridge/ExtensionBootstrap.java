@@ -53,6 +53,45 @@ public final class ExtensionBootstrap {
 	}
 
 	/**
+	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features require the device
+	 * to enable, merged into Minecraft's enabled feature set at the createDevice seam. Opens a
+	 * fresh bridge like the other queries; bootstrap is idempotent.
+	 */
+	public static List<String> queryDeviceFeatures12() {
+		loadStreamlineRuntime();
+		try (Native nativeBridge = Native.open(nativeLibrary())) {
+			bootstrap(nativeBridge);
+			return nativeBridge.queryDeviceFeatures12();
+		}
+	}
+
+	/**
+	 * The deduplicated Vulkan 1.3 feature names Streamline's loaded features require, merged
+	 * into Minecraft's enabled feature set at the createDevice seam.
+	 */
+	public static List<String> queryDeviceFeatures13() {
+		loadStreamlineRuntime();
+		try (Native nativeBridge = Native.open(nativeLibrary())) {
+			bootstrap(nativeBridge);
+			return nativeBridge.queryDeviceFeatures13();
+		}
+	}
+
+	/**
+	 * The summed extra graphics / compute / optical-flow queues Streamline's loaded features
+	 * require the host to create, added to Minecraft's queue-family create map at the
+	 * createDevice seam. Optical flow is reported but never created: without a host optical-flow
+	 * family, DLSS-G runs in interop mode.
+	 */
+	public static SlQueueRequirements queryQueueRequirements() {
+		loadStreamlineRuntime();
+		try (Native nativeBridge = Native.open(nativeLibrary())) {
+			bootstrap(nativeBridge);
+			return nativeBridge.queryQueueRequirements();
+		}
+	}
+
+	/**
 	 * Activates Streamline's manual-hook Vulkan proxies against the live device, right after
 	 * the VulkanDevice is constructed. Opens a fresh bridge like the other seams (bootstrap is
 	 * idempotent and the Streamline state survives the bridge close) and throws
@@ -69,7 +108,9 @@ public final class ExtensionBootstrap {
 				context.getPhysicalDeviceHandle(),
 				context.getDeviceHandle(),
 				context.getGraphicsQueueFamily(),
-				context.getGraphicsQueueIndex()
+				context.getGraphicsQueueIndex(),
+				context.getComputeQueueFamily(),
+				context.getComputeQueueIndex()
 			);
 			if (result != NativeApi.SUCCESS_RESULT) {
 				throw new NativeException("activate-vulkan-proxies", result);

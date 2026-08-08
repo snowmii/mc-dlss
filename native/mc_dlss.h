@@ -73,17 +73,19 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin
  *
  * Must be called after mc_dlss_bootstrap_streamline and after the Vulkan device exists, when
  * the application creates the instance/device itself instead of going through Streamline's
- * vkCreateInstance/vkCreateDevice proxies. Carries the live handles and the graphics queue
- * layout to slSetVulkanInfo, which is what routes the application's Vulkan loading - already
- * redirected to sl.interposer.dll by the mod entrypoint - through Streamline's
+ * vkCreateInstance/vkCreateDevice proxies. Carries the live handles and the graphics + compute
+ * queue layout to slSetVulkanInfo, which is what routes the application's Vulkan loading -
+ * already redirected to sl.interposer.dll by the mod entrypoint - through Streamline's
  * present/acquire/swapchain hooks.
  *
- * `graphics_queue_family` is the queue family the graphics queue was created in, and
- * `graphics_queue_index` is the index at which Streamline's own queues start: the number of
- * queues the host created in that family. Streamline adds its required graphics/compute
- * queues after the host's, so the host hands over its queue COUNT, not the handle's index.
+ * `graphics_queue_family`/`compute_queue_family` are the queue families the host's graphics
+ * and compute queues were created in, and `graphics_queue_index`/`compute_queue_index` are the
+ * indices at which Streamline's own queues start: the number of queues the host created in
+ * each family. Streamline adds its required queues after the host's, so the host hands over
+ * its queue COUNTS, not handle indices. No optical-flow family is passed: without a host
+ * optical-flow family, DLSS-G runs optical flow in interop mode.
  *
- * Idempotent: repeating the same five values returns success without re-calling
+ * Idempotent: repeating the same seven values returns success without re-calling
  * slSetVulkanInfo. A different device than the one already recorded cannot replace live
  * Streamline ownership without a shutdown, so that returns kInvalidParameter.
  */
@@ -92,7 +94,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
     uint64_t vk_physical_device,
     uint64_t vk_device,
     uint32_t graphics_queue_family,
-    uint32_t graphics_queue_index);
+    uint32_t graphics_queue_index,
+    uint32_t compute_queue_family,
+    uint32_t compute_queue_index);
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
     uint32_t index,
@@ -107,6 +111,47 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
     char* name,
     uint32_t name_capacity,
     uint32_t* extension_count);
+
+/*
+ * Pre-creation Streamline device-feature requirements.
+ *
+ * Must be called after mc_dlss_bootstrap_streamline and before the Vulkan device is created.
+ * Returns the deduplicated Vulkan 1.2 (mc_dlss_query_device_feature_12) or Vulkan 1.3
+ * (mc_dlss_query_device_feature_13) feature names the loaded features require, drawn from
+ * slGetFeatureRequirements' vkFeatures12/vkFeatures13 across every enabled feature.
+ *
+ * Same two-call shape as the extension queries: first call with index==0 && name==NULL &&
+ * name_capacity==0 returns the count in *feature_count; subsequent calls with a valid name
+ * buffer copy the i-th name (NUL terminated) and return the count.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_feature_12(
+    uint32_t index,
+    char* name,
+    uint32_t name_capacity,
+    uint32_t* feature_count);
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_feature_13(
+    uint32_t index,
+    char* name,
+    uint32_t name_capacity,
+    uint32_t* feature_count);
+
+/*
+ * Pre-creation Streamline queue requirements.
+ *
+ * Must be called after mc_dlss_bootstrap_streamline and before the Vulkan device is created.
+ * Returns the summed extra graphics / compute / optical-flow queue counts the loaded features
+ * require the host to create, from slGetFeatureRequirements' vkNumGraphicsQueuesRequired /
+ * vkNumComputeQueuesRequired / vkNumOpticalFlowQueuesRequired across every enabled feature.
+ *
+ * The graphics and compute counts are merged into the host's queue-family create map before
+ * vkCreateDevice. The optical-flow count is reported but the host is not expected to create
+ * the family: in its absence DLSS-G runs optical flow in interop mode.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_queue_requirements(
+    uint32_t* extra_graphics_queues,
+    uint32_t* extra_compute_queues,
+    uint32_t* extra_optical_flow_queues);
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(
     uint64_t vk_instance,
