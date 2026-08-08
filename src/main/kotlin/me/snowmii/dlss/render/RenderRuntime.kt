@@ -11,6 +11,9 @@ import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssSessionState
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.mrt.MotionVectorCompatibility
+import me.snowmii.dlss.mrt.MotionVectorPipeline
+import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.session.LifecycleAdapter
 import com.mojang.blaze3d.pipeline.RenderTarget
 
@@ -60,6 +63,8 @@ class RenderRuntime(
 	 * because it must not re-initialize the Streamline session.
 	 */
 	private val reconfigure: ((SRMode, SRModelPreset) -> DlssDimensions?)? = null,
+	/** Session compatibility latch populated by world-pipeline compilation. */
+	private val motionVectors: MotionVectorCompatibility = MotionVectorCompatibility(),
 	/**
 	 * Blocks until the device has finished every frame already submitted, or does nothing for a
 	 * runtime with no device behind it.
@@ -132,6 +137,14 @@ class RenderRuntime(
 	 */
 	val activeMotion: DlssFrameMotion?
 		get() = phase.activeMotion
+
+	/** Motion-vector path selected for this session after observing world shader ownership. */
+	val motionVectorRoute: MotionVectorRoute
+		get() = motionVectors.route
+
+	/** Records one pipeline seen at the Vulkan lazy-compile seam while the world phase is open. */
+	internal fun observeWorldPipeline(pipeline: MotionVectorPipeline): MotionVectorRoute =
+		motionVectors.observe(pipeline)
 
 	/**
 	 * Opens the world phase. Returns the low-resolution scene target for an eligible DLSS
@@ -359,7 +372,9 @@ class RenderRuntime(
 				adapter,
 				{ VulkanContextRegistry.getCurrent() },
 				readout,
-			), reconfigure = adapter::reconfigure, quiesce = { adapter.waitDeviceIdle() }, startup = {
+			), reconfigure = adapter::reconfigure,
+			motionVectors = MotionVectorCompatibility(diagnostics),
+			quiesce = { adapter.waitDeviceIdle() }, startup = {
 				val context = VulkanContextRegistry.getCurrent()
 				val sdkPath = session.config.sdkPath
 				val dataPath = session.config.dataPath

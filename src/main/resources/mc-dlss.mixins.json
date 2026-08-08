@@ -10,7 +10,8 @@
 		"MinecraftLevelChangeMixin",
 		"VulkanBackendExtensionMixin",
 		"VulkanDeviceContextMixin",
-		"VulkanInstanceExtensionMixin"
+		"VulkanInstanceExtensionMixin",
+		"VulkanPipelineCompatibilityMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

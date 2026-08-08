@@ -3,6 +3,7 @@ import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.readout.SessionFacts
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.dlss.mrt.MotionVectorPipeline
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
 import com.mojang.blaze3d.pipeline.RenderTarget
@@ -67,6 +68,17 @@ class WorldPhase(
 	 */
 	val worldTargetOverride: RenderTarget?
 		get() = if (isOpen) scene else null
+
+	/**
+	 * Observes a lazily compiled pipeline only while this phase owns the world target. Shader
+	 * reload, GUI, post-processing, and presentation pipelines run outside that window and cannot
+	 * change the session's world-motion route.
+	 */
+	fun observePipeline(pipeline: MotionVectorPipeline) {
+		if (isOpen) {
+			runtime.observeWorldPipeline(pipeline)
+		}
+	}
 
 	/**
 	 * Decides this frame's route and jitter without opening the phase, and returns the jitter
