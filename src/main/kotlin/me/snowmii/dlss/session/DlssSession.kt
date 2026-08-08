@@ -31,6 +31,7 @@ enum class DlssNativeStage(val wireName: String) {
 	RELEASE_IMAGES("release-images"),
 	WAIT_DEVICE_IDLE("wait-device-idle"),
 	WRITE_MOTION("write-motion"),
+	TAG("tag-sr-resources"),
 	EVALUATE("evaluate"),
 	PRESENT_OUTPUT("present-output"),
 	RESET("reset"),

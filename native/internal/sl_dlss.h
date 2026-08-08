@@ -30,8 +30,18 @@ int32_t record_sr_options() noexcept;
 
 // Tags one frame's DLSS SR resources on the caller's command buffer via slGetNewFrameToken +
 // slSetTagForFrame. The engine's colour and depth are always tagged; the module's motion and
-// output images are tagged as well once they have been acquired for the configured size.
+// output images are tagged as well once they have been acquired for the configured size. The
+// frame token this call obtains is retained in state for the evaluation to consume, so a
+// repeated tag for the same frame reuses the token rather than advancing the frame.
 int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept;
+
+// Records the frame's DLSS SR evaluation on the caller's command buffer: the per-frame
+// constants (slSetConstants) and then the feature evaluation (slEvaluateFeature), both on the
+// frame token mc_dlss_tag_sr_resources obtained and retained for this frame. Consuming the
+// token clears it. The caller owns the layout transitions around this call and restores them
+// whether or not it succeeds.
+int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
+                             VkCommandBuffer commandBuffer) noexcept;
 
 } // namespace mc_dlss
 

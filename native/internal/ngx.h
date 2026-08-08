@@ -45,25 +45,9 @@ int32_t copy_extension_name(uint32_t index, char* name, uint32_t nameCapacity,
                             uint32_t* extensionCount, uint32_t count,
                             const VkExtensionProperties* properties) noexcept;
 
-// Builds the NGX resource description for one image. `width` and `height` are the dimensions
-// the evaluation treats it as having, and `readWrite` marks the one image DLSS writes rather
-// than reads. The subresource range is derived from `isDepth` rather than carried.
-NVSDK_NGX_Resource_VK make_image_view_resource(const McDlssImage& image, bool isDepth,
-                                               uint32_t width, uint32_t height,
-                                               bool readWrite) noexcept;
-
 int32_t release_feature() noexcept;
 
 int32_t destroy_capability_parameters() noexcept;
-
-// Creates the DLSS feature for the configuration currently stored, reusing the existing one
-// while every input it was created from is unchanged. A mode, preset, or dimension change
-// releases the old feature first, because NGX reads all of them only at creation.
-int32_t ensure_feature(VkCommandBuffer commandBuffer) noexcept;
-
-// Records the DLSS evaluation itself. The caller owns the layout transitions around it: the
-// engine's images have to be restored whether or not this succeeds.
-int32_t record_evaluation(const McDlssEvaluateInfo& info, VkCommandBuffer commandBuffer) noexcept;
 
 } // namespace mc_dlss
 

@@ -7,6 +7,7 @@ import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.PresentTarget
+import me.snowmii.dlss.bridge.SrTagRequest
 import java.nio.file.Path
 
 /**
@@ -174,6 +175,25 @@ class LifecycleAdapter(
 		val dimensions = renderDimensions ?: return false
 		return invokeStatus(DlssNativeStage.WRITE_MOTION) {
 			native.writeMotion(request.copy(renderDimensions = dimensions))
+		}
+	}
+
+	/**
+	 * Tags this frame's SR resources on the caller's command buffer, through Streamline's
+	 * frame-based tagging (slGetNewFrameToken + slSetTagForFrame), and retains the frame token
+	 * the evaluation consumes.
+	 *
+	 * This has to precede [evaluate] on the same buffer: the evaluation records Streamline's
+	 * constants and feature evaluation against the token this call obtained, and evaluating
+	 * with no retained token fails.
+	 */
+	fun tagSrResources(request: SrTagRequest): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		return invokeStatus(DlssNativeStage.TAG) {
+			native.tagSrResources(request)
 		}
 	}
 

@@ -7,15 +7,6 @@
 
 namespace mc_dlss {
 
-NVSDK_NGX_Resource_VK make_image_view_resource(const McDlssImage& image, const bool isDepth,
-                                               const uint32_t width, const uint32_t height,
-                                               const bool readWrite) noexcept {
-    const VkImageSubresourceRange subresourceRange = image_range_of(isDepth);
-    return NVSDK_NGX_Create_ImageView_Resource_VK(
-        from_uint64<VkImageView>(image.view), from_uint64<VkImage>(image.image),
-        subresourceRange, static_cast<VkFormat>(image.format), width, height, readWrite);
-}
-
 bool valid_quality_mode(const uint32_t qualityMode) noexcept {
     switch (static_cast<NVSDK_NGX_PerfQuality_Value>(qualityMode)) {
         case NVSDK_NGX_PerfQuality_Value_MaxPerf:
@@ -188,91 +179,6 @@ int32_t destroy_capability_parameters() noexcept {
         g_state.capabilityParameters = nullptr;
     }
     return result;
-}
-
-int32_t ensure_feature(const VkCommandBuffer commandBuffer) noexcept {
-    const bool featureMatchesConfiguration =
-        g_state.feature != nullptr && g_state.featureOutputWidth == g_state.outputWidth &&
-        g_state.featureOutputHeight == g_state.outputHeight &&
-        g_state.featureRenderWidth == g_state.renderWidth &&
-        g_state.featureRenderHeight == g_state.renderHeight &&
-        g_state.featureQualityMode == g_state.qualityMode &&
-        g_state.featureRenderPreset == g_state.renderPreset;
-    if (featureMatchesConfiguration) {
-        return kSuccess;
-    }
-
-    const int32_t releaseResult = release_feature();
-    if (releaseResult != kSuccess) {
-        return releaseResult;
-    }
-    // NGX reads the preset hint when the feature is created and never again, so it is
-    // written here rather than at configure time: a preset stored before the parameters
-    // existed, or written after this creation, is a preset that silently never ran.
-    const char* presetParameter = preset_parameter_for(g_state.qualityMode);
-    if (presetParameter == nullptr) {
-        return kInvalidParameter;
-    }
-    NVSDK_NGX_Parameter_SetUI(g_state.capabilityParameters, presetParameter,
-                              g_state.renderPreset);
-    NVSDK_NGX_DLSS_Create_Params createParams{};
-    createParams.Feature.InWidth = g_state.renderWidth;
-    createParams.Feature.InHeight = g_state.renderHeight;
-    createParams.Feature.InTargetWidth = g_state.outputWidth;
-    createParams.Feature.InTargetHeight = g_state.outputHeight;
-    createParams.Feature.InPerfQualityValue =
-        static_cast<NVSDK_NGX_PerfQuality_Value>(g_state.qualityMode);
-    createParams.InFeatureCreateFlags =
-        NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
-    const NVSDK_NGX_Result createResult = NGX_VULKAN_CREATE_DLSS_EXT(
-        commandBuffer, 1, 1, &g_state.feature, g_state.capabilityParameters, &createParams);
-    if (createResult != NVSDK_NGX_Result_Success) {
-        g_state.feature = nullptr;
-        return static_cast<int32_t>(createResult);
-    }
-    g_state.featureOutputWidth = g_state.outputWidth;
-    g_state.featureOutputHeight = g_state.outputHeight;
-    g_state.featureRenderWidth = g_state.renderWidth;
-    g_state.featureRenderHeight = g_state.renderHeight;
-    g_state.featureQualityMode = g_state.qualityMode;
-    g_state.featureRenderPreset = g_state.renderPreset;
-    return kSuccess;
-}
-
-int32_t record_evaluation(const McDlssEvaluateInfo& info,
-                          const VkCommandBuffer commandBuffer) noexcept {
-    // The module's own images are described from the configuration rather than from the call:
-    // they were allocated at exactly these sizes and nothing else can have handed them over.
-    const McDlssImage motionImage{to_uint64(g_state.motionImage.view),
-                                  to_uint64(g_state.motionImage.image),
-                                  static_cast<uint32_t>(kMotionFormat)};
-    const McDlssImage outputImage{to_uint64(g_state.outputImage.view),
-                                  to_uint64(g_state.outputImage.image),
-                                  static_cast<uint32_t>(kOutputFormat)};
-
-    auto colorResource =
-        make_image_view_resource(info.color, false, info.render_width, info.render_height, false);
-    auto depthResource =
-        make_image_view_resource(info.depth, true, info.render_width, info.render_height, false);
-    auto motionResource =
-        make_image_view_resource(motionImage, false, info.render_width, info.render_height, false);
-    auto outputResource = make_image_view_resource(outputImage, false, g_state.outputWidth,
-                                                   g_state.outputHeight, true);
-
-    NVSDK_NGX_VK_DLSS_Eval_Params evaluateParams{};
-    evaluateParams.Feature.pInColor = &colorResource;
-    evaluateParams.Feature.pInOutput = &outputResource;
-    evaluateParams.pInDepth = &depthResource;
-    evaluateParams.pInMotionVectors = &motionResource;
-    evaluateParams.InJitterOffsetX = info.jitter.x;
-    evaluateParams.InJitterOffsetY = info.jitter.y;
-    evaluateParams.InRenderSubrectDimensions = {info.render_width, info.render_height};
-    evaluateParams.InReset = info.reset_history;
-    evaluateParams.InMVScaleX = info.motion_scale.x;
-    evaluateParams.InMVScaleY = info.motion_scale.y;
-    evaluateParams.InFrameTimeDeltaInMsec = info.frame_time_milliseconds;
-    return static_cast<int32_t>(NGX_VULKAN_EVALUATE_DLSS_EXT(
-        commandBuffer, g_state.feature, g_state.capabilityParameters, &evaluateParams));
 }
 
 } // namespace mc_dlss

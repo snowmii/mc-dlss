@@ -5,6 +5,7 @@ import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.PresentTarget
+import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.Vec2
 import me.snowmii.dlss.bridge.VulkanContext
 import me.snowmii.dlss.bridge.VulkanContextRegistry
@@ -36,12 +37,13 @@ data class SceneResources(
  * This is that path, and it is deliberately the only place in the mod that touches a command
  * buffer.
  *
- * The ordering is the contract. Both calls go on **one** buffer, motion first, because the
- * evaluation reads the image the motion pass writes and the pass ends with the barrier that makes
- * those writes visible. The buffer comes from Minecraft's shared command encoder and goes straight
- * back to it, so the work lands behind the world render it consumes and in front of whatever the
- * frame does next. Nothing here submits a queue, signals a fence, or idles the device: the
- * encoder's existing timeline is what orders all of it.
+ * The ordering is the contract. All three calls go on **one** buffer, motion first, then the
+ * frame's resource tags, then the evaluation: the evaluation reads the image the motion pass
+ * writes (the pass ends with the barrier that makes those writes visible) and consumes the
+ * Streamline frame token the tag call obtained. The buffer comes from Minecraft's shared
+ * command encoder and goes straight back to it, so the work lands behind the world render it
+ * consumes and in front of whatever the frame does next. Nothing here submits a queue, signals
+ * a fence, or idles the device: the encoder's existing timeline is what orders all of it.
  *
  * A failed stage still hands the buffer back. The native side records its layout restorations
  * whether or not NGX succeeded, so a buffer dropped on the floor is the one outcome that would
@@ -142,6 +144,20 @@ class FrameEvaluation(
 			),
 		)
 		if (!wroteMotion) {
+			return false
+		}
+
+		// The frame's SR resources tag between the motion pass and the evaluation, on the same
+		// buffer: the tag call obtains the Streamline frame token the evaluation consumes, and
+		// the DLSS plugin reads the tagged resources at evaluate time.
+		val tagged = adapter.tagSrResources(
+			SrTagRequest(
+				commandBuffer = handle,
+				color = scene.color,
+				depth = scene.depth,
+			),
+		)
+		if (!tagged) {
 			return false
 		}
 

@@ -72,21 +72,21 @@ class DlssResourceAbiTest {
 		// Normalized for the same reason as DlssFeatureLifecycleTest: a Windows checkout hands
 		// these files back with CRLF, and the patterns match the source text literally.
 		val common = Files.readString(Path.of("native", "internal", "common.cpp")).replace("\r\n", "\n")
-		val ngx = Files.readString(Path.of("native", "internal", "ngx.cpp")).replace("\r\n", "\n")
+		val sl = Files.readString(Path.of("native", "internal", "sl_dlss.cpp")).replace("\r\n", "\n")
 
 		// The subresource range is derived, not carried: one constant {0, 1, 0, 1} whose aspect
 		// follows from the image's role. This is the invariant the ABI no longer carries.
 		assertTrue(common.contains("VkImageSubresourceRange image_range_of(const bool isDepth)"))
 		assertTrue(common.contains("isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT"))
 		assertTrue(common.contains("return VkImageSubresourceRange{aspect, 0, 1, 0, 1};"))
-		// View, image, and format all reach NGX from the one carried struct.
-		assertTrue(ngx.contains("from_uint64<VkImageView>(image.view), from_uint64<VkImage>(image.image)"))
-		assertTrue(ngx.contains("static_cast<VkFormat>(image.format), width, height, readWrite"))
+		// View, image, and format all reach the Streamline resource from the one carried struct:
+		// make_sr_resource builds the sl::Resource from the native handles and the named format.
+		assertTrue(sl.contains("sl::Resource resource(sl::ResourceType::eTex2d, native, memory, view, state)"))
+		assertTrue(sl.contains("resource.nativeFormat = format"))
 		// The role that picks the aspect is explicit at each resource's construction.
-		assertTrue(ngx.contains("make_image_view_resource(info.color, false,"))
-		assertTrue(ngx.contains("make_image_view_resource(info.depth, true,"))
-		assertTrue(ngx.contains("make_image_view_resource(motionImage, false,"))
-		assertTrue(ngx.contains("make_image_view_resource(outputImage, false,"))
+		assertTrue(sl.contains("sl::Resource colorResource = make_sr_resource("))
+		assertTrue(sl.contains("from_uint64<void*>(info.color.image), nullptr, from_uint64<void*>(info.color.view)"))
+		assertTrue(sl.contains("from_uint64<void*>(info.depth.image), nullptr, from_uint64<void*>(info.depth.view)"))
 	}
 
 	@Test

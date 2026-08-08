@@ -551,7 +551,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(const McDlssMotionInfo* in
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_state.bootstrapComplete) {
+        // The SL session is the only evaluation path now: the direct-NGX feature lifecycle
+        // retired with it, and there is no fallback.
+        if (!sl_session_ready()) {
             return kNotInitialized;
         }
         if (info == nullptr || info->command_buffer == 0 || info->reset_history < 0 ||
@@ -568,10 +570,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
 
         const VkCommandBuffer recordingBuffer =
             from_uint64<VkCommandBuffer>(info->command_buffer);
-        const int32_t featureResult = ensure_feature(recordingBuffer);
-        if (featureResult != kSuccess) {
-            return featureResult;
-        }
 
         // Inputs into a read state and the output into a storage state, recorded on the
         // engine's own command buffer immediately before the evaluation reads them.
@@ -590,7 +588,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
                                  current_layout_of(outputImage), kDlssOutputLayout);
         note_layout_after_transition(outputImage, kDlssOutputLayout);
 
-        const int32_t evaluateResult = record_evaluation(*info, recordingBuffer);
+        const int32_t evaluateResult = record_sr_evaluation(*info, recordingBuffer);
 
         // The engine's images go back where Minecraft expects to find them, in the same
         // recording, whether or not the evaluation succeeded: the transitions above were

@@ -1,8 +1,11 @@
 package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.Native
+import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
+import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -49,12 +52,30 @@ class DlssEvaluationBarrierTest {
 		val ngxRuntime = ngxRuntimeDirectory()
 		val instanceExtensions = Native.open(library).use { it.queryInstanceExtensions() }
 
+		// Streamline must bootstrap and record the device before the session starts: the
+		// evaluation now runs through SL, so the device has to be created with SL's extensions
+		// and merged queues and activated before the first frame. The queue requirements come
+		// from a throwaway bridge closed before the device exists; the fixture then OUTLIVES
+		// the bridge so Native.close's mc_dlss_close runs while the Vulkan device is alive.
+		val requirements = Native.open(library).use { native ->
+			assertEquals(
+				NativeApi.SUCCESS_RESULT,
+				native.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
+				"Streamline bootstrap must succeed before the device is created",
+			)
+			native.queryQueueRequirements()
+		}
+		val graphicsFamily = probeGraphicsQueueFamily()
+		val extras = requirements.graphicsQueues + requirements.computeQueues
 		HeadlessVulkanFixture(
 			instanceExtensions,
 			{ vkInstance, vkPhysicalDevice ->
-				Native.open(library).use { it.queryDeviceExtensions(vkInstance, vkPhysicalDevice) }
+				val extensions = mutableListOf<String>()
+				ExtensionBootstrap.addDeviceExtensions(extensions, vkInstance, vkPhysicalDevice)
+				extensions
 			},
 			true,
+			mapOf(graphicsFamily to extras),
 		).use { vulkan ->
 			assertTrue(
 				vulkan.validationEnabled(),
@@ -62,6 +83,29 @@ class DlssEvaluationBarrierTest {
 			)
 
 			Native.open(library).use { native ->
+				// Bootstrap is idempotent across bridge instances: the runtime is already up.
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					native.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
+					"Streamline bootstrap must succeed before the device is created",
+				)
+				// The fixture creates one host queue in the family, so Streamline's own queues
+				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
+				val hostQueueCount = 1
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					native.activateVulkanProxies(
+						vulkan.instanceAddress(),
+						vulkan.physicalDeviceAddress(),
+						vulkan.deviceAddress(),
+						graphicsFamily,
+						hostQueueCount,
+						graphicsFamily,
+						hostQueueCount,
+					),
+					"SL proxy activation must succeed against the merged queue layout",
+				)
+
 				val session = DlssSession(
 					DlssStartupConfig(
 						enabled = true,
@@ -104,7 +148,14 @@ class DlssEvaluationBarrierTest {
 					VK_IMAGE_ASPECT_DEPTH_BIT,
 				)
 
+				// The evaluation consumes the frame token the tag call obtains and retains, so the
+				// frame's resources tag first on the same buffer, exactly as FrameEvaluation records
+				// them in production.
 				val commandBuffer = vulkan.allocateAndBeginCommandBuffer()
+				assertTrue(
+					adapter.tagSrResources(tagRequest(commandBuffer.address(), color, depth)),
+					session.failure?.diagnostic(),
+				)
 				val evaluated = adapter.evaluate(
 					evaluationRequest(commandBuffer.address(), color, depth),
 				)
@@ -134,6 +185,10 @@ class DlssEvaluationBarrierTest {
 				// cheapest check that the native images are tracked rather than re-transitioned
 				// from UNDEFINED, which would discard what DLSS accumulated in them.
 				val secondFrame = vulkan.allocateAndBeginCommandBuffer()
+				assertTrue(
+					adapter.tagSrResources(tagRequest(secondFrame.address(), color, depth)),
+					session.failure?.diagnostic(),
+				)
 				assertTrue(
 					adapter.evaluate(evaluationRequest(secondFrame.address(), color, depth)),
 					session.failure?.diagnostic(),
@@ -173,6 +228,24 @@ class DlssEvaluationBarrierTest {
 		frameTimeMilliseconds = 16.6f,
 		resetHistory = true,
 	)
+
+	/** The frame's engine images, tagged the way FrameEvaluation tags them before evaluating. */
+	private fun tagRequest(
+		commandBuffer: Long,
+		color: HeadlessVulkanFixture.EngineImage,
+		depth: HeadlessVulkanFixture.EngineImage,
+	): SrTagRequest = SrTagRequest(
+		commandBuffer = commandBuffer,
+		color = ImageBinding(color.view(), color.image(), color.format()),
+		depth = ImageBinding(depth.view(), depth.image(), depth.format()),
+	)
+
+	/**
+	 * The family the fixture creates its queues in, discovered with a throwaway default fixture
+	 * so the augmented fixture can be built with the extras keyed by the right family.
+	 */
+	private fun probeGraphicsQueueFamily(): Int =
+		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 
 	private fun nativeLibrary(): Path {
 		val library = Path.of("").toAbsolutePath().resolve("build/native/mc_dlss.dll")

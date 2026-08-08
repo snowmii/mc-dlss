@@ -353,6 +353,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
  *
  * `reset_history` must be 0 or 1: it clears the accumulated DLSS history for a frame that is
  * not continuous with the one before it.
+ *
+ * Must be called after mc_dlss_tag_sr_resources for the same frame on the same command buffer:
+ * the evaluation records Streamline's per-frame constants and the feature evaluation against
+ * the frame token the tag call obtained and retained, and evaluating with no retained token
+ * fails. The direct-NGX feature lifecycle this call used to drive is retired.
  */
 typedef struct McDlssEvaluateInfo {
     uint64_t command_buffer;

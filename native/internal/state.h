@@ -3,6 +3,8 @@
 
 #include "internal/common.h"
 
+#include <sl_core_types.h>
+
 #include <mutex>
 #include <string>
 
@@ -98,6 +100,11 @@ struct DlssState {
     uint32_t imagesRenderHeight = 0;
     uint32_t imagesOutputWidth = 0;
     uint32_t imagesOutputHeight = 0;
+    // The Streamline frame token the last mc_dlss_tag_sr_resources call obtained and retained
+    // for the current frame. The evaluation consumes it (slSetConstants + slEvaluateFeature run
+    // against it and it is cleared), so a tag always precedes an evaluate and the next frame's
+    // tag obtains the next token. reset_state clears it with the rest of the struct.
+    sl::FrameToken* frameToken = nullptr;
 };
 
 extern DlssState g_state;
