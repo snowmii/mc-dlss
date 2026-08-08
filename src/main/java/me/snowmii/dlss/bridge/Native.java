@@ -72,6 +72,16 @@ public final class Native implements AutoCloseable, NativeApi {
 		JAVA_INT.withName("height")
 	).withName("McDlssPresentInfo");
 
+	/**
+	 * {@code McDlssTagInfo}: the caller's command buffer followed by two {@code McDlssImage}
+	 * structs, 56 bytes with no padding of its own.
+	 */
+	private static final StructLayout TAG_LAYOUT = MemoryLayout.structLayout(
+		JAVA_LONG.withName("command_buffer"),
+		IMAGE_LAYOUT.withName("color"),
+		IMAGE_LAYOUT.withName("depth")
+	).withName("McDlssTagInfo");
+
 	private static VarHandle field(final StructLayout layout, final String... path) {
 		final MemoryLayout.PathElement[] elements = new MemoryLayout.PathElement[path.length];
 		for (int index = 0; index < path.length; index++) {
@@ -113,6 +123,14 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final VarHandle PRESENT_WIDTH = field(PRESENT_LAYOUT, "width");
 	private static final VarHandle PRESENT_HEIGHT = field(PRESENT_LAYOUT, "height");
 
+	private static final VarHandle TAG_COMMAND_BUFFER = field(TAG_LAYOUT, "command_buffer");
+	private static final VarHandle TAG_COLOR_VIEW = field(TAG_LAYOUT, "color", "view");
+	private static final VarHandle TAG_COLOR_IMAGE = field(TAG_LAYOUT, "color", "image");
+	private static final VarHandle TAG_COLOR_FORMAT = field(TAG_LAYOUT, "color", "format");
+	private static final VarHandle TAG_DEPTH_VIEW = field(TAG_LAYOUT, "depth", "view");
+	private static final VarHandle TAG_DEPTH_IMAGE = field(TAG_LAYOUT, "depth", "image");
+	private static final VarHandle TAG_DEPTH_FORMAT = field(TAG_LAYOUT, "depth", "format");
+
 	private final Arena arena;
 	private final MethodHandle bootstrapStreamline;
 	private final MethodHandle activateVulkanProxies;
@@ -138,9 +156,11 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MemorySegment evaluateScratch;
 	private final MemorySegment motionScratch;
 	private final MemorySegment presentScratch;
+	private final MemorySegment tagScratch;
 	private final MethodHandle writeMotion;
 	private final MethodHandle presentOutput;
 	private final MethodHandle evaluate;
+	private final MethodHandle tagSrResources;
 	private final MethodHandle reset;
 	private final MethodHandle close;
 	private boolean closed;
@@ -243,12 +263,18 @@ public final class Native implements AutoCloseable, NativeApi {
 			"mc_dlss_evaluate",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssEvaluateInfo*
 		);
+		this.tagSrResources = bind(
+			lookup,
+			"mc_dlss_tag_sr_resources",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssTagInfo*
+		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
 		this.close = bind(lookup, "mc_dlss_close", FunctionDescriptor.of(JAVA_INT));
 		this.reprojectionScratch = arena.allocate(JAVA_FLOAT, 16);
 		this.evaluateScratch = arena.allocate(EVALUATE_LAYOUT);
 		this.motionScratch = arena.allocate(MOTION_LAYOUT);
 		this.presentScratch = arena.allocate(PRESENT_LAYOUT);
+		this.tagScratch = arena.allocate(TAG_LAYOUT);
 	}
 
 	public static Native open(final Path libraryPath) {
@@ -616,6 +642,19 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.evaluate.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("evaluate", error);
+		}
+	}
+
+	@Override
+	public int tagSrResources(final SrTagRequest request) {
+		try {
+			final MemorySegment info = this.tagScratch;
+			TAG_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
+			writeImage(info, TAG_COLOR_VIEW, TAG_COLOR_IMAGE, TAG_COLOR_FORMAT, request.getColor());
+			writeImage(info, TAG_DEPTH_VIEW, TAG_DEPTH_IMAGE, TAG_DEPTH_FORMAT, request.getDepth());
+			return (int)this.tagSrResources.invokeExact(info);
+		} catch (Throwable error) {
+			throw nativeError("tag-sr-resources", error);
 		}
 	}
 

@@ -9,6 +9,15 @@ void reset_state() noexcept {
     g_state = DlssState{};
 }
 
+bool images_match_configuration() noexcept {
+    return g_state.motionImage.view != VK_NULL_HANDLE &&
+           g_state.outputImage.view != VK_NULL_HANDLE &&
+           g_state.imagesRenderWidth == g_state.renderWidth &&
+           g_state.imagesRenderHeight == g_state.renderHeight &&
+           g_state.imagesOutputWidth == g_state.outputWidth &&
+           g_state.imagesOutputHeight == g_state.outputHeight;
+}
+
 void wait_device_idle() noexcept {
     if (g_state.device != VK_NULL_HANDLE) {
         // Result deliberately ignored: on a device already lost there is nothing left to

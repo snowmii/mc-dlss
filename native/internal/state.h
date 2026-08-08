@@ -55,12 +55,26 @@ struct DlssMotionPass {
 struct DlssState {
     bool initialized = false;
     bool bootstrapComplete = false;
+    // Whether this module instance's Streamline bootstrap succeeded: slInit answered eOk (or
+    // one of the two errors that mean the runtime is already up in this process). Activation,
+    // which records the Vulkan device, is tracked separately by the proxy tuple below.
+    bool streamlineInitialized = false;
     uint64_t instanceValue = 0;
     uint64_t physicalDeviceValue = 0;
     uint64_t deviceValue = 0;
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
+    // The layout mc_dlss_activate_vulkan_proxies last handed to slSetVulkanInfo. Zero means no
+    // device has been recorded yet; a non-zero device with an identical tuple is the idempotent
+    // repeat that must not re-call slSetVulkanInfo.
+    uint64_t proxyInstance = 0;
+    uint64_t proxyPhysicalDevice = 0;
+    uint64_t proxyDevice = 0;
+    uint32_t proxyGraphicsQueueFamily = 0;
+    uint32_t proxyGraphicsQueueIndex = 0;
+    uint32_t proxyComputeQueueFamily = 0;
+    uint32_t proxyComputeQueueIndex = 0;
     std::wstring sdkPath;
     std::wstring dataPath;
     NVSDK_NGX_Parameter* capabilityParameters = nullptr;
@@ -90,6 +104,10 @@ extern DlssState g_state;
 extern std::mutex g_mutex;
 
 void reset_state() noexcept;
+
+// The module's own images have to exist, at the size the configuration stores, before anything
+// can be recorded into or out of them - and before they can be tagged for a frame.
+bool images_match_configuration() noexcept;
 
 // Destroying a resource the GPU may still be reading is the one Vulkan error nothing
 // reports where it happens: the queued command buffers that reference it keep running,

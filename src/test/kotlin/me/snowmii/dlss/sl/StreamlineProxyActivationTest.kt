@@ -107,7 +107,7 @@ class StreamlineProxyActivationTest {
 		val nativeSource = Files.readString(Path.of("native", "mc_dlss_api.cpp"))
 		assertTrue(nativeSource.contains("sl_helpers_vk.h"))
 		assertTrue(nativeSource.contains("slSetVulkanInfo"))
-		assertTrue(nativeSource.contains("if (g_streamlineInitialized)"))
+		assertTrue(nativeSource.contains("if (g_state.streamlineInitialized)"))
 
 		val provider = Files.readString(
 			Path.of("src", "main", "java", "me", "snowmii", "dlss", "bridge", "StreamlineVulkanProvider.java")

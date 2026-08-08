@@ -110,6 +110,22 @@ public interface NativeApi {
 	int evaluate(EvaluationRequest request);
 
 	/**
+	 * Tags one frame's DLSS SR resources on the caller's command buffer, through Streamline's
+	 * frame-based resource tagging ({@code slGetNewFrameToken} + {@code slSetTagForFrame}).
+	 *
+	 * <p>The request carries only the engine's colour and depth. The motion and output images
+	 * are the bridge's own, so they are tagged from native state when they have been acquired
+	 * for the configured dimensions - until then the call still succeeds with just the engine's
+	 * two inputs.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int tagSrResources(SrTagRequest request) {
+		throw new UnsupportedOperationException("tagSrResources");
+	}
+
+	/**
 	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features (DLSS, DLSS-G,
 	 * Reflex) require the device to enable, as {@code slGetFeatureRequirements} reports them
 	 * through {@code mc_dlss_query_device_feature_12}.

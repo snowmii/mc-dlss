@@ -14,12 +14,12 @@
 #include "internal/motion.h"
 #include "internal/ngx.h"
 #include "internal/session.h"
+#include "internal/sl_dlss.h"
 #include "internal/state.h"
 #include "internal/timing.h"
 
 #include <nvsdk_ngx_vk.h>
 #include <sl.h>
-#include <sl_dlss.h>
 #include <sl_dlss_g.h>
 #include <sl_helpers_vk.h>
 #include <sl_reflex.h>
@@ -36,18 +36,6 @@ namespace {
 constexpr char kProjectId[] = "50f68c51-c7be-49bd-a875-f73045f88d27";
 constexpr char kEngineVersion[] = "Minecraft 26.2";
 constexpr sl::Feature kStreamlineFeatures[] = {sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex};
-bool g_streamlineInitialized = false;
-
-// The layout mc_dlss_activate_vulkan_proxies last handed to slSetVulkanInfo. Zero means no
-// device has been recorded yet; a non-zero device with an identical tuple is the idempotent
-// repeat that must not re-call slSetVulkanInfo.
-uint64_t g_proxyInstance = 0;
-uint64_t g_proxyPhysicalDevice = 0;
-uint64_t g_proxyDevice = 0;
-uint32_t g_proxyGraphicsQueueFamily = 0;
-uint32_t g_proxyGraphicsQueueIndex = 0;
-uint32_t g_proxyComputeQueueFamily = 0;
-uint32_t g_proxyComputeQueueIndex = 0;
 
 // The manual-hook Vulkan preferences this module always uses, shared by the bootstrap and by
 // the activation recovery path (which has to re-run slInit after slShutdown). `paths` is the
@@ -93,7 +81,7 @@ int32_t copy_streamline_extension(const uint32_t index, char* name,
 
 int32_t collect_streamline_extensions(const bool device, const uint32_t index, char* name,
                                       const uint32_t nameCapacity, uint32_t* count) {
-    if (!g_streamlineInitialized) return kNotInitialized;
+    if (!g_state.streamlineInitialized) return kNotInitialized;
     std::vector<const char*> extensions;
     for (const sl::Feature feature : kStreamlineFeatures) {
         sl::FeatureRequirements requirements{};
@@ -113,7 +101,7 @@ int32_t collect_streamline_extensions(const bool device, const uint32_t index, c
 // and copied through the same index/name/capacity/count copier as the extension queries.
 int32_t collect_streamline_feature_names(const bool features13, const uint32_t index, char* name,
                                          const uint32_t nameCapacity, uint32_t* count) {
-    if (!g_streamlineInitialized) return kNotInitialized;
+    if (!g_state.streamlineInitialized) return kNotInitialized;
     std::vector<const char*> names;
     for (const sl::Feature feature : kStreamlineFeatures) {
         sl::FeatureRequirements requirements{};
@@ -135,7 +123,7 @@ int32_t collect_streamline_feature_names(const bool features13, const uint32_t i
 int32_t collect_streamline_queue_requirements(uint32_t* extra_graphics_queues,
                                               uint32_t* extra_compute_queues,
                                               uint32_t* extra_optical_flow_queues) {
-    if (!g_streamlineInitialized) return kNotInitialized;
+    if (!g_state.streamlineInitialized) return kNotInitialized;
     if (extra_graphics_queues == nullptr || extra_compute_queues == nullptr ||
         extra_optical_flow_queues == nullptr) {
         return kInvalidParameter;
@@ -164,23 +152,12 @@ bool matches_configured_render_size(const uint32_t width, const uint32_t height)
            height == g_state.renderHeight;
 }
 
-// The module's own images have to exist, at the size this frame is being recorded for, before
-// anything can be recorded into or out of them.
-bool images_match_configuration() noexcept {
-    return g_state.motionImage.view != VK_NULL_HANDLE &&
-           g_state.outputImage.view != VK_NULL_HANDLE &&
-           g_state.imagesRenderWidth == g_state.renderWidth &&
-           g_state.imagesRenderHeight == g_state.renderHeight &&
-           g_state.imagesOutputWidth == g_state.outputWidth &&
-           g_state.imagesOutputHeight == g_state.outputHeight;
-}
-
 } // namespace
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin_path) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (g_streamlineInitialized) return kSuccess;
+        if (g_state.streamlineInitialized) return kSuccess;
         std::wstring pluginPath;
         if (!utf8_to_wide(plugin_path, pluginPath)) return kInvalidParameter;
         const wchar_t* paths[1] = {pluginPath.c_str()};
@@ -193,7 +170,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin
         // every query below works against it. Anything else - a missing plugin, a bad path -
         // still fails loudly.
         if (!streamline_initialized_after(slInitResult)) return kFailure;
-        g_streamlineInitialized = true;
+        g_state.streamlineInitialized = true;
         return kSuccess;
     } catch (...) {
         return kFailure;
@@ -206,19 +183,20 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
     const uint32_t compute_queue_family, const uint32_t compute_queue_index) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_streamlineInitialized) return kNotInitialized;
+        if (!g_state.streamlineInitialized) return kNotInitialized;
         if (vk_instance == 0 || vk_physical_device == 0 || vk_device == 0) {
             return kInvalidParameter;
         }
-        if (g_proxyDevice != 0 && g_proxyInstance == vk_instance &&
-            g_proxyPhysicalDevice == vk_physical_device && g_proxyDevice == vk_device &&
-            g_proxyGraphicsQueueFamily == graphics_queue_family &&
-            g_proxyGraphicsQueueIndex == graphics_queue_index &&
-            g_proxyComputeQueueFamily == compute_queue_family &&
-            g_proxyComputeQueueIndex == compute_queue_index) {
+        if (g_state.proxyDevice != 0 && g_state.proxyInstance == vk_instance &&
+            g_state.proxyPhysicalDevice == vk_physical_device &&
+            g_state.proxyDevice == vk_device &&
+            g_state.proxyGraphicsQueueFamily == graphics_queue_family &&
+            g_state.proxyGraphicsQueueIndex == graphics_queue_index &&
+            g_state.proxyComputeQueueFamily == compute_queue_family &&
+            g_state.proxyComputeQueueIndex == compute_queue_index) {
             return kSuccess;
         }
-        if (g_proxyDevice != 0) {
+        if (g_state.proxyDevice != 0) {
             // A different device cannot replace the layout Streamline already hooks: the SL
             // runtime accepts one device per process (its own slShutdown cannot tear the old
             // one down reliably once plugins initialized against a live device). The caller
@@ -244,13 +222,13 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
         info.graphicsQueueCreateFlags = 0;
         info.opticalFlowQueueCreateFlags = 0;
         if (slSetVulkanInfo(info) != sl::Result::eOk) return kFailure;
-        g_proxyInstance = vk_instance;
-        g_proxyPhysicalDevice = vk_physical_device;
-        g_proxyDevice = vk_device;
-        g_proxyGraphicsQueueFamily = graphics_queue_family;
-        g_proxyGraphicsQueueIndex = graphics_queue_index;
-        g_proxyComputeQueueFamily = compute_queue_family;
-        g_proxyComputeQueueIndex = compute_queue_index;
+        g_state.proxyInstance = vk_instance;
+        g_state.proxyPhysicalDevice = vk_physical_device;
+        g_state.proxyDevice = vk_device;
+        g_state.proxyGraphicsQueueFamily = graphics_queue_family;
+        g_state.proxyGraphicsQueueIndex = graphics_queue_index;
+        g_state.proxyComputeQueueFamily = compute_queue_family;
+        g_state.proxyComputeQueueIndex = compute_queue_index;
         return kSuccess;
     } catch (...) {
         return kFailure;
@@ -261,7 +239,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
     const uint32_t index, char* name, const uint32_t name_capacity,
     uint32_t* extension_count) {
     try {
-        if (g_streamlineInitialized) return collect_streamline_extensions(false, index, name, name_capacity, extension_count);
+        if (g_state.streamlineInitialized) return collect_streamline_extensions(false, index, name, name_capacity, extension_count);
         const NVSDK_NGX_FeatureDiscoveryInfo dis = make_discovery_info();
         uint32_t count = 0;
         VkExtensionProperties* properties = nullptr;
@@ -277,7 +255,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
     uint32_t* extension_count) {
     try {
         if (vk_instance == 0 || vk_physical_device == 0) return kInvalidParameter;
-        if (g_streamlineInitialized) return collect_streamline_extensions(true, index, name, name_capacity, extension_count);
+        if (g_state.streamlineInitialized) return collect_streamline_extensions(true, index, name, name_capacity, extension_count);
         const NVSDK_NGX_FeatureDiscoveryInfo dis = make_discovery_info();
         uint32_t count = 0;
         VkExtensionProperties* properties = nullptr;
@@ -412,6 +390,12 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
     uint32_t* render_width, uint32_t* render_height) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
+        if (sl_session_ready()) {
+            return query_optimal_dimensions_sl(output_width, output_height, quality_mode,
+                                               render_width, render_height);
+        }
+        // Interim: the direct-NGX branch survives until the M-3 retirement capability removes it;
+        // production always takes the Streamline branch because the device is recorded at construction.
         return query_optimal_dimensions(output_width, output_height, quality_mode, render_width,
                                         render_height);
     } catch (...) {
@@ -427,12 +411,26 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
                                                     const uint32_t render_preset) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_state.bootstrapComplete) {
-            return kNotInitialized;
-        }
         if (!valid_dimensions(output_width, output_height, render_width, render_height) ||
             !valid_quality_mode(quality_mode) || !valid_render_preset(render_preset)) {
             return kInvalidParameter;
+        }
+        if (sl_session_ready()) {
+            g_state.outputWidth = output_width;
+            g_state.outputHeight = output_height;
+            g_state.renderWidth = render_width;
+            g_state.renderHeight = render_height;
+            g_state.qualityMode = quality_mode;
+            g_state.renderPreset = render_preset;
+            // The SL session gate lives inside record_sr_options: configuring against a bootstrap
+            // without a recorded device stores nothing the recording calls could use and answers
+            // FAIL_NotInitialized, exactly where the NGX-era bootstrapComplete gate used to sit.
+            return record_sr_options();
+        }
+        // Interim: the direct-NGX branch survives until the M-3 retirement capability removes it;
+        // production always takes the Streamline branch because the device is recorded at construction.
+        if (!g_state.bootstrapComplete) {
+            return kNotInitialized;
         }
         g_state.outputWidth = output_width;
         g_state.outputHeight = output_height;
@@ -606,6 +604,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
                                  image_range_of(true), kDlssInputLayout, depthEntryLayout);
         mark_frame_timing(recordingBuffer, 2);
         return evaluateResult;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* info) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (info == nullptr) {
+            return kInvalidParameter;
+        }
+        return tag_sr_resources(*info);
     } catch (...) {
         return kFailure;
     }

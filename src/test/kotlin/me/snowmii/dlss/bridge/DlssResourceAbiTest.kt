@@ -158,6 +158,12 @@ class DlssResourceAbiTest {
 					info->render_width == 1280 && info->render_height == 720 &&
 					info->frame_time_milliseconds == 16.7f && info->reset_history == 1;
 			}
+			__declspec(dllexport) int __cdecl mc_dlss_tag_sr_resources(const McDlssTagInfo* info) {
+				if (info == nullptr) return 0;
+				return info->command_buffer == 101 &&
+					info->color.view == 201 && info->color.image == 202 && info->color.format == 203 &&
+					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303;
+			}
 			__declspec(dllexport) int __cdecl mc_dlss_write_motion(const McDlssMotionInfo* info) {
 				if (info == nullptr || info->reprojection == nullptr) return 0;
 				for (int i = 0; i < 16; ++i) {

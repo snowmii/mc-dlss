@@ -56,15 +56,17 @@ typedef struct McDlssVec2 {
 } McDlssVec2;
 
 /*
- * Pre-creation NGX extension requirements. Must be called before the Vulkan
- * instance and device are created; the returned names are the exact
- * NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements and
- * NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements strings.
+ * Bootstraps the Streamline runtime (slInit) against the plugin directory `plugin_path`, with
+ * the manual-hook Vulkan integration and frame-based resource tagging enabled.
  *
- * First call with index==0 && name==NULL && name_capacity==0 returns the
- * extension count in *extension_count. Subsequent calls with a valid name
- * buffer copy the i-th extension name (NUL terminated) and return the count.
- * Returns an NGX/native result code on failure (e.g. FAIL_InvalidParameter).
+ * Must be called before the Vulkan instance and device are created: the extension, feature,
+ * and queue queries below require it. After the device exists,
+ * mc_dlss_activate_vulkan_proxies records the live handles with slSetVulkanInfo, which is
+ * what the DLSS options, queries, and tagging calls require.
+ *
+ * `plugin_path` is the directory holding sl.interposer.dll and the feature plugins it loads.
+ * Idempotent: slInit's two errors for "the runtime is already up" (a previous bridge loaded
+ * it in this process) are treated as success.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin_path);
 
@@ -98,6 +100,19 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
     uint32_t compute_queue_family,
     uint32_t compute_queue_index);
 
+/*
+ * Streamline feature requirements, queried before the Vulkan instance and device are created.
+ *
+ * Returns the deduplicated Vulkan instance (mc_dlss_query_instance_extension) or device
+ * (mc_dlss_query_device_extension) extension names the loaded features require, drawn from
+ * slGetFeatureRequirements across every enabled feature. Before Streamline is bootstrapped,
+ * the same queries fall back to the pre-creation NGX discovery API of the same shape.
+ *
+ * Two-call shape: first call with index==0 && name==NULL && name_capacity==0 returns the
+ * count in *extension_count; subsequent calls with a valid name buffer copy the i-th
+ * extension name (NUL terminated) and return the count. Returns an NGX/native result code on
+ * failure (e.g. FAIL_InvalidParameter).
+ */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
     uint32_t index,
     char* name,
@@ -160,6 +175,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(
     const char* sdk_path,
     const char* data_path);
 
+/*
+ * Queries the DLSS optimal render dimensions for an output size and quality mode, answered by
+ * Streamline's slDLSSGetOptimalSettings.
+ *
+ * Must be called after mc_dlss_bootstrap_streamline and mc_dlss_activate_vulkan_proxies: the
+ * query needs the DLSS plugin loaded and the Vulkan device recorded. DLAA is anti-aliasing at
+ * native resolution, so it returns the output dimensions without querying.
+ *
+ * `quality_mode` is an NVSDK_NGX_PerfQuality_Value (MaxPerf 0, Balanced 1, MaxQuality 2,
+ * UltraPerformance 3, DLAA 5); the bridge maps it onto the sl::DLSSMode of the same rank.
+ * Any other value is refused.
+ */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
     uint32_t output_width,
     uint32_t output_height,
@@ -168,22 +195,22 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
     uint32_t* render_height);
 
 /*
- * Stores the dimensions, the NGX performance/quality mode, and the DLSS render
- * preset the next feature creation uses. Owns no command buffer and creates no
- * feature.
+ * Stores the dimensions, the NGX-valued performance/quality mode, and the DLSS render preset
+ * the SR configuration uses, and records them with Streamline's slDLSSSetOptions.
  *
- * `quality_mode` is an NVSDK_NGX_PerfQuality_Value: MaxPerf, Balanced,
- * MaxQuality, UltraPerformance, or DLAA. UltraQuality is defined by NGX and not
- * implemented by it, so it is rejected here rather than passed through.
+ * Must be called after mc_dlss_bootstrap_streamline and mc_dlss_activate_vulkan_proxies;
+ * otherwise returns FAIL_NotInitialized. Owns no command buffer and creates no feature.
  *
- * `render_preset` is an NVSDK_NGX_DLSS_Hint_Render_Preset. It is written onto
- * the capability parameters immediately before feature creation, which is the
- * only point NGX reads it; changing it recreates the feature exactly like a
- * dimension or mode change.
+ * `quality_mode` is an NVSDK_NGX_PerfQuality_Value: MaxPerf, Balanced, MaxQuality,
+ * UltraPerformance, or DLAA. UltraQuality is defined by NGX and not implemented by it, so it
+ * is rejected here rather than passed through. The bridge maps the mode onto sl::DLSSMode and
+ * writes `render_preset` (an NVSDK_NGX_DLSS_Hint_Render_Preset: J, K, L, or M) onto the
+ * preset field sl::DLSSOptions carries for that mode; every other preset field stays the SDK
+ * default.
  *
- * These dimensions are the single source of truth for everything sized from them: the
- * images mc_dlss_acquire_images allocates, the feature the next evaluation creates, and
- * the sizes the recording calls check their callers against.
+ * These dimensions are the single source of truth for everything sized from them: the images
+ * mc_dlss_acquire_images allocates, the tags mc_dlss_tag_sr_resources records, and the sizes
+ * the recording calls check their callers against.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(
     uint32_t output_width,
@@ -340,6 +367,28 @@ typedef struct McDlssEvaluateInfo {
 } McDlssEvaluateInfo;
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info);
+
+/*
+ * Tags one frame's DLSS SR resources on the caller's command buffer, through Streamline's
+ * frame-based tagging (slGetNewFrameToken + slSetTagForFrame).
+ *
+ * `color` and `depth` are the engine's render-sized colour and depth images, tagged as the
+ * scaling-input colour and the depth. When the module's own motion and output images have
+ * been acquired for the configured dimensions (mc_dlss_acquire_images), they are tagged as
+ * the motion-vector and scaling-output colour buffers as well; until then the call still
+ * succeeds with just the engine's two inputs, so tagging can run from the first frame on.
+ *
+ * Must be called after mc_dlss_bootstrap_streamline, mc_dlss_activate_vulkan_proxies, and
+ * mc_dlss_configure. Records on and never submits `command_buffer`, like the other recording
+ * calls.
+ */
+typedef struct McDlssTagInfo {
+    uint64_t command_buffer;
+    McDlssImage color;
+    McDlssImage depth;
+} McDlssTagInfo;
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* info);
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);

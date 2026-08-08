@@ -16,7 +16,7 @@ class StreamlineBootstrapTest {
         assertTrue(source.contains("sl::kFeatureDLSS_G"))
         assertTrue(source.contains("sl::kFeatureReflex"))
         assertTrue(source.contains("slGetFeatureRequirements"))
-        assertTrue(source.contains("if (g_streamlineInitialized) return collect_streamline_extensions"))
+        assertTrue(source.contains("if (g_state.streamlineInitialized) return collect_streamline_extensions"))
 
         // Production seam performs bootstrap before querying requirements. Empty extension sets
         // are valid when loaded plugins require only core Vulkan functionality.
