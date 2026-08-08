@@ -29,7 +29,9 @@ class DlssFeatureLifecycleTest {
 		// The evaluation records the frame's constants and the feature evaluation itself,
 		// against the frame token the tag call retained, on the caller's command buffer.
 		assertTrue(sl.contains("slSetConstants(constants, *frameToken, sl::ViewportHandle{0})"))
-		assertTrue(sl.contains("slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, 1, &commandBuffer)"))
+		assertTrue(sl.contains("slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, 1, commandBuffer)"))
+		assertTrue(sl.contains("slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, numTags, commandBuffer)"))
+		assertTrue(!sl.contains("&commandBuffer"), "SL must receive the VkCommandBuffer handle, not its stack address")
 	}
 
 	@Test

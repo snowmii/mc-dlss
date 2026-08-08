@@ -130,7 +130,8 @@ int32_t acquire_images() noexcept {
     }
     result = create_owned_image(
         g_state.outputWidth, g_state.outputHeight, kOutputFormat,
-        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         g_state.outputImage);
     if (result != kSuccess) {
         release_images();

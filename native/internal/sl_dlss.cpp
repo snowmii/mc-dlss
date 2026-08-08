@@ -179,7 +179,10 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // viewport id from there and refuses an evaluate that does not chain it.
     sl::ViewportHandle viewport{0};
     const sl::BaseStructure* inputs[] = {&viewport};
-    result = slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, 1, &commandBuffer);
+    // sl::CommandBuffer is void, so CommandBuffer* is the native Vulkan handle itself as
+    // void*. Applying address-of here would pass the address of this local handle variable; SL
+    // would forward that stack address to NGX as a VkCommandBuffer and corrupt the process.
+    result = slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, 1, commandBuffer);
     // The frame consumed its token whether the evaluation succeeded or failed: a failed frame
     // has no history the next one could reuse, and the next tag must obtain a fresh token.
     g_state.frameToken = nullptr;
@@ -296,8 +299,13 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // The command buffer is the caller's shared recording: slSetTagForFrame takes it as an
     // opaque pointer and this module only ever records on it, never submits.
     VkCommandBuffer commandBuffer = from_uint64<VkCommandBuffer>(info.command_buffer);
-    result = slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, numTags, &commandBuffer);
-    return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
+    // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
+    result = slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, numTags, commandBuffer);
+    if (result != sl::Result::eOk) {
+        g_state.frameToken = nullptr;
+        return static_cast<int32_t>(result);
+    }
+    return kSuccess;
 }
 
 } // namespace mc_dlss
