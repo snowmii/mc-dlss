@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 
 /** Queries NGX's exact Vulkan requirements at Minecraft's pre-creation bootstrap seams. */
 public final class ExtensionBootstrap {
@@ -51,6 +52,31 @@ public final class ExtensionBootstrap {
 		}
 	}
 
+	/**
+	 * Activates Streamline's manual-hook Vulkan proxies against the live device, right after
+	 * the VulkanDevice is constructed. Opens a fresh bridge like the other seams (bootstrap is
+	 * idempotent and the Streamline state survives the bridge close) and throws
+	 * {@link NativeException} if slSetVulkanInfo fails, so a device that Streamline cannot hook
+	 * fails loudly at the same seam where bootstrap already throws.
+	 */
+	public static void activateVulkanProxies(final VulkanContext context) {
+		Objects.requireNonNull(context, "context");
+		loadStreamlineRuntime();
+		try (Native nativeBridge = Native.open(nativeLibrary())) {
+			bootstrap(nativeBridge);
+			final int result = nativeBridge.activateVulkanProxies(
+				context.getInstanceHandle(),
+				context.getPhysicalDeviceHandle(),
+				context.getDeviceHandle(),
+				context.getGraphicsQueueFamily(),
+				context.getGraphicsQueueIndex()
+			);
+			if (result != NativeApi.SUCCESS_RESULT) {
+				throw new NativeException("activate-vulkan-proxies", result);
+			}
+		}
+	}
+
 	private static void loadStreamlineRuntime() {
 		if (streamlineRuntimeLoaded) return;
 		synchronized (ExtensionBootstrap.class) {
@@ -70,7 +96,12 @@ public final class ExtensionBootstrap {
 		}
 	}
 
-	static Path streamlineRuntimeDirectory() {
+	/**
+	 * The staged Streamline runtime directory: where sl.common.dll, sl.interposer.dll, and the
+	 * feature plugins were copied by processResources. Resolves the packaged resource first,
+	 * then walks up from the working directory for plain {@code buildNativeDlss} runs.
+	 */
+	public static Path streamlineRuntimeDirectory() {
 		final URL resource = ExtensionBootstrap.class.getResource(STREAMLINE_RESOURCE_PATH);
 		if (resource != null && "file".equals(resource.getProtocol())) {
 			try {

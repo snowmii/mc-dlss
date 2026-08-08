@@ -21,6 +21,7 @@
 #include <sl.h>
 #include <sl_dlss.h>
 #include <sl_dlss_g.h>
+#include <sl_helpers_vk.h>
 #include <sl_reflex.h>
 
 #include <cstring>
@@ -36,6 +37,15 @@ constexpr char kProjectId[] = "50f68c51-c7be-49bd-a875-f73045f88d27";
 constexpr char kEngineVersion[] = "Minecraft 26.2";
 constexpr sl::Feature kStreamlineFeatures[] = {sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex};
 bool g_streamlineInitialized = false;
+
+// The layout mc_dlss_activate_vulkan_proxies last handed to slSetVulkanInfo. Zero means no
+// device has been recorded yet; a non-zero device with an identical tuple is the idempotent
+// repeat that must not re-call slSetVulkanInfo.
+uint64_t g_proxyInstance = 0;
+uint64_t g_proxyPhysicalDevice = 0;
+uint64_t g_proxyDevice = 0;
+uint32_t g_proxyGraphicsQueueFamily = 0;
+uint32_t g_proxyGraphicsQueueIndex = 0;
 
 int32_t copy_streamline_extension(const uint32_t index, char* name,
                                   const uint32_t nameCapacity, uint32_t* count,
@@ -110,6 +120,55 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin
         preferences.renderAPI = sl::RenderAPI::eVulkan;
         if (slInit(preferences) != sl::Result::eOk) return kFailure;
         g_streamlineInitialized = true;
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
+    const uint64_t vk_instance, const uint64_t vk_physical_device, const uint64_t vk_device,
+    const uint32_t graphics_queue_family, const uint32_t graphics_queue_index) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_streamlineInitialized) return kNotInitialized;
+        if (vk_instance == 0 || vk_physical_device == 0 || vk_device == 0) {
+            return kInvalidParameter;
+        }
+        if (g_proxyDevice != 0 && g_proxyInstance == vk_instance &&
+            g_proxyPhysicalDevice == vk_physical_device && g_proxyDevice == vk_device &&
+            g_proxyGraphicsQueueFamily == graphics_queue_family &&
+            g_proxyGraphicsQueueIndex == graphics_queue_index) {
+            return kSuccess;
+        }
+        if (g_proxyDevice != 0) {
+            // A different device cannot replace the layout Streamline already hooks without
+            // shutting it down first; the caller must not be silently re-hooking around it.
+            return kInvalidParameter;
+        }
+        sl::VulkanInfo info{};
+        info.device = from_uint64<VkDevice>(vk_device);
+        info.instance = from_uint64<VkInstance>(vk_instance);
+        info.physicalDevice = from_uint64<VkPhysicalDevice>(vk_physical_device);
+        // Streamline's graphicsQueueIndex is the index at which its own queues start, so the
+        // host passes its queue COUNT in the family, and no compute or optical-flow family is
+        // recorded because the host created none of its own for Streamline to follow.
+        info.graphicsQueueFamily = graphics_queue_family;
+        info.graphicsQueueIndex = graphics_queue_index;
+        info.computeQueueIndex = 0;
+        info.computeQueueFamily = 0;
+        info.opticalFlowQueueIndex = 0;
+        info.opticalFlowQueueFamily = 0;
+        info.useNativeOpticalFlowMode = false;
+        info.computeQueueCreateFlags = 0;
+        info.graphicsQueueCreateFlags = 0;
+        info.opticalFlowQueueCreateFlags = 0;
+        if (slSetVulkanInfo(info) != sl::Result::eOk) return kFailure;
+        g_proxyInstance = vk_instance;
+        g_proxyPhysicalDevice = vk_physical_device;
+        g_proxyDevice = vk_device;
+        g_proxyGraphicsQueueFamily = graphics_queue_family;
+        g_proxyGraphicsQueueIndex = graphics_queue_index;
         return kSuccess;
     } catch (...) {
         return kFailure;

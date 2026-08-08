@@ -68,6 +68,32 @@ typedef struct McDlssVec2 {
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin_path);
 
+/*
+ * Activates Streamline's manual-hook Vulkan proxies against the caller's live device.
+ *
+ * Must be called after mc_dlss_bootstrap_streamline and after the Vulkan device exists, when
+ * the application creates the instance/device itself instead of going through Streamline's
+ * vkCreateInstance/vkCreateDevice proxies. Carries the live handles and the graphics queue
+ * layout to slSetVulkanInfo, which is what routes the application's Vulkan loading - already
+ * redirected to sl.interposer.dll by the mod entrypoint - through Streamline's
+ * present/acquire/swapchain hooks.
+ *
+ * `graphics_queue_family` is the queue family the graphics queue was created in, and
+ * `graphics_queue_index` is the index at which Streamline's own queues start: the number of
+ * queues the host created in that family. Streamline adds its required graphics/compute
+ * queues after the host's, so the host hands over its queue COUNT, not the handle's index.
+ *
+ * Idempotent: repeating the same five values returns success without re-calling
+ * slSetVulkanInfo. A different device than the one already recorded cannot replace live
+ * Streamline ownership without a shutdown, so that returns kInvalidParameter.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
+    uint64_t vk_instance,
+    uint64_t vk_physical_device,
+    uint64_t vk_device,
+    uint32_t graphics_queue_family,
+    uint32_t graphics_queue_index);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
     uint32_t index,
     char* name,

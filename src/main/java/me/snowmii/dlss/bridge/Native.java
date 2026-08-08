@@ -115,6 +115,7 @@ public final class Native implements AutoCloseable, NativeApi {
 
 	private final Arena arena;
 	private final MethodHandle bootstrapStreamline;
+	private final MethodHandle activateVulkanProxies;
 	private final MethodHandle queryInstanceExtension;
 	private final MethodHandle queryDeviceExtension;
 	private final MethodHandle initialize;
@@ -147,6 +148,11 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_bootstrap_streamline",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
+		);
+		this.activateVulkanProxies = bind(
+			lookup,
+			"mc_dlss_activate_vulkan_proxies",
+			FunctionDescriptor.of(JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT)
 		);
 		this.queryInstanceExtension = bind(
 			lookup,
@@ -243,6 +249,33 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.bootstrapStreamline.invokeExact(callArena.allocateFrom(pluginPath.toString()));
 		} catch (Throwable error) {
 			throw nativeError("bootstrap-streamline", error);
+		}
+	}
+
+	/**
+	 * Hands the live instance / physical device / device and graphics queue layout to
+	 * Streamline's manual-hook Vulkan integration (slSetVulkanInfo). {@code graphicsQueueIndex}
+	 * is the index at which Streamline's own queues start - the number of queues the host
+	 * created in {@code graphicsQueueFamily}. Idempotent natively: repeating the same five
+	 * values returns success without re-calling slSetVulkanInfo.
+	 */
+	public int activateVulkanProxies(
+		final long vkInstance,
+		final long vkPhysicalDevice,
+		final long vkDevice,
+		final int graphicsQueueFamily,
+		final int graphicsQueueIndex
+	) {
+		try {
+			return (int)this.activateVulkanProxies.invokeExact(
+				vkInstance,
+				vkPhysicalDevice,
+				vkDevice,
+				graphicsQueueFamily,
+				graphicsQueueIndex
+			);
+		} catch (Throwable error) {
+			throw nativeError("activate-vulkan-proxies", error);
 		}
 	}
 

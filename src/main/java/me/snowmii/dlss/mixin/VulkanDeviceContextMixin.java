@@ -5,6 +5,7 @@ import com.mojang.blaze3d.vulkan.VulkanDevice;
 import com.mojang.blaze3d.vulkan.VulkanInstance;
 import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
 import com.mojang.blaze3d.vulkan.checkpoints.CheckpointExtension;
+import me.snowmii.dlss.bridge.ExtensionBootstrap;
 import me.snowmii.dlss.bridge.VulkanContext;
 import me.snowmii.dlss.bridge.VulkanContextRegistry;
 import org.lwjgl.vulkan.VkDevice;
@@ -44,6 +45,10 @@ public class VulkanDeviceContextMixin {
 			VulkanContext.fromVulkanDevice((VulkanDevice) (Object) this, physicalDevice);
 		if (context != null) {
 			VulkanContextRegistry.register(context);
+			// Loud on failure: a device Streamline cannot hook must not be silently presented as
+			// proxy-active. bootstrap throws NativeException at this same seam, so the injection
+			// point is already the one that fails device creation rather than the frame loop.
+			ExtensionBootstrap.activateVulkanProxies(context);
 		}
 	}
 }

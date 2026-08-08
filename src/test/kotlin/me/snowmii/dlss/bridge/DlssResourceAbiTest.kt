@@ -180,6 +180,8 @@ class DlssResourceAbiTest {
 				return 1;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_release_images() { return 1; }
+			__declspec(dllexport) int __cdecl mc_dlss_activate_vulkan_proxies(
+				uint64_t, uint64_t, uint64_t, uint32_t, uint32_t) { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_wait_device_idle() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_query_frame_timings(
 				float*, float*, float*, float*) { return 1; }

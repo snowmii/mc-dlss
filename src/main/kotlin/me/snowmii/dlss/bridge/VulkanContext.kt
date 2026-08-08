@@ -24,6 +24,10 @@ class VulkanContext private constructor(
 	val physicalDeviceHandle: Long,
 	val deviceHandle: Long,
 	val graphicsQueueHandle: Long,
+	/** Queue family the graphics queue lives in, for Streamline's manual-hook Vulkan info. */
+	val graphicsQueueFamily: Int,
+	/** Index at which Streamline's own queues start: the number of queues the host created in [graphicsQueueFamily]. */
+	val graphicsQueueIndex: Int,
 	val commandBufferSource: () -> VkCommandBuffer,
 	private val commandBufferSink: (VkCommandBuffer) -> Unit,
 ) {
@@ -61,6 +65,9 @@ class VulkanContext private constructor(
 			val physicalDeviceHandle = physicalDevice.vkPhysicalDevice().address()
 			val deviceHandle = device.vkDevice().address()
 			val queueHandle = device.graphicsQueue().vkQueue().address()
+			// Minecraft records no graphics queue when no family can present, which is exactly the
+			// case that must not reach Streamline's Vulkan info - degrade like the zero handles do.
+			val graphicsPair = physicalDevice.graphicsQueueFamilyAndIndex() ?: return null
 			if (instanceHandle == 0L || physicalDeviceHandle == 0L || deviceHandle == 0L || queueHandle == 0L) {
 				return null
 			}
@@ -70,6 +77,11 @@ class VulkanContext private constructor(
 				physicalDeviceHandle,
 				deviceHandle,
 				queueHandle,
+				graphicsQueueFamily = graphicsPair.leftInt(),
+				// Streamline's graphicsQueueIndex is where its own queues start, which is after the
+				// queues Minecraft created in the family - the host queue COUNT from the create-info
+				// map, not the pair's queue index.
+				graphicsQueueIndex = physicalDevice.queueFamilyCreateInfoMap().get(graphicsPair.leftInt()),
 				commandBufferSource = { encoder.allocateAndBeginTransientCommandBuffer() },
 				// execute() ends whatever the encoder was recording and appends this buffer behind
 				// it, so the buffer has to be closed here first. It is not submitted by this call;
@@ -91,6 +103,8 @@ class VulkanContext private constructor(
 			vkPhysicalDevice: Long,
 			vkDevice: Long,
 			vkQueue: Long,
+			graphicsQueueFamily: Int = 0,
+			graphicsQueueIndex: Int = 0,
 			commandBufferSource: () -> VkCommandBuffer,
 			commandBufferSink: (VkCommandBuffer) -> Unit = {},
 		): VulkanContext = VulkanContext(
@@ -98,6 +112,8 @@ class VulkanContext private constructor(
 			vkPhysicalDevice,
 			vkDevice,
 			vkQueue,
+			graphicsQueueFamily,
+			graphicsQueueIndex,
 			commandBufferSource,
 			commandBufferSink,
 		)
