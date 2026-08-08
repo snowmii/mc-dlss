@@ -69,8 +69,10 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 		val streamlineSdk = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", DEFAULT_STREAMLINE_SDK)
 		val vulkanHeader = vulkanSdk.resolve("Include/vulkan/vulkan.h")
 		val vulkanLibrary = vulkanSdk.resolve("Lib/vulkan-1.lib")
+		// The DLSS 310.7.0 SDK is reference-only: its headers carry the quality-mode, preset, and
+		// result vocabulary the public ABI keeps, but the SDK's static library is never linked
+		// and no NGX runtime function is called.
 		val ngxHeader = ngxSdk.resolve("include/nvsdk_ngx.h")
-		val ngxLibrary = ngxSdk.resolve("lib/Windows_x86_64/x64/nvsdk_ngx_s.lib")
 		val streamlineHeader = streamlineSdk.resolve("include/sl.h")
 		val streamlineLibrary = streamlineSdk.resolve("lib/x64/sl.interposer.lib")
 		val glslc = vulkanSdk.resolve("Bin/glslc.exe")
@@ -79,8 +81,7 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 		check(glslc.isFile) { "Vulkan SDK 1.4.357.0 shader compiler missing: $glslc" }
 		check(vulkanHeader.isFile) { "Vulkan SDK 1.4.357.0 header missing: $vulkanHeader (set VULKAN_SDK or install at C:/VulkanSDK/1.4.357.0)" }
 		check(vulkanLibrary.isFile) { "Vulkan SDK 1.4.357.0 loader library missing: $vulkanLibrary" }
-		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 header missing: $ngxHeader" }
-		check(ngxLibrary.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 library missing: $ngxLibrary" }
+		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 header (reference vocabulary only) missing: $ngxHeader" }
 		check(streamlineHeader.isFile) { "Pinned Streamline 2.12.0 header missing: $streamlineHeader" }
 		check(streamlineLibrary.isFile) { "Pinned Streamline 2.12.0 interposer library missing: $streamlineLibrary" }
 
@@ -116,7 +117,7 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 				sourceArguments + " " +
 				"/link /OUT:\"${output.absolutePath}\" " +
 				"/IMPLIB:\"${outputDir.resolve("mc_dlss.lib").absolutePath}\" " +
-				"\"${vulkanLibrary.absolutePath}\" \"${ngxLibrary.absolutePath}\" " +
+				"\"${vulkanLibrary.absolutePath}\" " +
 				"\"${streamlineLibrary.absolutePath}\" Advapi32.lib User32.lib && " +
 				"copy /Y \"${streamlineSdk.resolve("bin/x64/sl.interposer.dll").absolutePath}\" \"${outputDir.absolutePath}\\\" >nul && " +
 				"copy /Y \"${streamlineSdk.resolve("bin/x64/sl.common.dll").absolutePath}\" \"${outputDir.absolutePath}\\\" >nul"
@@ -173,8 +174,9 @@ tasks.processResources {
 // launch.cfg, so the DLSS startup properties are set on the run task's JVM directly. Every
 // value is overridable, e.g. `./gradlew.bat runClient -Pmc.dlss.mode=performance`.
 tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configureEach {
-	// Directory holding nvngx_dlss.dll; NGX uses it as the feature search path.
-	val ngxRuntime = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
+	// sdk-path is a compatibility input: the retired direct-NGX path searched it for its
+	// feature DLL, and initialize now validates it and records only the Vulkan tuple.
+	val sdkPath = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
 		.resolve("lib/Windows_x86_64/rel")
 	val dlssData = layout.buildDirectory.dir("dlss-data").get().asFile
 
@@ -182,7 +184,7 @@ tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configur
 		dlssData.mkdirs()
 	}
 
-	systemProperty("mc.dlss.sdk-path", providers.gradleProperty("mc.dlss.sdk-path").getOrElse(ngxRuntime.absolutePath))
+	systemProperty("mc.dlss.sdk-path", providers.gradleProperty("mc.dlss.sdk-path").getOrElse(sdkPath.absolutePath))
 	systemProperty("mc.dlss.data-path", providers.gradleProperty("mc.dlss.data-path").getOrElse(dlssData.absolutePath))
 	// Performance mode by default: the widest render/output gap, so a routing change is easiest
 	// to see. Quality and balanced remain a -Pmc.dlss.mode away.

@@ -10,7 +10,11 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.MethodOrderer
+import org.junit.jupiter.api.Order
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestMethodOrder
+import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VkDevice
@@ -24,16 +28,25 @@ import org.lwjgl.vulkan.VkPhysicalDevice
  * summed DLSS_G queue counts surface through the bridge, the production merge seams exist
  * (feature chain + queue-family map before vkCreateDevice), and proxy activation succeeds
  * against a device that actually holds the merged queue layout.
+ *
+ * Methods are ORDERED because the fork is one process: the live-device test's close shuts the
+ * Streamline runtime down (slShutdown, while the fixture device is still alive - the fix that
+ * keeps the fork's JVM exit from crashing in sl.common.dll / nvcuda64.dll), and the
+ * bootstrap-dependent queries need the runtime up, so they run before it and nothing
+ * bootstraps after it.
  */
+@TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 class StreamlineRequirementsMergeTest {
 
+	@Order(1)
 	@Test
 	fun `SL features12 and 13 surface through the bridge`() {
 		// queryInstanceExtensions runs the same pre-Vulkan bootstrap Minecraft's instance seam
 		// performs, so the feature queries run against a live Streamline runtime. The bridge
-		// closes between the two seams and the native module is unloaded with it, so the query
-		// bridge re-bootstraps in place - slInit is idempotent, and every production seam
-		// (ExtensionBootstrap) does the same.
+		// closes between the two seams and the native module is pinned for the JVM lifetime, so
+		// the module's bootstrap state survives the close; the fresh bridge still bootstraps in
+		// place because slInit is idempotent and every production seam (ExtensionBootstrap)
+		// does the same.
 		ExtensionBootstrap.queryInstanceExtensions()
 		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
@@ -55,6 +68,7 @@ class StreamlineRequirementsMergeTest {
 		}
 	}
 
+	@Order(2)
 	@Test
 	fun `DLSS_G queue requirements surface through the bridge`() {
 		ExtensionBootstrap.queryInstanceExtensions()
@@ -72,32 +86,45 @@ class StreamlineRequirementsMergeTest {
 		}
 	}
 
+	@Order(4)
 	@Test
-	fun `merged queue layout activates proxies against a device holding SL queues`() {
+	fun `merged queue layout activates proxies against a device holding SL queues`(
+		@TempDir dataPath: Path,
+	) {
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
-		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+		// The query bridge closes before the device exists, when its close path is a no-op;
+		// the pinned module keeps the bootstrap state for the activation bridge below.
+		val requirements = Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 			)
-			val requirements = bridge.queryQueueRequirements()
+			bridge.queryQueueRequirements()
+		}
 
-			// The production merge starts from Minecraft's {graphicsFamily: 1} queue map and adds
-			// SL's extra graphics and compute queues to the families Streamline would record at
-			// activation. The first graphics family is compute-capable on this workstation, so
-			// both merges land in the same family - exactly the layout the fixture must hold.
-			val graphicsFamily = probeGraphicsQueueFamily()
-			val extras = requirements.graphicsQueues + requirements.computeQueues
-			HeadlessVulkanFixture(
-				instanceExtensions,
-				{ instance, physicalDevice ->
-					val extensions = mutableListOf<String>()
-					ExtensionBootstrap.addDeviceExtensions(extensions, instance, physicalDevice)
-					extensions
-				},
-				false,
-				mapOf(graphicsFamily to extras),
-			).use { fixture ->
+		// The production merge starts from Minecraft's {graphicsFamily: 1} queue map and adds
+		// SL's extra graphics and compute queues to the families Streamline would record at
+		// activation. The first graphics family is compute-capable on this workstation, so
+		// both merges land in the same family - exactly the layout the fixture must hold.
+		val graphicsFamily = probeGraphicsQueueFamily()
+		val extras = requirements.graphicsQueues + requirements.computeQueues
+		HeadlessVulkanFixture(
+			instanceExtensions,
+			{ instance, physicalDevice ->
+				val extensions = mutableListOf<String>()
+				ExtensionBootstrap.addDeviceExtensions(extensions, instance, physicalDevice)
+				extensions
+			},
+			false,
+			mapOf(graphicsFamily to extras),
+		).use { fixture ->
+			// The fixture OUTLIVES the bridge: the close's slShutdown must run while the
+			// device is still alive.
+			Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
+				)
 				// The fixture creates one host queue in the family, so Streamline's own queues
 				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
 				val hostQueueCount = 1
@@ -138,10 +165,18 @@ class StreamlineRequirementsMergeTest {
 					vkGetDeviceQueue(fixture, graphicsFamily, hostQueueCount + extras),
 					"the device must not exceed the merged queue count",
 				)
+
+				// Arm the close path: the already-activated tuple is recorded through the
+				// existing initialize, so this bridge's close runs the orderly slShutdown
+				// while the device is still alive instead of leaving the fork to crash at
+				// exit. Runs last (Order 4) because nothing in this fork may bootstrap
+				// after the shutdown.
+				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}
 	}
 
+	@Order(3)
 	@Test
 	fun `production merges SL features and queues into device creation`() {
 		val mixin = Files.readString(

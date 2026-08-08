@@ -19,6 +19,16 @@ bool sl_session_ready() noexcept {
     return g_state.streamlineInitialized && g_state.proxyDevice != 0;
 }
 
+void shutdown_streamline() noexcept {
+    // The module gates every close-path shutdown on a ready session, so bootstrap has always
+    // run by the time this is called; the guard keeps the unit self-contained for future
+    // callers. The result is deliberately not acted on: on a device already lost there is
+    // nothing left to salvage, and the teardown has to complete either way.
+    if (g_state.streamlineInitialized) {
+        slShutdown();
+    }
+}
+
 int32_t query_optimal_dimensions_sl(const uint32_t outputWidth, const uint32_t outputHeight,
                                     const uint32_t qualityMode, uint32_t* renderWidth,
                                     uint32_t* renderHeight) noexcept {

@@ -6,16 +6,17 @@
 #include <sl_core_types.h>
 
 #include <mutex>
-#include <string>
 
 /*
  * The module's one piece of mutable state, and the operations that read or write it without
  * needing anything above it.
  *
- * Everything that owns a GPU object - timing, images, motion, the NGX feature - reads
- * `g_state` and is layered above this unit. Teardown, which has to drive all of them in
- * order, lives above them all in session.h rather than here: putting it here would make the
- * state unit depend on its own dependents.
+ * Everything that owns a GPU object - timing, images, motion - reads `g_state` and is layered
+ * above this unit. Teardown, which has to drive all of them in order, lives above them all in
+ * session.h rather than here: putting it here would make the state unit depend on its own
+ * dependents. The Streamline runtime itself is process-wide and never enters this struct; the
+ * bootstrap flag, the proxy tuple, and the frame token are the only per-module Streamline
+ * state it carries, and close clears all of it so a later bootstrap can reinitialize.
  */
 namespace mc_dlss {
 
@@ -55,11 +56,16 @@ struct DlssMotionPass {
 };
 
 struct DlssState {
-    bool initialized = false;
-    bool bootstrapComplete = false;
+    // Whether mc_dlss_initialize validated and recorded the live Vulkan tuple. This is what
+    // the module-owned images and motion pass gate on; Streamline readiness is tracked
+    // separately by streamlineInitialized + the proxy tuple, and the extension/feature/option
+    // seams gate on those.
+    bool sessionReady = false;
     // Whether this module instance's Streamline bootstrap succeeded: slInit answered eOk (or
     // one of the two errors that mean the runtime is already up in this process). Activation,
-    // which records the Vulkan device, is tracked separately by the proxy tuple below.
+    // which records the Vulkan device, is tracked separately by the proxy tuple below. Close
+    // resets the flag with the rest of the struct after slShutdown, so a later bootstrap runs
+    // slInit again instead of treating the shutdown runtime as already up.
     bool streamlineInitialized = false;
     uint64_t instanceValue = 0;
     uint64_t physicalDeviceValue = 0;
@@ -77,22 +83,12 @@ struct DlssState {
     uint32_t proxyGraphicsQueueIndex = 0;
     uint32_t proxyComputeQueueFamily = 0;
     uint32_t proxyComputeQueueIndex = 0;
-    std::wstring sdkPath;
-    std::wstring dataPath;
-    NVSDK_NGX_Parameter* capabilityParameters = nullptr;
-    NVSDK_NGX_Handle* feature = nullptr;
     uint32_t outputWidth = 0;
     uint32_t outputHeight = 0;
     uint32_t renderWidth = 0;
     uint32_t renderHeight = 0;
     uint32_t qualityMode = 0;
     uint32_t renderPreset = 0;
-    uint32_t featureOutputWidth = 0;
-    uint32_t featureOutputHeight = 0;
-    uint32_t featureRenderWidth = 0;
-    uint32_t featureRenderHeight = 0;
-    uint32_t featureQualityMode = 0;
-    uint32_t featureRenderPreset = 0;
     DlssOwnedImage motionImage;
     DlssOwnedImage outputImage;
     DlssMotionPass motionPass;

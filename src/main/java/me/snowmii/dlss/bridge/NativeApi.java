@@ -16,6 +16,21 @@ public interface NativeApi {
 	/** Flat ABI success result defined by native/mc_dlss.h. */
 	int SUCCESS_RESULT = 1;
 
+	/**
+	 * Validates and records the live Vulkan tuple the bridge's own images and motion pass are
+	 * allocated against, and nothing else: the retired direct-NGX initialization no longer runs
+	 * behind it.
+	 *
+	 * <p>Must be called after {@link Native#bootstrapStreamline(Path)} and
+	 * {@link Native#activateVulkanProxies(long, long, long, int, int, int, int)} with the same
+	 * handles that were handed to {@code slSetVulkanInfo}; an initialize that ran before proxy
+	 * activation - or with a tuple that disagrees with the recorded proxy tuple - is refused and
+	 * records nothing.
+	 *
+	 * <p>{@code sdkPath} and {@code dataPath} are compatibility inputs. The retired direct-NGX
+	 * implementation used them to locate its feature DLL and data; nothing in the Streamline
+	 * stack consumes them, so they are validated as well-formed paths and otherwise ignored.
+	 */
 	int initialize(
 		long vkInstance,
 		long vkPhysicalDevice,
@@ -31,16 +46,16 @@ public interface NativeApi {
 	);
 
 	/**
-	 * Stores the dimensions, the NGX performance/quality mode, and the render preset the next
-	 * feature creation uses.
+	 * Stores the dimensions, the NGX-valued performance/quality mode, and the render preset
+	 * the SR configuration uses, and records them with Streamline's {@code slDLSSSetOptions}.
 	 *
-	 * <p>{@code renderPreset} is an {@code NVSDK_NGX_DLSS_Hint_Render_Preset} value. It is written
-	 * onto the capability parameters before the feature is created, because NGX reads the hint
-	 * at creation and ignores it afterwards.
+	 * <p>{@code renderPreset} is an {@code NVSDK_NGX_DLSS_Hint_Render_Preset} value (J, K, L, or
+	 * M). The bridge writes it onto the preset field {@code sl::DLSSOptions} carries for the
+	 * mode, which is how a preset change reaches the running model.
 	 *
 	 * <p>These dimensions are what everything else is sized from: the images {@link
-	 * #acquireImages()} allocates, the feature the next evaluation creates, and the sizes the
-	 * recording calls check their callers against.
+	 * #acquireImages()} allocates and the sizes the recording calls check their callers
+	 * against.
 	 */
 	int configure(
 		int outputWidth,

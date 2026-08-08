@@ -2,16 +2,9 @@ package me.snowmii.dlss.sl
 
 import java.nio.file.Files
 import java.nio.file.Path
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -20,8 +13,7 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * M-3 rung: DLSS SR evaluates through Streamline on the caller's command buffer, and the
- * direct-NGX evaluation is retired.
+ * M-3 rung: DLSS SR evaluates through Streamline on the caller's command buffer.
  *
  * The live frame drives the whole SL path on a headless device: bootstrap, proxy activation,
  * initialize, optimal-dimension query, configure, module-image acquisition, and then per frame
@@ -30,12 +22,13 @@ import org.lwjgl.vulkan.VK10
  * under the Khronos validation layer - the plugin transitions the tagged resources from the
  * declared states, and a stale declaration would surface there.
  *
- * The whole device-backed scenario runs in ONE test method (and therefore one test fork):
- * Streamline's runtime crashes its teardown when a process that called DLSS plugin functions
- * exits (sl.common.dll, the same known exit-crash family as nvcuda64.dll), and a fork that
- * followed such a crash comes up with the plugin manager already initialized, which makes
- * slSetVulkanInfo answer eErrorInvalidIntegration. Splitting the scenario across two forks
- * makes the second fork's activation fail on this workstation no matter what it does.
+ * The live scenario lives in [SrLiveSession], which the canonical M-3 rung
+ * ([SrOnStreamlineTest]) shares; this class asserts the evaluate seam itself and the frame
+ * ordering around it. The whole device-backed scenario runs in ONE test method (and therefore
+ * one test fork): the close-path slShutdown is what makes the fork's exit clean, and a fork
+ * that followed an unclean exit comes up with the plugin manager already initialized, which
+ * makes slSetVulkanInfo answer eErrorInvalidIntegration. Splitting the scenario across two
+ * forks makes the second fork's activation fail on this workstation no matter what it does.
  */
 class StreamlineSrEvaluateTest {
 
@@ -43,7 +36,7 @@ class StreamlineSrEvaluateTest {
 	fun `SL SR evaluates on one clean command buffer after tagging the frame's resources`(
 		@TempDir dataPath: Path,
 	) {
-		withLiveSession(dataPath) { bridge, fixture ->
+		SrLiveSession.withLiveSession(dataPath) { bridge, fixture ->
 
 			val outputWidth = 2560
 			val outputHeight = 1440
@@ -111,12 +104,11 @@ class StreamlineSrEvaluateTest {
 			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.evaluate(evaluationRequest(frame.address(), color, depth, dimensions, reset = true)),
+				bridge.evaluate(SrLiveSession.evaluationRequest(frame.address(), color, depth, dimensions, reset = true)),
 				"the evaluation must record on the tagged frame's buffer",
 			)
 			fixture.endSubmitAndWait(frame)
-			assertValidationClean(fixture, color, depth, images!!)
-
+			SrLiveSession.assertValidationClean(fixture, color, depth, images!!)
 
 			// Frame two: the same images with accumulated history rather than a reset, starting
 			// from the layouts the first frame left behind.
@@ -129,21 +121,20 @@ class StreamlineSrEvaluateTest {
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				bridge.evaluate(
-					evaluationRequest(secondFrame.address(), color, depth, dimensions, reset = false),
+					SrLiveSession.evaluationRequest(secondFrame.address(), color, depth, dimensions, reset = false),
 				),
 				"the second frame must evaluate from the layouts the first left behind",
 			)
 			fixture.endSubmitAndWait(secondFrame)
-			assertValidationClean(fixture, color, depth, images)
+			SrLiveSession.assertValidationClean(fixture, color, depth, images)
 
 		}
 	}
 
 	@Test
-	fun `the evaluate path runs through Streamline and the direct NGX evaluation is retired`() {
+	fun `the evaluate path runs through Streamline`() {
 		val apiSource = Files.readString(Path.of("native", "mc_dlss_api.cpp"))
 		val slSource = Files.readString(Path.of("native", "internal", "sl_dlss.cpp"))
-		val ngxSource = Files.readString(Path.of("native", "internal", "ngx.cpp"))
 		val stateHeader = Files.readString(Path.of("native", "internal", "state.h"))
 
 		// The API's evaluate records the SL evaluation: it routes into the SL unit, which
@@ -155,13 +146,6 @@ class StreamlineSrEvaluateTest {
 		assertTrue(slSource.contains("slSetConstants"))
 		assertTrue(slSource.contains("slEvaluateFeature"))
 		assertTrue(slSource.contains("sl::kFeatureDLSS"))
-
-		// The direct-NGX evaluate machinery is gone from the module, with no fallback.
-		assertTrue(!apiSource.contains("NGX_VULKAN_EVALUATE_DLSS_EXT"))
-		assertTrue(!apiSource.contains("NVSDK_NGX_VULKAN_CREATE_DLSS_EXT"))
-		assertTrue(!ngxSource.contains("NGX_VULKAN_EVALUATE_DLSS_EXT"))
-		assertTrue(!ngxSource.contains("ensure_feature"))
-		assertTrue(!ngxSource.contains("record_evaluation"))
 
 		// The evaluation consumes the frame token the tag call retained: state carries it, the
 		// tag obtains it only when none is retained, and the evaluation fails without one.
@@ -195,140 +179,4 @@ class StreamlineSrEvaluateTest {
 		assertTrue(adapterSource.contains("DlssNativeStage.TAG"))
 		assertTrue(sessionSource.contains("TAG(\"tag-sr-resources\")"))
 	}
-
-	private fun assertValidationClean(
-		fixture: HeadlessVulkanFixture,
-		color: HeadlessVulkanFixture.EngineImage,
-		depth: HeadlessVulkanFixture.EngineImage,
-		images: DlssEvaluationImages,
-	) {
-		if (fixture.validationEnabled()) {
-			val errors = fixture.validationErrorsAbout(
-				color.image(),
-				depth.image(),
-				images.motion.image,
-				images.output.image,
-			)
-			assertTrue(
-				errors.isEmpty(),
-				"the evaluated frame must not leave a resource in a state validation rejects: $errors",
-			)
-		}
-	}
-
-	/**
-	 * The engine's two images and nothing else, with the render dimensions stamped the way the
-	 * adapter stamps them in production. The motion and output images are the bridge's own and
-	 * are reached natively.
-	 */
-	private fun evaluationRequest(
-		commandBuffer: Long,
-		color: HeadlessVulkanFixture.EngineImage,
-		depth: HeadlessVulkanFixture.EngineImage,
-		dimensions: DlssDimensions,
-		reset: Boolean,
-	): EvaluationRequest = EvaluationRequest(
-		commandBuffer = commandBuffer,
-		color = ImageBinding(color.view(), color.image(), color.format()),
-		depth = ImageBinding(depth.view(), depth.image(), depth.format()),
-		// The offset is in render pixels, the unit the jitter sequence is in. The motion
-		// buffer is normalized device units, so the scale that normalizes it onto [-1,1] is one.
-		jitter = Vec2(0.25f, -0.5f),
-		motionScale = Vec2(1f, 1f),
-		frameTimeMilliseconds = 16.6f,
-		resetHistory = reset,
-		renderDimensions = dimensions,
-	)
-
-	/**
-	 * Bootstraps Streamline, activates the Vulkan proxies against a headless device holding the
-	 * merged queue layout, and runs the initialize surface production runs, then executes
-	 * [block] with the live bridge and fixture.
-	 *
-	 * The fixture OUTLIVES the bridge: Native.close runs mc_dlss_close (which destroys the
-	 * module's images and motion pass), and that must happen while the Vulkan device is still
-	 * alive. The queue requirements come from a throwaway bridge closed before the device
-	 * exists, when its close path is a no-op.
-	 */
-	private fun withLiveSession(dataPath: Path, block: (Native, HeadlessVulkanFixture) -> Unit) {
-		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
-		val requirements = Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
-			assertEquals(
-				NativeApi.SUCCESS_RESULT,
-				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
-			)
-			bridge.queryQueueRequirements()
-		}
-
-		// The production merge starts from Minecraft's {graphicsFamily: 1} queue map and
-		// adds SL's extra graphics and compute queues; the first graphics family is
-		// compute-capable on this workstation, so both merges land in the same family.
-		val graphicsFamily = probeGraphicsQueueFamily()
-		val extras = requirements.graphicsQueues + requirements.computeQueues
-		HeadlessVulkanFixture(
-			instanceExtensions,
-			{ instance, physicalDevice ->
-				val extensions = mutableListOf<String>()
-				ExtensionBootstrap.addDeviceExtensions(extensions, instance, physicalDevice)
-				extensions
-			},
-			true,
-			mapOf(graphicsFamily to extras),
-		).use { fixture ->
-			Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
-				// Bootstrap is idempotent across bridge instances: the runtime is already up.
-				assertEquals(
-					NativeApi.SUCCESS_RESULT,
-					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
-				)
-				// The fixture creates one host queue in the family, so Streamline's own queues
-				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
-				val hostQueueCount = 1
-				assertEquals(
-					NativeApi.SUCCESS_RESULT,
-					bridge.activateVulkanProxies(
-						fixture.instanceAddress(),
-					fixture.physicalDeviceAddress(),
-					fixture.deviceAddress(),
-					graphicsFamily,
-					hostQueueCount,
-					graphicsFamily,
-					hostQueueCount,
-				),
-					"activation must succeed against the merged queue layout",
-				)
-				// The module-image acquisition gate (mc_dlss_acquire_images) still runs on the
-				// NGX-init surface, which retires in the following capability, so initialize
-				// runs here exactly as production runs it.
-				assertEquals(
-					NativeApi.SUCCESS_RESULT,
-					bridge.initialize(
-						fixture.instanceAddress(),
-					fixture.physicalDeviceAddress(),
-					fixture.deviceAddress(),
-					ngxRuntimeDirectory(),
-					dataPath,
-				),
-					"initialize must succeed alongside the SL session",
-				)
-				block(bridge, fixture)
-			}
-		}
-	}
-
-	/** The pinned NGX runtime directory the initialize surface still searches for features. */
-	private fun ngxRuntimeDirectory(): Path {
-		val runtime = Path.of(
-			"C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0/lib/Windows_x86_64/rel",
-		)
-		assertTrue(Files.isDirectory(runtime), "Pinned NGX runtime directory must exist")
-		return runtime
-	}
-
-	/**
-	 * The family the fixture creates its queues in, discovered with a throwaway default fixture
-	 * so the augmented fixture can be built with the extras keyed by the right family.
-	 */
-	private fun probeGraphicsQueueFamily(): Int =
-		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 }

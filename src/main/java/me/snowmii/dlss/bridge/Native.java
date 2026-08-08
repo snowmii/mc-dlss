@@ -14,7 +14,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Flat Java 25 FFM binding. NGX types and ownership stay inside mc_dlss_native. */
 public final class Native implements AutoCloseable, NativeApi {
@@ -23,6 +25,19 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final ValueLayout.OfLong JAVA_LONG = ValueLayout.JAVA_LONG;
 	private static final ValueLayout.OfFloat JAVA_FLOAT = ValueLayout.JAVA_FLOAT;
 	private static final Linker LINKER = Linker.nativeLinker();
+
+	/**
+	 * One native-library lookup per absolute path, each pinned for the JVM lifetime.
+	 *
+	 * <p>The bootstrap/query/activation bridges ExtensionBootstrap opens close before the
+	 * runtime bridge opens, and the native module's globals (Streamline bootstrap state, the
+	 * activated proxy tuple) have to survive those closes: Streamline stays process-wide, and
+	 * a module instance that unloaded with its arena would lose the tuple the runtime bridge's
+	 * {@code mc_dlss_initialize} must match. Pinning the lookup with {@link Arena#global()}
+	 * keeps the native module loaded, the path key keeps it loaded exactly once, and each
+	 * {@link Native} still owns its scratch arena and close behavior.
+	 */
+	private static final Map<Path, SymbolLookup> PINNED_LOOKUPS = new ConcurrentHashMap<>();
 
 	/**
 	 * {@code McDlssImage}: two 8-byte handles and a 4-byte format.
@@ -288,7 +303,13 @@ public final class Native implements AutoCloseable, NativeApi {
 		}
 		final Arena arena = Arena.ofShared();
 		try {
-			return new Native(arena, SymbolLookup.libraryLookup(absoluteLibrary, arena));
+			// The lookup is shared and pinned, never tied to this bridge's arena: closing the
+			// bridge must not unload the module the next bridge's calls run against.
+			final SymbolLookup lookup = PINNED_LOOKUPS.computeIfAbsent(
+				absoluteLibrary,
+				path -> SymbolLookup.libraryLookup(path, Arena.global())
+			);
+			return new Native(arena, lookup);
 		} catch (Throwable error) {
 			arena.close();
 			throw new NativeException("load-library", error);

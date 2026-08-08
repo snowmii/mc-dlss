@@ -16,11 +16,13 @@ extern "C" {
 #endif
 
 /**
- * Flat ABI used by Java 25 FFM. NVIDIA NGX headers, handles, parameters, and
- * result decoding remain private to the native implementation.
+ * Flat ABI used by Java 25 FFM. NVIDIA NGX headers remain reference-only vocabulary: the
+ * quality-mode, preset, and result values the ABI speaks in keep their NGX names, and no
+ * direct-NGX runtime call exists behind them. Streamline owns every feature path.
  *
- * Every function returns 1 on success and an NGX/native result code otherwise.
- * The bridge owns NGX feature and parameter lifetimes.
+ * Every function returns 1 on success and an NGX-valued result code otherwise. The bridge
+ * owns its images and motion pass; the Streamline runtime is process-wide and outlives the
+ * bridge.
  *
  * The per-frame recording calls take a pointer to a description struct rather than a
  * long argument list. The struct is what makes the call self-describing: the flat form
@@ -105,8 +107,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
  *
  * Returns the deduplicated Vulkan instance (mc_dlss_query_instance_extension) or device
  * (mc_dlss_query_device_extension) extension names the loaded features require, drawn from
- * slGetFeatureRequirements across every enabled feature. Before Streamline is bootstrapped,
- * the same queries fall back to the pre-creation NGX discovery API of the same shape.
+ * slGetFeatureRequirements across every enabled feature. Must be called after
+ * mc_dlss_bootstrap_streamline: the retired direct-NGX discovery fallback no longer answers
+ * a query that ran before bootstrap.
  *
  * Two-call shape: first call with index==0 && name==NULL && name_capacity==0 returns the
  * count in *extension_count; subsequent calls with a valid name buffer copy the i-th
@@ -168,12 +171,39 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_queue_requirements(
     uint32_t* extra_compute_queues,
     uint32_t* extra_optical_flow_queues);
 
+/*
+ * Validates and records the live Vulkan tuple the module's own images and motion pass are
+ * allocated against, and nothing else: the retired direct-NGX initialization no longer runs
+ * behind it. Must be called after mc_dlss_bootstrap_streamline and
+ * mc_dlss_activate_vulkan_proxies with the same handles that were handed to slSetVulkanInfo.
+ * An initialize that ran before bootstrap or proxy activation - or with a tuple that
+ * disagrees with the activated one - fails and records nothing.
+ *
+ * `sdk_path` and `data_path` are compatibility inputs: the retired direct-NGX path used them
+ * to locate its feature DLL and data, and nothing in the Streamline stack consumes them. They
+ * are validated as well-formed paths and otherwise ignored.
+ */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(
     uint64_t vk_instance,
     uint64_t vk_physical_device,
     uint64_t vk_device,
     const char* sdk_path,
     const char* data_path);
+
+/*
+ * Validates and records the live Vulkan tuple the module-owned images and motion pass are
+ * allocated against.
+ *
+ * Must be called after mc_dlss_bootstrap_streamline and mc_dlss_activate_vulkan_proxies with
+ * the same instance / physical device / device that was handed to slSetVulkanInfo: a tuple
+ * that disagrees with the recorded proxy tuple is refused. Repeating the same three handles
+ * returns success without re-recording; a different tuple cannot replace the recorded one
+ * without close.
+ *
+ * `sdk_path` and `data_path` are compatibility inputs. The retired direct-NGX implementation
+ * used them to locate its feature DLL and data; nothing in the Streamline stack consumes
+ * them, so they are validated as well-formed paths and otherwise ignored.
+ */
 
 /*
  * Queries the DLSS optimal render dimensions for an output size and quality mode, answered by
@@ -261,7 +291,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_device_idle(void);
 /*
  * GPU milliseconds the last completed frame spent in each recorded stage.
  *
- * Measured with device timestamps around the motion pass, the NGX evaluation, and the copy
+ * Measured with device timestamps around the motion pass, the DLSS evaluation, and the copy
  * into the engine target, so the three are separable - frame rate and GPU utilization are
  * not, and on a CPU-bound client neither one moves when this chain gets cheaper or dearer.
  *
@@ -283,7 +313,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_frame_timings(
  * position through `reprojection`, and stores the normalized-device difference into the
  * motion image mc_dlss_acquire_images returned. `reprojection` is 16 floats in
  * column-major order - the same layout GLSL and JOML use - and must be the jitter-free
- * reprojection, because NGX is told this frame's jitter separately.
+ * reprojection, because the plugin is told this frame's jitter separately.
  *
  * The destination is the module's own motion image and never appears here.
  *
@@ -397,6 +427,16 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);
+
+/*
+ * mc_dlss_reset releases the module-owned images and drops the retained Streamline frame
+ * token, so the next tag obtains a fresh token; the session stays ready for the next
+ * acquire. mc_dlss_close releases the module-owned Vulkan resources (timing, motion pass,
+ * images) and the retained frame token, shuts the process-wide Streamline runtime down
+ * (while the caller's device is still alive), and forgets the bootstrap, proxy, and session
+ * bookkeeping - a later mc_dlss_bootstrap_streamline then reinitializes the runtime.
+ * Neither releases direct-NGX ownership, because there is none.
+ */
 
 #ifdef __cplusplus
 }

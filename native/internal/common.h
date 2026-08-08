@@ -23,8 +23,6 @@ constexpr int32_t kSuccess = static_cast<int32_t>(NVSDK_NGX_Result_Success);
 constexpr int32_t kFailure = static_cast<int32_t>(NVSDK_NGX_Result_Fail);
 constexpr int32_t kInvalidParameter = static_cast<int32_t>(NVSDK_NGX_Result_FAIL_InvalidParameter);
 constexpr int32_t kNotInitialized = static_cast<int32_t>(NVSDK_NGX_Result_FAIL_NotInitialized);
-constexpr int32_t kFeatureNotSupported =
-    static_cast<int32_t>(NVSDK_NGX_Result_FAIL_FeatureNotSupported);
 
 // R16G16_SFLOAT and R8G8B8A8_UNORM are both mandatory storage-image formats in
 // Vulkan, so neither needs a runtime capability probe. Two half-float channels

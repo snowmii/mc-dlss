@@ -29,7 +29,7 @@ data class WorldTargetRoute(
  * place that turns a captured Vulkan context into a READY session and then answers one
  * question per frame: *which target does the world phase render into?*
  *
- * Startup is attempted exactly once. NGX initialization needs a live Vulkan device, so it
+ * Startup is attempted exactly once. Streamline-backed startup needs a live Vulkan device, so it
  * cannot happen at mod-init time; the first frame that asks for a world target drives it.
  * A failed or skipped startup is never retried — the session latches vanilla fallback and
  * every later frame routes full-resolution, which is what the effort contract requires of
@@ -57,7 +57,7 @@ class RenderRuntime(
 	/**
 	 * Re-queries the native render dimensions for a mode and preset chosen while the session
 	 * runs, or null for a runtime whose configuration cannot change. Separate from [startup]
-	 * because it must not re-initialize NGX.
+	 * because it must not re-initialize the Streamline session.
 	 */
 	private val reconfigure: ((SRMode, SRModelPreset) -> DlssDimensions?)? = null,
 	/**
@@ -104,7 +104,7 @@ class RenderRuntime(
 	var activeRoute: WorldTargetRoute? = null
 		private set
 
-	/** NGX-queried render dimensions, or null until a successful startup. */
+	/** Streamline-queried render dimensions, or null until a successful startup. */
 	var renderDimensions: DlssDimensions? = null
 		private set
 
@@ -119,7 +119,7 @@ class RenderRuntime(
 	/**
 	 * Sub-pixel jitter for the current world phase, or null outside an eligible DLSS phase.
 	 *
-	 * The world projection and the NGX evaluation parameter both have to describe the same
+	 * The world projection and the Streamline evaluation parameter both have to describe the same
 	 * offset, so the phase advances the sequence exactly once and publishes the single value
 	 * both of them read.
 	 */
@@ -147,7 +147,7 @@ class RenderRuntime(
 		camera: DlssCameraSample? = null,
 	): RenderTarget? {
 		// Switched off takes effect before startup is ever attempted, so a session that begins
-		// switched off never initializes NGX at all.
+		// switched off never initializes the bridge at all.
 		val started = if (runtimeEnabled) ensureStarted() else false
 		if (!started) {
 			// No DLSS this session: release any target held from an earlier eligible frame. The
@@ -218,7 +218,7 @@ class RenderRuntime(
 	 * jitter sequence whose length is the pixel ratio, the motion reprojection whose scale is the
 	 * render dimensions, the router that decides the scene target's size, the scene target itself,
 	 * and the native images the evaluation writes into. A preset change rebuilds none of that and
-	 * still goes through here, because the native feature is recreated on either one.
+	 * still goes through here, because the Streamline options are re-recorded on either one.
 	 *
 	 * A refused reconfiguration leaves the runtime on the configuration it was already running:
 	 * the native side rejected it, so nothing about the frames that follow has changed, and the
@@ -287,7 +287,7 @@ class RenderRuntime(
 			return false
 		}
 
-		// Startup configures NGX from the session's own configuration, so a mode or preset chosen
+		// Startup configures the bridge from the session's own configuration, so a mode or preset chosen
 		// before the first frame - which is the only time a change is free - has to be re-applied
 		// once there is a native side to apply it to.
 		val dimensions = if (qualityMode == session.config.qualityMode && renderPreset == session.config.renderPreset) {
@@ -317,7 +317,7 @@ class RenderRuntime(
 	/**
 	 * Decides this frame's world target size from the session's route.
 	 *
-	 * An eligible DLSS frame renders at the NGX-queried render dimensions; every vanilla frame
+	 * An eligible DLSS frame renders at the Streamline-queried render dimensions; every vanilla frame
 	 * renders at the output size. The render dimensions are this runtime's own field, so there is
 	 * exactly one copy of them for the whole route path.
 	 */
@@ -339,9 +339,9 @@ class RenderRuntime(
 
 	companion object {
 		/**
-		 * Production wiring: NGX startup against the captured Minecraft Vulkan context and
-		 * a Minecraft-allocated scene target. Returns null when no Vulkan context has been
-		 * captured yet or the configuration supplies no SDK/data path, because
+		 * Production wiring: Streamline-backed startup against the captured Minecraft Vulkan
+		 * context and a Minecraft-allocated scene target. Returns null when no Vulkan context has
+		 * been captured yet or the configuration supplies no SDK/data path, because
 		 * [LifecycleAdapter.initialize] cannot run without either.
 		 */
 		fun forMinecraft(

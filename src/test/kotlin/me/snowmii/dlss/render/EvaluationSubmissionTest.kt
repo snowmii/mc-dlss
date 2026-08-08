@@ -60,8 +60,7 @@ class EvaluationSubmissionTest {
 		@TempDir dataPath: Path,
 	) {
 		val library = nativeLibrary()
-		val ngxRuntime = ngxRuntimeDirectory()
-		val instanceExtensions = Native.open(library).use { it.queryInstanceExtensions() }
+		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
 
 		// Streamline must bootstrap and record the device before the session starts: the
 		// evaluation now runs through SL and requires the SL session, so the device has to be
@@ -118,13 +117,13 @@ class EvaluationSubmissionTest {
 					"SL proxy activation must succeed against the merged queue layout",
 				)
 
-				val session = DlssSession(startupConfig(library, ngxRuntime, dataPath))
+				val session = DlssSession(startupConfig(library, dataPath, dataPath))
 				val adapter = LifecycleAdapter(session, native)
 				val render = adapter.initialize(
 					vulkan.instanceAddress(),
 					vulkan.physicalDeviceAddress(),
 					vulkan.deviceAddress(),
-					ngxRuntime,
+					dataPath,
 					dataPath,
 				)
 				assertNotNull(render, session.failure?.diagnostic())
@@ -364,14 +363,6 @@ class EvaluationSubmissionTest {
 		val library = Path.of("").toAbsolutePath().resolve("build/native/mc_dlss.dll")
 		assertTrue(Files.isRegularFile(library), "buildNativeDlss must produce mc_dlss.dll")
 		return library
-	}
-
-	private fun ngxRuntimeDirectory(): Path {
-		val runtime = Path.of(
-			"C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0/lib/Windows_x86_64/rel",
-		)
-		assertTrue(Files.isDirectory(runtime), "Pinned NGX runtime directory must exist")
-		return runtime
 	}
 
 	/** Fails every call: a session that never reached READY must not reach the native side at all. */

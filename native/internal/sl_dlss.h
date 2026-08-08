@@ -16,6 +16,14 @@ namespace mc_dlss {
 // has been recorded through mc_dlss_activate_vulkan_proxies (slSetVulkanInfo done).
 bool sl_session_ready() noexcept;
 
+// Shuts the Streamline runtime down while the caller's Vulkan device is still alive, after the
+// module's own resources have been released. Streamline's plugins keep their worker threads
+// (CUDA/NGX) running until slShutdown, and those threads reach into the live device: leaving
+// them running through device/process teardown is what crashes process exit in sl.common.dll
+// or nvcuda64.dll. Called by the teardown ordering unit; reset_state then clears the bootstrap
+// flag with the rest of the struct, so a later mc_dlss_bootstrap_streamline re-runs slInit.
+void shutdown_streamline() noexcept;
+
 // Answers from slDLSSGetOptimalSettings. Validates like the NGX query it replaces: non-zero
 // output dimensions, a valid NGX-valued quality mode, and sane dimensions coming back. DLAA
 // is anti-aliasing at native resolution, so it returns the output dimensions without asking.

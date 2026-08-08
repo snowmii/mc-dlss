@@ -49,8 +49,7 @@ class DlssEvaluationBarrierTest {
 		@TempDir dataPath: Path,
 	) {
 		val library = nativeLibrary()
-		val ngxRuntime = ngxRuntimeDirectory()
-		val instanceExtensions = Native.open(library).use { it.queryInstanceExtensions() }
+		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
 
 		// Streamline must bootstrap and record the device before the session starts: the
 		// evaluation now runs through SL, so the device has to be created with SL's extensions
@@ -111,7 +110,7 @@ class DlssEvaluationBarrierTest {
 						enabled = true,
 						qualityMode = SRMode.QUALITY,
 						outputDimensions = output,
-						sdkPath = ngxRuntime,
+						sdkPath = dataPath,
 						nativeLibraryPath = library,
 						dataPath = dataPath,
 						warnings = emptyList(),
@@ -122,7 +121,7 @@ class DlssEvaluationBarrierTest {
 					vulkan.instanceAddress(),
 					vulkan.physicalDeviceAddress(),
 					vulkan.deviceAddress(),
-					ngxRuntime,
+					dataPath,
 					dataPath,
 				)
 				assertNotNull(render, session.failure?.diagnostic())
@@ -251,14 +250,6 @@ class DlssEvaluationBarrierTest {
 		val library = Path.of("").toAbsolutePath().resolve("build/native/mc_dlss.dll")
 		assertTrue(Files.isRegularFile(library), "buildNativeDlss must produce mc_dlss.dll")
 		return library
-	}
-
-	private fun ngxRuntimeDirectory(): Path {
-		val runtime = Path.of(
-			"C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0/lib/Windows_x86_64/rel",
-		)
-		assertTrue(Files.isDirectory(runtime), "Pinned NGX runtime directory must exist")
-		return runtime
 	}
 
 	private companion object {

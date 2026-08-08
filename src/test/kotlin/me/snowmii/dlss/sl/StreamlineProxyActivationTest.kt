@@ -10,6 +10,7 @@ import me.snowmii.dlss.bridge.StreamlineVulkanProvider
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VkInstance
@@ -26,11 +27,18 @@ import org.lwjgl.vulkan.VkQueueFamilyProperties
  * (2) the redirect seam - org.lwjgl.vulkan.libname is pointed at the staged sl.interposer.dll,
  * which is how Minecraft's Vulkan loading routes through SL's proxies; (3) source inspection
  * that production wires both seams (mod entrypoint redirect, device-ctor activation).
+ *
+ * The live test arms the bridge's close path before the fixture dies: after the activation
+ * assertions it records the already-activated tuple through mc_dlss_initialize, so the close
+ * runs the orderly slShutdown while the device is still alive - the fix that keeps the fork's
+ * JVM exit from crashing in sl.common.dll / nvcuda64.dll.
  */
 class StreamlineProxyActivationTest {
 
 	@Test
-	fun `activation returns success against live headless device and repeats success`() {
+	fun `activation returns success against live headless device and repeats success`(
+		@TempDir dataPath: Path,
+	) {
 		// Runs slInit through the real bridge (idempotent, survives bridge close), the same
 		// pre-Vulkan bootstrap Minecraft's instance seam performs.
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
@@ -65,6 +73,13 @@ class StreamlineProxyActivationTest {
 				assertEquals(NativeApi.SUCCESS_RESULT, layout(), "first activation must succeed")
 				// Idempotent: the same seven values must not re-call slSetVulkanInfo.
 				assertEquals(NativeApi.SUCCESS_RESULT, layout(), "repeated activation must succeed")
+
+				// Arm the close path: the already-activated tuple is recorded through the
+				// existing initialize, so this bridge's close runs the orderly slShutdown
+				// while the device is still alive instead of leaving the fork to crash at
+				// exit. The bridge closes inside the fixture's scope, so the device survives
+				// the shutdown.
+				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}
 	}

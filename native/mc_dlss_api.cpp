@@ -18,7 +18,6 @@
 #include "internal/state.h"
 #include "internal/timing.h"
 
-#include <nvsdk_ngx_vk.h>
 #include <sl.h>
 #include <sl_dlss_g.h>
 #include <sl_helpers_vk.h>
@@ -37,9 +36,10 @@ constexpr char kProjectId[] = "50f68c51-c7be-49bd-a875-f73045f88d27";
 constexpr char kEngineVersion[] = "Minecraft 26.2";
 constexpr sl::Feature kStreamlineFeatures[] = {sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex};
 
-// The manual-hook Vulkan preferences this module always uses, shared by the bootstrap and by
-// the activation recovery path (which has to re-run slInit after slShutdown). `paths` is the
-// caller-owned one-element array the pointer must stay valid for the duration of slInit.
+// The manual-hook Vulkan preferences this module always uses, shared by every bootstrap (a
+// close's slShutdown tears the runtime down and reset_state forgets the bootstrap, so the
+// next mc_dlss_bootstrap_streamline runs slInit again). `paths` is the caller-owned one-element
+// array the pointer must stay valid for the duration of slInit.
 sl::Preferences make_streamline_preferences(const std::wstring& plugin_path, const wchar_t** paths) {
     paths[0] = plugin_path.c_str();
     sl::Preferences preferences{};
@@ -58,8 +58,8 @@ sl::Preferences make_streamline_preferences(const std::wstring& plugin_path, con
 }
 
 // Whether slInit's answer means the runtime is up: eOk, or the two errors it reports when the
-// plugin manager is already initialized by a previous bootstrap (the SL runtime itself stays
-// loaded for the whole process while this module is unloaded with every bridge's arena).
+// plugin manager is already initialized by a previous bootstrap (the SL runtime is loaded for
+// the whole process while this module is pinned for the JVM lifetime).
 bool streamline_initialized_after(const sl::Result slInitResult) {
     return slInitResult == sl::Result::eOk ||
            slInitResult == sl::Result::eErrorInitNotCalled ||
@@ -163,12 +163,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin
         const wchar_t* paths[1] = {pluginPath.c_str()};
         const sl::Preferences preferences = make_streamline_preferences(pluginPath, paths);
         const sl::Result slInitResult = slInit(preferences);
-        // The SL runtime itself (sl.interposer.dll) stays loaded for the whole process, but this
-        // module is unloaded with every bridge's arena, so a fresh module instance re-runs slInit
-        // on a runtime that already initialized it. That is not a failure to bootstrap: the two
-        // errors slInit reports in that state both mean the plugin manager is already up, and
-        // every query below works against it. Anything else - a missing plugin, a bad path -
-        // still fails loudly.
+        // The module is pinned for the JVM lifetime (one native-library lookup per path,
+        // Arena.global), so a fresh bridge shares the module instance an earlier bridge
+        // bootstrapped. The two errors slInit reports in that state both mean the plugin
+        // manager is already up, and every query below works against it. Anything else - a
+        // missing plugin, a bad path - still fails loudly.
         if (!streamline_initialized_after(slInitResult)) return kFailure;
         g_state.streamlineInitialized = true;
         return kSuccess;
@@ -197,10 +196,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
             return kSuccess;
         }
         if (g_state.proxyDevice != 0) {
-            // A different device cannot replace the layout Streamline already hooks: the SL
-            // runtime accepts one device per process (its own slShutdown cannot tear the old
-            // one down reliably once plugins initialized against a live device). The caller
-            // must not be silently re-hooking around it.
+            // A different device cannot replace the layout Streamline already hooks while the
+            // session is live: the SL runtime accepts one device per process, and the caller
+            // must not be silently re-hooking around it. The path to a fresh device is close,
+            // which shuts Streamline down while the old device is still alive and resets the
+            // proxy tuple, after which a new bootstrap and activation record the new tuple.
             return kInvalidParameter;
         }
         sl::VulkanInfo info{};
@@ -239,13 +239,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
     const uint32_t index, char* name, const uint32_t name_capacity,
     uint32_t* extension_count) {
     try {
-        if (g_state.streamlineInitialized) return collect_streamline_extensions(false, index, name, name_capacity, extension_count);
-        const NVSDK_NGX_FeatureDiscoveryInfo dis = make_discovery_info();
-        uint32_t count = 0;
-        VkExtensionProperties* properties = nullptr;
-        const NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(&dis, &count, &properties);
-        if (result != NVSDK_NGX_Result_Success) return static_cast<int32_t>(result);
-        return copy_extension_name(index, name, name_capacity, extension_count, count, properties);
+        // The pre-creation requirements come from Streamline and nowhere else: the direct-NGX
+        // discovery fallback is retired, so a query before bootstrap fails rather than
+        // answering from a runtime that is no longer part of the stack.
+        return collect_streamline_extensions(false, index, name, name_capacity,
+                                             extension_count);
     } catch (...) { return kFailure; }
 }
 
@@ -255,15 +253,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
     uint32_t* extension_count) {
     try {
         if (vk_instance == 0 || vk_physical_device == 0) return kInvalidParameter;
-        if (g_state.streamlineInitialized) return collect_streamline_extensions(true, index, name, name_capacity, extension_count);
-        const NVSDK_NGX_FeatureDiscoveryInfo dis = make_discovery_info();
-        uint32_t count = 0;
-        VkExtensionProperties* properties = nullptr;
-        const NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
-            from_uint64<VkInstance>(vk_instance), from_uint64<VkPhysicalDevice>(vk_physical_device),
-            &dis, &count, &properties);
-        if (result != NVSDK_NGX_Result_Success) return static_cast<int32_t>(result);
-        return copy_extension_name(index, name, name_capacity, extension_count, count, properties);
+        return collect_streamline_extensions(true, index, name, name_capacity,
+                                             extension_count);
     } catch (...) { return kFailure; }
 }
 
@@ -303,30 +294,43 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(const uint64_t vk_instance,
         if (vk_instance == 0 || vk_physical_device == 0 || vk_device == 0) {
             return kInvalidParameter;
         }
+        // sdk_path and data_path are compatibility inputs: the retired direct-NGX path used
+        // them to locate the feature DLL and its data, and nothing in the Streamline stack
+        // consumes them. They are still validated as well-formed paths and nothing else.
         std::wstring sdkPath;
         std::wstring dataPath;
         if (!utf8_to_wide(sdk_path, sdkPath) || !utf8_to_wide(data_path, dataPath)) {
             return kInvalidParameter;
         }
 
-        if (g_state.initialized) {
-            const bool sameDevice = g_state.instanceValue == vk_instance &&
-                                    g_state.physicalDeviceValue == vk_physical_device &&
-                                    g_state.deviceValue == vk_device &&
-                                    g_state.sdkPath == sdkPath && g_state.dataPath == dataPath;
-            if (!sameDevice) {
-                // A different device/path cannot replace live NGX ownership without close.
+        if (g_state.sessionReady) {
+            const bool sameTuple = g_state.instanceValue == vk_instance &&
+                                   g_state.physicalDeviceValue == vk_physical_device &&
+                                   g_state.deviceValue == vk_device;
+            if (!sameTuple) {
+                // A different device cannot replace the recorded tuple without close.
                 return kInvalidParameter;
             }
-            if (g_state.bootstrapComplete) {
-                return kSuccess;
-            }
-            // A prior bootstrap failed during cleanup. Retry only after releasing every
-            // ownership still held by this state.
-            const int32_t cleanupResult = shutdown_state();
-            if (cleanupResult != kSuccess) {
-                return cleanupResult;
-            }
+            return kSuccess;
+        }
+
+        // The tuple this module records is the live one the mod already handed to
+        // slSetVulkanInfo at proxy activation: the module-owned images and motion pass
+        // allocate against it, and a session that never activated - or one whose recorded
+        // tuple disagrees - must fail rather than record a device Streamline knows nothing
+        // about. The module is pinned for the JVM lifetime, so the bootstrap state and the
+        // proxy tuple recorded by the query and activation bridges survive their closes and
+        // are exactly what this check requires.
+        if (!g_state.streamlineInitialized) {
+            return kNotInitialized;
+        }
+        if (g_state.proxyDevice == 0) {
+            return kNotInitialized;
+        }
+        if (g_state.proxyInstance != vk_instance ||
+            g_state.proxyPhysicalDevice != vk_physical_device ||
+            g_state.proxyDevice != vk_device) {
+            return kInvalidParameter;
         }
 
         g_state.instanceValue = vk_instance;
@@ -335,51 +339,10 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(const uint64_t vk_instance,
         g_state.instance = from_uint64<VkInstance>(vk_instance);
         g_state.physicalDevice = from_uint64<VkPhysicalDevice>(vk_physical_device);
         g_state.device = from_uint64<VkDevice>(vk_device);
-        g_state.sdkPath = std::move(sdkPath);
-        g_state.dataPath = std::move(dataPath);
-
-        const wchar_t* featureSearchPath = g_state.sdkPath.c_str();
-        NVSDK_NGX_FeatureCommonInfo featureInfo{};
-        featureInfo.PathListInfo.Path = &featureSearchPath;
-        featureInfo.PathListInfo.Length = 1;
-
-        const NVSDK_NGX_Result initResult = NVSDK_NGX_VULKAN_Init_with_ProjectID(
-            kProjectId, NVSDK_NGX_ENGINE_TYPE_CUSTOM, kEngineVersion, g_state.dataPath.c_str(),
-            g_state.instance, g_state.physicalDevice, g_state.device, nullptr, nullptr,
-            &featureInfo, NVSDK_NGX_Version_API);
-        if (initResult != NVSDK_NGX_Result_Success) {
-            reset_state();
-            return static_cast<int32_t>(initResult);
-        }
-        g_state.initialized = true;
-
-        NVSDK_NGX_Result result =
-            NVSDK_NGX_VULKAN_GetCapabilityParameters(&g_state.capabilityParameters);
-        if (result != NVSDK_NGX_Result_Success) {
-            return cleanup_after_initialize_failure(static_cast<int32_t>(result));
-        }
-        if (g_state.capabilityParameters == nullptr) {
-            return cleanup_after_initialize_failure(kInvalidParameter);
-        }
-
-        int available = 0;
-        result = NVSDK_NGX_Parameter_GetI(g_state.capabilityParameters,
-                                          NVSDK_NGX_Parameter_SuperSampling_Available,
-                                          &available);
-        if (result != NVSDK_NGX_Result_Success) {
-            return cleanup_after_initialize_failure(static_cast<int32_t>(result));
-        }
-        if (available <= 0) {
-            return cleanup_after_initialize_failure(kFeatureNotSupported);
-        }
-        g_state.bootstrapComplete = true;
+        g_state.sessionReady = true;
         return kSuccess;
     } catch (...) {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (g_state.initialized || g_state.capabilityParameters != nullptr) {
-            const int32_t cleanupResult = shutdown_state();
-            return cleanupResult == kSuccess ? kFailure : cleanupResult;
-        }
         reset_state();
         return kFailure;
     }
@@ -390,14 +353,10 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
     uint32_t* render_width, uint32_t* render_height) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (sl_session_ready()) {
-            return query_optimal_dimensions_sl(output_width, output_height, quality_mode,
-                                               render_width, render_height);
-        }
-        // Interim: the direct-NGX branch survives until the M-3 retirement capability removes it;
-        // production always takes the Streamline branch because the device is recorded at construction.
-        return query_optimal_dimensions(output_width, output_height, quality_mode, render_width,
-                                        render_height);
+        // Streamline answers the optimal-settings query and nothing else answers it: the
+        // direct-NGX optimal-settings callback is retired with the rest of the NGX path.
+        return query_optimal_dimensions_sl(output_width, output_height, quality_mode,
+                                           render_width, render_height);
     } catch (...) {
         return kFailure;
     }
@@ -415,30 +374,16 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
             !valid_quality_mode(quality_mode) || !valid_render_preset(render_preset)) {
             return kInvalidParameter;
         }
-        if (sl_session_ready()) {
-            g_state.outputWidth = output_width;
-            g_state.outputHeight = output_height;
-            g_state.renderWidth = render_width;
-            g_state.renderHeight = render_height;
-            g_state.qualityMode = quality_mode;
-            g_state.renderPreset = render_preset;
-            // The SL session gate lives inside record_sr_options: configuring against a bootstrap
-            // without a recorded device stores nothing the recording calls could use and answers
-            // FAIL_NotInitialized, exactly where the NGX-era bootstrapComplete gate used to sit.
-            return record_sr_options();
-        }
-        // Interim: the direct-NGX branch survives until the M-3 retirement capability removes it;
-        // production always takes the Streamline branch because the device is recorded at construction.
-        if (!g_state.bootstrapComplete) {
-            return kNotInitialized;
-        }
         g_state.outputWidth = output_width;
         g_state.outputHeight = output_height;
         g_state.renderWidth = render_width;
         g_state.renderHeight = render_height;
         g_state.qualityMode = quality_mode;
         g_state.renderPreset = render_preset;
-        return kSuccess;
+        // The SL session gate lives inside record_sr_options: configuring against a bootstrap
+        // without a recorded device stores nothing the recording calls could use and answers
+        // FAIL_NotInitialized, exactly where the retired direct-NGX ready gate used to sit.
+        return record_sr_options();
     } catch (...) {
         return kFailure;
     }
@@ -448,7 +393,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_acquire_images(McDlssImage* motion,
                                                          McDlssImage* output) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_state.bootstrapComplete) {
+        if (!g_state.sessionReady) {
             return kNotInitialized;
         }
         if (motion == nullptr || output == nullptr) {
@@ -518,7 +463,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_device_idle(void) {
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(const McDlssMotionInfo* info) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_state.bootstrapComplete) {
+        if (!g_state.sessionReady) {
             return kNotInitialized;
         }
         if (info == nullptr || info->command_buffer == 0 || info->reprojection == nullptr ||
@@ -622,7 +567,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo* info) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_state.bootstrapComplete) {
+        if (!g_state.sessionReady) {
             return kNotInitialized;
         }
         if (info == nullptr || info->command_buffer == 0 || info->image == 0 ||
@@ -694,14 +639,16 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_state.bootstrapComplete) {
+        if (!g_state.sessionReady) {
             return kNotInitialized;
         }
-        // The images belong to the feature's configuration, so a reset that drops the
-        // feature drops them with it rather than leaving orphans the next acquire
-        // would have to recognise.
+        // The images belong to the configuration, so a reset drops them with it rather than
+        // leaving orphans the next acquire would have to recognise. The retained Streamline
+        // frame token belongs to a frame that will never evaluate, so it goes too: the next
+        // tag must obtain a fresh token rather than advance the frame under a stale one.
         release_images();
-        return release_feature();
+        g_state.frameToken = nullptr;
+        return kSuccess;
     } catch (...) {
         return kFailure;
     }
@@ -710,7 +657,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_state.initialized && g_state.capabilityParameters == nullptr) {
+        if (!g_state.sessionReady) {
             return kSuccess;
         }
         return shutdown_state();

@@ -129,7 +129,7 @@ class QualityModePresetTest {
 	fun nativeAcceptsEveryImplementedModeAndRefusesUltraQuality() {
 		val validator = nativeSource
 			.substringAfter("bool valid_quality_mode(")
-			.substringBefore("const char* preset_parameter_for(")
+			.substringBefore("bool valid_render_preset(")
 
 		listOf(
 			"NVSDK_NGX_PerfQuality_Value_MaxPerf",
@@ -148,27 +148,33 @@ class QualityModePresetTest {
 
 	@Test
 	fun changingOnlyThePresetIsRecordedOnTheNextConfigure() {
-		// The NGX feature was created once per configuration and recreated when the preset
-		// changed. The SL plugin owns the recreation (it recreates when mode, size, or preset
+		// The SL plugin owns the recreation (it recreates when mode, size, or preset
 		// changed), so the module's side of that invariant is that every configure records the
-		// options again - a preset-only change reaches the plugin on the next configure.
+		// options again - a preset-only change reaches the plugin on the next configure. There
+		// is no direct-NGX branch left to skip the recording.
 		val api = nativeSource("mc_dlss_api.cpp")
 		val configure = api.substringAfter("mc_dlss_configure").substringBefore("mc_dlss_acquire_images")
-		val slBranch = configure.substringAfter("sl_session_ready()")
 		assertTrue(
-			slBranch.contains("record_sr_options()"),
-			"the SL branch must record the options on every configure",
+			configure.contains("record_sr_options()"),
+			"configure must record the SL options on every configure",
+		)
+		assertTrue(
+			!configure.contains("bootstrapComplete") && !configure.contains("capabilityParameters"),
+			"no direct-NGX branch may remain inside configure",
 		)
 	}
 
 	@Test
-	fun dlaaRendersAtOutputResolutionWithoutAskingNgxForIt() {
-		val query = nativeSource
-			.substringAfter("int32_t query_optimal_dimensions(")
-			.substringBefore("NVSDK_NGX_Parameter_DLSSOptimalSettingsCallback")
+	fun dlaaRendersAtOutputResolutionWithoutAskingTheOptimalSettingsQuery() {
+		// DLAA is 1:1 by definition, so the SL optimal-settings query (slDLSSGetOptimalSettings)
+		// must not be asked for it: the bridge answers the output dimensions directly, exactly
+		// as the retired NGX callback used to be skipped.
+		val query = nativeSource("internal/sl_dlss.cpp")
+			.substringAfter("int32_t query_optimal_dimensions_sl(")
+			.substringBefore("int32_t record_sr_options(")
 		assertTrue(
 			query.contains("NVSDK_NGX_PerfQuality_Value_DLAA"),
-			"DLAA is 1:1 by definition, so it must not depend on the optimal-settings callback",
+			"DLAA is 1:1 by definition, so it must not depend on the optimal-settings query",
 		)
 		assertTrue(
 			query.contains("*renderWidth = outputWidth") && query.contains("*renderHeight = outputHeight"),

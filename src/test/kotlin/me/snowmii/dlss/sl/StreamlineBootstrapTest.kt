@@ -16,7 +16,11 @@ class StreamlineBootstrapTest {
         assertTrue(source.contains("sl::kFeatureDLSS_G"))
         assertTrue(source.contains("sl::kFeatureReflex"))
         assertTrue(source.contains("slGetFeatureRequirements"))
-        assertTrue(source.contains("if (g_state.streamlineInitialized) return collect_streamline_extensions"))
+        // The pre-creation queries route into the Streamline collector unconditionally: the
+        // retired direct-NGX discovery fallback no longer answers them.
+        assertTrue(source.contains("return collect_streamline_extensions(false"))
+        assertTrue(source.contains("return collect_streamline_extensions(true"))
+        assertTrue(!source.contains("NVSDK_NGX_VULKAN_GetFeature"))
 
         // Production seam performs bootstrap before querying requirements. Empty extension sets
         // are valid when loaded plugins require only core Vulkan functionality.

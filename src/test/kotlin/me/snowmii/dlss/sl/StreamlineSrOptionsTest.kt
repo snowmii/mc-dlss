@@ -11,6 +11,7 @@ import me.snowmii.dlss.bridge.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
@@ -27,18 +28,24 @@ import org.lwjgl.vulkan.VK10
  * configured size. The live test therefore tags engine images only, and the buffer must still
  * submit clean.
  *
- * The whole device-backed scenario runs in ONE test method (and therefore one test fork):
- * Streamline's runtime crashes its teardown when a process that called DLSS plugin functions
- * exits (sl.common.dll, the same known exit-crash family as nvcuda64.dll), and a fork that
- * followed such a crash comes up with the plugin manager already initialized, which makes
- * slSetVulkanInfo answer eErrorInvalidIntegration. Splitting the scenario across two forks
- * makes the second fork's activation fail on this workstation no matter what it does.
+ * The whole device-backed scenario runs in ONE test method (and therefore one test fork),
+ * and the fixture OUTLIVES the bridge: after the assertions the test records the
+ * already-activated tuple through mc_dlss_initialize, so the bridge's close runs the orderly
+ * slShutdown while the device is still alive. That close-path shutdown is what makes the
+ * fork's exit clean (Streamline's runtime crashes its teardown when a process that called
+ * DLSS plugin functions exits, sl.common.dll, the same known exit-crash family as
+ * nvcuda64.dll), and a fork that followed such a crash comes up with the plugin manager
+ * already initialized, which makes slSetVulkanInfo answer eErrorInvalidIntegration.
+ * Splitting the scenario across two forks makes the second fork's activation fail on this
+ * workstation no matter what it does.
  */
 class StreamlineSrOptionsTest {
 
 	@Test
-	fun `SL options configure and SR resources tag on a live command buffer`() {
-		withLiveSession { bridge, fixture ->
+	fun `SL options configure and SR resources tag on a live command buffer`(
+		@TempDir dataPath: Path,
+	) {
+		withLiveSession(dataPath) { bridge, fixture ->
 			val outputWidth = 2560
 			val outputHeight = 1440
 			// MaxQuality = 2 (NVSDK_NGX_PerfQuality_Value), which the bridge maps onto
@@ -140,32 +147,37 @@ class StreamlineSrOptionsTest {
 
 	/**
 	 * Bootstraps Streamline and activates the Vulkan proxies against a headless device holding
-	 * the merged queue layout, then runs [block] with the live bridge and fixture.
+	 * the merged queue layout, then executes [block] with the live bridge and fixture, and
+	 * finally records the activated tuple through mc_dlss_initialize so the bridge's close
+	 * shuts the Streamline runtime down.
+	 *
+	 * The fixture OUTLIVES the bridge: Native.close runs mc_dlss_close, which shuts Streamline
+	 * down, and that must happen while the Vulkan device is still alive. The queue
+	 * requirements come from a throwaway bridge closed before the device exists, when its
+	 * close path is a no-op.
 	 */
-	private fun withLiveSession(block: (Native, HeadlessVulkanFixture) -> Unit) {
+	private fun withLiveSession(dataPath: Path, block: (Native, HeadlessVulkanFixture) -> Unit) {
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
-		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
-			assertEquals(
-				NativeApi.SUCCESS_RESULT,
-				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
-			)
-			val requirements = bridge.queryQueueRequirements()
 
-			// The production merge starts from Minecraft's {graphicsFamily: 1} queue map and
-			// adds SL's extra graphics and compute queues; the first graphics family is
-			// compute-capable on this workstation, so both merges land in the same family.
-			val graphicsFamily = probeGraphicsQueueFamily()
-			val extras = requirements.graphicsQueues + requirements.computeQueues
-			HeadlessVulkanFixture(
-				instanceExtensions,
-				{ instance, physicalDevice ->
-					val extensions = mutableListOf<String>()
-					ExtensionBootstrap.addDeviceExtensions(extensions, instance, physicalDevice)
-					extensions
-				},
-				true,
-				mapOf(graphicsFamily to extras),
-			).use { fixture ->
+		// The production merge starts from Minecraft's {graphicsFamily: 1} queue map and
+		// adds SL's extra graphics and compute queues; the first graphics family is
+		// compute-capable on this workstation, so both merges land in the same family.
+		val graphicsFamily = probeGraphicsQueueFamily()
+		HeadlessVulkanFixture(
+			instanceExtensions,
+			{ instance, physicalDevice ->
+				val extensions = mutableListOf<String>()
+				ExtensionBootstrap.addDeviceExtensions(extensions, instance, physicalDevice)
+				extensions
+			},
+			true,
+			mapOf(graphicsFamily to requirementsExtras()),
+		).use { fixture ->
+			Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
+				)
 				// The fixture creates one host queue in the family, so Streamline's own queues
 				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
 				val hostQueueCount = 1
@@ -183,8 +195,24 @@ class StreamlineSrOptionsTest {
 					"activation must succeed against the merged queue layout",
 				)
 				block(bridge, fixture)
+				// Arm the close path: the already-activated tuple is recorded through the
+				// existing initialize, so this bridge's close runs the orderly slShutdown while
+				// the device is still alive instead of leaving the fork to crash at exit.
+				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}
+	}
+
+	/** The summed extra graphics + compute queues the loaded SL features require. */
+	private fun requirementsExtras(): Int {
+		val requirements = Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+			assertEquals(
+				NativeApi.SUCCESS_RESULT,
+				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
+			)
+			bridge.queryQueueRequirements()
+		}
+		return requirements.graphicsQueues + requirements.computeQueues
 	}
 
 	/**

@@ -11,7 +11,7 @@ class DlssFeatureLifecycleTest {
 
 	@Test
 	fun evaluateRecordsTheSlEvaluationOnTheCallersCommandBuffer() {
-		// Configure stores dimensions and creates no feature; the evaluation records the SL
+		// Configure stores dimensions and records the SL options; the evaluation records the SL
 		// constants and the feature evaluation on the command buffer the caller is recording
 		// into, and no NGX feature creation exists anywhere in the API.
 		val configure = api.substringAfter("mc_dlss_configure").substringBefore("mc_dlss_acquire_images")
@@ -51,13 +51,47 @@ class DlssFeatureLifecycleTest {
 	}
 
 	@Test
-	fun lifecycleReleasesTheNgxFeatureBeforeItsParameters() {
-		// Teardown order is the constraint: the feature belongs to the parameters, so it dies
-		// first. The NGX feature surface stays until the retirement capability removes it.
+	fun closeAndResetReleaseOnlyModuleOwnedResources() {
+		// Teardown order is the constraint: the module's GPU objects die before the device
+		// that owns them, the retained Streamline frame token goes with the state, and close
+		// then shuts the Streamline runtime down (while the caller's device is still alive)
+		// before resetting the bootstrap/proxy/session bookkeeping. The direct-NGX feature,
+		// capability parameters, and shutdown are retired: close releases only module-owned
+		// Vulkan resources, Streamline frame state, and the Streamline runtime, never NGX
+		// ownership.
 		val shutdown = session.substringAfter("int32_t shutdown_state()")
-			.substringBefore("int32_t cleanup_after_initialize_failure")
-		assertTrue(shutdown.indexOf("release_feature()") < shutdown.indexOf("destroy_capability_parameters()"))
+			.substringBefore("} // namespace mc_dlss")
+		assertTrue(shutdown.contains("destroy_timing()"))
+		assertTrue(shutdown.contains("destroy_motion_pass()"))
+		assertTrue(shutdown.contains("release_images()"))
+		assertTrue(shutdown.contains("shutdown_streamline()"))
+		assertTrue(shutdown.contains("reset_state()"))
+		assertTrue(
+			shutdown.indexOf("destroy_timing()") < shutdown.indexOf("destroy_motion_pass()"),
+			"the motion pass must die after the timing objects",
+		)
+		assertTrue(
+			shutdown.indexOf("destroy_motion_pass()") < shutdown.indexOf("release_images()"),
+			"the images must die after the pass that writes them",
+		)
+		assertTrue(
+			shutdown.indexOf("release_images()") < shutdown.indexOf("reset_state()"),
+			"the retained frame token must drop with the state, after the resources",
+		)
+		assertTrue(!shutdown.contains("release_feature"))
+		assertTrue(!shutdown.contains("DestroyParameters"))
+		assertTrue(!shutdown.contains("Shutdown1"))
+		assertTrue(!shutdown.contains("NVSDK_NGX_VULKAN_"))
+
+		// Reset releases the module-owned images and the retained frame token and keeps the
+		// session ready; it owns no NGX object to release.
 		val reset = api.substringAfter("mc_dlss_reset").substringBefore("mc_dlss_close")
-		assertTrue(reset.contains("release_feature()"))
+		assertTrue(reset.contains("release_images()"))
+		assertTrue(reset.contains("g_state.frameToken = nullptr"))
+		assertTrue(!reset.contains("release_feature"))
+
+		// Close hands the whole session to the same module-owned teardown.
+		val close = api.substringAfter("mc_dlss_close")
+		assertTrue(close.contains("shutdown_state()"))
 	}
 }
