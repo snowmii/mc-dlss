@@ -46,10 +46,13 @@ class WorldPhase(
 	 * into the destination, returning true when the destination now holds the upscaled frame.
 	 *
 	 * Injected because reaching the raw Vulkan handles behind a target needs Minecraft's backend
-	 * types, and everything else here is verifiable off the render thread.
+	 * types, and everything else here is verifiable off the render thread. [route] is the
+	 * session's world-motion route and [velocityView] the scene velocity companion view behind
+	 * it, captured at close time so the evaluation can feed the velocity MRT to Streamline on
+	 * the velocity route and keep the compute writer on the camera-only route.
 	 */
-	private val evaluateFrame: (RenderTarget, RenderTarget, DlssJitterOffset, DlssFrameMotion) -> Boolean =
-		{ _, _, _, _ -> false },
+	private val evaluateFrame: (RenderTarget, RenderTarget, DlssJitterOffset, DlssFrameMotion, MotionVectorRoute, GpuTextureView?) -> Boolean =
+		{ _, _, _, _, _, _ -> false },
 	/**
 	 * Formats and emits the session's reporting lines, fed by this phase and by the evaluation.
 	 */
@@ -212,6 +215,11 @@ class WorldPhase(
 		// jitter and motion the world was actually rendered with.
 		val jitter = runtime.activeJitter
 		val motion = runtime.activeMotion
+		// The route and the velocity view behind it are captured while the phase is still open:
+		// [terrainVelocityView] is non-null only inside an open velocity-MRT phase, which is
+		// exactly the handoff the evaluation's motion-source gate needs.
+		val route = runtime.motionVectorRoute
+		val velocityView = terrainVelocityView
 		isOpen = false
 		prepared = false
 		scene = null
@@ -219,7 +227,7 @@ class WorldPhase(
 		runtime.endWorldPhase()
 
 		// Present only after the phase is closed, so the destination is the vanilla target.
-		if (rendered != null && destination != null && !evaluate(rendered, destination, jitter, motion)) {
+		if (rendered != null && destination != null && !evaluate(rendered, destination, jitter, motion, route, velocityView)) {
 			// No DLSS image reached the target, so the frame still has to show something: the
 			// low-resolution scene, un-upscaled, exactly as it looked before composition existed.
 			present(rendered, destination)
@@ -245,12 +253,14 @@ class WorldPhase(
 		destination: RenderTarget,
 		jitter: DlssJitterOffset?,
 		motion: DlssFrameMotion?,
+		route: MotionVectorRoute,
+		velocityView: GpuTextureView?,
 	): Boolean {
 		if (jitter == null || motion == null) {
 			return false
 		}
 
-		return evaluateFrame(rendered, destination, jitter, motion)
+		return evaluateFrame(rendered, destination, jitter, motion, route, velocityView)
 	}
 
 	/**
@@ -302,7 +312,7 @@ class WorldPhase(
 				Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.shouldResetSkyRenderer = true
 			},
 			readout = readout,
-			evaluateFrame = { rendered, destination, jitter, motion ->
+			evaluateFrame = { rendered, destination, jitter, motion, route, velocityView ->
 				val evaluation = runtime.frameEvaluation
 				val resources = sceneResourcesOf(rendered)
 				val destinationImage = (destination.colorTextureView as? VulkanGpuTextureView)
@@ -311,7 +321,14 @@ class WorldPhase(
 				if (evaluation == null || resources == null || destinationImage == null) {
 					false
 				} else {
-					evaluation.evaluateFrame(resources, jitter, motion, destinationImage)
+					evaluation.evaluateFrame(
+						resources,
+						jitter,
+						motion,
+						destinationImage,
+						route,
+						velocityBindingOf(velocityView),
+					)
 				}
 			},
 		)
@@ -338,6 +355,23 @@ class WorldPhase(
 					image = depth.texture().vkImage(),
 					format = VulkanConst.toVk(depth.texture().getFormat()),
 				),
+			)
+		}
+
+		/**
+		 * Reads the `VkImage` / `VkImageView` handles and format out of a scene-sized velocity
+		 * view, the same way [sceneResourcesOf] reads the scene target.
+		 *
+		 * Null for a non-Vulkan view (an OpenGL backend, or a test view): the velocity-MRT route
+		 * then hands no velocity binding to the evaluation, which skips the frame rather than
+		 * evaluating against no motion source.
+		 */
+		private fun velocityBindingOf(view: GpuTextureView?): ImageBinding? {
+			val vulkan = view as? VulkanGpuTextureView ?: return null
+			return ImageBinding(
+				view = vulkan.vkImageView(),
+				image = vulkan.texture().vkImage(),
+				format = VulkanConst.toVk(vulkan.texture().getFormat()),
 			)
 		}
 

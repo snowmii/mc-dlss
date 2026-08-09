@@ -408,10 +408,20 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
  * frame-based tagging (slGetNewFrameToken + slSetTagForFrame).
  *
  * `color` and `depth` are the engine's render-sized colour and depth images, tagged as the
- * scaling-input colour and the depth. When the module's own motion and output images have
- * been acquired for the configured dimensions (mc_dlss_acquire_images), they are tagged as
- * the motion-vector and scaling-output colour buffers as well; until then the call still
- * succeeds with just the engine's two inputs, so tagging can run from the first frame on.
+ * scaling-input colour and the depth. `velocity` is the engine's render-sized RG16_FLOAT
+ * velocity companion, tagged as the motion-vector buffer when present; an all-zero `velocity`
+ * means the caller's route carries no companion, and the module's own motion image is tagged
+ * as the motion-vector buffer instead (the camera-only path the compute writer fills). When
+ * the module's own output image has been acquired for the configured dimensions
+ * (mc_dlss_acquire_images), it is tagged as the scaling-output colour as well; until then the
+ * call still succeeds with just the engine's inputs, so tagging can run from the first frame
+ * on.
+ *
+ * A non-zero `velocity` also opens the frame's GPU timing chain with the motion stage skipped:
+ * the velocity route records no compute motion pass, so this call is where the chain starts and
+ * the skipped stage is recorded per slot, reporting a motion cost of exactly zero. The
+ * camera-only route's chain is opened by mc_dlss_write_motion instead, and this call leaves it
+ * alone.
  *
  * Must be called after mc_dlss_bootstrap_streamline, mc_dlss_activate_vulkan_proxies, and
  * mc_dlss_configure. Records on and never submits `command_buffer`, like the other recording
@@ -421,6 +431,7 @@ typedef struct McDlssTagInfo {
     uint64_t command_buffer;
     McDlssImage color;
     McDlssImage depth;
+    McDlssImage velocity;
 } McDlssTagInfo;
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* info);

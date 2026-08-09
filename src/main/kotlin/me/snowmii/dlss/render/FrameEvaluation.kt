@@ -9,6 +9,7 @@ import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.Vec2
 import me.snowmii.dlss.bridge.VulkanContext
 import me.snowmii.dlss.bridge.VulkanContextRegistry
+import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.session.LifecycleAdapter
 import org.lwjgl.vulkan.VkCommandBuffer
@@ -70,18 +71,27 @@ class FrameEvaluation(
 	 *
 	 * Returns true only when both stages recorded successfully. False means the frame produced no
 	 * DLSS output and the session has latched whatever failure caused it.
+	 *
+	 * [route] is the session's world-motion route and [velocity] the scene velocity companion
+	 * binding behind it. On [MotionVectorRoute.VELOCITY_MRT] the frame's motion source is that
+	 * companion: the compute camera-motion writer is not recorded and the companion is tagged as
+	 * the motion-vector buffer, so a frame without a companion is skipped rather than evaluated
+	 * against no motion at all. On [MotionVectorRoute.CAMERA_ONLY] the existing compute writer and
+	 * native motion image path stay exactly as they were, and any carried velocity is ignored.
 	 */
 	fun evaluateFrame(
 		scene: SceneResources,
 		jitter: DlssJitterOffset,
 		motion: DlssFrameMotion,
 		destinationImage: Long = NO_DESTINATION,
+		route: MotionVectorRoute = MotionVectorRoute.CAMERA_ONLY,
+		velocity: ImageBinding? = null,
 	): Boolean {
 		val vulkan = context() ?: return false
 		val held = images ?: adapter.acquireImages()?.also { images = it } ?: return false
 
 		val buffer = vulkan.recordCommandBuffer()
-		val recorded = record(buffer, scene, jitter, motion, held) &&
+		val recorded = record(buffer, scene, jitter, motion, held, route, velocity) &&
 			(destinationImage == NO_DESTINATION || present(buffer, destinationImage))
 		// Submitted on every path: see the class comment - an abandoned buffer is what actually
 		// breaks the renderer, not a failed evaluation.
@@ -134,17 +144,40 @@ class FrameEvaluation(
 		jitter: DlssJitterOffset,
 		motion: DlssFrameMotion,
 		held: DlssEvaluationImages,
+		route: MotionVectorRoute,
+		velocity: ImageBinding?,
 	): Boolean {
 		val handle = buffer.address()
-		val wroteMotion = adapter.writeMotion(
-			MotionRequest(
-				commandBuffer = handle,
-				depth = scene.depth,
-				reprojection = FloatArray(16).also { motion.reprojection.get(it) },
-			),
-		)
-		if (!wroteMotion) {
-			return false
+
+		// The motion source is the route's choice. On VELOCITY_MRT the scene velocity companion
+		// carries the frame's motion vectors, so the compute camera-motion writer is retired from
+		// this path and nothing fills the native motion image; on CAMERA_ONLY the compute writer
+		// stays exactly as before. A VELOCITY_MRT frame that reached here without a velocity
+		// companion has no motion source at all and is skipped: evaluating with no motion vectors
+		// is worse than one frame of the low-resolution present.
+		val motionSource = when (route) {
+			MotionVectorRoute.VELOCITY_MRT -> {
+				if (velocity == null) {
+					return false
+				}
+				velocity
+			}
+
+			MotionVectorRoute.CAMERA_ONLY -> {
+				val wroteMotion = adapter.writeMotion(
+					MotionRequest(
+						commandBuffer = handle,
+						depth = scene.depth,
+						reprojection = FloatArray(16).also { motion.reprojection.get(it) },
+					),
+				)
+				if (!wroteMotion) {
+					return false
+				}
+				// The CAMERA_ONLY path tags no velocity: the native side tags the motion image
+				// the compute writer just filled, and a carried velocity must never replace it.
+				null
+			}
 		}
 
 		// The frame's SR resources tag between the motion pass and the evaluation, on the same
@@ -155,6 +188,7 @@ class FrameEvaluation(
 				commandBuffer = handle,
 				color = scene.color,
 				depth = scene.depth,
+				velocity = motionSource ?: ImageBinding(0, 0, 0),
 			),
 		)
 		if (!tagged) {

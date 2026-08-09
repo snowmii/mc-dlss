@@ -477,8 +477,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(const McDlssMotionInfo* in
             return kNotInitialized;
         }
 
-        // The motion pass is the first thing this module records in a frame, so the frame's
-        // timing opens here and everything the chain costs falls inside it.
+        // On the camera-only route the motion pass is the first thing this module records in a
+        // frame, so the frame's timing opens here and everything the chain costs falls inside
+        // it. The velocity route records no motion pass: its chain opens at
+        // mc_dlss_tag_sr_resources with the motion stage skipped, and this path stays exactly
+        // as it is.
         const VkCommandBuffer recordingBuffer =
             from_uint64<VkCommandBuffer>(info->command_buffer);
         begin_frame_timing(recordingBuffer);

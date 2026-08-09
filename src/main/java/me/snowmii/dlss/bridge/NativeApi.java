@@ -128,10 +128,12 @@ public interface NativeApi {
 	 * Tags one frame's DLSS SR resources on the caller's command buffer, through Streamline's
 	 * frame-based resource tagging ({@code slGetNewFrameToken} + {@code slSetTagForFrame}).
 	 *
-	 * <p>The request carries only the engine's colour and depth. The motion and output images
-	 * are the bridge's own, so they are tagged from native state when they have been acquired
-	 * for the configured dimensions - until then the call still succeeds with just the engine's
-	 * two inputs.
+	 * <p>The request carries the engine's colour and depth, plus the engine's RG16_FLOAT
+	 * velocity companion on the velocity-MRT route (absent as an all-zero image on the
+	 * camera-only route, where the native side tags the module's own motion image instead). The
+	 * bridge's own motion and output images are tagged from native state when they have been
+	 * acquired for the configured dimensions - until then the call still succeeds with just the
+	 * engine's inputs.
 	 *
 	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
 	 * have to declare a call they never reach; {@link Native} overrides it.

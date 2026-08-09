@@ -3,6 +3,7 @@
 #include "internal/common.h"
 #include "internal/ngx.h"
 #include "internal/state.h"
+#include "internal/timing.h"
 
 #include <sl.h>
 #include <sl_core_api.h>
@@ -206,6 +207,20 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     if (info.command_buffer == 0 || !valid_image(info.color) || !valid_image(info.depth)) {
         return kInvalidParameter;
     }
+    const VkCommandBuffer commandBuffer = from_uint64<VkCommandBuffer>(info.command_buffer);
+
+    // The frame's timing opens where the frame's recording does. On the camera-only route that
+    // is the compute motion writer (mc_dlss_write_motion); the velocity route records no
+    // compute writer, so its chain opens here with the motion stage skipped. The skip is
+    // recorded per slot, so collection reports a motion cost of exactly zero instead of a
+    // stamp span, which for a stage that records no work would only measure earlier command
+    // buffers still draining around the open. The evaluation and present marks complete the
+    // slot exactly as a written motion stage would; only the motion duration differs.
+    const bool hasVelocity = valid_image(info.velocity);
+    if (hasVelocity) {
+        begin_frame_timing(commandBuffer);
+        mark_skipped_motion_timing(commandBuffer);
+    }
 
     // The frame token is obtained once per frame: this call retains it for the evaluation to
     // consume, so a repeated tag for the same frame reuses the token instead of advancing the
@@ -220,11 +235,18 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     sl::FrameToken* frameToken = g_state.frameToken;
 
     // The engine's colour and depth are the frame's inputs, so they tag from the first frame
-    // on. The module's motion and output images can only tag once they exist at the configured
-    // size - there is no NGX initialize in the SL path to acquire them early - so they are
-    // added when (and only when) images_match_configuration holds.
+    // on. The motion source is the route's choice: the ABI-carried velocity companion when the
+    // velocity-MRT route fed one, the module's own motion image otherwise (the camera-only
+    // path the compute writer fills). The module's output image can only tag once it exists at
+    // the configured size - there is no NGX initialize in the SL path to acquire it early -
+    // so it is added when (and only when) images_match_configuration holds.
     const bool moduleImagesReady = images_match_configuration();
-    const uint32_t numTags = moduleImagesReady ? 4 : 2;
+    // Four slots: the two engine inputs, the motion-source slot (the velocity companion
+    // when the route fed one, the module motion image otherwise), and the module output
+    // image. The motion-source slot exists when either source is present; the output slot
+    // only once the module's output image exists at the configured size.
+    const uint32_t numTags = 2 + (hasVelocity || moduleImagesReady ? 1 : 0) +
+                            (moduleImagesReady ? 1 : 0);
 
     const uint32_t renderWidth = g_state.renderWidth;
     const uint32_t renderHeight = g_state.renderHeight;
@@ -238,6 +260,14 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // kDlssOutputLayout on the same recording immediately before the evaluation. Declaring the
     // resting layouts instead would make the plugin record a barrier whose oldLayout no longer
     // matches the image's actual layout, which validation rejects.
+    //
+    // The velocity companion is the one exception: the module has no evaluate-path transition
+    // for it (the velocity handle rides the tag ABI only), so its declared state is the layout
+    // the engine actually leaves it in. Minecraft renders its colour attachments - the velocity
+    // attachment included - in VK_IMAGE_LAYOUT_GENERAL, its clear and dynamic-rendering
+    // transitions restore that layout, and Streamline restores every tagged resource to its
+    // declared state at present, so kEngineRestingLayout is where the image rests at every
+    // evaluation and where the tag must name it.
     sl::Resource colorResource = make_sr_resource(
         from_uint64<void*>(info.color.image), nullptr, from_uint64<void*>(info.color.view),
         kDlssInputLayout, renderWidth, renderHeight, info.color.format);
@@ -250,6 +280,9 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
         reinterpret_cast<void*>(g_state.motionImage.view),
         kDlssInputLayout, renderWidth, renderHeight,
         static_cast<uint32_t>(kMotionFormat));
+    sl::Resource velocityResource = make_sr_resource(
+        from_uint64<void*>(info.velocity.image), nullptr, from_uint64<void*>(info.velocity.view),
+        kEngineRestingLayout, renderWidth, renderHeight, info.velocity.format);
     sl::Resource outputResource = make_sr_resource(
         reinterpret_cast<void*>(g_state.outputImage.image),
         reinterpret_cast<void*>(g_state.outputImage.memory),
@@ -279,6 +312,12 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     motionRange.levelCount = 1;
     motionRange.baseArrayLayer = 0;
     motionRange.layerCount = 1;
+    static sl::SubresourceRange velocityRange{};
+    velocityRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    velocityRange.baseMipLevel = 0;
+    velocityRange.levelCount = 1;
+    velocityRange.baseArrayLayer = 0;
+    velocityRange.layerCount = 1;
     static sl::SubresourceRange outputRange{};
     outputRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     outputRange.baseMipLevel = 0;
@@ -288,6 +327,7 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     colorResource.next = &colorRange;
     depthResource.next = &depthRange;
     motionResource.next = &motionRange;
+    velocityResource.next = &velocityRange;
     outputResource.next = &outputRange;
 
     // Every tag covers the whole image: the inputs are the configured render size, the output
@@ -299,16 +339,23 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
                               sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
     tags[1] = sl::ResourceTag(&depthResource, sl::kBufferTypeDepth,
                               sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
-    if (moduleImagesReady) {
-        tags[2] = sl::ResourceTag(&motionResource, sl::kBufferTypeMotionVectors,
-                                  sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
-        tags[3] = sl::ResourceTag(&outputResource, sl::kBufferTypeScalingOutputColor,
-                                  sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
+    if (hasVelocity || moduleImagesReady) {
+        // The motion source: the route's velocity companion when the ABI carried one, the
+        // module's motion image otherwise. Both carry the same NDC motion payload, so the
+        // evaluation's mvecScale and cameraMotionIncluded hold for either.
+        tags[2] = hasVelocity
+            ? sl::ResourceTag(&velocityResource, sl::kBufferTypeMotionVectors,
+                              sl::ResourceLifecycle::eValidUntilPresent, &renderExtent)
+            : sl::ResourceTag(&motionResource, sl::kBufferTypeMotionVectors,
+                              sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+        if (moduleImagesReady) {
+            tags[3] = sl::ResourceTag(&outputResource, sl::kBufferTypeScalingOutputColor,
+                                      sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
+        }
     }
 
     // The command buffer is the caller's shared recording: slSetTagForFrame takes it as an
     // opaque pointer and this module only ever records on it, never submits.
-    VkCommandBuffer commandBuffer = from_uint64<VkCommandBuffer>(info.command_buffer);
     // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
     result = slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, numTags, commandBuffer);
     if (result != sl::Result::eOk) {

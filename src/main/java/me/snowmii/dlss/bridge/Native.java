@@ -88,13 +88,14 @@ public final class Native implements AutoCloseable, NativeApi {
 	).withName("McDlssPresentInfo");
 
 	/**
-	 * {@code McDlssTagInfo}: the caller's command buffer followed by two {@code McDlssImage}
-	 * structs, 56 bytes with no padding of its own.
+	 * {@code McDlssTagInfo}: the caller's command buffer followed by three {@code McDlssImage}
+	 * structs, 80 bytes with no padding of its own.
 	 */
 	private static final StructLayout TAG_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
 		IMAGE_LAYOUT.withName("color"),
-		IMAGE_LAYOUT.withName("depth")
+		IMAGE_LAYOUT.withName("depth"),
+		IMAGE_LAYOUT.withName("velocity")
 	).withName("McDlssTagInfo");
 
 	private static VarHandle field(final StructLayout layout, final String... path) {
@@ -145,6 +146,9 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final VarHandle TAG_DEPTH_VIEW = field(TAG_LAYOUT, "depth", "view");
 	private static final VarHandle TAG_DEPTH_IMAGE = field(TAG_LAYOUT, "depth", "image");
 	private static final VarHandle TAG_DEPTH_FORMAT = field(TAG_LAYOUT, "depth", "format");
+	private static final VarHandle TAG_VELOCITY_VIEW = field(TAG_LAYOUT, "velocity", "view");
+	private static final VarHandle TAG_VELOCITY_IMAGE = field(TAG_LAYOUT, "velocity", "image");
+	private static final VarHandle TAG_VELOCITY_FORMAT = field(TAG_LAYOUT, "velocity", "format");
 
 	private final Arena arena;
 	private final MethodHandle bootstrapStreamline;
@@ -673,6 +677,7 @@ public final class Native implements AutoCloseable, NativeApi {
 			TAG_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
 			writeImage(info, TAG_COLOR_VIEW, TAG_COLOR_IMAGE, TAG_COLOR_FORMAT, request.getColor());
 			writeImage(info, TAG_DEPTH_VIEW, TAG_DEPTH_IMAGE, TAG_DEPTH_FORMAT, request.getDepth());
+			writeImage(info, TAG_VELOCITY_VIEW, TAG_VELOCITY_IMAGE, TAG_VELOCITY_FORMAT, request.getVelocity());
 			return (int)this.tagSrResources.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("tag-sr-resources", error);
