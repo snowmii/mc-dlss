@@ -39,7 +39,8 @@ in vec2 texCoord;
 out vec4 fragColor;
 // The velocity twin's second color target: jitter-free NDC camera motion, written only when the
 // pass is bound with the velocity attachment. On the one-target pipeline this output has no
-// attachment and the write is discarded.
+// attachment and the write is discarded. The assignment must stay after `fragColor =` in main():
+// Minecraft rewrites output locations by reflection order, which follows first-assignment order.
 out vec4 velocityColor;
 
 const int MAX_STEPS = 192;
@@ -207,8 +208,6 @@ void main() {
             invalidPixel = true;
         }
     }
-    velocityColor = invalidPixel ? vec4(INVALID_VELOCITY, INVALID_VELOCITY, 0.0, 0.0) : vec4(motion, 0.0, 0.0);
-
     // Reversed-Z: 1.0 is the near plane, 0.0 the far plane.
     vec3 nearPosition = unproject(ndc, 1.0);
     vec3 farPosition = unproject(ndc, 0.0);
@@ -299,4 +298,12 @@ void main() {
     color *= vignette;
 
     fragColor = vec4(color, 1.0);
+
+    // The velocity twin's second color target: jitter-free NDC camera motion. Assigned after
+    // fragColor on purpose - Minecraft rewrites every fragment output's Location decoration to
+    // its index in the spirv-cross reflection list, and glslang emits outputs in first-assignment
+    // order inside main(), so keeping the final fragColor assignment first in the module is what
+    // pins scene color at attachment 0 and this payload at attachment 1. On the one-target
+    // pipeline this output has no attachment and the write is discarded.
+    velocityColor = invalidPixel ? vec4(INVALID_VELOCITY, INVALID_VELOCITY, 0.0, 0.0) : vec4(motion, 0.0, 0.0);
 }

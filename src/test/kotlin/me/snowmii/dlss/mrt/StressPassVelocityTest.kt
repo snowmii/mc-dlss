@@ -5,10 +5,16 @@ import com.mojang.blaze3d.pipeline.ColorTargetState
 import com.mojang.blaze3d.systems.RenderPassDescriptor
 import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
+import java.nio.ByteBuffer
 import java.nio.file.Path
 import java.util.Optional
 import kotlin.io.path.readText
 import kotlin.math.abs
+import org.lwjgl.system.MemoryStack
+import org.lwjgl.system.MemoryUtil
+import org.lwjgl.util.shaderc.Shaderc
+import org.lwjgl.util.spvc.Spvc
+import org.lwjgl.util.spvc.SpvcReflectedResource
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.pass.StressPass
 import me.snowmii.dlss.render.DlssCameraMotion
@@ -34,7 +40,10 @@ import org.junit.jupiter.api.Test
  * one-target pipeline and never throws.
  *
  * The pipeline- and shader-level claims are descriptor and source proofs, exactly like the rest
- * of the MRT suite: nothing here compiles a pipeline on a device. The two-target twin and the
+ * of the MRT suite, plus one compiled proof: the stress fragment shader is compiled through the
+ * same LWJGL Shaderc + spirv-cross path `GlslCompiler` and `IntermediaryShaderModule` use, and
+ * the reflected output order is pinned to fragColor-then-velocityColor - the order Minecraft's
+ * location rewrite turns into color attachments 0 and 1. The two-target twin and the
  * two-attachment render pass must agree on count and format, because that is the one check
  * `RenderPass.setPipeline` performs on first bind. The still-camera math is exercised through
  * the real [DlssCameraMotion] with the shader's own per-pixel formula, and the sentinel choice
@@ -330,10 +339,219 @@ class StressPassVelocityTest {
 		assertTrue(worldPhase.contains("if (isOpen) runtime.activeMotion else null"))
 	}
 
+	/**
+	 * Minecraft rewrites every fragment output's Location decoration to its index in the
+	 * spirv-cross reflection list (`IntermediaryShaderModule.createFromSpirv`), and glslang
+	 * emits outputs in first-assignment order inside `main()`. The stress shader must therefore
+	 * assign the final `fragColor` before the velocity payload, exactly the ordering the
+	 * live-correct `velocity_terrain.fsh` already proves; an earlier velocity write would land
+	 * the near-black motion payload on attachment 0 and black the whole frame on both routes.
+	 */
+	@Test
+	fun `the stress shader assigns velocityColor after fragColor so scene color keeps attachment 0`() {
+		val shader = stressShader()
+		val fragWrite = shader.indexOf("fragColor = vec4(color, 1.0);")
+		val velocityWrite = shader.indexOf("velocityColor = invalidPixel")
+
+		assertTrue(fragWrite >= 0, "the final fragColor write must exist")
+		assertTrue(velocityWrite >= 0, "the velocityColor write must exist")
+		assertTrue(
+			velocityWrite > fragWrite,
+			"velocityColor must be assigned after the final fragColor: glslang emits fragment outputs in " +
+				"first-assignment order, and Minecraft rewrites locations by that reflection order, so an " +
+				"earlier velocityColor write would put the motion payload on attachment 0 and black the scene",
+		)
+
+		// The live-correct control: the terrain shader that rendered normally in the same session
+		// keeps the identical assignment order.
+		val terrain = terrainShader()
+		assertTrue(terrain.indexOf("velocityColor = invalidPixel") > terrain.indexOf("fragColor = apply_fog"),
+			"the known-good terrain shader keeps the same assignment order")
+	}
+
+	/**
+	 * The compiled seam, exercising the true mechanism: the shader is compiled through the same
+	 * LWJGL Shaderc + spirv-cross path `GlslCompiler.createIntermediary` and
+	 * `IntermediaryShaderModule.createFromSpirv` use, the stage-output reflection list must come
+	 * back fragColor-first (that list's index is what the location rewrite writes), and applying
+	 * the rewrite must leave fragColor on Location 0 (the scene attachment) and velocityColor on
+	 * Location 1 (the velocity attachment). The terrain shader cannot be compiled here - it needs
+	 * Minecraft's import/resource preprocessor - so it stays a source-order control in the
+	 * deterministic test above.
+	 */
+	@Test
+	fun `the stress shader reflects outputs in fragColor-then-velocityColor order through Minecraft's compile path`() {
+		val spirv = compileFragmentShader(minecraftFragmentSource(stressShader()))
+		try {
+			val outputs = reflectOutputs(spirv)
+			assertEquals(
+				listOf("fragColor", "velocityColor"),
+				outputs.map { it.name },
+				"the stage-output reflection list must be fragColor first: createFromSpirv rewrites each " +
+					"output's Location to its index in this list, so the list order IS the attachment binding",
+			)
+
+			// Apply the exact rewrite createFromSpirv performs on the module - output i gets
+			// Location i written at its binary decoration offset - then re-reflect the mutated
+			// module and read back the Location decorations the driver will see.
+			val intSpirv = spirv.asIntBuffer()
+			outputs.forEachIndexed { index, output -> intSpirv.put(output.locationOffset, index) }
+			val rewritten = reflectOutputs(spirv)
+			assertEquals(
+				mapOf("fragColor" to 0, "velocityColor" to 1),
+				rewritten.associate { it.name to it.location },
+				"after the createFromSpirv rewrite fragColor must sit on attachment 0 (scene color) and " +
+					"velocityColor on attachment 1 (velocity)",
+			)
+
+		} finally {
+			MemoryUtil.memFree(spirv)
+		}
+	}
+
 	private fun stressShader(): String = Path.of("")
 		.toAbsolutePath()
 		.resolve("src/main/resources/assets/mc-dlss/shaders/post/dlss_stress.fsh")
 		.readText()
+
+	private fun terrainShader(): String = Path.of("")
+		.toAbsolutePath()
+		.resolve("src/main/resources/assets/mc-dlss/shaders/core/velocity_terrain.fsh")
+		.readText()
+
+	/**
+	 * Compiles a fragment shader exactly the way `GlslCompiler.createIntermediary` does: the
+	 * global defines injected after the `#version` line, then shaderc with the Vulkan 1.2 target
+	 * and automatic location/uniform mapping. Returns a copy of the SPIR-V bytes so the caller
+	 * owns the buffer.
+	 */
+	private fun compileFragmentShader(source: String): ByteBuffer {
+		val compiler = Shaderc.shaderc_compiler_initialize()
+		val options = Shaderc.shaderc_compile_options_initialize()
+		try {
+			Shaderc.shaderc_compile_options_set_target_env(options, Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2)
+			Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true)
+			Shaderc.shaderc_compile_options_set_auto_map_locations(options, true)
+			Shaderc.shaderc_compile_options_set_generate_debug_info(options)
+			Shaderc.shaderc_compile_options_set_optimization_level(options, 0)
+
+			MemoryStack.stackPush().use {
+				val sourceBuffer = MemoryUtil.memUTF8(source, false)
+				val filenameBuffer = MemoryUtil.memUTF8("dlss_stress.fsh")
+				val entrypointBuffer = MemoryUtil.memUTF8("main")
+				try {
+					val result = Shaderc.shaderc_compile_into_spv(
+						compiler, sourceBuffer, Shaderc.shaderc_fragment_shader, filenameBuffer, entrypointBuffer, options,
+					)
+					try {
+						val status = Shaderc.shaderc_result_get_compilation_status(result)
+						check(status == 0) { "shaderc failed (status $status): ${Shaderc.shaderc_result_get_error_message(result)}" }
+						val compiled = checkNotNull(Shaderc.shaderc_result_get_bytes(result)) { "shaderc returned no SPIR-V bytes" }
+						val copy = MemoryUtil.memCalloc(compiled.remaining())
+						MemoryUtil.memCopy(compiled, copy)
+						return copy
+					} finally {
+						Shaderc.shaderc_result_release(result)
+					}
+				} finally {
+					MemoryUtil.memFree(entrypointBuffer)
+					MemoryUtil.memFree(filenameBuffer)
+					MemoryUtil.memFree(sourceBuffer)
+				}
+			}
+		} finally {
+			Shaderc.shaderc_compile_options_release(options)
+			Shaderc.shaderc_compiler_release(compiler)
+		}
+	}
+
+	/**
+	 * The exact preprocessed source `compileShader` hands `createIntermediary`: the global
+	 * defines injected right after the `#version` line. They alias vertex-only builtins and are
+	 * inert for fragment output emission, but keeping them makes the compiled module match the
+	 * game's byte-for-byte.
+	 */
+	private fun minecraftFragmentSource(source: String): String {
+		val versionLineEnd = source.indexOf('\n')
+		check(versionLineEnd >= 0) { "shader source must start with a #version line" }
+		return source.substring(0, versionLineEnd + 1) +
+			"#define gl_VertexID gl_VertexIndex\n#define gl_InstanceID gl_InstanceIndex\n#line 1 0\n" +
+			source.substring(versionLineEnd + 1)
+	}
+
+	/** A stage output as spirv-cross reflects it, plus the byte offset of its Location decoration. */
+	private class OutputReflection(val name: String, val locationOffset: Int, val location: Int)
+
+	/**
+	 * Reflects the stage outputs of a compiled module the way `createFromSpirv` does: parse the
+	 * SPIR-V, list STAGE_OUTPUT resources, and read each output's Location decoration value and
+	 * the binary word offset where that decoration lives. The list comes back in module
+	 * declaration order, which is glslang's first-assignment order inside `main()`.
+	 */
+	private fun reflectOutputs(spirv: ByteBuffer): List<OutputReflection> {
+		MemoryStack.stackPush().use { stack ->
+			val contextPointer = stack.callocPointer(1)
+			spvcCheck(Spvc.spvc_context_create(contextPointer), "spvc_context_create")
+			val context = contextPointer.get(0)
+			try {
+				val intSpirv = spirv.asIntBuffer()
+				val irPointer = stack.callocPointer(1)
+				spvcCheck(
+					Spvc.spvc_context_parse_spirv(context, intSpirv, intSpirv.remaining().toLong(), irPointer),
+					"spvc_context_parse_spirv",
+				)
+				val compilerPointer = stack.callocPointer(1)
+				spvcCheck(
+					Spvc.spvc_context_create_compiler(context, 0, irPointer.get(0), 1, compilerPointer),
+					"spvc_context_create_compiler",
+				)
+				val compiler = compilerPointer.get(0)
+				val resourcesPointer = stack.callocPointer(1)
+				spvcCheck(Spvc.spvc_compiler_create_shader_resources(compiler, resourcesPointer), "spvc_compiler_create_shader_resources")
+				val listPointer = stack.callocPointer(1)
+				val countPointer = stack.callocPointer(1)
+				spvcCheck(
+					Spvc.spvc_resources_get_resource_list_for_type(
+						resourcesPointer.get(0), Spvc.SPVC_RESOURCE_TYPE_STAGE_OUTPUT, listPointer, countPointer,
+					),
+					"spvc_resources_get_resource_list_for_type",
+				)
+				val resources = SpvcReflectedResource.create(listPointer.get(0), countPointer.get(0).toInt())
+				val offsetBuffer = stack.callocInt(1)
+				val outputs = ArrayList<OutputReflection>(resources.capacity())
+				for (index in 0 until resources.capacity()) {
+					val resource = resources.get(index)
+					val name = resource.nameString()
+					check(Spvc.spvc_compiler_get_binary_offset_for_decoration(compiler, resource.id(), LOCATION_DECORATION, offsetBuffer)) {
+						"no Location decoration on $name"
+					}
+					outputs.add(
+						OutputReflection(
+							name = name,
+						locationOffset = offsetBuffer.get(0),
+						location = Spvc.spvc_compiler_get_decoration(compiler, resource.id(), LOCATION_DECORATION),
+					),
+					)
+				}
+				return outputs
+			} finally {
+				Spvc.spvc_context_destroy(context)
+			}
+		}
+	}
+
+	private fun spvcCheck(result: Int, step: String) {
+		check(result == Spvc.SPVC_SUCCESS) {
+			val name = when (result) {
+				Spvc.SPVC_ERROR_INVALID_ARGUMENT -> "SPVC_ERROR_INVALID_ARGUMENT"
+				Spvc.SPVC_ERROR_OUT_OF_MEMORY -> "SPVC_ERROR_OUT_OF_MEMORY"
+				Spvc.SPVC_ERROR_UNSUPPORTED_SPIRV -> "SPVC_ERROR_UNSUPPORTED_SPIRV"
+				Spvc.SPVC_ERROR_INVALID_SPIRV -> "SPVC_ERROR_INVALID_SPIRV"
+				else -> result.toString()
+			}
+			"$step failed ($name)"
+		}
+	}
 
 	private fun sample() = DlssCameraSample(projection, Matrix4f(), 0.0, 64.0, 0.0)
 
@@ -424,6 +642,9 @@ class StressPassVelocityTest {
 	}
 
 	private companion object {
+		/** SPIR-V DecorationLocation, the decoration `createFromSpirv` rewrites and this suite reads back. */
+		const val LOCATION_DECORATION = 30
+
 		const val TOLERANCE = 1e-3f
 
 		/** The shader's sentinel, mirrored so the JVM classification asserts the same value. */
