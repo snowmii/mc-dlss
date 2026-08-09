@@ -4,6 +4,7 @@ import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.ColorTargetState
 import com.mojang.blaze3d.pipeline.RenderPipeline
 import java.util.Optional
+import java.util.concurrent.ConcurrentHashMap
 import net.minecraft.resources.Identifier
 
 /**
@@ -18,8 +19,19 @@ import net.minecraft.resources.Identifier
  * The clone goes through [RenderPipeline.Snippet], the public descriptor carrier, so no private
  * RenderPipelines internals and no reflection are involved: the source's getters feed the snippet
  * verbatim, and the snippet seeds the builder.
+ *
+ * The twin is cached per source pipeline: Vulkan's lazy-compile cache is keyed by pipeline
+ * identity (`IdentityHashMap`), so a twin rebuilt on every bind would be recompiled on every
+ * bind. Reusing the one twin per source pipeline keeps the compile at the first bind, exactly
+ * like the source pipeline's own cache entry. Terrain layers are static pipelines, so the same
+ * twin instance is what every frame's terrain pass binds.
  */
-fun velocityTwin(source: RenderPipeline): RenderPipeline {
+fun velocityTwin(source: RenderPipeline): RenderPipeline =
+	velocityTwins.computeIfAbsent(source, ::buildVelocityTwin)
+
+private val velocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
+
+private fun buildVelocityTwin(source: RenderPipeline): RenderPipeline {
 	val snippet = RenderPipeline.Snippet(
 		Optional.of(source.vertexShader),
 		Optional.of(source.fragmentShader),

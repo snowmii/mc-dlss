@@ -1,6 +1,7 @@
 package me.snowmii.dlss.render
 
 import com.mojang.blaze3d.pipeline.RenderTarget
+import com.mojang.blaze3d.textures.GpuTextureView
 import me.snowmii.dlss.session.DlssFrameRoute
 
 /**
@@ -35,6 +36,16 @@ class FrameResources(
 	/** The scene target currently held, or null when the last route did not need one. */
 	val currentTarget: RenderTarget?
 		get() = sceneTarget.current
+
+	/**
+	 * The velocity view of the held scene target, or null when the last route did not need one.
+	 *
+	 * The companion is sized from the same route as the scene target and freed with it, so a
+	 * null here means there is no scene-sized velocity attachment this frame - and terrain
+	 * passes must stay vanilla.
+	 */
+	val currentVelocityView: GpuTextureView?
+		get() = sceneTarget.currentVelocity?.colorTextureView
 
 	/**
 	 * The scene target for [route], stalling first if satisfying it will free the one held.

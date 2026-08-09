@@ -16,6 +16,7 @@ import me.snowmii.dlss.mrt.MotionVectorPipeline
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.session.LifecycleAdapter
 import com.mojang.blaze3d.pipeline.RenderTarget
+import com.mojang.blaze3d.textures.GpuTextureView
 
 /** Dimension policy consumed by renderer hooks before world target allocation. */
 data class WorldTargetRoute(
@@ -108,6 +109,15 @@ class RenderRuntime(
 	/** Route chosen for the current world phase, or null outside one. */
 	var activeRoute: WorldTargetRoute? = null
 		private set
+
+	/**
+	 * Scene-sized velocity view owned by the held scene target, or null when nothing is held.
+	 *
+	 * This is the color-1 attachment terrain passes bind when the session is on the velocity
+	 * route; on a vanilla route or a fallback session nothing is held and the answer is null.
+	 */
+	val activeVelocityView: GpuTextureView?
+		get() = resources.currentVelocityView
 
 	/** Streamline-queried render dimensions, or null until a successful startup. */
 	var renderDimensions: DlssDimensions? = null

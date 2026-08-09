@@ -4,11 +4,13 @@ import me.snowmii.dlss.readout.SessionFacts
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.mrt.MotionVectorPipeline
+import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.FilterMode
+import com.mojang.blaze3d.textures.GpuTextureView
 import com.mojang.blaze3d.vulkan.VulkanConst
 import com.mojang.blaze3d.vulkan.VulkanGpuTextureView
 import net.minecraft.client.Minecraft
@@ -70,15 +72,40 @@ class WorldPhase(
 		get() = if (isOpen) scene else null
 
 	/**
-	 * Observes a lazily compiled pipeline only while this phase owns the world target. Shader
-	 * reload, GUI, post-processing, and presentation pipelines run outside that window and cannot
-	 * change the session's world-motion route.
+	 * Observes a pipeline whose ownership can change the session's world-motion route.
+	 *
+	 * Two callers use this seam, both inside the open world phase: the Vulkan lazy-compile
+	 * mixin observes every pipeline entering compile as a backstop, and the terrain mixin's
+	 * {@code renderGroup} HEAD inject classifies a group's source pipelines before the pass
+	 * shape is chosen, so a first-encounter foreign pipeline keeps exact vanilla passthrough
+	 * instead of binding into a two-attachment pass. Shader reload, GUI, post-processing, and
+	 * presentation pipelines run outside this window and cannot change the session's
+	 * world-motion route.
 	 */
 	fun observePipeline(pipeline: MotionVectorPipeline) {
 		if (isOpen) {
 			runtime.observeWorldPipeline(pipeline)
 		}
 	}
+
+	/**
+	 * The scene-sized RG16_FLOAT velocity view terrain chunk passes must render into, or null
+	 * when those passes stay vanilla.
+	 *
+	 * Non-null only inside an open world phase that latched the velocity-MRT route and holds a
+	 * scene target with a velocity companion: exactly the frames on which
+	 * `ChunkSectionsToRender.renderGroup` may add the velocity attachment at color index 1 and
+	 * bind velocity twins. A closed phase, the camera-only fallback route, or a frame without a
+	 * companion all answer null, which keeps pass creation and source-pipeline binding exactly
+	 * vanilla - and because every read here is a plain field or enum read, the fallback path
+	 * cannot throw.
+	 */
+	val terrainVelocityView: GpuTextureView?
+		get() = if (isOpen && runtime.motionVectorRoute == MotionVectorRoute.VELOCITY_MRT) {
+			runtime.activeVelocityView
+		} else {
+			null
+		}
 
 	/**
 	 * Decides this frame's route and jitter without opening the phase, and returns the jitter
