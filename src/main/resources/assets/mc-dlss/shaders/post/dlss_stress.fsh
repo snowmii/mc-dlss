@@ -25,11 +25,22 @@ layout(std140) uniform StressConfig {
     vec4 MarchParams;
     // xy: render size in pixels. zw: sun position in UV space, or (-1,-1) when off screen.
     vec4 ScreenParams;
+    // Jitter-stripped current-to-previous clip reprojection: maps a pixel's jittered clip
+    // position - what the rendered frame and its reversed-Z depth actually hold - to where that
+    // same surface sat in the previous frame, in the same jittered clip space.
+    mat4 Reprojection;
+    // x: 1.0 when this frame has no valid predecessor, so every pixel writes the invalid
+    // sentinel instead of the identity-derived zero. yzw: unused.
+    vec4 VelocityParams;
 };
 
 in vec2 texCoord;
 
 out vec4 fragColor;
+// The velocity twin's second color target: jitter-free NDC camera motion, written only when the
+// pass is bound with the velocity attachment. On the one-target pipeline this output has no
+// attachment and the write is discarded.
+out vec4 velocityColor;
 
 const int MAX_STEPS = 192;
 const int MAX_OCTAVES = 8;
@@ -41,6 +52,14 @@ const int MAX_GODRAY_TAPS = 48;
 const float BAND_CENTER = 130.0;
 const float BAND_WIDTH = 55.0;
 const float MAX_DISTANCE = 480.0;
+
+// The single representable sentinel for pixels with no valid motion: far outside the [-1, 1]
+// NDC range a real camera-motion vector can reach, and exactly representable in the RG16_FLOAT
+// payload. A frame with no predecessor, a pixel whose reprojection the previous camera cannot
+// see, and any pixel whose derived vector is non-finite or out of range must all write this
+// rather than the identity-derived zero (which would read as a camera that stood still) or an
+// Inf/NaN payload value.
+const float INVALID_VELOCITY = 10000.0;
 
 float hash13(vec3 p) {
     p = fract(p * vec3(0.1031, 0.1030, 0.0973));
@@ -154,6 +173,41 @@ void main() {
     int godrayTaps = int(clamp(MarchParams.w, 0.0, float(MAX_GODRAY_TAPS)));
 
     vec2 ndc = vec2(texCoord.x * 2.0 - 1.0, (texCoord.y * 2.0 - 1.0) * MarchParams.z);
+
+    // Jitter-free NDC camera motion, the payload DLSS reads. The rendered frame is jittered, so
+    // the clip position below carries this frame's offset; the reprojection strips it, walking
+    // the surface point back to where it sat in the previous frame, and subtracting the current
+    // NDC leaves the motion vector. Reversed-Z depth goes straight into clip.z - 1.0 is the near
+    // plane, 0.0 the far plane - and the reprojection was composed from the same depth
+    // convention, so flipping or inverting it here would point previous-frame positions at the
+    // wrong surface.
+    vec4 clip = vec4(ndc, sceneDepth, 1.0);
+    vec4 previous = Reprojection * clip;
+    // Per-pixel invalid classification, before the divide: a previous w that is zero (the
+    // previous camera's eye plane), negative (behind the previous camera - dividing would
+    // mirror the point into a plausible-looking but wrong NDC), or non-finite (NaN/Inf) is a
+    // homogeneous coordinate no camera ever projected, and must never produce a finite motion.
+    // The reset flag - a frame with no valid predecessor - forces every pixel invalid on top of
+    // that, so a reset never reads as the identity-derived zero.
+    bool invalidPixel = false;
+    if (VelocityParams.x > 0.5 || previous.w <= 0.0 || previous.w != previous.w || isinf(previous.w)) {
+        invalidPixel = true;
+    }
+    vec2 motion = vec2(0.0);
+    if (!invalidPixel) {
+        motion = previous.xy / previous.w - ndc;
+        // A non-finite or out-of-range result must never reach the RG16_FLOAT payload. NaN is
+        // the one value that compares unequal to itself; Infinity and any magnitude at or
+        // beyond the sentinel itself - which would either overflow the half-float payload or
+        // collide with the sentinel - all collapse to the same invalid classification. Real
+        // camera motion spans a few NDC units, so the sentinel magnitude is a wide safety
+        // margin, not a bound any valid vector approaches.
+        if (motion.x != motion.x || motion.y != motion.y ||
+            abs(motion.x) >= INVALID_VELOCITY || abs(motion.y) >= INVALID_VELOCITY) {
+            invalidPixel = true;
+        }
+    }
+    velocityColor = invalidPixel ? vec4(INVALID_VELOCITY, INVALID_VELOCITY, 0.0, 0.0) : vec4(motion, 0.0, 0.0);
 
     // Reversed-Z: 1.0 is the near plane, 0.0 the far plane.
     vec3 nearPosition = unproject(ndc, 1.0);

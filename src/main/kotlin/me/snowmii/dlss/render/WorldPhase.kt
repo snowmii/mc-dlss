@@ -108,6 +108,19 @@ class WorldPhase(
 		}
 
 	/**
+	 * This frame's published camera motion while the phase is open, or null outside one.
+	 *
+	 * Read by the stress pass at the tail of the world phase, before [end] consumes the value:
+	 * the reprojection it derives velocity from is the same jitter-stripped current-to-previous
+	 * clip reprojection the evaluation receives, so the velocity buffer and the DLSS evaluation
+	 * describe the same camera motion. A closed phase, a vanilla route, or a frame whose camera
+	 * was never observed all answer null; every read here is a plain field read, so the fallback
+	 * path cannot throw.
+	 */
+	val activeMotion: DlssFrameMotion?
+		get() = if (isOpen) runtime.activeMotion else null
+
+	/**
 	 * Decides this frame's route and jitter without opening the phase, and returns the jitter
 	 * an eligible DLSS frame must apply to its world projection, or null for a vanilla frame.
 	 *

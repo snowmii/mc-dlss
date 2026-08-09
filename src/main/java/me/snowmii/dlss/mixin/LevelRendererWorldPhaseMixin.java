@@ -65,10 +65,12 @@ public class LevelRendererWorldPhaseMixin {
 		// Still inside the world phase, so this is the low-resolution scene target on a DLSS frame
 		// and the real main target on a vanilla one. The stress pass therefore pays its cost at
 		// whatever resolution the world was actually rendered at, which is the comparison it
-		// exists to make, and DLSS upscales the finished image rather than a pre-effect one.
-		StressRuntime.render(Minecraft.getInstance().gameRenderer.mainRenderTarget());
-
+		// exists to make, and DLSS upscales the finished image rather than a pre-effect one. The
+		// phase is handed along only to supply the velocity-MRT write context: null in exactly
+		// the sessions without a phase, so vanilla and camera-only frames keep the one-target
+		// stress pass and the stress pass itself still renders on every frame.
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
+		StressRuntime.render(Minecraft.getInstance().gameRenderer.mainRenderTarget(), phase);
 		if (phase != null) {
 			phase.end();
 		}

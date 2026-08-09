@@ -1,4 +1,5 @@
 package me.snowmii.dlss.pass
+import me.snowmii.dlss.mrt.VelocityContext
 import me.snowmii.dlss.render.DlssCameraSample
 import com.mojang.blaze3d.pipeline.RenderTarget
 
@@ -27,6 +28,11 @@ interface ScenePass : AutoCloseable {
 	/**
 	 * Draws the effect over [target], in place, with [camera] supplying the frame's unjittered
 	 * world projection and view rotation.
+	 *
+	 * [velocity] is this frame's velocity-MRT write context when the open world phase offers
+	 * its scene velocity view on the velocity route, or null on a vanilla or camera-only frame.
+	 * A pass that writes camera motion binds its two-target pipeline and writes the view at
+	 * color index 1 only for a non-null context; a null context keeps the one-target shape.
 	 */
-	fun render(target: RenderTarget, camera: DlssCameraSample)
+	fun render(target: RenderTarget, camera: DlssCameraSample, velocity: VelocityContext? = null)
 }
