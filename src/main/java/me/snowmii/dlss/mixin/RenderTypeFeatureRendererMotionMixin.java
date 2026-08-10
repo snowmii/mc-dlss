@@ -46,6 +46,6 @@ public class RenderTypeFeatureRendererMotionMixin {
 		at = @At(value = "INVOKE", target = "Ljava/util/List;indexOf(Ljava/lang/Object;)I")
 	)
 	private int mcDlssDisableEntityReorder(final List<?> renderTypes, final Object preparedRenderType) {
-		return EntityVelocityWriterBindings.suppressConsolidation() ? -1 : renderTypes.indexOf(preparedRenderType);
+		return EntityVelocityWriterBindings.consolidationIndex(renderTypes, preparedRenderType);
 	}
 }

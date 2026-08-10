@@ -19,6 +19,7 @@ import net.minecraft.client.renderer.rendertype.OutputTarget
 import net.minecraft.client.renderer.rendertype.PreparedRenderType
 import org.joml.Matrix4f
 import org.lwjgl.system.MemoryStack
+import java.util.HashMap
 import java.util.IdentityHashMap
 import java.util.Optional
 import java.util.OptionalDouble
@@ -119,6 +120,10 @@ object EntityVelocityWriterBindings {
 	private val entityContext = ThreadLocal<Int?>()
 	private val submitContext = ThreadLocal<Int?>()
 	private val consolidationContext = ThreadLocal<Boolean>()
+	private val eligibleDrawContext = ThreadLocal<Boolean>()
+	private val previousEligibleDraw = ThreadLocal<Boolean>()
+	private val afterEligibleDraw = ThreadLocal<Boolean>()
+	private val nonEntityDrawIndexes = IdentityHashMap<List<*>, MutableMap<Any, Int>>()
 	private val submitIds = IdentityHashMap<Any, Int>()
 	private val drawIds = IdentityHashMap<Any, Int>()
 	private val executeInfoIds = IdentityHashMap<Any, Int>()
@@ -155,19 +160,70 @@ object EntityVelocityWriterBindings {
 	}
 
 	@JvmStatic
-	fun beginDraw(pipeline: RenderPipeline): Boolean {
-		val isolate = shouldIsolateDraw(pipeline)
-		consolidationContext.set(isolate)
-		return isolate
+	fun beginDraw(pipeline: RenderPipeline): Boolean = beginDraw(pipeline, shouldIsolateDraw(pipeline))
+
+	/**
+	 * Opens one Group.getVertexBuilder boundary with an explicit eligibility result. The overload
+	 * is also the JVM-test seam for the batch state machine: a supported entity draw must be
+	 * followed by a fresh draw when eligibility ends, while consecutive ineligible submits regain
+	 * vanilla reorder/consolidation behavior after that one boundary.
+	 */
+	@Suppress("UNUSED_PARAMETER")
+	@JvmStatic
+	internal fun beginDraw(pipeline: RenderPipeline, eligible: Boolean): Boolean {
+		val endedEligibleDraw = previousEligibleDraw.get() == true && !eligible
+		if (endedEligibleDraw) {
+			afterEligibleDraw.set(true)
+		}
+		previousEligibleDraw.set(eligible)
+		eligibleDrawContext.set(eligible)
+		val freshBoundary = eligible || endedEligibleDraw
+		// This flag controls both Group.lastDraw and getOrAddDraw's reorder lookup. A transition
+		// must suppress both reuse paths or a no-id block/entity submit can still find the entity's
+		// PreparedRenderType in drawRenderTypes after lastDraw has been cleared.
+		consolidationContext.set(freshBoundary)
+		return freshBoundary
 	}
 
 	@JvmStatic
 	fun endDraw() {
 		consolidationContext.remove()
+		eligibleDrawContext.remove()
 	}
 
 	@JvmStatic
 	fun suppressConsolidation(): Boolean = consolidationContext.get() == true
+
+	/**
+	 * Chooses the index for RenderTypeFeatureRenderer.Group's reorder lookup.
+	 *
+	 * Before any eligible entity draw, this is exactly vanilla's indexOf. Once an entity draw has
+	 * ended, eligible draws are never looked up, and each non-entity render type gets a private
+	 * latest index. The first non-entity occurrence reserves a new draw; later occurrences reuse
+	 * that safe non-entity draw rather than indexOf's earlier entity duplicate.
+	 */
+	@JvmStatic
+	fun consolidationIndex(renderTypes: List<*>, preparedRenderType: Any): Int {
+		if (eligibleDrawContext.get() == true) {
+			return -1
+		}
+		if (afterEligibleDraw.get() != true) {
+			return if (suppressConsolidation()) -1 else renderTypes.indexOf(preparedRenderType)
+		}
+
+		val indexes = nonEntityDrawIndexes.getOrPut(renderTypes) { HashMap() }
+		val existingIndex = indexes[preparedRenderType]
+		if (!suppressConsolidation() && existingIndex != null &&
+			existingIndex < renderTypes.size && renderTypes[existingIndex] == preparedRenderType
+		) {
+			return existingIndex
+		}
+
+		// getOrAddDraw appends this prepared type immediately after the redirect returns -1.
+		// Reserve that append position so subsequent non-entity submits can consolidate safely.
+		indexes[preparedRenderType] = renderTypes.size
+		return -1
+	}
 
 	private fun currentEntityId(): Int? = submitContext.get() ?: entityContext.get()
 
@@ -180,7 +236,7 @@ object EntityVelocityWriterBindings {
 	@JvmStatic
 	fun bindDraw(draw: StagedVertexBuffer.Draw) {
 		val entityId = currentEntityId()
-		if (entityId != null && consolidationContext.get() == true && EntityVelocityUniforms.activeVelocityPhase() != null) {
+		if (entityId != null && eligibleDrawContext.get() == true) {
 			drawIds[draw] = entityId
 		}
 	}
@@ -201,6 +257,10 @@ object EntityVelocityWriterBindings {
 		drawIds.clear()
 		executeInfoIds.clear()
 		consolidationContext.remove()
+		eligibleDrawContext.remove()
+		previousEligibleDraw.remove()
+		afterEligibleDraw.remove()
+		nonEntityDrawIndexes.clear()
 		submitContext.remove()
 		entityContext.remove()
 	}
@@ -214,12 +274,26 @@ object EntityVelocityWriterBindings {
 object EntityVelocityRender {
 	private var uniformBuffer: GpuBuffer? = null
 
+	/**
+	 * Control seam used by the callback and by headless evidence before any device operation. A
+	 * true result means this prepared main-target draw has an entity identity, an open velocity-MRT
+	 * phase, and an owned core/entity pipeline; the actual render pass still has its own safe gates.
+	 */
+	@JvmStatic
+	fun canDraw(
+		prepared: PreparedRenderType,
+		info: StagedVertexBuffer.ExecuteInfo,
+		phase: WorldPhase?,
+	): Boolean = EntityVelocityWriterBindings.executeInfoEntityId(info) != null &&
+		phase?.entityVelocityActive == true &&
+		EntityVelocityUniforms.isSupportedPipeline(prepared.pipeline()) &&
+		prepared.outputTarget() === OutputTarget.MAIN_TARGET
+
 	@JvmStatic
 	fun draw(prepared: PreparedRenderType, info: StagedVertexBuffer.ExecuteInfo): Boolean = runCatching {
-			val entityId = EntityVelocityWriterBindings.executeInfoEntityId(info) ?: return@runCatching false
 			val phase = EntityVelocityUniforms.activeVelocityPhase() ?: return@runCatching false
-			if (!EntityVelocityUniforms.isSupportedPipeline(prepared.pipeline())) return@runCatching false
-			if (prepared.outputTarget() !== OutputTarget.MAIN_TARGET) return@runCatching false
+			if (!canDraw(prepared, info, phase)) return@runCatching false
+			val entityId = EntityVelocityWriterBindings.executeInfoEntityId(info) ?: return@runCatching false
 
 			val scene = phase.worldTargetOverride ?: return@runCatching false
 			val renderTarget = prepared.outputTarget().getRenderTarget()
