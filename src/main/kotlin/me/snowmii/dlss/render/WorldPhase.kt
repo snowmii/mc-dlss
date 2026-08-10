@@ -92,6 +92,21 @@ class WorldPhase(
 	}
 
 	/**
+	 * Records one visible entity's interpolated render position for the frame in flight, keyed
+	 * by the entity's stable id.
+	 *
+	 * The capture mixes in from `LevelExtractor.extractVisibleEntities`, which runs before
+	 * [begin] opens the phase, so - unlike [observePipeline] - this is deliberately not gated on
+	 * [isOpen]: the in-flight captures must land while the phase is still closed, and only a
+	 * DLSS frame's own open keeps them. A vanilla frame's open, an abandoned phase, a world
+	 * change, a release, and a close all reset the history instead; a successful world-phase
+	 * completion publishes the frame's captures exactly once at the boundary.
+	 */
+	fun captureEntity(id: Int, x: Double, y: Double, z: Double) {
+		runtime.captureEntity(id, x, y, z)
+	}
+
+	/**
 	 * The scene-sized RG16_FLOAT velocity view terrain chunk passes must render into, or null
 	 * when those passes stay vanilla.
 	 *
@@ -224,10 +239,22 @@ class WorldPhase(
 		prepared = false
 		scene = null
 		mainTarget = null
-		runtime.endWorldPhase()
+
+		// Evaluation decides whether this frame may become the predecessor for object motion.
+		// Keep the runtime's published phase values alive through evaluation, then disposition
+		// captures exactly once in finally: false/skipped evaluation and a throw reset without an
+		// intermediate publish; only a composed DLSS result publishes.
+		var completedDlssFrame = false
+		try {
+			if (rendered != null && destination != null) {
+				completedDlssFrame = evaluate(rendered, destination, jitter, motion, route, velocityView)
+			}
+		} finally {
+			runtime.endWorldPhase(completedDlssFrame)
+		}
 
 		// Present only after the phase is closed, so the destination is the vanilla target.
-		if (rendered != null && destination != null && !evaluate(rendered, destination, jitter, motion, route, velocityView)) {
+		if (rendered != null && destination != null && !completedDlssFrame) {
 			// No DLSS image reached the target, so the frame still has to show something: the
 			// low-resolution scene, un-upscaled, exactly as it looked before composition existed.
 			present(rendered, destination)

@@ -6,6 +6,7 @@
 		"GameRendererProjectionJitterMixin",
 		"GameRendererWorldTargetMixin",
 		"KeyboardHandlerControlsMixin",
+		"LevelExtractorCaptureMixin",
 		"LevelRendererWorldPhaseMixin",
 		"MinecraftLevelChangeMixin",
 		"VulkanBackendExtensionMixin",

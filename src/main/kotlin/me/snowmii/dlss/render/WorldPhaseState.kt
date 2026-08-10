@@ -2,16 +2,18 @@ package me.snowmii.dlss.render
 
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.dlss.mrt.ObjectMotionState
 
 /**
  * The two sequences a DLSS frame accumulates against its predecessor, and the values this frame
  * published from them.
  *
- * Jitter and camera motion are one concern rather than two: both are sequences whose current
- * term is only meaningful relative to the frame before it, both are rebuilt from the render
- * dimensions when those change, and both are broken by exactly the same events - a vanilla
- * frame, a lost frame, a replaced scene. Keeping them together is what makes "this frame is not
- * continuous with the last one" a single statement instead of two that can drift apart.
+ * Jitter, camera motion, and visible-object poses are one concern rather than three: all are
+ * sequences whose current term is only meaningful relative to the frame before it, the camera
+ * sequences are rebuilt from render dimensions when those change, and all three are broken by
+ * exactly the same events - a vanilla frame, a lost frame, a replaced scene.
+ * Keeping them together is what makes "this frame is not continuous with the last one" a single
+ * statement instead of three that can drift apart.
  *
  * The published values are read by the world projection and by the evaluation, which both have
  * to describe the *same* offset. The phase advances the sequence exactly once and publishes the
@@ -20,6 +22,19 @@ import me.snowmii.dlss.bridge.DlssDimensions
 class WorldPhaseState {
 	private var jitter: DlssJitter? = null
 	private var motion: DlssCameraMotion? = null
+
+	/**
+	 * The previous-transform double buffer for visible-object poses, accumulated and broken
+	 * with the jitter and camera-motion sequences.
+	 *
+	 * Each visible entity extraction captures the interpolated render position the geometry
+	 * will be drawn at, keyed by the entity's stable id, into the frame in flight; successful
+	 * world-phase [finish] is the frame boundary that publishes those captures exactly once;
+	 * and every failed or skipped completion and every break - a vanilla frame, an abandoned
+	 * phase, a replaced world, a release, a close - resets object history, so a reused entity id
+	 * never inherits a dead object's predecessor.
+	 */
+	internal val objectMotion = ObjectMotionState()
 
 	/**
 	 * Sub-pixel jitter for the current world phase, or null outside an eligible DLSS phase.
@@ -60,6 +75,9 @@ class WorldPhaseState {
 			jitter?.advance()
 		} else {
 			jitter?.reset()
+			// A vanilla frame renders no DLSS image and the object poses extracted for it were
+			// never drawn into one, so they must not become anyone's predecessor.
+			objectMotion.reset()
 			null
 		}
 		activeJitter = offset
@@ -71,10 +89,21 @@ class WorldPhaseState {
 		}
 	}
 
-	/** Closes the phase. The sequences keep their accumulated state for the next frame. */
-	fun close() {
+	/**
+	 * Finishes the phase and disposes its in-flight object captures from the outcome Minecraft
+	 * displayed. Camera and jitter accumulation keep their existing close semantics; object
+	 * poses publish only when DLSS evaluation/composition [completedDlssFrame], because a frame
+	 * Streamline never produced must not become a dynamic writer's predecessor. Every false or
+	 * skipped outcome resets instead, without an observable intermediate publication.
+	 */
+	fun finish(completedDlssFrame: Boolean) {
 		activeJitter = null
 		activeMotion = null
+		if (completedDlssFrame) {
+			objectMotion.publish()
+		} else {
+			objectMotion.reset()
+		}
 	}
 
 	/**
@@ -82,10 +111,12 @@ class WorldPhaseState {
 	 *
 	 * A frame that decided its route but never finished rendering still moved the predecessor
 	 * forward. Nothing accumulated it, so the frame after it must not measure motion from a
-	 * camera no image was ever produced for.
+	 * camera no image was ever produced for - nor reproject an object against poses no image
+	 * ever showed.
 	 */
 	fun resetMotion() {
 		motion?.reset()
+		objectMotion.reset()
 	}
 
 	/**
@@ -99,11 +130,13 @@ class WorldPhaseState {
 	fun reset() {
 		jitter?.reset()
 		motion?.reset()
+		objectMotion.reset()
 	}
 
 	/** Drops the sequences entirely, for a runtime that is shutting down. */
 	fun discard() {
 		jitter = null
 		motion = null
+		objectMotion.reset()
 	}
 }

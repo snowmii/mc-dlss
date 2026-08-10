@@ -14,6 +14,7 @@ import me.snowmii.dlss.config.ModConfig
 import me.snowmii.dlss.mrt.MotionVectorCompatibility
 import me.snowmii.dlss.mrt.MotionVectorPipeline
 import me.snowmii.dlss.mrt.MotionVectorRoute
+import me.snowmii.dlss.mrt.ObjectMotionState
 import me.snowmii.dlss.session.LifecycleAdapter
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.textures.GpuTextureView
@@ -40,8 +41,9 @@ data class WorldTargetRoute(
  * a failed native stage.
  *
  * What it does *not* own is deliberate. The GPU objects a configuration holds, and the device
- * stall that makes freeing them safe, belong to [FrameResources]; the jitter and motion
- * sequences a frame accumulates against its predecessor belong to [WorldPhaseState]. Both were
+ * stall that makes freeing them safe, belong to [FrameResources]; the jitter, motion, and
+ * object-pose sequences a frame accumulates against its predecessor belong to
+ * [WorldPhaseState]. Both were
  * threaded through this class as loose fields and a release rule repeated at four call sites.
  * What is left here is the startup latch, the configuration in effect, and the routing decision.
  *
@@ -157,6 +159,27 @@ class RenderRuntime(
 		motionVectors.observe(pipeline)
 
 	/**
+	 * The frame-boundary object-motion history: the published predecessors and in-flight
+	 * captures behind every dynamic world-pass velocity writer.
+	 *
+	 * Owned by the phase state, which accumulates and breaks it with the jitter and camera
+	 * sequences; this is the read seam the draw path and the lifecycle use.
+	 */
+	internal val objectMotion: ObjectMotionState
+		get() = phase.objectMotion
+
+	/**
+	 * Records one visible entity's interpolated render position for the frame in flight.
+	 *
+	 * Entity extraction runs before the world phase opens, so a capture can land while no
+	 * phase is open; a DLSS frame's open keeps it and its completion publishes it, while the
+	 * vanilla, abandoned, replaced-world, released, and closed paths reset the history.
+	 */
+	internal fun captureEntity(id: Int, x: Double, y: Double, z: Double) {
+		phase.objectMotion.capture(id, x, y, z)
+	}
+
+	/**
 	 * Opens the world phase. Returns the low-resolution scene target for an eligible DLSS
 	 * frame, or null when the frame must use the vanilla main target.
 	 *
@@ -188,11 +211,18 @@ class RenderRuntime(
 		return target
 	}
 
-	/** Closes the world phase. The scene target stays allocated for reuse across frames. */
-	fun endWorldPhase() {
+	/**
+	 * Closes the world phase. The scene target stays allocated for reuse across frames.
+	 *
+	 * [completedDlssFrame] is true only after evaluation/composition produced the destination
+	 * Minecraft will display. That outcome publishes this frame's entity captures; false resets
+	 * them without publication. The default is the safe abandonment/release disposition used by
+	 * callers that are not completing an evaluated frame.
+	 */
+	fun endWorldPhase(completedDlssFrame: Boolean = false) {
 		activeRoute = null
 		activeWorldTarget = null
-		phase.close()
+		phase.finish(completedDlssFrame)
 	}
 
 	/**
