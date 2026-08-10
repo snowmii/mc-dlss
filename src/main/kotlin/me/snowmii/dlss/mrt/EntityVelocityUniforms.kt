@@ -17,6 +17,7 @@ import me.snowmii.dlss.render.WorldPhase
 import net.minecraft.client.renderer.StagedVertexBuffer
 import net.minecraft.client.renderer.rendertype.OutputTarget
 import net.minecraft.client.renderer.rendertype.PreparedRenderType
+import net.minecraft.client.renderer.rendertype.RenderType
 import org.joml.Matrix4f
 import org.lwjgl.system.MemoryStack
 import java.util.HashMap
@@ -160,6 +161,10 @@ object EntityVelocityWriterBindings {
 	}
 
 	@JvmStatic
+	fun beginDraw(renderType: RenderType): Boolean =
+		beginDraw(renderType.pipeline(), isEligibleRenderType(renderType, shouldIsolateDraw(renderType.pipeline())))
+
+	@JvmStatic
 	fun beginDraw(pipeline: RenderPipeline): Boolean = beginDraw(pipeline, shouldIsolateDraw(pipeline))
 
 	/**
@@ -226,6 +231,19 @@ object EntityVelocityWriterBindings {
 	}
 
 	private fun currentEntityId(): Int? = submitContext.get() ?: entityContext.get()
+
+	/**
+	 * Applies the actual RenderType output target to pipeline eligibility at the batching seam.
+	 * Non-main targets must retain vanilla consolidation even when their pipeline is entity-shaped.
+	 */
+	@JvmStatic
+	internal fun isEligibleRenderType(renderType: RenderType, pipelineEligible: Boolean): Boolean =
+		pipelineEligible && renderType.outputTarget() === OutputTarget.MAIN_TARGET
+
+	/** Forces one staged draw per supported main-target entity, defeating same-render-type consolidation. */
+	@JvmStatic
+	fun shouldIsolateDraw(renderType: RenderType): Boolean =
+		isEligibleRenderType(renderType, shouldIsolateDraw(renderType.pipeline()))
 
 	/** Forces one staged draw per supported entity, defeating same-render-type consolidation. */
 	@JvmStatic

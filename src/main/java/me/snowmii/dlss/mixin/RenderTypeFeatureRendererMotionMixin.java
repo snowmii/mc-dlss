@@ -27,7 +27,7 @@ public class RenderTypeFeatureRendererMotionMixin {
 
 	@Inject(method = "getVertexBuilder", at = @At("HEAD"))
 	private void mcDlssBeginEntityDraw(final RenderType renderType, final CallbackInfoReturnable<VertexConsumer> info) {
-		if (EntityVelocityWriterBindings.beginDraw(renderType.pipeline())) {
+		if (EntityVelocityWriterBindings.beginDraw(renderType)) {
 			// The normal fast path and the reorder lookup below both reuse one draw for a
 			// consecutive render type. Clearing these identities starts a fresh draw; the list
 			// lookup redirect also disables the reorder-side reuse.

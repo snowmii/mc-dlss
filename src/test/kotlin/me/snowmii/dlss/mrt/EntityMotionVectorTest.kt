@@ -254,6 +254,8 @@ class EntityMotionVectorTest {
 		assertTrue(prepared.contains("callback.cancel()"))
 		assertTrue(bindings.contains("activeVelocityPhase()"))
 		assertTrue(bindings.contains("OutputTarget.MAIN_TARGET"))
+		assertTrue(bindings.contains("isEligibleRenderType"))
+		assertTrue(batching.contains("beginDraw(renderType)"))
 		assertTrue(bindings.contains("getOrDefault(false)"))
 		for (mixin in listOf(
 			"EntityRenderDispatcherMotionMixin",
@@ -274,6 +276,8 @@ class EntityMotionVectorTest {
 		assertEquals(VertexConsumer::class.java, groupBuilder.returnType)
 		val getOrAddDraw = group.getDeclaredMethod("getOrAddDraw", RenderType::class.java)
 		assertEquals(StagedVertexBuffer.Draw::class.java, getOrAddDraw.returnType)
+		val outputTarget = RenderType::class.java.getDeclaredMethod("outputTarget")
+		assertEquals(OutputTarget::class.java, outputTarget.returnType)
 
 		val drawTarget = PreparedRenderType::class.java.getDeclaredMethod(
 			"drawFromBuffer",
@@ -372,6 +376,49 @@ class EntityMotionVectorTest {
 			EntityVelocityWriterBindings.clearFrame()
 			staged.close()
 			if (phase.isOpen) phase.end()
+		}
+	}
+
+	@Test
+	fun `non-main entity render type stays vanilla while main target binds identity`() {
+		val texture = Identifier.fromNamespaceAndPath("minecraft", "textures/entity/entity-boundary.png")
+		val mainRenderType = RenderTypes.entitySolid(texture)
+		val nonMainRenderType = RenderTypes.entityTranslucentCullItemTarget(texture)
+		assertSame(OutputTarget.MAIN_TARGET, mainRenderType.outputTarget())
+		assertSame(OutputTarget.ITEM_ENTITY_TARGET, nonMainRenderType.outputTarget())
+		assertTrue(EntityVelocityWriterBindings.isEligibleRenderType(mainRenderType, true))
+		assertFalse(EntityVelocityWriterBindings.isEligibleRenderType(nonMainRenderType, true))
+		val renderTypes = mutableListOf<Any>()
+		val prepared = Any()
+		val staged = StagedVertexBuffer({ "entity-output-target-test" }, 256)
+		try {
+			EntityVelocityWriterBindings.clearFrame()
+			EntityVelocityWriterBindings.beginEntity(404)
+			val mainEligible = EntityVelocityWriterBindings.isEligibleRenderType(mainRenderType, true)
+			assertTrue(EntityVelocityWriterBindings.beginDraw(mainRenderType.pipeline(), mainEligible))
+			val mainDraw = staged.appendDraw(DefaultVertexFormat.ENTITY, PrimitiveTopology.QUADS)
+			val mainInfo = emptyExecuteInfo()
+			EntityVelocityWriterBindings.bindDraw(mainDraw)
+			EntityVelocityWriterBindings.bindExecuteInfo(mainDraw, mainInfo)
+			assertEquals(404, EntityVelocityWriterBindings.executeInfoEntityId(mainInfo))
+			EntityVelocityWriterBindings.endDraw()
+			EntityVelocityWriterBindings.endEntity()
+
+			EntityVelocityWriterBindings.clearFrame()
+			EntityVelocityWriterBindings.beginEntity(505)
+			val nonMainEligible = EntityVelocityWriterBindings.isEligibleRenderType(nonMainRenderType, true)
+			assertFalse(EntityVelocityWriterBindings.beginDraw(nonMainRenderType.pipeline(), nonMainEligible))
+			assertFalse(EntityVelocityWriterBindings.suppressConsolidation())
+			renderTypes += prepared
+			assertEquals(0, EntityVelocityWriterBindings.consolidationIndex(renderTypes, prepared))
+			val nonMainDraw = staged.appendDraw(DefaultVertexFormat.ENTITY, PrimitiveTopology.QUADS)
+			val nonMainInfo = emptyExecuteInfo()
+			EntityVelocityWriterBindings.bindDraw(nonMainDraw)
+			EntityVelocityWriterBindings.bindExecuteInfo(nonMainDraw, nonMainInfo)
+			assertEquals(null, EntityVelocityWriterBindings.executeInfoEntityId(nonMainInfo))
+		} finally {
+			EntityVelocityWriterBindings.clearFrame()
+			staged.close()
 		}
 	}
 
