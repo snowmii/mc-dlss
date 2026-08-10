@@ -1,0 +1,69 @@
+package me.snowmii.dlss.mixin;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+import me.snowmii.dlss.mrt.EntityVelocityWriterBindings;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
+import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Redirect;
+
+/**
+ * Brackets ordinary static block-entity model submission in a context that can never inherit an
+ * adjacent entity identity - but only for the positive static renderer family.
+ *
+ * Block-entity model geometry is staged through the same ModelFeatureRenderer batching and
+ * PreparedRenderType draw seam as entity geometry, so without a positive bracket the submit
+ * records constructed inside a block-entity renderer call could associate with whatever identity
+ * happened to be on the thread. The redirect classifies the renderer first:
+ * {@link EntityVelocityWriterBindings#isStaticBlockEntityRenderer} admits only the mapped
+ * renderers whose submit geometry is time-invariant (the lectern book and the copper golem
+ * statue). For those, a try/finally block-entity context brackets the renderer invocation:
+ * submit records constructed inside it carry the block-entity marker instead of any entity id,
+ * so the shared two-attachment velocity writer can draw the static geometry with a
+ * zero-displacement camera reprojection while entity-id draws stay isolated.
+ *
+ * Every other block-entity renderer - animated banner, chest, enchantment table, shulker box,
+ * bell, conduit, skull, spinning spawner display entity, moving piston head, signs, and all
+ * special non-model renderers - is invoked exactly as vanilla invokes it, with no bracket and
+ * no token, so its geometry keeps the original route and is never misclassified as static.
+ *
+ * Vanilla, CAMERA_ONLY, non-main output targets, and unsupported block-entity renderers keep
+ * their exact source route: the bracket itself only installs a context, and eligibility is
+ * decided later by the existing writer gates, which answer false for those paths without
+ * throwing.
+ */
+@Mixin(net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher.class)
+public class BlockEntityRenderDispatcherMotionMixin {
+	@Redirect(
+		method = "submit",
+		at = @At(
+			value = "INVOKE",
+			target = "Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderer;submit(Lnet/minecraft/client/renderer/blockentity/state/BlockEntityRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/level/CameraRenderState;)V"
+		)
+	)
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private void mcDlssSubmitBlockEntity(
+		final BlockEntityRenderer renderer,
+		final BlockEntityRenderState state,
+		final PoseStack poseStack,
+		final SubmitNodeCollector output,
+		final CameraRenderState camera
+	) {
+		// Positive static-family gate: only renderers whose submit geometry is time-invariant
+		// open the block-entity bracket. Dynamic-capable renderers keep the exact source call
+		// with no context and no token, so their geometry never becomes static block motion.
+		if (!EntityVelocityWriterBindings.isStaticBlockEntityRenderer(renderer.getClass())) {
+			renderer.submit(state, poseStack, output, camera);
+			return;
+		}
+		EntityVelocityWriterBindings.beginBlockEntity();
+		try {
+			renderer.submit(state, poseStack, output, camera);
+		} finally {
+			EntityVelocityWriterBindings.endBlockEntity();
+		}
+	}
+}

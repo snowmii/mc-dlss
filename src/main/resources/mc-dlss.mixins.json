@@ -8,6 +8,7 @@
 		"KeyboardHandlerControlsMixin",
 		"LevelExtractorCaptureMixin",
 		"EntityRenderDispatcherMotionMixin",
+		"BlockEntityRenderDispatcherMotionMixin",
 		"ModelFeatureSubmitMotionMixin",
 		"ModelFeatureRendererMotionMixin",
 		"RenderTypeFeatureRendererMotionMixin",
