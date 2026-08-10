@@ -63,8 +63,35 @@ fun terrainVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
 fun entityVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
 	entityVelocityTwins.computeIfAbsent(plainTwin, ::buildEntityVelocityTwin)
 
+/**
+ * Cached weather writer twin: the plain two-target velocity twin with the mc-dlss weather
+ * velocity fragment shader and the existing VelocityConfig uniform layout layered on top.
+ *
+ * The weather pass is the one remaining bespoke world pass: `WeatherEffectRenderer.render`
+ * creates a single pass over the weather target with `WEATHER_DEPTH_WRITE` or
+ * `WEATHER_NO_DEPTH_WRITE` and draws the CPU-baked rain and snow columns. The pass-creation
+ * redirect binds this twin only while an open VELOCITY_MRT phase offers the scene velocity
+ * view: the two-target shape comes from the plain twin, the velocity shader reproduces the
+ * source core/particle color output byte-identically and writes jitter-stripped NDC camera
+ * motion into the payload at color target 1, and the added layout is the terrain writer's own
+ * `VelocityConfig` layout, because the weather writer fills that existing payload block
+ * rather than introducing a new uniform design. Everything else - vertex shader, defines,
+ * the other bind-group layouts, depth state (the depth-write variant's write state included),
+ * polygon mode, culling, all sixteen vertex bindings, primitive topology, and the first
+ * color target (the weather target's translucent blend) - is the plain twin's, so the pass's
+ * attachment count and format agree with the pipeline exactly as they do for the plain twin.
+ *
+ * Keyed by the plain twin (which is itself cached per source pipeline), so every weather pass
+ * bind after the first hits the lazy-compile cache. The twin lives at a distinct mc-dlss
+ * location - `velocity/weather/<name>` - so it never collides with the plain twin's
+ * `velocity/pipeline/<name>` location or the terrain/entity writer twins.
+ */
+fun weatherVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
+	weatherVelocityTwins.computeIfAbsent(plainTwin, ::buildWeatherVelocityTwin)
+
 private val terrainVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val entityVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
+private val weatherVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 
 private fun buildVelocityTwin(source: RenderPipeline): RenderPipeline {
 	val snippet = RenderPipeline.Snippet(
@@ -131,6 +158,28 @@ private fun buildEntityVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
 		.build()
 }
 
+private fun buildWeatherVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
+	val snippet = RenderPipeline.Snippet(
+		Optional.of(plainTwin.vertexShader),
+		Optional.of(plainTwin.fragmentShader),
+		Optional.of(plainTwin.shaderDefines),
+		Optional.of(plainTwin.bindGroupLayouts),
+		plainTwin.colorTargetStates,
+		plainTwin.colorTargetStates?.size ?: 0,
+		Optional.ofNullable(plainTwin.depthStencilState),
+		Optional.of(plainTwin.polygonMode),
+		Optional.of(plainTwin.isCull),
+		plainTwin.vertexFormatBindings,
+		Optional.of(plainTwin.primitiveTopology),
+	)
+
+	return RenderPipeline.builder(snippet)
+		.withLocation(weatherVelocityLocation(plainTwin.location))
+		.withFragmentShader(WeatherVelocityRender.FRAGMENT_SHADER)
+		.withBindGroupLayout(WeatherVelocityRender.LAYOUT)
+		.build()
+}
+
 private fun velocityLocation(source: Identifier): Identifier =
 	Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, "$VELOCITY_PATH_PREFIX${source.path}")
 
@@ -158,6 +207,16 @@ private fun entityVelocityLocation(plainTwinLocation: Identifier): Identifier {
 		"${VELOCITY_PATH_PREFIX}entity/$path"
 	}
 	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, entityPath)
+}
+
+private fun weatherVelocityLocation(plainTwinLocation: Identifier): Identifier {
+	val path = plainTwinLocation.path
+	val weatherPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
+		"${VELOCITY_PATH_PREFIX}weather/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
+	} else {
+		"${VELOCITY_PATH_PREFIX}weather/$path"
+	}
+	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, weatherPath)
 }
 
 private const val VELOCITY_NAMESPACE = "mc-dlss"
