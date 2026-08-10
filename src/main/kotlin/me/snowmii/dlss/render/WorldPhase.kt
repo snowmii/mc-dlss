@@ -5,6 +5,9 @@ import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.mrt.MotionVectorPipeline
 import me.snowmii.dlss.mrt.MotionVectorRoute
+import net.minecraft.client.renderer.entity.state.EntityRenderState
+import org.joml.Matrix4f
+import org.joml.Vector3f
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
 import com.mojang.blaze3d.pipeline.RenderTarget
@@ -105,6 +108,30 @@ class WorldPhase(
 	fun captureEntity(id: Int, x: Double, y: Double, z: Double) {
 		runtime.captureEntity(id, x, y, z)
 	}
+
+	/** Records the returned render-state identity alongside its stable entity id and pose. */
+	fun captureEntity(state: EntityRenderState, id: Int, x: Double, y: Double, z: Double) {
+		runtime.captureEntity(state, id, x, y, z)
+	}
+
+	/** Resolves the stable id paired with one extracted state while this phase is open. */
+	fun entityId(state: EntityRenderState): Int? = if (isOpen) runtime.entityId(state) else null
+
+	/** Whether an entity-model draw may use the scene velocity attachment. */
+	val entityVelocityActive: Boolean
+		get() = isOpen && runtime.motionVectorRoute == MotionVectorRoute.VELOCITY_MRT && terrainVelocityView != null
+
+	/** Jitter used by this open world's projection, for object reprojection composition. */
+	val activeJitter: DlssJitterOffset?
+		get() = if (isOpen) runtime.activeJitter else null
+
+	/** Unjittered current view-projection captured at the world projection seam. */
+	val currentViewProjection: Matrix4f?
+		get() = if (isOpen) runtime.currentViewProjection else null
+
+	/** Current captured-minus-previous displacement for one entity, or null without a predecessor. */
+	fun objectMotionDisplacement(entityId: Int): Vector3f? =
+		if (entityVelocityActive) runtime.objectMotion.displacement(entityId) else null
 
 	/**
 	 * The scene-sized RG16_FLOAT velocity view terrain chunk passes must render into, or null

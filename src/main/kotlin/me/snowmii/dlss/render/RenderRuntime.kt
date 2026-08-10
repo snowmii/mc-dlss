@@ -15,6 +15,9 @@ import me.snowmii.dlss.mrt.MotionVectorCompatibility
 import me.snowmii.dlss.mrt.MotionVectorPipeline
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.mrt.ObjectMotionState
+import net.minecraft.client.renderer.entity.state.EntityRenderState
+import org.joml.Matrix4f
+import java.util.IdentityHashMap
 import me.snowmii.dlss.session.LifecycleAdapter
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.textures.GpuTextureView
@@ -81,6 +84,8 @@ class RenderRuntime(
 ) : AutoCloseable {
 	private val resources = FrameResources(sceneTarget, frameEvaluation, quiesce)
 	private val phase = WorldPhaseState()
+	private val entityIds = IdentityHashMap<EntityRenderState, Int>()
+	private var currentViewProjectionState: Matrix4f? = null
 	private var startupAttempted = false
 
 	/** Quality mode this runtime is rendering at, which starts as the configured one. */
@@ -143,6 +148,10 @@ class RenderRuntime(
 	val activeJitter: DlssJitterOffset?
 		get() = phase.activeJitter
 
+	/** Unjittered current view-projection captured with the world camera sample. */
+	val currentViewProjection: Matrix4f?
+		get() = currentViewProjectionState
+
 	/**
 	 * Camera-only motion for the current world phase, or null outside an eligible DLSS phase and
 	 * for an eligible phase that was routed without a camera sample.
@@ -168,6 +177,9 @@ class RenderRuntime(
 	internal val objectMotion: ObjectMotionState
 		get() = phase.objectMotion
 
+	/** Resolves the stable id retained for an extracted entity render state. */
+	fun entityId(state: EntityRenderState): Int? = entityIds[state]
+
 	/**
 	 * Records one visible entity's interpolated render position for the frame in flight.
 	 *
@@ -176,6 +188,11 @@ class RenderRuntime(
 	 * vanilla, abandoned, replaced-world, released, and closed paths reset the history.
 	 */
 	internal fun captureEntity(id: Int, x: Double, y: Double, z: Double) {
+		phase.objectMotion.capture(id, x, y, z)
+	}
+
+	internal fun captureEntity(state: EntityRenderState, id: Int, x: Double, y: Double, z: Double) {
+		entityIds[state] = id
 		phase.objectMotion.capture(id, x, y, z)
 	}
 
@@ -207,6 +224,14 @@ class RenderRuntime(
 		val target = resources.acquire(route)
 		activeRoute = route
 		activeWorldTarget = target
+		if (target == null) {
+			entityIds.clear()
+		}
+		currentViewProjectionState = if (target != null && camera != null) {
+			Matrix4f(camera.projection).mul(camera.viewRotation)
+		} else {
+			null
+		}
 		phase.open(target, camera, clock())
 		return target
 	}
@@ -223,6 +248,8 @@ class RenderRuntime(
 		activeRoute = null
 		activeWorldTarget = null
 		phase.finish(completedDlssFrame)
+		currentViewProjectionState = null
+		entityIds.clear()
 	}
 
 	/**
@@ -234,6 +261,8 @@ class RenderRuntime(
 	 */
 	fun resetMotionHistory() {
 		phase.resetMotion()
+		currentViewProjectionState = null
+		entityIds.clear()
 	}
 
 	/**
@@ -244,6 +273,8 @@ class RenderRuntime(
 	 */
 	fun resetHistory() {
 		phase.reset()
+		currentViewProjectionState = null
+		entityIds.clear()
 	}
 
 	/**
@@ -306,6 +337,8 @@ class RenderRuntime(
 		// Before the session closes: releasing the native images needs a session still READY.
 		phase.discard()
 		renderDimensions = null
+		currentViewProjectionState = null
+		entityIds.clear()
 		session.close()
 	}
 

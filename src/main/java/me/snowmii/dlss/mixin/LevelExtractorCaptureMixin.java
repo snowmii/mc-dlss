@@ -38,7 +38,7 @@ public class LevelExtractorCaptureMixin {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
 		final EntityRenderState state = info.getReturnValue();
 		if (phase != null && state != null) {
-			phase.captureEntity(entity.getId(), state.x, state.y, state.z);
+			phase.captureEntity(state, entity.getId(), state.x, state.y, state.z);
 		}
 	}
 }

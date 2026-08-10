@@ -54,7 +54,17 @@ private val velocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 fun terrainVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
 	terrainVelocityTwins.computeIfAbsent(plainTwin, ::buildTerrainVelocityTwin)
 
+/**
+ * Cached entity-model writer twin: the plain two-target velocity twin with the mc-dlss entity
+ * velocity fragment shader and its per-object reprojection layout layered on top. The source
+ * entity shader's defines and all source layouts remain intact, so `EMISSIVE`, `DISSOLVE`, face
+ * lighting, overlay, and light-map behavior continue to compile and render exactly as before.
+ */
+fun entityVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
+	entityVelocityTwins.computeIfAbsent(plainTwin, ::buildEntityVelocityTwin)
+
 private val terrainVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
+private val entityVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 
 private fun buildVelocityTwin(source: RenderPipeline): RenderPipeline {
 	val snippet = RenderPipeline.Snippet(
@@ -99,6 +109,28 @@ private fun buildTerrainVelocityTwin(plainTwin: RenderPipeline): RenderPipeline 
 		.build()
 }
 
+private fun buildEntityVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
+	val snippet = RenderPipeline.Snippet(
+		Optional.of(plainTwin.vertexShader),
+		Optional.of(plainTwin.fragmentShader),
+		Optional.of(plainTwin.shaderDefines),
+		Optional.of(plainTwin.bindGroupLayouts),
+		plainTwin.colorTargetStates,
+		plainTwin.colorTargetStates?.size ?: 0,
+		Optional.ofNullable(plainTwin.depthStencilState),
+		Optional.of(plainTwin.polygonMode),
+		Optional.of(plainTwin.isCull),
+		plainTwin.vertexFormatBindings,
+		Optional.of(plainTwin.primitiveTopology),
+	)
+
+	return RenderPipeline.builder(snippet)
+		.withLocation(entityVelocityLocation(plainTwin.location))
+		.withFragmentShader(EntityVelocityUniforms.FRAGMENT_SHADER)
+		.withBindGroupLayout(EntityVelocityUniforms.LAYOUT)
+		.build()
+}
+
 private fun velocityLocation(source: Identifier): Identifier =
 	Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, "$VELOCITY_PATH_PREFIX${source.path}")
 
@@ -116,6 +148,16 @@ private fun terrainVelocityLocation(plainTwinLocation: Identifier): Identifier {
 		"${VELOCITY_PATH_PREFIX}terrain/$path"
 	}
 	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, terrainPath)
+}
+
+private fun entityVelocityLocation(plainTwinLocation: Identifier): Identifier {
+	val path = plainTwinLocation.path
+	val entityPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
+		"${VELOCITY_PATH_PREFIX}entity/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
+	} else {
+		"${VELOCITY_PATH_PREFIX}entity/$path"
+	}
+	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, entityPath)
 }
 
 private const val VELOCITY_NAMESPACE = "mc-dlss"
