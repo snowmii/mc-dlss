@@ -197,6 +197,16 @@ class RenderRuntime(
 	}
 
 	/**
+	 * Records one moving block's absolute render position for the frame in flight, in the
+	 * moving-block (long-keyed) domain of the shared object history. Same lifecycle and
+	 * disposition as [captureEntity]: a DLSS frame's open keeps it and its completion publishes
+	 * it, while the vanilla, abandoned, replaced-world, released, and closed paths reset it.
+	 */
+	internal fun captureBlock(id: Long, x: Double, y: Double, z: Double) {
+		phase.objectMotion.capture(id, x, y, z)
+	}
+
+	/**
 	 * Opens the world phase. Returns the low-resolution scene target for an eligible DLSS
 	 * frame, or null when the frame must use the vanilla main target.
 	 *

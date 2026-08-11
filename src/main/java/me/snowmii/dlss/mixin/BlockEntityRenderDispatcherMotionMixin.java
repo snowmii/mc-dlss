@@ -2,9 +2,11 @@ package me.snowmii.dlss.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import me.snowmii.dlss.mrt.EntityVelocityWriterBindings;
+import me.snowmii.dlss.mrt.MovingBlockVelocityRender;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
+import net.minecraft.client.renderer.blockentity.state.PistonHeadRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -56,6 +58,16 @@ public class BlockEntityRenderDispatcherMotionMixin {
 		// open the block-entity bracket. Dynamic-capable renderers keep the exact source call
 		// with no context and no token, so their geometry never becomes static block motion.
 		if (!EntityVelocityWriterBindings.isStaticBlockEntityRenderer(renderer.getClass())) {
+			// Piston moving-block gate: the mapped piston renderer's render state carries the
+			// submitted moving-block states, their baked positions, and the current piston
+			// offset. The capture seam binds each state to its block-position id and records
+			// this frame's absolute position into the object-motion history before the submit
+			// constructs the moving-block submits; with no eligible velocity phase it binds and
+			// captures nothing, so vanilla, CAMERA_ONLY, and identity-less frames keep the exact
+			// source submit.
+			if (MovingBlockVelocityRender.isPistonHeadRenderer(renderer.getClass()) && state instanceof PistonHeadRenderState pistonState) {
+				MovingBlockVelocityRender.capturePiston(pistonState);
+			}
 			renderer.submit(state, poseStack, output, camera);
 			return;
 		}

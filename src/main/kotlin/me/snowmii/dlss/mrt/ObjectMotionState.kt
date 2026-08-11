@@ -30,12 +30,21 @@ data class ObjectPosition(
 
 /**
  * The previous-transform double buffer behind every dynamic world-pass velocity writer: a
- * per-frame snapshot of visible-object positions keyed by the object's stable integer id.
+ * per-frame snapshot of visible-object positions keyed by the object's stable id.
  *
  * Terrain velocity is a function of the camera alone and collapses into one reprojection per
  * frame; an entity's pixels are where the entity's *current* pose put them, so the velocity
  * writer also needs where each object sat in the previous frame. This class retains exactly
  * that: one committed frame of positions, one in-flight frame of captures, and nothing else.
+ *
+ * Two key domains share the buffer, disjoint by key type and storage: the entity domain - the
+ * stable ids entity extraction assigns, positive ints, plus the static block-entity marker
+ * semantics the block-entity writer keeps out of this buffer entirely - and the moving-block
+ * domain - the packed long block-position identity ([MovingBlockVelocityWriterBindings.blockId])
+ * the piston capture seam assigns. An int id and a long id that happen to carry the same
+ * numeric value are different objects with independent history slots; the overloads resolve by
+ * key type, so a moving-block id can never read an entity's predecessor and an entity id can
+ * never read a block's. The int overloads are the entity writer's API and stay untouched.
  *
  * The lifecycle is the frame:
  *
@@ -66,6 +75,16 @@ class ObjectMotionState {
 	private val committed = HashMap<Int, ObjectPosition>()
 
 	/**
+	 * The moving-block domain's in-flight captures, keyed by the packed long block-position
+	 * identity. Separate storage from the entity captures: the two domains can never share a
+	 * history slot, no matter what numeric values the keys carry.
+	 */
+	private val blockCaptures = HashMap<Long, ObjectPosition>()
+
+	/** The last [publish]ed moving-block frame's positions. */
+	private val blockCommitted = HashMap<Long, ObjectPosition>()
+
+	/**
 	 * Records [id]'s position this frame. Does not become visible to [previous] until the next
 	 * [publish].
 	 */
@@ -74,13 +93,24 @@ class ObjectMotionState {
 	}
 
 	/**
+	 * Records one moving block's position this frame, in the block domain's own history.
+	 * Does not become visible to [previous] until the next [publish].
+	 */
+	fun capture(id: Long, x: Double, y: Double, z: Double) {
+		blockCaptures[id] = ObjectPosition(x, y, z)
+	}
+
+	/**
 	 * The frame boundary: [capture]d positions become the predecessors of the next frame, and
-	 * ids absent from this frame's captures are evicted from history.
+	 * ids absent from this frame's captures are evicted from history, in both domains.
 	 */
 	fun publish() {
 		committed.clear()
 		committed.putAll(captures)
 		captures.clear()
+		blockCommitted.clear()
+		blockCommitted.putAll(blockCaptures)
+		blockCaptures.clear()
 	}
 
 	/**
@@ -88,6 +118,9 @@ class ObjectMotionState {
 	 * predecessor: a first observation, an id evicted at the boundary, or history [reset].
 	 */
 	fun previous(id: Int): ObjectPosition? = committed[id]
+
+	/** The moving-block-domain predecessor of [id], from the last published frame. */
+	fun previous(id: Long): ObjectPosition? = blockCommitted[id]
 
 	/**
 	 * This frame's captured position minus the last published one, for an object drawn at its
@@ -107,8 +140,19 @@ class ObjectMotionState {
 		)
 	}
 
+	/** The moving-block-domain displacement of [id], or null without a current capture and predecessor. */
+	fun displacement(id: Long): Vector3f? {
+		val previous = blockCommitted[id] ?: return null
+		val current = blockCaptures[id] ?: return null
+		return Vector3f(
+			(current.x - previous.x).toFloat(),
+			(current.y - previous.y).toFloat(),
+			(current.z - previous.z).toFloat(),
+		)
+	}
+
 	/**
-	 * Forgets every predecessor and every in-flight capture.
+	 * Forgets every predecessor and every in-flight capture, in both domains.
 	 *
 	 * Any break in the DLSS chain invalidates the history - a vanilla frame, a world or
 	 * dimension change, a frame abandoned by an exception. The next observation of any id is a
@@ -117,6 +161,8 @@ class ObjectMotionState {
 	fun reset() {
 		captures.clear()
 		committed.clear()
+		blockCaptures.clear()
+		blockCommitted.clear()
 	}
 }
 

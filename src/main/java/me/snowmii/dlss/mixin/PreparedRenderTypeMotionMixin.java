@@ -1,6 +1,7 @@
 package me.snowmii.dlss.mixin;
 
 import me.snowmii.dlss.mrt.EntityVelocityRender;
+import me.snowmii.dlss.mrt.MovingBlockVelocityRender;
 import net.minecraft.client.renderer.StagedVertexBuffer;
 import net.minecraft.client.renderer.rendertype.PreparedRenderType;
 import org.spongepowered.asm.mixin.Mixin;
@@ -8,7 +9,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Replaces supported main-target entity draws with the two-attachment velocity pass. */
+/** Replaces supported main-target entity and piston moving-block draws with the two-attachment velocity pass. */
 @Mixin(PreparedRenderType.class)
 public class PreparedRenderTypeMotionMixin {
 	@Inject(
@@ -20,7 +21,10 @@ public class PreparedRenderTypeMotionMixin {
 		final StagedVertexBuffer.ExecuteInfo info,
 		final CallbackInfo callback
 	) {
-		if (EntityVelocityRender.draw((PreparedRenderType)(Object)this, info)) {
+		// The moving-block writer is checked first: its draws carry the packed long block-position
+		// identity in their own maps, so the entity writer's predicates answer false for them.
+		if (MovingBlockVelocityRender.draw((PreparedRenderType)(Object)this, info) ||
+			EntityVelocityRender.draw((PreparedRenderType)(Object)this, info)) {
 			callback.cancel();
 		}
 	}

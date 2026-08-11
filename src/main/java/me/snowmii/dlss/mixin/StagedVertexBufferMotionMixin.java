@@ -4,6 +4,7 @@ import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexSorting;
 import me.snowmii.dlss.mrt.EntityVelocityWriterBindings;
+import me.snowmii.dlss.mrt.MovingBlockVelocityWriterBindings;
 import net.minecraft.client.renderer.StagedVertexBuffer;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
@@ -12,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** Carries per-entity identity across staged draws and their uploaded ExecuteInfo records. */
+/** Carries per-entity and per-moving-block identity across staged draws and their uploaded ExecuteInfo records. */
 @Mixin(StagedVertexBuffer.class)
 public class StagedVertexBufferMotionMixin {
 	@Inject(
@@ -28,6 +29,7 @@ public class StagedVertexBufferMotionMixin {
 		final StagedVertexBuffer.Draw draw = info.getReturnValue();
 		if (draw != null) {
 			EntityVelocityWriterBindings.bindDraw(draw);
+			MovingBlockVelocityWriterBindings.bindDraw(draw);
 		}
 	}
 
@@ -40,10 +42,12 @@ public class StagedVertexBufferMotionMixin {
 		final CallbackInfoReturnable<StagedVertexBuffer.ExecuteInfo> info
 	) {
 		EntityVelocityWriterBindings.bindExecuteInfo(draw, info.getReturnValue());
+		MovingBlockVelocityWriterBindings.bindExecuteInfo(draw, info.getReturnValue());
 	}
 
 	@Inject(method = "endDraw", at = @At("HEAD"))
 	private void mcDlssClearEntityDraws(final CallbackInfo info) {
 		EntityVelocityWriterBindings.clearFrame();
+		MovingBlockVelocityWriterBindings.clearFrame();
 	}
 }

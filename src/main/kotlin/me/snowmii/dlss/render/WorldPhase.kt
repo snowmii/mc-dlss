@@ -114,6 +114,21 @@ class WorldPhase(
 		runtime.captureEntity(state, id, x, y, z)
 	}
 
+	/**
+	 * Records one moving block's absolute render position for the frame in flight, keyed by the
+	 * packed long block-position identity of its baked position.
+	 *
+	 * The piston capture seam calls this at the block-entity dispatcher, before [begin] opens
+	 * the phase, so - like [captureEntity] - this is deliberately not gated on [isOpen]: the
+	 * in-flight captures must land while the phase is still closed, and only a DLSS frame's own
+	 * open keeps them. The key is a long in the moving-block domain, resolved by the long
+	 * overload of the shared object history, so an entity id with the same numeric value can
+	 * never read or write this block's slot.
+	 */
+	fun captureBlock(id: Long, x: Double, y: Double, z: Double) {
+		runtime.captureBlock(id, x, y, z)
+	}
+
 	/** Resolves the stable id paired with one extracted state while this phase is open. */
 	fun entityId(state: EntityRenderState): Int? = if (isOpen) runtime.entityId(state) else null
 
@@ -132,6 +147,15 @@ class WorldPhase(
 	/** Current captured-minus-previous displacement for one entity, or null without a predecessor. */
 	fun objectMotionDisplacement(entityId: Int): Vector3f? =
 		if (entityVelocityActive) runtime.objectMotion.displacement(entityId) else null
+
+	/**
+	 * Current captured-minus-previous displacement for one moving block, or null without a
+	 * predecessor. Gated by the same shared velocity-active condition as
+	 * [objectMotionDisplacement] - an open velocity-MRT phase with a scene velocity view -
+	 * and resolved in the moving-block domain of the shared object history.
+	 */
+	fun blockMotionDisplacement(blockId: Long): Vector3f? =
+		if (entityVelocityActive) runtime.objectMotion.displacement(blockId) else null
 
 	/**
 	 * The scene-sized RG16_FLOAT velocity view terrain chunk passes must render into, or null

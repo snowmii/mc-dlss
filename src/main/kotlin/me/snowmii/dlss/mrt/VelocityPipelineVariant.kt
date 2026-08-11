@@ -89,10 +89,35 @@ fun entityVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
 fun weatherVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
 	weatherVelocityTwins.computeIfAbsent(plainTwin, ::buildWeatherVelocityTwin)
 
+/**
+ * Cached moving-block writer twin: the plain two-target velocity twin with the mc-dlss moving-
+ * block velocity shader and the existing moving-block payload layout layered on top.
+ *
+ * The piston moving-block render types bind the owned core/block pipeline family (`SOLID_BLOCK`
+ * and `CUTOUT_BLOCK` on the main target), and the prepared-draw redirect binds this twin only
+ * for those owned main-target draws that carry a bound moving-block identity. The two-target
+ * shape comes from the plain twin, the swapped-in fragment shader is the moving-block writer's
+ * own `core/velocity_block` - which is the vanilla `core/block` fragment body verbatim plus
+ * the velocity-MRT payload write, so block color output stays byte-identical - and the added
+ * layout is the writer's `BlockVelocityConfig` layout, the existing payload design the writer
+ * fills on the draw encoder. Everything else - vertex shader, defines, the other bind-group
+ * layouts, depth state, polygon mode, culling, all sixteen vertex bindings, primitive topology,
+ * and the first color target - is the plain twin's, so the pass's attachment count and format
+ * agree with the pipeline exactly as they do for the plain twin.
+ *
+ * Keyed by the plain twin (which is itself cached per source pipeline), so every moving-block
+ * draw bind after the first hits the lazy-compile cache. The twin lives at a distinct mc-dlss
+ * location - `velocity/movingblock/<name>` - so it never collides with the plain twin's
+ * `velocity/pipeline/<name>` location or the terrain/entity/weather/particle writer twins.
+ */
+fun movingBlockVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
+	movingBlockVelocityTwins.computeIfAbsent(plainTwin, ::buildMovingBlockVelocityTwin)
+
 private val terrainVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val entityVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val weatherVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val particleVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
+private val movingBlockVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 
 private fun buildVelocityTwin(source: RenderPipeline): RenderPipeline {
 	val snippet = RenderPipeline.Snippet(
@@ -235,6 +260,28 @@ private fun buildWeatherVelocityTwin(plainTwin: RenderPipeline): RenderPipeline 
 		.build()
 }
 
+private fun buildMovingBlockVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
+	val snippet = RenderPipeline.Snippet(
+		Optional.of(plainTwin.vertexShader),
+		Optional.of(plainTwin.fragmentShader),
+		Optional.of(plainTwin.shaderDefines),
+		Optional.of(plainTwin.bindGroupLayouts),
+		plainTwin.colorTargetStates,
+		plainTwin.colorTargetStates?.size ?: 0,
+		Optional.ofNullable(plainTwin.depthStencilState),
+		Optional.of(plainTwin.polygonMode),
+		Optional.of(plainTwin.isCull),
+		plainTwin.vertexFormatBindings,
+		Optional.of(plainTwin.primitiveTopology),
+	)
+
+	return RenderPipeline.builder(snippet)
+		.withLocation(movingBlockVelocityLocation(plainTwin.location))
+		.withFragmentShader(MovingBlockVelocityRender.FRAGMENT_SHADER)
+		.withBindGroupLayout(MovingBlockVelocityRender.LAYOUT)
+		.build()
+}
+
 private fun velocityLocation(source: Identifier): Identifier =
 	Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, "$VELOCITY_PATH_PREFIX${source.path}")
 
@@ -282,6 +329,16 @@ private fun particleVelocityLocation(plainTwinLocation: Identifier): Identifier 
 		"${VELOCITY_PATH_PREFIX}particle/$path"
 	}
 	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, particlePath)
+}
+
+private fun movingBlockVelocityLocation(plainTwinLocation: Identifier): Identifier {
+	val path = plainTwinLocation.path
+	val movingBlockPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
+		"${VELOCITY_PATH_PREFIX}movingblock/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
+	} else {
+		"${VELOCITY_PATH_PREFIX}movingblock/$path"
+	}
+	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, movingBlockPath)
 }
 
 private const val VELOCITY_NAMESPACE = "mc-dlss"
