@@ -113,11 +113,43 @@ fun weatherVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
 fun movingBlockVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
 	movingBlockVelocityTwins.computeIfAbsent(plainTwin, ::buildMovingBlockVelocityTwin)
 
+/**
+ * Cached breaking-block crumbling writer twin: the plain two-target velocity twin with the
+ * mc-dlss crumbling velocity shader and the existing terrain VelocityConfig uniform layout
+ * layered on top.
+ *
+ * The crumbling overlay - `ModelBakery.DESTROY_TYPES`, ten static stages of the mapped
+ * `CRUMBLING` pipeline - draws through the same `PreparedRenderType.drawFromBuffer` seam the
+ * entity and moving-block writers use, and the prepared-draw dispatch binds this twin only for
+ * owned main-target crumbling draws while an open VELOCITY_MRT phase offers the scene velocity
+ * view. The two-target shape comes from the plain twin, the swapped-in fragment shader is the
+ * crumbling writer's own `core/velocity_crumbling` - which is the vanilla
+ * `core/rendertype_crumbling` fragment body verbatim (the alpha discard between the
+ * vertex-color and ColorModulator multiplies included) plus the velocity-MRT payload write, so
+ * overlay color output stays byte-identical - and the added layout is the terrain writer's own
+ * `VelocityConfig` layout, because the crumbling overlay carries no block identity or history
+ * of its own and the writer fills that existing payload block rather than introducing a new
+ * uniform design. Everything else - vertex shader, defines, the other bind-group layouts,
+ * depth state, polygon mode, culling, all sixteen vertex bindings, primitive topology, and the
+ * first color target (the overlay's DST_COLOR/SRC_COLOR multiply blend) - is the plain twin's,
+ * so the pass's attachment count and format agree with the pipeline exactly as they do for the
+ * plain twin.
+ *
+ * Keyed by the plain twin (which is itself cached per source pipeline), so every crumbling
+ * draw bind after the first hits the lazy-compile cache. The twin lives at a distinct mc-dlss
+ * location - `velocity/crumbling/<name>` - so it never collides with the plain twin's
+ * `velocity/pipeline/<name>` location or the terrain/entity/weather/particle/moving-block
+ * writer twins.
+ */
+fun crumblingVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
+	crumblingVelocityTwins.computeIfAbsent(plainTwin, ::buildCrumblingVelocityTwin)
+
 private val terrainVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val entityVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val weatherVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val particleVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val movingBlockVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
+private val crumblingVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 
 private fun buildVelocityTwin(source: RenderPipeline): RenderPipeline {
 	val snippet = RenderPipeline.Snippet(
@@ -282,6 +314,28 @@ private fun buildMovingBlockVelocityTwin(plainTwin: RenderPipeline): RenderPipel
 		.build()
 }
 
+private fun buildCrumblingVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
+	val snippet = RenderPipeline.Snippet(
+		Optional.of(plainTwin.vertexShader),
+		Optional.of(plainTwin.fragmentShader),
+		Optional.of(plainTwin.shaderDefines),
+		Optional.of(plainTwin.bindGroupLayouts),
+		plainTwin.colorTargetStates,
+		plainTwin.colorTargetStates?.size ?: 0,
+		Optional.ofNullable(plainTwin.depthStencilState),
+		Optional.of(plainTwin.polygonMode),
+		Optional.of(plainTwin.isCull),
+		plainTwin.vertexFormatBindings,
+		Optional.of(plainTwin.primitiveTopology),
+	)
+
+	return RenderPipeline.builder(snippet)
+		.withLocation(crumblingVelocityLocation(plainTwin.location))
+		.withFragmentShader(BreakingBlockVelocityRender.FRAGMENT_SHADER)
+		.withBindGroupLayout(BreakingBlockVelocityRender.LAYOUT)
+		.build()
+}
+
 private fun velocityLocation(source: Identifier): Identifier =
 	Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, "$VELOCITY_PATH_PREFIX${source.path}")
 
@@ -329,6 +383,16 @@ private fun particleVelocityLocation(plainTwinLocation: Identifier): Identifier 
 		"${VELOCITY_PATH_PREFIX}particle/$path"
 	}
 	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, particlePath)
+}
+
+private fun crumblingVelocityLocation(plainTwinLocation: Identifier): Identifier {
+	val path = plainTwinLocation.path
+	val crumblingPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
+		"${VELOCITY_PATH_PREFIX}crumbling/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
+	} else {
+		"${VELOCITY_PATH_PREFIX}crumbling/$path"
+	}
+	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, crumblingPath)
 }
 
 private fun movingBlockVelocityLocation(plainTwinLocation: Identifier): Identifier {
