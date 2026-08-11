@@ -291,7 +291,7 @@ object MovingBlockVelocityRender {
 		// plain reads - so a failure here still leaves the exact source draw safe to replay.
 		// The buffer's first allocation is a device call, so it is guarded: a device failure
 		// degrades to the passthrough rather than throwing out of the writer.
-		val twin = movingBlockVelocityTwin(velocityTwin(prepared.pipeline()))
+		val twin = writerTwin(prepared.pipeline(), VelocityWriter.MOVING_BLOCK)
 		val payload = runCatching { buffer() }.getOrNull() ?: return false
 		val scissor = prepared.scissorState()
 		val scissorEnabled = scissor.enabled()

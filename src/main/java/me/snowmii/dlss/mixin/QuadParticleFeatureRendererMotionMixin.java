@@ -1,5 +1,7 @@
 package me.snowmii.dlss.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.RenderPass;
@@ -8,19 +10,18 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.mrt.ParticleVelocityRender;
 import me.snowmii.dlss.mrt.TerrainVelocityUniforms;
+import me.snowmii.dlss.mrt.VelocityWriter;
 import me.snowmii.dlss.render.WorldPhase;
 import net.minecraft.client.renderer.feature.QuadParticleFeatureRenderer;
 import org.joml.Vector4fc;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
 
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.function.Supplier;
 
-import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.particleVelocityTwin;
-import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.velocityTwin;
+import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.writerTwin;
 
 /**
  * Adds the scene-sized velocity attachment to both particle passes and selects the particle
@@ -31,7 +32,7 @@ import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.velocityTwin;
  * families - the solid group into the scene (main) target, the translucent group into the
  * particles target - and the static {@code drawLayers} binds each layer's
  * {@code OPAQUE_PARTICLE} / {@code TRANSLUCENT_PARTICLE} pipeline. Both targets are
- * scene-sized on a DLSS frame, so the pass-creation redirect carries the attachment, the
+ * scene-sized on a DLSS frame, so the pass-creation handler carries the attachment, the
  * payload write, and the pass shape together: while the phase offers the scene velocity view,
  * the pass is created with that RG16_FLOAT attachment at color index 1, this frame's
  * VelocityConfig payload is written on the same encoder (the terrain writer's existing block:
@@ -45,14 +46,14 @@ import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.velocityTwin;
  * the pass shape and the bound pipeline change.
  *
  * Outside the eligible phase or on the latched camera-only route, the velocity view is null
- * and both redirects fall through to the exact vanilla calls: the pass keeps one attachment
+ * and both handlers fall through to the exact vanilla calls: the pass keeps one attachment
  * and the source particle pipeline binds unchanged, so nothing this mixin does can throw.
  */
 @Mixin(QuadParticleFeatureRenderer.class)
 public class QuadParticleFeatureRendererMotionMixin {
 	private static final ThreadLocal<RenderPass> PARTICLE_VELOCITY_PASS = new ThreadLocal<>();
 
-	@Redirect(
+	@WrapOperation(
 		method = "executeGroup",
 		at = @At(
 			value = "INVOKE",
@@ -65,12 +66,13 @@ public class QuadParticleFeatureRendererMotionMixin {
 		final GpuTextureView colorTexture,
 		final Optional<Vector4fc> clearColor,
 		final GpuTextureView depthTexture,
-		final OptionalDouble clearDepth
+		final OptionalDouble clearDepth,
+		final Operation<RenderPass> original
 	) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
 		final GpuTextureView velocity = phase == null ? null : phase.getTerrainVelocityView();
 		if (velocity == null) {
-			return encoder.createRenderPass(label, colorTexture, clearColor, depthTexture, clearDepth);
+			return original.call(encoder, label, colorTexture, clearColor, depthTexture, clearDepth);
 		}
 
 		// This frame's VelocityConfig payload: the published camera reprojection and reset
@@ -93,27 +95,31 @@ public class QuadParticleFeatureRendererMotionMixin {
 	}
 
 	/**
-	 * The pipeline-boundary handler for the static {@code drawLayers}: the redirect handler
-	 * must be static because its target method is, and it must carry the velocity write onto
-	 * the pass exactly when the pass-creation redirect built the two-attachment shape.
+	 * The pipeline-boundary handler for the static {@code drawLayers}: the handler must be
+	 * static because its target method is, and it must carry the velocity write onto the pass
+	 * exactly when the pass-creation handler built the two-attachment shape.
 	 */
-	@Redirect(
+	@WrapOperation(
 		method = "drawLayers",
 		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderPass;setPipeline(Lcom/mojang/blaze3d/pipeline/RenderPipeline;)V")
 	)
-	private static void mcDlssParticleSetPipeline(final RenderPass pass, final RenderPipeline pipeline) {
+	private static void mcDlssParticleSetPipeline(
+		final RenderPass pass,
+		final RenderPipeline pipeline,
+		final Operation<Void> original
+	) {
 		if (PARTICLE_VELOCITY_PASS.get() == pass) {
 			// The particle writer twin: the plain two-target velocity twin (which keeps the
 			// source fragment shader and is the M-4 descriptor contract) with the existing
 			// particle-body velocity shader and the existing VelocityConfig uniform layout
 			// layered on, so the pass writes jitter-stripped NDC camera motion into color
-			// target 1. The uniform block was written by the pass-creation redirect into the
+			// target 1. The uniform block was written by the pass-creation handler into the
 			// writer's shared buffer this pass binds, so every particle draw reads this
 			// frame's reprojection.
 			pass.setUniform(TerrainVelocityUniforms.UNIFORM_NAME, ParticleVelocityRender.uniformSlice());
-			pass.setPipeline(particleVelocityTwin(velocityTwin(pipeline)));
+			original.call(pass, writerTwin(pipeline, VelocityWriter.PARTICLE));
 		} else {
-			pass.setPipeline(pipeline);
+			original.call(pass, pipeline);
 		}
 	}
 }

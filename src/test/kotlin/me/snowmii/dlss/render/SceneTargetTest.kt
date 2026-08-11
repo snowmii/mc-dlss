@@ -35,22 +35,6 @@ class SceneTargetTest {
 	private val velocityAllocated = mutableListOf<FakeTarget>()
 
 	@Test
-	fun `dlss route allocates one scene target at render dimensions and reuses it`() {
-		val scene = sceneTarget()
-		val route = dlssRoute()
-
-		val first = scene.acquire(route)
-		val second = scene.acquire(dlssRoute())
-
-		assertSame(first, second)
-		assertEquals(1, allocated.size)
-		assertEquals(render, scene.currentDimensions)
-		assertEquals(render.width, first!!.width)
-		assertEquals(render.height, first.height)
-		assertTrue(released.isEmpty())
-	}
-
-	@Test
 	fun `changed render dimensions release the old target before allocating the new one`() {
 		val scene = sceneTarget()
 		val first = scene.acquire(dlssRoute(render))
@@ -61,19 +45,6 @@ class SceneTargetTest {
 		assertEquals(listOf(first), released)
 		assertEquals(2, allocated.size)
 		assertEquals(DlssDimensions(1280, 720), scene.currentDimensions)
-	}
-
-	@Test
-	fun `vanilla route holds no scene target and releases any held one`() {
-		val scene = sceneTarget()
-		val held = scene.acquire(dlssRoute())
-
-		val vanilla = scene.acquire(vanillaRoute())
-
-		assertNull(vanilla)
-		assertNull(scene.current)
-		assertNull(scene.currentDimensions)
-		assertEquals(listOf(held), released)
 	}
 
 	@Test

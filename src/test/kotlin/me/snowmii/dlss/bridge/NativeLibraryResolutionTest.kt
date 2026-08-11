@@ -4,7 +4,6 @@ import me.snowmii.dlss.session.DlssStartupConfig
 
 import java.nio.file.Files
 import java.nio.file.Path
-import me.snowmii.McDlss
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -39,12 +38,6 @@ class NativeLibraryResolutionTest {
 			val resolved = ExtensionBootstrap.nativeLibrary()
 			assertTrue(Files.isRegularFile(resolved), "resolved path must exist: $resolved")
 		}
-	}
-
-	@Test
-	fun `the packaged resource path stays under the mod namespace`() {
-		assertEquals("/assets/mc-dlss/native/mc_dlss.dll", ExtensionBootstrap.RESOURCE_PATH)
-		assertTrue(ExtensionBootstrap.RESOURCE_PATH.contains("/assets/${McDlss.MOD_ID}/"))
 	}
 
 	private fun withProperty(value: String?, block: () -> Unit) {

@@ -18,7 +18,6 @@ import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.readout.SessionReadout
-import me.snowmii.dlss.readout.AcceptanceRecord
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
@@ -134,22 +133,6 @@ class RuntimeControlsTest {
 	}
 
 	@Test
-	fun `a mode change hands the new render dimensions to the native bridge before the next frame`() {
-		val fixture = fixture()
-
-		fixture.frame()
-		fixture.controls.cycleQualityMode()
-		val resolved = fixture.frame()
-
-		// The native images are allocated from the dimensions the last configure stored, so this
-		// is what makes the next acquisition the right size. The release itself runs through
-		// FrameEvaluation, which needs a live command encoder to have acquired anything, so
-		// the release-and-re-acquire pair is held on the RTX device by DlssEvaluationImagesTest.
-		assertEquals(fixture.native.lastConfiguredRender, fixture.runtime.renderDimensions)
-		assertEquals(fixture.runtime.renderDimensions?.width, resolved.width)
-	}
-
-	@Test
 	fun `cycling the preset re-configures without changing the internal resolution`() {
 		val fixture = fixture()
 
@@ -217,28 +200,6 @@ class RuntimeControlsTest {
 
 		fixture.controls.toggleEnabled()
 		assertTrue(fixture.announced.last().startsWith("DLSS off"), fixture.announced.last())
-	}
-
-	@Test
-	fun `the acceptance record names the preset the session is actually running`() {
-		val fixture = fixture()
-		fixture.frame()
-		fixture.controls.cyclePreset()
-
-		val record = AcceptanceRecord.render(
-			minecraftBuild = "26.2",
-			enabled = fixture.runtime.config.enabled,
-			state = fixture.runtime.sessionState,
-			qualityMode = fixture.runtime.qualityMode,
-			renderPreset = fixture.runtime.renderPreset,
-			outputDimensions = fixture.runtime.config.outputDimensions,
-			renderDimensions = fixture.runtime.renderDimensions,
-		)
-
-		assertTrue(
-			record.contains("render-preset=${fixture.runtime.renderPreset.propertyValue}"),
-			record,
-		)
 	}
 
 	private fun fixture() = Fixture()

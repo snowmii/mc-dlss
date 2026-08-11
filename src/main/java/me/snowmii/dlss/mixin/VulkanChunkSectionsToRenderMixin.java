@@ -1,5 +1,8 @@
 package me.snowmii.dlss.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.llamalad7.mixinextras.sugar.Local;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.CommandEncoder;
@@ -12,6 +15,7 @@ import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.mrt.MotionVectorPipeline;
 import me.snowmii.dlss.mrt.MotionVectorShader;
 import me.snowmii.dlss.mrt.TerrainVelocityUniforms;
+import me.snowmii.dlss.mrt.VelocityWriter;
 import me.snowmii.dlss.render.DlssFrameMotion;
 import me.snowmii.dlss.render.WorldPhase;
 import net.minecraft.SharedConstants;
@@ -24,7 +28,6 @@ import org.joml.Vector4fc;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.List;
@@ -32,8 +35,7 @@ import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.function.Supplier;
 
-import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.terrainVelocityTwin;
-import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.velocityTwin;
+import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.writerTwin;
 
 /**
  * Adds the scene-sized velocity attachment to the terrain chunk passes, selects the terrain
@@ -53,7 +55,7 @@ import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.velocityTwin;
  * jitter-stripped NDC camera motion into color target 1. The translucent group loads the
  * attachment instead of clearing it, so the opaque-written velocity survives through its
  * work. Outside the eligible phase or on the latched camera-only route, the velocity view is
- * null and both redirects fall through to the exact vanilla calls: the pass keeps one
+ * null and both handlers fall through to the exact vanilla calls: the pass keeps one
  * attachment and the source pipeline binds unchanged, so nothing this mixin does can throw.
  *
  * The group's source pipelines are classified before the pass shape is chosen: a HEAD inject on
@@ -84,7 +86,7 @@ public class VulkanChunkSectionsToRenderMixin {
 	 * Classifies every source pipeline {@code renderGroup} is about to bind, before the pass
 	 * descriptor exists. Mirrors the pipelines the method itself selects - the wireframe
 	 * debug override or each layer's own pipeline - so a first-encounter foreign terrain
-	 * pipeline latches camera-only here, and the pass-creation redirect below then reads a
+	 * pipeline latches camera-only here, and the pass-creation handler below then reads a
 	 * null velocity view and creates the exact vanilla one-attachment pass.
 	 */
 	@Inject(method = "renderGroup", at = @At("HEAD"))
@@ -123,7 +125,7 @@ public class VulkanChunkSectionsToRenderMixin {
 		}
 	}
 
-	@Redirect(
+	@WrapOperation(
 		method = "renderGroup",
 		at = @At(
 			value = "INVOKE",
@@ -137,14 +139,14 @@ public class VulkanChunkSectionsToRenderMixin {
 		final Optional<Vector4fc> clearColor,
 		final GpuTextureView depthTexture,
 		final OptionalDouble clearDepth,
-		// The enclosing renderGroup arguments, appended after the invocation arguments: the
-		// group decides whether the velocity attachment clears (opaque) or loads (translucent).
-		final ChunkSectionLayerGroup group,
-		final GpuSampler sampler
+		final Operation<RenderPass> original,
+		// The enclosing renderGroup argument: the group decides whether the velocity attachment
+		// clears (opaque) or loads (translucent).
+		@Local(argsOnly = true) final ChunkSectionLayerGroup group
 	) {
 		final GpuTextureView velocity = mcDlssTerrainVelocityView();
 		if (velocity == null) {
-			return encoder.createRenderPass(label, colorTexture, clearColor, depthTexture, clearDepth);
+			return original.call(encoder, label, colorTexture, clearColor, depthTexture, clearDepth);
 		}
 
 		// The velocity clear lifecycle: the attachment is cleared to the invalid sentinel before
@@ -177,22 +179,26 @@ public class VulkanChunkSectionsToRenderMixin {
 		return pass;
 	}
 
-	@Redirect(
+	@WrapOperation(
 		method = "renderGroup",
 		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderPass;setPipeline(Lcom/mojang/blaze3d/pipeline/RenderPipeline;)V")
 	)
-	private void mcDlssChunkSetPipeline(final RenderPass pass, final RenderPipeline pipeline) {
+	private void mcDlssChunkSetPipeline(
+		final RenderPass pass,
+		final RenderPipeline pipeline,
+		final Operation<Void> original
+	) {
 		if (VELOCITY_PASS.get() == pass) {
 			// The terrain writer twin: the plain two-target velocity twin (which keeps the
 			// source fragment shader and is the M-4 descriptor contract) with the mc-dlss
 			// terrain velocity shader and its VelocityConfig uniform layout layered on, so the
 			// pass writes jitter-stripped NDC camera motion into color target 1. The uniform
-			// block was written by the pass-creation redirect into the shared buffer this pass
+			// block was written by the pass-creation handler into the shared buffer this pass
 			// binds, so every layer in the pass reads this frame's reprojection.
 			pass.setUniform(TerrainVelocityUniforms.UNIFORM_NAME, VELOCITY_UNIFORM_BUFFER.slice());
-			pass.setPipeline(terrainVelocityTwin(velocityTwin(pipeline)));
+			original.call(pass, writerTwin(pipeline, VelocityWriter.TERRAIN));
 		} else {
-			pass.setPipeline(pipeline);
+			original.call(pass, pipeline);
 		}
 	}
 

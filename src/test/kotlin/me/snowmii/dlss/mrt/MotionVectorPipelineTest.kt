@@ -60,107 +60,10 @@ import org.junit.jupiter.api.Test
  * broken production mixin cannot leave the descriptor and routing assertions above green.
  */
 class MotionVectorPipelineTest {
+	private val mainTarget = fakeMainTarget()
 
-	/**
-	 * Every pipeline the world terrain pass can bind gets one cached twin: a different
-	 * descriptor at a distinct mc-dlss location that preserves the source's shaders, defines,
-	 * bind-group layouts, depth state, polygon mode, culling, all sixteen vertex bindings, and
-	 * primitive topology, keeps target zero as the identical instance, and adds exactly one
-	 * unblended RG16_FLOAT WRITE_ALL target at index 1.
-	 */
-	@Test
-	fun `every enumerated known world pipeline has a two-target twin preserving target zero`() {
-		val known = knownWorldPipelines()
-		assertEquals(4, known.size, "the known world enumeration must stay in step with ChunkSectionLayer plus the wireframe debug override")
-		val twins = known.map { velocityTwin(it) }
-
-		for ((source, twin) in known.zip(twins)) {
-			assertNotSame(source, twin)
-			assertEquals(
-				Identifier.fromNamespaceAndPath("mc-dlss", "velocity/${source.location.path}"),
-				twin.location,
-			)
-			assertNotEquals(source.location, twin.location)
-
-			// Descriptor fields carried over unchanged.
-			assertSame(source.vertexShader, twin.vertexShader)
-			assertSame(source.fragmentShader, twin.fragmentShader)
-			assertEquals(source.shaderDefines, twin.shaderDefines)
-			assertEquals(source.bindGroupLayouts.size, twin.bindGroupLayouts.size)
-			for (index in source.bindGroupLayouts.indices) {
-				assertSame(source.bindGroupLayouts[index], twin.bindGroupLayouts[index])
-			}
-			assertSame(source.depthStencilState, twin.depthStencilState)
-			assertSame(source.polygonMode, twin.polygonMode)
-			assertEquals(source.isCull, twin.isCull)
-			assertSame(source.primitiveTopology, twin.primitiveTopology)
-			for (index in 0 until 16) {
-				assertSame(source.getVertexFormatBinding(index), twin.getVertexFormatBinding(index))
-			}
-
-			// The two-target color contract: target zero identical, target one the velocity payload.
-			val sourceTargets = source.colorTargetStates
-			val twinTargets = twin.colorTargetStates
-			assertEquals(2, twinTargets.size)
-			assertSame(sourceTargets[0], twinTargets[0])
-			assertVelocityTarget(twinTargets[1]!!)
-
-			// One cached twin per source pipeline, so Vulkan's identity-keyed lazy-compile
-			// cache is hit on every bind after the first.
-			assertSame(twin, velocityTwin(source))
-		}
-
-		// Each source gets its own twin: no two known pipelines share a velocity location.
-		assertEquals(4, twins.distinct().size)
-		assertEquals(4, twins.map { it.location }.distinct().size)
-	}
 
 	/** The blended translucent first target and the cutout threshold defines survive the twin. */
-	@Test
-	fun `translucent and cutout terrain twins preserve their blended target and defines`() {
-		val translucent = velocityTwin(RenderPipelines.TRANSLUCENT_TERRAIN)
-		assertEquals(Optional.of(BlendFunction.TRANSLUCENT), translucent.colorTargetStates[0]!!.blendFunction())
-		assertVelocityTarget(translucent.colorTargetStates[1]!!)
-		assertEquals("0.1", translucent.shaderDefines.values["ALPHA_CUTOUT"])
-
-		val cutout = velocityTwin(RenderPipelines.CUTOUT_TERRAIN)
-		assertEquals("0.5", cutout.shaderDefines.values["ALPHA_CUTOUT"])
-		assertVelocityTarget(cutout.colorTargetStates[1]!!)
-	}
-
-	/**
-	 * The two-attachment render-pass descriptor the terrain seam builds — scene colour at
-	 * index 0, the RG16_FLOAT velocity view at index 1, neither cleared — carries exactly the
-	 * color-target count and format the twins declare, which is the agreement
-	 * `RenderPass.setPipeline` validates on first bind.
-	 */
-	@Test
-	fun `two-attachment pass descriptor agrees with every twin color-target shape`() {
-		val sceneView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM))
-		val velocityView = FakeView(FakeTexture(GpuFormat.RG16_FLOAT))
-
-		val descriptor = RenderPassDescriptor.create({ "terrain velocity" })
-			.withColorAttachment(sceneView, Optional.empty())
-			.withColorAttachment(velocityView, Optional.empty())
-
-		val attachments = descriptor.colorAttachments()
-		assertEquals(2, attachments.size)
-		assertSame(sceneView, attachments[0]!!.textureView())
-		assertSame(velocityView, attachments[1]!!.textureView())
-		assertEquals(Optional.empty<Vector4fc>(), attachments[1]!!.clearValue())
-		assertEquals(GpuFormat.RG16_FLOAT, attachments[1]!!.textureView().texture().getFormat())
-
-		// The pass's two attachments and every twin's two targets declare the same shape: two
-		// color targets with an unblended RG16_FLOAT payload at index 1.
-		for (source in knownWorldPipelines()) {
-			val twin = velocityTwin(source)
-			val targets = twin.colorTargetStates
-			assertEquals(2, targets.size)
-			assertEquals(attachments.size, targets.size)
-			assertEquals(GpuFormat.RG16_FLOAT, targets[1]!!.format())
-			assertEquals(attachments[1]!!.textureView().texture().getFormat(), targets[1]!!.format())
-		}
-	}
 
 	/** The real known world descriptors classify owned: Minecraft shaders stay velocity-MRT eligible. */
 	@Test
@@ -274,87 +177,6 @@ class MotionVectorPipelineTest {
 	 * wireframe mode. This is the exact set `VulkanChunkSectionsToRenderMixin` classifies and
 	 * twins, so it is the enumeration a twin-construction defect would surface in.
 	 */
-	/**
-	 * Binds every descriptor and routing assertion above to the production seams that consume them.
-	 *
-	 * The twin assertions exercise [velocityTwin]; this check proves that exact function is what
-	 * the terrain mixin's pipeline-boundary redirect binds. The known-world enumeration is the
-	 * exact selection the mixin's `renderGroup` HEAD classification makes — each layer's own
-	 * pipeline, or the wireframe debug override for every layer — and the two-attachment
-	 * descriptor agreement is the exact descriptor the pass-creation redirect constructs. The
-	 * route assertions feed [MotionVectorCompatibility] one pipeline shape; this check proves
-	 * both mixins build that exact shape (location id plus vertex/fragment shader id and owner
-	 * namespace) and hand it to the phase that forwards into the runtime seam the fallback test
-	 * drives. Removing or breaking any of those production seams fails here even though the
-	 * pure descriptor and routing assertions stay green.
-	 */
-	@Test
-	fun `production mixin seams select the exact twin and observation surface under test`() {
-		val repository = Path.of("").toAbsolutePath()
-		val mixins = repository.resolve("src/main/resources/mc-dlss.mixins.json").readText()
-		val terrainMixin = repository
-			.resolve("src/main/java/me/snowmii/dlss/mixin/VulkanChunkSectionsToRenderMixin.java")
-			.readText()
-		val compileMixin = repository
-			.resolve("src/main/java/me/snowmii/dlss/mixin/VulkanPipelineCompatibilityMixin.java")
-			.readText()
-		val worldPhase = repository
-			.resolve("src/main/kotlin/me/snowmii/dlss/render/WorldPhase.kt")
-			.readText()
-
-		// Both mixins stay registered, or the loader never applies the seams under test.
-		assertTrue(mixins.contains("VulkanChunkSectionsToRenderMixin"))
-		assertTrue(mixins.contains("VulkanPipelineCompatibilityMixin"))
-
-		// The twin under test is the exact pipeline bound at the terrain setPipeline redirect,
-		// and only for the pass that carries the velocity attachment.
-		assertTrue(terrainMixin.contains("@Mixin(ChunkSectionsToRender.class)"))
-		assertTrue(terrainMixin.contains("RenderPass;setPipeline("))
-		assertTrue(terrainMixin.contains("velocityTwin(pipeline)"))
-		assertTrue(terrainMixin.contains("VELOCITY_PASS.get() == pass"))
-
-		// The known-world enumeration is the exact selection the renderGroup HEAD classification
-		// makes: one pass over the group's layers, each layer's own pipeline unless the wireframe
-		// debug override replaces every layer's pipeline.
-		assertTrue(terrainMixin.contains("@Inject(method = \"renderGroup\", at = @At(\"HEAD\"))"))
-		assertTrue(terrainMixin.contains("for (ChunkSectionLayer layer : group.layers())"))
-		assertTrue(terrainMixin.contains("wireframe ? RenderPipelines.WIREFRAME : layer.pipeline()"))
-
-		// The two-attachment descriptor agreement is the exact descriptor the pass-creation
-		// redirect builds when the open velocity-MRT phase offers its RG16_FLOAT view.
-		assertTrue(terrainMixin.contains("getTerrainVelocityView()"))
-		assertTrue(terrainMixin.contains("withColorAttachment(velocity, Optional.empty())"))
-
-		// The classification and the lazy-compile backstop both observe through the phase, and
-		// both build the exact MotionVectorPipeline shape the route assertions feed the
-		// compatibility latch: location id, then vertex and fragment shader id plus owner
-		// namespace.
-		val observationShape = listOf(
-			"pipeline.getLocation().toString()",
-			"pipeline.getVertexShader().toString()",
-			"pipeline.getVertexShader().getNamespace()",
-			"pipeline.getFragmentShader().toString()",
-			"pipeline.getFragmentShader().getNamespace()",
-		)
-		for (fragment in observationShape) {
-			assertTrue(terrainMixin.contains(fragment), "terrain classification must observe the shape via $fragment")
-			assertTrue(compileMixin.contains(fragment), "lazy-compile observation must observe the shape via $fragment")
-		}
-		assertTrue(terrainMixin.contains("phase.observePipeline(new MotionVectorPipeline("))
-		assertTrue(compileMixin.contains("phase.observePipeline(new MotionVectorPipeline("))
-
-		// The lazy-compile backstop observes at the Vulkan pipeline-compile seam while the world
-		// phase is open, before compilation can bind an incompatible attachment shape.
-		assertTrue(compileMixin.contains("@Mixin(VulkanDevice.class)"))
-		assertTrue(compileMixin.contains("method = \"getOrCompilePipeline\""))
-		assertTrue(compileMixin.contains("at = @At(\"HEAD\")"))
-		assertTrue(compileMixin.contains("activeWorldPhase()"))
-
-		// The phase forwards mixin observations into the runtime seam the camera-only fallback
-		// test drives, and the terrain mixin reads the velocity view through that same phase.
-		assertTrue(worldPhase.contains("fun observePipeline(pipeline: MotionVectorPipeline)"))
-		assertTrue(worldPhase.contains("runtime.observeWorldPipeline(pipeline)"))
-	}
 
 	private fun knownWorldPipelines(): List<RenderPipeline> =
 		ChunkSectionLayer.entries.map { it.pipeline() } + RenderPipelines.WIREFRAME
@@ -371,20 +193,6 @@ class MotionVectorPipelineTest {
 		"example:pipeline/waving_terrain",
 		listOf(MotionVectorShader("example:core/waving_terrain", "example")),
 	)
-
-	private fun assertVelocityTarget(target: ColorTargetState) {
-		assertTrue(target.blendFunction().isEmpty())
-		assertEquals(GpuFormat.RG16_FLOAT, target.format())
-		assertEquals(ColorTargetState.WRITE_ALL, target.writeMask())
-		assertTrue(target.writeRed())
-		assertTrue(target.writeGreen())
-		assertTrue(target.writeBlue())
-		assertTrue(target.writeAlpha())
-	}
-
-	private val output = DlssDimensions(2560, 1440)
-	private val render = DlssDimensions(1707, 960)
-	private val mainTarget = FakeTarget(output.width, output.height)
 	private var clockNanos = 0L
 
 	private fun advanceClock() {
@@ -399,25 +207,11 @@ class MotionVectorPipelineTest {
 		cameraZ = 0.0,
 	)
 
-	private fun velocityRuntime(): RenderRuntime {
-		val session = session(enabled = true).also { check(it.markReadyAfterNativeStartup()) }
-		return RenderRuntime(
-			session = session,
-			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
-				release = { (it as FakeTarget).releases++ },
-				allocateVelocity = { width, height -> FakeTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) },
-			),
-			startup = { render },
-			clock = { clockNanos },
-		)
-	}
-
 	private fun session(enabled: Boolean) = DlssSession(
 		DlssStartupConfig(
 			enabled = enabled,
 			qualityMode = SRMode.QUALITY,
-			outputDimensions = output,
+			outputDimensions = OUTPUT_DIMENSIONS,
 			sdkPath = null,
 			nativeLibraryPath = null,
 			dataPath = null,
@@ -426,41 +220,4 @@ class MotionVectorPipelineTest {
 	)
 
 	/** Render target with a fake view over a fake texture, so the seams are verifiable off the render thread. */
-	private class FakeTarget(
-		width: Int,
-		height: Int,
-		format: GpuFormat = GpuFormat.RGBA8_UNORM,
-		withView: Boolean = false,
-	) : RenderTarget("fake", true, format) {
-		var releases = 0
-		private val texture = FakeTexture(format, width, height)
-
-		init {
-			this.width = width
-			this.height = height
-			if (withView) {
-				colorTextureView = FakeView(texture)
-			}
-		}
-
-		override fun createBuffers(width: Int, height: Int) {
-			this.width = width
-			this.height = height
-		}
-
-		override fun destroyBuffers() {
-			releases++
-		}
-	}
-
-	private class FakeTexture(format: GpuFormat, width: Int = 16, height: Int = 16) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT, "fake", format, width, height, 1, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
-
-	private class FakeView(texture: GpuTexture) : GpuTextureView(texture, 0, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
 }

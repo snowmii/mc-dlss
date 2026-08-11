@@ -502,7 +502,7 @@ object EntityVelocityRender {
 			descriptor.withRenderArea(RenderPass.RenderArea(0, 0, colorTexture.getWidth(0), colorTexture.getHeight(0)))
 
 			encoder.createRenderPass(descriptor).use { pass ->
-				pass.setPipeline(entityVelocityTwin(velocityTwin(prepared.pipeline())))
+				pass.setPipeline(writerTwin(prepared.pipeline(), VelocityWriter.ENTITY))
 				if (prepared.scissorState().enabled()) {
 					val scissor = prepared.scissorState()
 					pass.enableScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height())

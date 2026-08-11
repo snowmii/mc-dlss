@@ -1,6 +1,7 @@
 package me.snowmii.dlss.mrt
 
 import com.mojang.blaze3d.GpuFormat
+import com.mojang.blaze3d.pipeline.BindGroupLayout
 import com.mojang.blaze3d.pipeline.ColorTargetState
 import com.mojang.blaze3d.pipeline.RenderPipeline
 import java.util.Optional
@@ -25,450 +26,106 @@ import net.minecraft.resources.Identifier
  * bind. Reusing the one twin per source pipeline keeps the compile at the first bind, exactly
  * like the source pipeline's own cache entry. Terrain layers are static pipelines, so the same
  * twin instance is what every frame's terrain pass binds.
+ *
+ * This plain twin keeps the *source* fragment shader — that is the M-4 descriptor contract — so
+ * it cannot write the velocity payload itself. A pass that has to write the payload binds a
+ * [writerTwin] instead.
  */
 fun velocityTwin(source: RenderPipeline): RenderPipeline =
-	velocityTwins.computeIfAbsent(source, ::buildVelocityTwin)
+	velocityTwins.computeIfAbsent(source) { plainTwin(it) }
+
+/**
+ * The velocity payload writers, one per world pass family that has to fill the velocity
+ * attachment itself.
+ *
+ * Each entry names the fragment shader swapped in for the source's and the one bind-group layout
+ * added for the payload block that shader declares — Vulkan's lazy compile resolves the block by
+ * name against the pipeline's layouts. Several writers deliberately share
+ * [TerrainVelocityUniforms]' `VelocityConfig` design rather than introduce a payload of their own.
+ *
+ * [segment] is the twin's location segment, so a writer twin can never collide with the plain
+ * twin's `velocity/pipeline/<name>` location or with another writer's.
+ */
+enum class VelocityWriter(
+	val segment: String,
+	val fragmentShader: Identifier,
+	val layout: BindGroupLayout,
+) {
+	TERRAIN("terrain", TerrainVelocityUniforms.FRAGMENT_SHADER, TerrainVelocityUniforms.LAYOUT),
+	ENTITY("entity", EntityVelocityUniforms.FRAGMENT_SHADER, EntityVelocityUniforms.LAYOUT),
+	WEATHER("weather", WeatherVelocityRender.FRAGMENT_SHADER, WeatherVelocityRender.LAYOUT),
+	PARTICLE("particle", ParticleVelocityRender.FRAGMENT_SHADER, ParticleVelocityRender.LAYOUT),
+	MOVING_BLOCK("movingblock", MovingBlockVelocityRender.FRAGMENT_SHADER, MovingBlockVelocityRender.LAYOUT),
+	CRUMBLING("crumbling", BreakingBlockVelocityRender.FRAGMENT_SHADER, BreakingBlockVelocityRender.LAYOUT),
+	CLOUD("cloud", CloudVelocityRender.FRAGMENT_SHADER, CloudVelocityRender.LAYOUT),
+	;
+
+	internal val cache = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
+}
+
+/**
+ * The cached [writer] twin of [source]: the plain two-target [velocityTwin] with the writer's
+ * velocity fragment shader swapped in and its payload layout added.
+ *
+ * The two-target shape, and with it the pass's attachment count and formats, comes from the plain
+ * twin; everything else the source carries — vertex shader, defines, the source bind-group
+ * layouts, depth state, polygon mode, culling, all sixteen vertex bindings, primitive topology,
+ * and the first color target with its blend — survives untouched, so the pass's color output
+ * stays byte-identical to vanilla and only the payload at color target 1 is new.
+ *
+ * Keyed by the source pipeline, so every bind after the first hits Vulkan's lazy-compile cache.
+ */
+fun writerTwin(source: RenderPipeline, writer: VelocityWriter): RenderPipeline =
+	writer.cache.computeIfAbsent(source) { build(velocityTwin(it), writerLocation(it, writer)) {
+		withFragmentShader(writer.fragmentShader)
+		withBindGroupLayout(writer.layout)
+	} }
 
 private val velocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 
-/**
- * Cached terrain writer twin: the plain two-target velocity twin with the mc-dlss terrain
- * velocity fragment shader swapped in for the source's fragment shader and the
- * [TerrainVelocityUniforms.LAYOUT] uniform layout added.
- *
- * The plain [velocityTwin] keeps the source fragment shader - that is the M-4 descriptor
- * contract - so it cannot write the velocity payload itself. The terrain pass binds this twin
- * instead: the two-target shape comes from the plain twin, the velocity shader writes
- * jitter-stripped NDC camera motion into the payload at color target 1, and the added layout
- * carries the `VelocityConfig` uniform block the shader declares, which Vulkan's lazy compile
- * resolves by name against the pipeline's layouts. Everything else - vertex shader, defines,
- * depth state, polygon mode, culling, all sixteen vertex bindings, primitive topology, and the
- * first color target - is the plain twin's, so the pass's attachment count and format agree
- * with the pipeline exactly as they do for the plain twin.
- *
- * Keyed by the plain twin (which is itself cached per source pipeline), so every terrain pass
- * bind after the first hits the lazy-compile cache. The twin lives at a distinct mc-dlss
- * location - `velocity/terrain/<name>` - so it never collides with the plain twin's
- * `velocity/pipeline/<name>` location.
- */
-fun terrainVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
-	terrainVelocityTwins.computeIfAbsent(plainTwin, ::buildTerrainVelocityTwin)
+private fun plainTwin(source: RenderPipeline): RenderPipeline =
+	build(source, Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, "$VELOCITY_PATH_PREFIX${source.path}")) {
+		withColorTargetState(1, VELOCITY_COLOR_TARGET)
+	}
 
 /**
- * Cached entity-model writer twin: the plain two-target velocity twin with the mc-dlss entity
- * velocity fragment shader and its per-object reprojection layout layered on top. The source
- * entity shader's defines and all source layouts remain intact, so `EMISSIVE`, `DISSOLVE`, face
- * lighting, overlay, and light-map behavior continue to compile and render exactly as before.
+ * Rebuilds [source]'s full descriptor at [location] through the public [RenderPipeline.Snippet]
+ * carrier, then applies [edits]. Every field the snippet carries round-trips verbatim.
  */
-fun entityVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
-	entityVelocityTwins.computeIfAbsent(plainTwin, ::buildEntityVelocityTwin)
-
-/**
- * Cached weather writer twin: the plain two-target velocity twin with the mc-dlss weather
- * velocity fragment shader and the existing VelocityConfig uniform layout layered on top.
- *
- * The weather pass is the one remaining bespoke world pass: `WeatherEffectRenderer.render`
- * creates a single pass over the weather target with `WEATHER_DEPTH_WRITE` or
- * `WEATHER_NO_DEPTH_WRITE` and draws the CPU-baked rain and snow columns. The pass-creation
- * redirect binds this twin only while an open VELOCITY_MRT phase offers the scene velocity
- * view: the two-target shape comes from the plain twin, the velocity shader reproduces the
- * source core/particle color output byte-identically and writes jitter-stripped NDC camera
- * motion into the payload at color target 1, and the added layout is the terrain writer's own
- * `VelocityConfig` layout, because the weather writer fills that existing payload block
- * rather than introducing a new uniform design. Everything else - vertex shader, defines,
- * the other bind-group layouts, depth state (the depth-write variant's write state included),
- * polygon mode, culling, all sixteen vertex bindings, primitive topology, and the first
- * color target (the weather target's translucent blend) - is the plain twin's, so the pass's
- * attachment count and format agree with the pipeline exactly as they do for the plain twin.
- *
- * Keyed by the plain twin (which is itself cached per source pipeline), so every weather pass
- * bind after the first hits the lazy-compile cache. The twin lives at a distinct mc-dlss
- * location - `velocity/weather/<name>` - so it never collides with the plain twin's
- * `velocity/pipeline/<name>` location or the terrain/entity writer twins.
- */
-fun weatherVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
-	weatherVelocityTwins.computeIfAbsent(plainTwin, ::buildWeatherVelocityTwin)
-
-/**
- * Cached moving-block writer twin: the plain two-target velocity twin with the mc-dlss moving-
- * block velocity shader and the existing moving-block payload layout layered on top.
- *
- * The piston moving-block render types bind the owned core/block pipeline family (`SOLID_BLOCK`
- * and `CUTOUT_BLOCK` on the main target), and the prepared-draw redirect binds this twin only
- * for those owned main-target draws that carry a bound moving-block identity. The two-target
- * shape comes from the plain twin, the swapped-in fragment shader is the moving-block writer's
- * own `core/velocity_block` - which is the vanilla `core/block` fragment body verbatim plus
- * the velocity-MRT payload write, so block color output stays byte-identical - and the added
- * layout is the writer's `BlockVelocityConfig` layout, the existing payload design the writer
- * fills on the draw encoder. Everything else - vertex shader, defines, the other bind-group
- * layouts, depth state, polygon mode, culling, all sixteen vertex bindings, primitive topology,
- * and the first color target - is the plain twin's, so the pass's attachment count and format
- * agree with the pipeline exactly as they do for the plain twin.
- *
- * Keyed by the plain twin (which is itself cached per source pipeline), so every moving-block
- * draw bind after the first hits the lazy-compile cache. The twin lives at a distinct mc-dlss
- * location - `velocity/movingblock/<name>` - so it never collides with the plain twin's
- * `velocity/pipeline/<name>` location or the terrain/entity/weather/particle writer twins.
- */
-fun movingBlockVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
-	movingBlockVelocityTwins.computeIfAbsent(plainTwin, ::buildMovingBlockVelocityTwin)
-
-/**
- * Cached breaking-block crumbling writer twin: the plain two-target velocity twin with the
- * mc-dlss crumbling velocity shader and the existing terrain VelocityConfig uniform layout
- * layered on top.
- *
- * The crumbling overlay - `ModelBakery.DESTROY_TYPES`, ten static stages of the mapped
- * `CRUMBLING` pipeline - draws through the same `PreparedRenderType.drawFromBuffer` seam the
- * entity and moving-block writers use, and the prepared-draw dispatch binds this twin only for
- * owned main-target crumbling draws while an open VELOCITY_MRT phase offers the scene velocity
- * view. The two-target shape comes from the plain twin, the swapped-in fragment shader is the
- * crumbling writer's own `core/velocity_crumbling` - which is the vanilla
- * `core/rendertype_crumbling` fragment body verbatim (the alpha discard between the
- * vertex-color and ColorModulator multiplies included) plus the velocity-MRT payload write, so
- * overlay color output stays byte-identical - and the added layout is the terrain writer's own
- * `VelocityConfig` layout, because the crumbling overlay carries no block identity or history
- * of its own and the writer fills that existing payload block rather than introducing a new
- * uniform design. Everything else - vertex shader, defines, the other bind-group layouts,
- * depth state, polygon mode, culling, all sixteen vertex bindings, primitive topology, and the
- * first color target (the overlay's DST_COLOR/SRC_COLOR multiply blend) - is the plain twin's,
- * so the pass's attachment count and format agree with the pipeline exactly as they do for the
- * plain twin.
- *
- * Keyed by the plain twin (which is itself cached per source pipeline), so every crumbling
- * draw bind after the first hits the lazy-compile cache. The twin lives at a distinct mc-dlss
- * location - `velocity/crumbling/<name>` - so it never collides with the plain twin's
- * `velocity/pipeline/<name>` location or the terrain/entity/weather/particle/moving-block
- * writer twins.
- */
-fun crumblingVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
-	crumblingVelocityTwins.computeIfAbsent(plainTwin, ::buildCrumblingVelocityTwin)
-
-/**
- * Cached cloud writer twin: the plain two-target velocity twin with the mc-dlss cloud
- * velocity fragment shader and its own CloudVelocityConfig uniform layout layered on top.
- *
- * `CloudRenderer.render` is the one remaining bespoke world pass before the protected hand
- * seam: it creates a single pass over the clouds target (or the main target without the
- * transparency chain) with `CLOUDS` or `FLAT_CLOUDS` and draws the CPU-baked cloud cells
- * through the `CloudFaces` texel buffer, the `CloudInfo`/`DynamicTransforms` uniforms, and
- * one QUADS index draw. The pass-creation redirect binds this twin only while an open
- * VELOCITY_MRT phase offers the scene velocity view: the two-target shape comes from the
- * plain twin, the swapped-in fragment shader is the cloud writer's own `core/velocity_clouds`
- * - which is the vanilla `core/rendertype_clouds` fragment body verbatim (the vertex color
- * with only the fog alpha fade) plus the velocity-MRT payload write, so cloud color output
- * stays byte-identical - and the added layout is the writer's own `CloudVelocityConfig`
- * layout, the payload design the writer fills with this frame's cloud-offset drift composed
- * into the camera reprojection. Everything else - vertex shader, defines, the other
- * bind-group layouts (`Globals`, `MatricesProjection`, `Fog`, and the `CloudInfo`/`CloudFaces`
- * layout, so the source binds resolve by name exactly as before), depth state, polygon mode,
- * culling (the flat variant's cull-off state included), the empty vertex-binding set (the
- * geometry comes from `CloudFaces` and `gl_VertexID`), primitive topology, and the first
- * color target (the clouds target's translucent blend) - is the plain twin's, so the pass's
- * attachment count and format agree with the pipeline exactly as they do for the plain twin.
- *
- * Keyed by the plain twin (which is itself cached per source pipeline), so every cloud pass
- * bind after the first hits the lazy-compile cache. The twin lives at a distinct mc-dlss
- * location - `velocity/cloud/<name>` - so it never collides with the plain twin's
- * `velocity/pipeline/<name>` location or the terrain/entity/weather/particle/moving-block/
- * crumbling writer twins.
- */
-fun cloudVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
-	cloudVelocityTwins.computeIfAbsent(plainTwin, ::buildCloudVelocityTwin)
-
-private val terrainVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
-private val entityVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
-private val weatherVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
-private val particleVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
-private val movingBlockVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
-private val crumblingVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
-private val cloudVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
-
-private fun buildVelocityTwin(source: RenderPipeline): RenderPipeline {
+private fun build(
+	source: RenderPipeline,
+	location: Identifier,
+	edits: RenderPipeline.Builder.() -> Unit,
+): RenderPipeline {
 	val snippet = RenderPipeline.Snippet(
 		Optional.of(source.vertexShader),
 		Optional.of(source.fragmentShader),
 		Optional.of(source.shaderDefines),
 		Optional.of(source.bindGroupLayouts),
 		source.colorTargetStates,
-		source.colorTargetStates?.size ?: 0,
+		source.colorTargetStates.size,
 		Optional.ofNullable(source.depthStencilState),
 		Optional.of(source.polygonMode),
 		Optional.of(source.isCull),
 		source.vertexFormatBindings,
 		Optional.of(source.primitiveTopology),
 	)
-
-	return RenderPipeline.builder(snippet)
-		.withLocation(velocityLocation(source.location))
-		.withColorTargetState(1, VELOCITY_COLOR_TARGET)
-		.build()
-}
-
-private fun buildTerrainVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
-	val snippet = RenderPipeline.Snippet(
-		Optional.of(plainTwin.vertexShader),
-		Optional.of(plainTwin.fragmentShader),
-		Optional.of(plainTwin.shaderDefines),
-		Optional.of(plainTwin.bindGroupLayouts),
-		plainTwin.colorTargetStates,
-		plainTwin.colorTargetStates?.size ?: 0,
-		Optional.ofNullable(plainTwin.depthStencilState),
-		Optional.of(plainTwin.polygonMode),
-		Optional.of(plainTwin.isCull),
-		plainTwin.vertexFormatBindings,
-		Optional.of(plainTwin.primitiveTopology),
-	)
-
-	return RenderPipeline.builder(snippet)
-		.withLocation(terrainVelocityLocation(plainTwin.location))
-		.withFragmentShader(TerrainVelocityUniforms.FRAGMENT_SHADER)
-		.withBindGroupLayout(TerrainVelocityUniforms.LAYOUT)
-		.build()
-}
-
-private fun buildEntityVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
-	val snippet = RenderPipeline.Snippet(
-		Optional.of(plainTwin.vertexShader),
-		Optional.of(plainTwin.fragmentShader),
-		Optional.of(plainTwin.shaderDefines),
-		Optional.of(plainTwin.bindGroupLayouts),
-		plainTwin.colorTargetStates,
-		plainTwin.colorTargetStates?.size ?: 0,
-		Optional.ofNullable(plainTwin.depthStencilState),
-		Optional.of(plainTwin.polygonMode),
-		Optional.of(plainTwin.isCull),
-		plainTwin.vertexFormatBindings,
-		Optional.of(plainTwin.primitiveTopology),
-	)
-
-	return RenderPipeline.builder(snippet)
-		.withLocation(entityVelocityLocation(plainTwin.location))
-		.withFragmentShader(EntityVelocityUniforms.FRAGMENT_SHADER)
-		.withBindGroupLayout(EntityVelocityUniforms.LAYOUT)
-		.build()
+	return RenderPipeline.builder(snippet).withLocation(location).apply(edits).build()
 }
 
 /**
- * Cached particle writer twin: the plain two-target velocity twin with the existing
- * particle-body velocity shader and the existing VelocityConfig uniform layout layered on
- * top.
- *
- * `QuadParticleFeatureRenderer.executeGroup` is the one method that draws both particle
- * families - the solid group into the scene (main) target, the translucent group into the
- * particles target - and the static `drawLayers` binds each layer's `OPAQUE_PARTICLE` /
- * `TRANSLUCENT_PARTICLE` pipeline. The pass-creation redirect binds this twin only while an
- * open VELOCITY_MRT phase offers the scene velocity view: the two-target shape comes from
- * the plain twin, the swapped-in fragment shader is the weather writer's shader - which IS
- * the vanilla `core/particle` fragment body verbatim plus the velocity-MRT payload write,
- * and the particle pipelines bind `core/particle`, so particle color output stays
- * byte-identical - and the added layout is the terrain writer's own `VelocityConfig` layout,
- * because the particle writer fills that existing payload block rather than introducing a
- * new uniform design. The mapped particle render state carries no stable previous identity,
- * so the shader writes jitter-stripped NDC camera motion into the payload at color target 1
- * exactly like the weather writer, with no particle history of its own. Everything else -
- * vertex shader, defines, the other bind-group layouts, depth state, polygon mode, culling,
- * all sixteen vertex bindings, primitive topology, and the first color target (the solid
- * variant's unblended state or the translucent variant's blend) - is the plain twin's, so
- * the pass's attachment count and format agree with the pipeline exactly as they do for the
- * plain twin.
- *
- * Keyed by the plain twin (which is itself cached per source pipeline), so every particle
- * pass bind after the first hits the lazy-compile cache. The twin lives at a distinct
- * mc-dlss location - `velocity/particle/<name>` - so it never collides with the plain
- * twin's `velocity/pipeline/<name>` location or the terrain/entity/weather writer twins.
+ * `velocity/<segment>/<name>` for a source at `pipeline/<name>`: distinct from the plain twin's
+ * `velocity/pipeline/<name>` and from every other writer's segment. A source that is not under
+ * `pipeline/` keeps its full path rather than guessing at a name it does not carry.
  */
-fun particleVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
-	particleVelocityTwins.computeIfAbsent(plainTwin, ::buildParticleVelocityTwin)
-
-private fun buildParticleVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
-	val snippet = RenderPipeline.Snippet(
-		Optional.of(plainTwin.vertexShader),
-		Optional.of(plainTwin.fragmentShader),
-		Optional.of(plainTwin.shaderDefines),
-		Optional.of(plainTwin.bindGroupLayouts),
-		plainTwin.colorTargetStates,
-		plainTwin.colorTargetStates?.size ?: 0,
-		Optional.ofNullable(plainTwin.depthStencilState),
-		Optional.of(plainTwin.polygonMode),
-		Optional.of(plainTwin.isCull),
-		plainTwin.vertexFormatBindings,
-		Optional.of(plainTwin.primitiveTopology),
+private fun writerLocation(source: RenderPipeline, writer: VelocityWriter): Identifier =
+	Identifier.fromNamespaceAndPath(
+		VELOCITY_NAMESPACE,
+		"$VELOCITY_PATH_PREFIX${writer.segment}/${source.path.removePrefix("pipeline/")}",
 	)
 
-	return RenderPipeline.builder(snippet)
-		.withLocation(particleVelocityLocation(plainTwin.location))
-		.withFragmentShader(ParticleVelocityRender.FRAGMENT_SHADER)
-		.withBindGroupLayout(ParticleVelocityRender.LAYOUT)
-		.build()
-}
-
-private fun buildWeatherVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
-	val snippet = RenderPipeline.Snippet(
-		Optional.of(plainTwin.vertexShader),
-		Optional.of(plainTwin.fragmentShader),
-		Optional.of(plainTwin.shaderDefines),
-		Optional.of(plainTwin.bindGroupLayouts),
-		plainTwin.colorTargetStates,
-		plainTwin.colorTargetStates?.size ?: 0,
-		Optional.ofNullable(plainTwin.depthStencilState),
-		Optional.of(plainTwin.polygonMode),
-		Optional.of(plainTwin.isCull),
-		plainTwin.vertexFormatBindings,
-		Optional.of(plainTwin.primitiveTopology),
-	)
-
-	return RenderPipeline.builder(snippet)
-		.withLocation(weatherVelocityLocation(plainTwin.location))
-		.withFragmentShader(WeatherVelocityRender.FRAGMENT_SHADER)
-		.withBindGroupLayout(WeatherVelocityRender.LAYOUT)
-		.build()
-}
-
-private fun buildMovingBlockVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
-	val snippet = RenderPipeline.Snippet(
-		Optional.of(plainTwin.vertexShader),
-		Optional.of(plainTwin.fragmentShader),
-		Optional.of(plainTwin.shaderDefines),
-		Optional.of(plainTwin.bindGroupLayouts),
-		plainTwin.colorTargetStates,
-		plainTwin.colorTargetStates?.size ?: 0,
-		Optional.ofNullable(plainTwin.depthStencilState),
-		Optional.of(plainTwin.polygonMode),
-		Optional.of(plainTwin.isCull),
-		plainTwin.vertexFormatBindings,
-		Optional.of(plainTwin.primitiveTopology),
-	)
-
-	return RenderPipeline.builder(snippet)
-		.withLocation(movingBlockVelocityLocation(plainTwin.location))
-		.withFragmentShader(MovingBlockVelocityRender.FRAGMENT_SHADER)
-		.withBindGroupLayout(MovingBlockVelocityRender.LAYOUT)
-		.build()
-}
-
-private fun buildCrumblingVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
-	val snippet = RenderPipeline.Snippet(
-		Optional.of(plainTwin.vertexShader),
-		Optional.of(plainTwin.fragmentShader),
-		Optional.of(plainTwin.shaderDefines),
-		Optional.of(plainTwin.bindGroupLayouts),
-		plainTwin.colorTargetStates,
-		plainTwin.colorTargetStates?.size ?: 0,
-		Optional.ofNullable(plainTwin.depthStencilState),
-		Optional.of(plainTwin.polygonMode),
-		Optional.of(plainTwin.isCull),
-		plainTwin.vertexFormatBindings,
-		Optional.of(plainTwin.primitiveTopology),
-	)
-
-	return RenderPipeline.builder(snippet)
-		.withLocation(crumblingVelocityLocation(plainTwin.location))
-		.withFragmentShader(BreakingBlockVelocityRender.FRAGMENT_SHADER)
-		.withBindGroupLayout(BreakingBlockVelocityRender.LAYOUT)
-		.build()
-}
-
-private fun buildCloudVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
-	val snippet = RenderPipeline.Snippet(
-		Optional.of(plainTwin.vertexShader),
-		Optional.of(plainTwin.fragmentShader),
-		Optional.of(plainTwin.shaderDefines),
-		Optional.of(plainTwin.bindGroupLayouts),
-		plainTwin.colorTargetStates,
-		plainTwin.colorTargetStates?.size ?: 0,
-		Optional.ofNullable(plainTwin.depthStencilState),
-		Optional.of(plainTwin.polygonMode),
-		Optional.of(plainTwin.isCull),
-		plainTwin.vertexFormatBindings,
-		Optional.of(plainTwin.primitiveTopology),
-	)
-
-	return RenderPipeline.builder(snippet)
-		.withLocation(cloudVelocityLocation(plainTwin.location))
-		.withFragmentShader(CloudVelocityRender.FRAGMENT_SHADER)
-		.withBindGroupLayout(CloudVelocityRender.LAYOUT)
-		.build()
-}
-
-private fun velocityLocation(source: Identifier): Identifier =
-	Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, "$VELOCITY_PATH_PREFIX${source.path}")
-
-/**
- * The terrain twin's location: the plain twin's `velocity/pipeline/<name>` path with the
- * `pipeline` segment replaced by `terrain`, so the two never share a location. A plain twin
- * always sits under `velocity/pipeline/`; anything else keeps the full path rather than
- * guessing at a source name it does not carry.
- */
-private fun terrainVelocityLocation(plainTwinLocation: Identifier): Identifier {
-	val path = plainTwinLocation.path
-	val terrainPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
-		"${VELOCITY_PATH_PREFIX}terrain/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
-	} else {
-		"${VELOCITY_PATH_PREFIX}terrain/$path"
-	}
-	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, terrainPath)
-}
-
-private fun entityVelocityLocation(plainTwinLocation: Identifier): Identifier {
-	val path = plainTwinLocation.path
-	val entityPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
-		"${VELOCITY_PATH_PREFIX}entity/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
-	} else {
-		"${VELOCITY_PATH_PREFIX}entity/$path"
-	}
-	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, entityPath)
-}
-
-private fun weatherVelocityLocation(plainTwinLocation: Identifier): Identifier {
-	val path = plainTwinLocation.path
-	val weatherPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
-		"${VELOCITY_PATH_PREFIX}weather/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
-	} else {
-		"${VELOCITY_PATH_PREFIX}weather/$path"
-	}
-	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, weatherPath)
-}
-
-private fun particleVelocityLocation(plainTwinLocation: Identifier): Identifier {
-	val path = plainTwinLocation.path
-	val particlePath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
-		"${VELOCITY_PATH_PREFIX}particle/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
-	} else {
-		"${VELOCITY_PATH_PREFIX}particle/$path"
-	}
-	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, particlePath)
-}
-
-private fun crumblingVelocityLocation(plainTwinLocation: Identifier): Identifier {
-	val path = plainTwinLocation.path
-	val crumblingPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
-		"${VELOCITY_PATH_PREFIX}crumbling/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
-	} else {
-		"${VELOCITY_PATH_PREFIX}crumbling/$path"
-	}
-	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, crumblingPath)
-}
-
-private fun cloudVelocityLocation(plainTwinLocation: Identifier): Identifier {
-	val path = plainTwinLocation.path
-	val cloudPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
-		"${VELOCITY_PATH_PREFIX}cloud/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
-	} else {
-		"${VELOCITY_PATH_PREFIX}cloud/$path"
-	}
-	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, cloudPath)
-}
-
-private fun movingBlockVelocityLocation(plainTwinLocation: Identifier): Identifier {
-	val path = plainTwinLocation.path
-	val movingBlockPath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
-		"${VELOCITY_PATH_PREFIX}movingblock/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
-	} else {
-		"${VELOCITY_PATH_PREFIX}movingblock/$path"
-	}
-	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, movingBlockPath)
-}
+private val RenderPipeline.path: String
+	get() = location.path
 
 private const val VELOCITY_NAMESPACE = "mc-dlss"
 private const val VELOCITY_PATH_PREFIX = "velocity/"

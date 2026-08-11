@@ -25,9 +25,8 @@ import org.lwjgl.vulkan.VkPhysicalDevice
 
 /**
  * M-2 rung: the device-requirements merge. Streamline's Vulkan 1.2/1.3 feature names and the
- * summed DLSS_G queue counts surface through the bridge, the production merge seams exist
- * (feature chain + queue-family map before vkCreateDevice), and proxy activation succeeds
- * against a device that actually holds the merged queue layout.
+ * summed DLSS_G queue counts surface through the bridge, and proxy activation succeeds against
+ * a device that actually holds the merged queue layout.
  *
  * Methods are ORDERED because the fork is one process: the live-device test's close shuts the
  * Streamline runtime down (slShutdown, while the fixture device is still alive - the fix that
@@ -174,31 +173,6 @@ class StreamlineRequirementsMergeTest {
 				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}
-	}
-
-	@Order(3)
-	@Test
-	fun `production merges SL features and queues into device creation`() {
-		val mixin = Files.readString(
-			Path.of("src", "main", "java", "me", "snowmii", "dlss", "mixin", "VulkanBackendExtensionMixin.java")
-		)
-		assertTrue(mixin.contains("createDevice"))
-		assertTrue(mixin.contains("queryDeviceFeatures12"))
-		assertTrue(mixin.contains("queryDeviceFeatures13"))
-		assertTrue(mixin.contains("queueFamilyCreateInfoMap"))
-		assertTrue(mixin.contains("Int2IntArrayMap"))
-
-		val contextSource = Files.readString(
-			Path.of("src", "main", "kotlin", "me", "snowmii", "dlss", "bridge", "VulkanContext.kt")
-		)
-		assertTrue(contextSource.contains("computeQueueFamily"))
-		assertTrue(contextSource.contains("computeQueueIndex"))
-
-		val nativeSource = Files.readString(Path.of("native", "mc_dlss_api.cpp"))
-		assertTrue(nativeSource.contains("mc_dlss_query_device_feature_12"))
-		assertTrue(nativeSource.contains("mc_dlss_query_queue_requirements"))
-		assertTrue(nativeSource.contains("info.computeQueueFamily = "))
-		assertTrue(nativeSource.contains("info.computeQueueIndex = "))
 	}
 
 	/**

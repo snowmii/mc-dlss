@@ -1,6 +1,7 @@
 package me.snowmii.dlss.mixin;
 
-import com.mojang.blaze3d.systems.BackendCreationException;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.vulkan.VulkanBackend;
 import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
 import com.mojang.blaze3d.vulkan.init.VulkanFeature;
@@ -13,9 +14,7 @@ import me.snowmii.dlss.bridge.SlVulkanFeatures;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
 
 import java.util.Collection;
 import java.util.Set;
@@ -30,16 +29,7 @@ import java.util.Set;
  */
 @Mixin(VulkanBackend.class)
 public abstract class VulkanBackendExtensionMixin {
-	@Shadow
-	private static VkDevice createDevice(
-		Collection<String> extensions,
-		VulkanPhysicalDevice physicalDevice,
-		Set<VulkanFeature> features
-	) throws BackendCreationException {
-		throw new AssertionError();
-	}
-
-	@Redirect(
+	@WrapOperation(
 		method = "createDevice(JLcom/mojang/blaze3d/shaders/ShaderSource;Lcom/mojang/blaze3d/shaders/GpuDebugOptions;Ljava/lang/Runnable;)Lcom/mojang/blaze3d/systems/GpuDevice;",
 		at = @At(
 			value = "INVOKE",
@@ -49,8 +39,9 @@ public abstract class VulkanBackendExtensionMixin {
 	private VkDevice mcDlssCreateDeviceWithExtensions(
 		Collection<String> extensions,
 		VulkanPhysicalDevice physicalDevice,
-		Set<VulkanFeature> features
-	) throws BackendCreationException {
+		Set<VulkanFeature> features,
+		Operation<VkDevice> original
+	) {
 		VkPhysicalDevice vkPhysicalDevice = physicalDevice.vkPhysicalDevice();
 		ExtensionBootstrap.addDeviceExtensions(
 			extensions,
@@ -63,7 +54,10 @@ public abstract class VulkanBackendExtensionMixin {
 			ExtensionBootstrap.queryDeviceFeatures12(),
 			ExtensionBootstrap.queryDeviceFeatures13()
 		));
-		return createDevice(extensions, physicalDevice, features);
+		// The wrapped createDevice declares BackendCreationException. Operation.call does not, so
+		// the checked exception passes through undeclared - legal in bytecode, and the enclosing
+		// createDevice still declares it, so the backend's own handling is unchanged.
+		return original.call(extensions, physicalDevice, features);
 	}
 
 	/**
@@ -73,20 +67,21 @@ public abstract class VulkanBackendExtensionMixin {
 	 * start right after them. Optical-flow queues are reported but never added: without a native
 	 * optical-flow family, DLSS-G runs in interop mode.
 	 *
-	 * The handler's first parameter is the target instance: @Redirect prepends it for instance
-	 * method targets, and calling queueFamilyCreateInfoMap() here reaches the original method
-	 * (redirects only apply inside the redirected method).
+	 * The handler's first parameter is the target instance: the wrapped call is an instance
+	 * method, so its receiver leads the operation arguments.
 	 */
-	@Redirect(
+	@WrapOperation(
 		method = "createDevice(Ljava/util/Collection;Lcom/mojang/blaze3d/vulkan/VulkanPhysicalDevice;Ljava/util/Set;)Lorg/lwjgl/vulkan/VkDevice;",
 		at = @At(
 			value = "INVOKE",
 			target = "Lcom/mojang/blaze3d/vulkan/VulkanPhysicalDevice;queueFamilyCreateInfoMap()Lit/unimi/dsi/fastutil/ints/Int2IntMap;"
 		)
 	)
-	private static Int2IntMap mcDlssMergedQueueMap(VulkanPhysicalDevice physicalDevice) {
-		Int2IntMap original = physicalDevice.queueFamilyCreateInfoMap();
-		Int2IntMap merged = new Int2IntArrayMap(original);
+	private static Int2IntMap mcDlssMergedQueueMap(
+		VulkanPhysicalDevice physicalDevice,
+		Operation<Int2IntMap> original
+	) {
+		Int2IntMap merged = new Int2IntArrayMap(original.call(physicalDevice));
 		SlQueueRequirements requirements = ExtensionBootstrap.queryQueueRequirements();
 		IntIntPair graphics = physicalDevice.graphicsQueueFamilyAndIndex();
 		if (graphics != null) {

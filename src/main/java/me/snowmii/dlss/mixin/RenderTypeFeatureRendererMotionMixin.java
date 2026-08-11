@@ -1,5 +1,7 @@
 package me.snowmii.dlss.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import java.util.List;
 import me.snowmii.dlss.mrt.EntityVelocityWriterBindings;
@@ -11,7 +13,6 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
@@ -52,14 +53,22 @@ public class RenderTypeFeatureRendererMotionMixin {
 		MovingBlockVelocityWriterBindings.endDraw();
 	}
 
-	@Redirect(
+	@WrapOperation(
 		method = "getOrAddDraw",
 		at = @At(value = "INVOKE", target = "Ljava/util/List;indexOf(Ljava/lang/Object;)I")
 	)
-	private int mcDlssDisableEntityReorder(final List<?> renderTypes, final Object preparedRenderType) {
+	private int mcDlssDisableEntityReorder(
+		final List<?> renderTypes,
+		final Object preparedRenderType,
+		final Operation<Integer> original
+	) {
 		// The governing marker set at the draw boundary picks the machine whose post-eligible
 		// bookkeeping owns this group's reorder decision; with neither machine governing this is
 		// exactly the pre-existing entity/vanilla decision.
+		//
+		// ponytail: the operation is not called through - both writers reproduce the vanilla
+		// List.indexOf themselves on their ineligible paths. Thread `original` into
+		// consolidationIndex if another mod ever needs to wrap this JDK call.
 		if (MovingBlockVelocityWriterBindings.isGoverning()) {
 			return MovingBlockVelocityWriterBindings.consolidationIndex(renderTypes, preparedRenderType);
 		}

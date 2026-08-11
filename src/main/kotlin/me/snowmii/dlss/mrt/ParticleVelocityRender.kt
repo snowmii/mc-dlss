@@ -24,7 +24,7 @@ import net.minecraft.resources.Identifier
  * redirect builds a two-attachment pass - the source solid/translucent particle target at
  * color index 0 unchanged, the scene-sized velocity view at index 1 - and the pipeline-boundary
  * seam binds the cached particle writer twin, whose fragment shader ([FRAGMENT_SHADER], swapped
- * in for the source's core/particle shader by [VelocityPipelineVariantKt.particleVelocityTwin])
+ * in for the source's core/particle shader by [writerTwin] for [VelocityWriter.PARTICLE])
  * reproduces the vanilla particle color output and writes jitter-stripped NDC camera motion
  * into the velocity attachment.
  *
@@ -42,8 +42,8 @@ import net.minecraft.resources.Identifier
  * particle color byte-identically and the slice needs no new shader resource.
  *
  * Ineligible routes - a closed phase, a vanilla session, the latched camera-only route, or a
- * frame whose scene target carries no velocity companion - answer false from [canRedirect] and
- * null from [velocityView]: the pass-creation redirect falls through to the exact vanilla
+ * frame whose scene target carries no velocity companion - leave `WorldPhase.terrainVelocityView`
+ * null, the one gate every writer reads: the pass-creation redirect falls through to the exact vanilla
  * one-attachment creation and the source particle pipeline binds unchanged. Every read here is
  * a plain field or enum read, so the fallback path cannot throw.
  */
@@ -67,24 +67,7 @@ object ParticleVelocityRender {
 
 	private var uniformBuffer: GpuBuffer? = null
 
-	/**
-	 * Whether a particle pass may carry the scene velocity attachment.
-	 *
-	 * Non-null only inside an open world phase that latched the velocity-MRT route and holds a
-	 * scene target with a velocity companion - exactly the frames on which the pass-creation
-	 * redirect may add the velocity attachment at color index 1 and bind the particle writer
-	 * twin. A closed phase, the camera-only fallback route, or a frame without a companion all
-	 * answer false, which keeps pass creation and source-pipeline binding exactly vanilla.
-	 */
-	@JvmStatic
-	fun canRedirect(phase: WorldPhase?): Boolean = phase != null && phase.terrainVelocityView != null
 
-	/**
-	 * The scene-sized RG16_FLOAT velocity view the particle twin writes at color index 1, or
-	 * null when the particle passes must stay vanilla.
-	 */
-	@JvmStatic
-	fun velocityView(phase: WorldPhase?): GpuTextureView? = if (canRedirect(phase)) phase!!.terrainVelocityView else null
 
 	/**
 	 * Fills this frame's VelocityConfig payload on [encoder] for the particle passes.

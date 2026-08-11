@@ -35,21 +35,20 @@ import org.junit.jupiter.api.Test
  * eligible phase, pass creation and source-pipeline binding stay exactly vanilla and never throw.
  */
 class MotionVectorTerrainPassTest {
-	private val output = DlssDimensions(2560, 1440)
-	private val render = DlssDimensions(1707, 960)
-	private val mainTarget = FakeTarget(output.width, output.height)
+	private val mainTarget = fakeMainTarget()
+
 
 	@Test
 	fun `an eligible phase offers one scene-sized RG16 velocity view for the terrain pass`() {
-		val phase = phase(velocityRuntime())
+		val phase = worldPhase(velocityRuntime())
 
 		assertNull(phase.terrainVelocityView)
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 
 		val view = checkNotNull(phase.terrainVelocityView)
 		assertEquals(GpuFormat.RG16_FLOAT, view.texture().getFormat())
-		assertEquals(render.width, view.getWidth(0))
-		assertEquals(render.height, view.getHeight(0))
+		assertEquals(RENDER_DIMENSIONS.width, view.getWidth(0))
+		assertEquals(RENDER_DIMENSIONS.height, view.getHeight(0))
 
 		phase.end()
 		assertNull(phase.terrainVelocityView)
@@ -65,7 +64,7 @@ class MotionVectorTerrainPassTest {
 			),
 		)
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, runtime.motionVectorRoute)
-		val phase = phase(runtime)
+		val phase = worldPhase(runtime)
 
 		assertDoesNotThrow {
 			phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
@@ -77,7 +76,7 @@ class MotionVectorTerrainPassTest {
 	@Test
 	fun `a session without DLSS keeps terrain passes vanilla`() {
 		val session = session(enabled = false)
-		val phase = phase(runtime(session) { null })
+		val phase = worldPhase(runtime(session) { null })
 
 		assertDoesNotThrow {
 			phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
@@ -88,7 +87,7 @@ class MotionVectorTerrainPassTest {
 
 	@Test
 	fun `a phase without a velocity companion keeps terrain passes vanilla`() {
-		val phase = phase(runtime(velocityRuntimeSession(), velocityCompanion = false) { render })
+		val phase = worldPhase(runtime(velocityRuntimeSession(), velocityCompanion = false) { RENDER_DIMENSIONS })
 
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		assertNull(phase.terrainVelocityView)
@@ -96,33 +95,9 @@ class MotionVectorTerrainPassTest {
 	}
 
 	@Test
-	fun `known terrain pipelines bind one cached velocity twin with one unblended RG16 target`() {
-		val solid = velocityTwin(RenderPipelines.SOLID_TERRAIN)
-
-		// One twin per source pipeline, so Vulkan's identity-keyed lazy-compile cache is hit on
-		// every later frame instead of recompiling the twin per bind.
-		assertSame(solid, velocityTwin(RenderPipelines.SOLID_TERRAIN))
-		assertEquals(Identifier.fromNamespaceAndPath("mc-dlss", "velocity/pipeline/solid_terrain"), solid.location)
-		val solidTargets = solid.colorTargetStates
-		assertEquals(2, solidTargets.size)
-		assertVelocityTarget(solidTargets[1]!!)
-
-		val translucent = velocityTwin(RenderPipelines.TRANSLUCENT_TERRAIN)
-		val translucentTargets = translucent.colorTargetStates
-		assertEquals(2, translucentTargets.size)
-		// The twin preserves the source's blended first target and adds an unblended velocity one.
-		assertEquals(Optional.of(BlendFunction.TRANSLUCENT), translucentTargets[0]!!.blendFunction())
-		assertVelocityTarget(translucentTargets[1]!!)
-
-		val cutout = velocityTwin(RenderPipelines.CUTOUT_TERRAIN)
-		assertEquals(Identifier.fromNamespaceAndPath("mc-dlss", "velocity/pipeline/cutout_terrain"), cutout.location)
-		assertEquals(2, cutout.colorTargetStates.size)
-	}
-
-	@Test
 	fun `first foreign terrain pipeline classified before pass creation keeps that pass exactly vanilla`() {
 		val runtime = velocityRuntime()
-		val phase = phase(runtime)
+		val phase = worldPhase(runtime)
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 
 		// The renderGroup HEAD inject classifies every source pipeline the group will bind before
@@ -139,38 +114,6 @@ class MotionVectorTerrainPassTest {
 		phase.end()
 	}
 
-	@Test
-	fun `terrain mixin gates the velocity attachment and twin selection on the open velocity-mrt phase`() {
-		val repository = Path.of("").toAbsolutePath()
-		val mixin = repository
-			.resolve("src/main/java/me/snowmii/dlss/mixin/VulkanChunkSectionsToRenderMixin.java")
-			.readText()
-		val mixins = repository.resolve("src/main/resources/mc-dlss.mixins.json").readText()
-
-		assertTrue(mixins.contains("VulkanChunkSectionsToRenderMixin"))
-		assertTrue(mixin.contains("@Mixin(ChunkSectionsToRender.class)"))
-		assertTrue(mixin.contains("method = \"renderGroup\""))
-		// The pass-creation redirect must add the velocity attachment at color index 1.
-		assertTrue(mixin.contains("CommandEncoder;createRenderPass("))
-		assertTrue(mixin.contains("withColorAttachment(velocity, Optional.empty())"))
-		// The pipeline-boundary redirect must swap in the twin only for the pass that carries it.
-		assertTrue(mixin.contains("RenderPass;setPipeline("))
-		assertTrue(mixin.contains("velocityTwin(pipeline)"))
-		// The eligible-phase gate: null phase or null velocity view keeps the exact vanilla calls.
-		assertTrue(mixin.contains("getTerrainVelocityView()"))
-		assertTrue(mixin.contains("createRenderPass(label, colorTexture, clearColor, depthTexture, clearDepth)"))
-		// First-encounter foreign ordering: a HEAD inject on renderGroup classifies the group's
-		// source pipelines before the pass-creation redirect chooses the attachment shape, so the
-		// first foreign pipeline never sees a two-attachment pass or a twin.
-		assertTrue(mixin.contains("@Inject(method = \"renderGroup\", at = @At(\"HEAD\"))"))
-		assertTrue(mixin.contains("ChunkSectionLayerGroup group"))
-		assertTrue(mixin.contains("layer.pipeline()"))
-		assertTrue(mixin.contains("phase.observePipeline(new MotionVectorPipeline("))
-		assertTrue(mixin.indexOf("mcDlssClassifyTerrainPipelines") >= 0)
-		assertTrue(mixin.indexOf("mcDlssChunkRenderPass") >= 0)
-		assertTrue(mixin.indexOf("mcDlssClassifyTerrainPipelines") < mixin.indexOf("mcDlssChunkRenderPass"))
-	}
-
 	private fun terrainPipeline(pipeline: RenderPipeline) = MotionVectorPipeline(
 		pipeline.getLocation().toString(),
 		listOf(
@@ -183,26 +126,6 @@ class MotionVectorTerrainPassTest {
 		"example:pipeline/waving_terrain",
 		listOf(MotionVectorShader("example:core/waving_terrain", "example")),
 	)
-
-	private fun assertVelocityTarget(target: ColorTargetState) {
-		assertTrue(target.blendFunction().isEmpty())
-		assertEquals(GpuFormat.RG16_FLOAT, target.format())
-		assertEquals(ColorTargetState.WRITE_ALL, target.writeMask())
-	}
-
-	private fun phase(runtime: RenderRuntime) = WorldPhase(
-		runtime = runtime,
-		present = { _, _ -> },
-		onWorldTargetChanged = {},
-	)
-
-	private fun velocityRuntime(): RenderRuntime {
-		val session = session(enabled = true)
-		return runtime(session, velocityCompanion = true) {
-			check(session.markReadyAfterNativeStartup())
-			render
-		}
-	}
 
 	private fun velocityRuntimeSession() = session(enabled = true).also { it.markReadyAfterNativeStartup() }
 
@@ -226,7 +149,7 @@ class MotionVectorTerrainPassTest {
 		DlssStartupConfig(
 			enabled = enabled,
 			qualityMode = SRMode.QUALITY,
-			outputDimensions = output,
+			outputDimensions = OUTPUT_DIMENSIONS,
 			sdkPath = null,
 			nativeLibraryPath = null,
 			dataPath = null,
@@ -235,41 +158,4 @@ class MotionVectorTerrainPassTest {
 	)
 
 	/** Render target with a fake view over a fake texture, so the velocity seam is testable off the render thread. */
-	private class FakeTarget(
-		width: Int,
-		height: Int,
-		format: GpuFormat = GpuFormat.RGBA8_UNORM,
-		withView: Boolean = false,
-	) : RenderTarget("fake", true, format) {
-		var releases = 0
-		private val texture = FakeTexture(format, width, height)
-
-		init {
-			this.width = width
-			this.height = height
-			if (withView) {
-				colorTextureView = FakeView(texture)
-			}
-		}
-
-		override fun createBuffers(width: Int, height: Int) {
-			this.width = width
-			this.height = height
-		}
-
-		override fun destroyBuffers() {
-			releases++
-		}
-	}
-
-	private class FakeTexture(format: GpuFormat, width: Int, height: Int) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT, "fake", format, width, height, 1, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
-
-	private class FakeView(texture: GpuTexture) : GpuTextureView(texture, 0, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
 }

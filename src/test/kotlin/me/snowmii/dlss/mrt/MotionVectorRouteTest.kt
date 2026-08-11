@@ -59,13 +59,12 @@ import org.lwjgl.vulkan.VkCommandBuffer
  * exercise.
  */
 class MotionVectorRouteTest {
-	private val output = DlssDimensions(2560, 1440)
-	private val render = DlssDimensions(1707, 960)
-	private val mainTarget = FakeTarget(output.width, output.height)
+	private val mainTarget = fakeMainTarget()
+
 
 	@Test
 	fun `the velocity route tags the scene velocity companion and skips the compute writer`() {
-		val calls = RecordingNative(render)
+		val calls = RecordingNative(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 		val velocity = ImageBinding(11L, 12L, 124)
 
@@ -86,7 +85,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `the camera-only route keeps the compute writer and the native motion image path`() {
-		val calls = RecordingNative(render)
+		val calls = RecordingNative(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		// The default route and absent velocity are exactly what the live Streamline tests and
@@ -103,7 +102,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `a stray velocity on the camera-only route cannot replace the native motion image path`() {
-		val calls = RecordingNative(render)
+		val calls = RecordingNative(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		// WorldPhase never produces this shape, but a caller that does must not silently move
@@ -127,7 +126,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `the velocity route without a velocity companion is not evaluated`() {
-		val calls = RecordingNative(render)
+		val calls = RecordingNative(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		// A velocity-route frame with no motion source at all must skip rather than hand DLSS
@@ -142,12 +141,12 @@ class MotionVectorRouteTest {
 	fun `the world phase hands the velocity route and the velocity view into the evaluation`() {
 		val runtime = velocityRuntime()
 		var handed: Pair<MotionVectorRoute, GpuTextureView?>? = null
-		val phase = phase(runtime) { _, _, _, _, route, velocity ->
+		val phase = worldPhase(runtime) { _, _, _, _, route, velocity ->
 			handed = route to velocity
 			true
 		}
 
-		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = camera())
+		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
 
@@ -168,12 +167,12 @@ class MotionVectorRouteTest {
 		)
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, runtime.motionVectorRoute)
 		var handed: Pair<MotionVectorRoute, GpuTextureView?>? = null
-		val phase = phase(runtime) { _, _, _, _, route, velocity ->
+		val phase = worldPhase(runtime) { _, _, _, _, route, velocity ->
 			handed = route to velocity
 			true
 		}
 
-		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = camera())
+		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
 
@@ -217,7 +216,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `the velocity route opens the native timing chain with a skipped motion stage`() {
-		val calls = RecordingNative(render)
+		val calls = RecordingNative(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		// The frame's GPU timing opens where the frame's recording does, and the evaluate/present
@@ -342,7 +341,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `the camera-only route keeps opening the timing chain in the compute writer`() {
-		val calls = RecordingNative(render)
+		val calls = RecordingNative(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		assertTrue(evaluation.evaluateFrame(scene(), jitter(), motion()))
@@ -366,7 +365,7 @@ class MotionVectorRouteTest {
 	}
 
 	private fun evaluation(calls: RecordingNative): FrameEvaluation {
-		val session = DlssSession(config())
+		val session = DlssSession(startupConfig())
 		val adapter = LifecycleAdapter(session, calls)
 		// The adapter stamps the configured render dimensions onto every request from its own
 		// initialize, so the frame path has to run through initialize exactly like production
@@ -397,7 +396,7 @@ class MotionVectorRouteTest {
 		return unsafe.allocateInstance(VkCommandBuffer::class.java) as VkCommandBuffer
 	}
 
-	private fun phase(
+	private fun worldPhase(
 		runtime: RenderRuntime,
 		evaluateFrame: (
 			RenderTarget,
@@ -414,49 +413,18 @@ class MotionVectorRouteTest {
 		evaluateFrame = evaluateFrame,
 	)
 
-	private fun velocityRuntime(): RenderRuntime {
-		val session = DlssSession(config()).also { check(it.markReadyAfterNativeStartup()) }
-		return RenderRuntime(
-			session = session,
-			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
-				release = { (it as FakeTarget).releases++ },
-				allocateVelocity = { width, height -> FakeTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) },
-			),
-			startup = { render },
-		)
-	}
-
-	private fun config() = DlssStartupConfig(
-		enabled = true,
-		qualityMode = SRMode.QUALITY,
-		outputDimensions = output,
-		sdkPath = null,
-		nativeLibraryPath = null,
-		dataPath = null,
-		warnings = emptyList(),
-	)
-
 	private fun scene() = SceneResources(
 		color = ImageBinding(201L, 202L, 37),
 		depth = ImageBinding(301L, 302L, 126),
 	)
 
-	private fun jitter(): DlssJitterOffset = DlssJitter(render, output).advance()
+	private fun jitter(): DlssJitterOffset = DlssJitter(RENDER_DIMENSIONS, OUTPUT_DIMENSIONS).advance()
 
-	private fun motion() = DlssFrameMotion(Matrix4f(), render.width / 2f, render.height / 2f, 16.6f, true)
-
-	private fun camera() = DlssCameraSample(
-		projection = Matrix4f(),
-		viewRotation = Matrix4f(),
-		cameraX = 0.0,
-		cameraY = 0.0,
-		cameraZ = 0.0,
-	)
+	private fun motion() = DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, true)
 
 	/** Records every per-frame native call so the route gate is assertable off the render thread. */
 	private class RecordingNative(
-		private val render: DlssDimensions,
+		private val RENDER_DIMENSIONS: DlssDimensions,
 	) : NativeApi {
 		val writeMotion = mutableListOf<MotionRequest>()
 		val tags = mutableListOf<SrTagRequest>()
@@ -473,7 +441,7 @@ class MotionVectorRouteTest {
 		): Int = NativeApi.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
-			DlssDimensions(render.width, render.height)
+			DlssDimensions(RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height)
 
 		override fun configure(
 			outputWidth: Int,
@@ -520,41 +488,4 @@ class MotionVectorRouteTest {
 	}
 
 	/** Render target with a fake view over a fake texture, so the handoff is testable off the render thread. */
-	private class FakeTarget(
-		width: Int,
-		height: Int,
-		format: GpuFormat = GpuFormat.RGBA8_UNORM,
-		withView: Boolean = false,
-	) : RenderTarget("fake", true, format) {
-		var releases = 0
-		private val texture = FakeTexture(format, width, height)
-
-		init {
-			this.width = width
-			this.height = height
-			if (withView) {
-				colorTextureView = FakeView(texture)
-			}
-		}
-
-		override fun createBuffers(width: Int, height: Int) {
-			this.width = width
-			this.height = height
-		}
-
-		override fun destroyBuffers() {
-			releases++
-		}
-	}
-
-	private class FakeTexture(format: GpuFormat, width: Int, height: Int) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT, "fake", format, width, height, 1, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
-
-	private class FakeView(texture: GpuTexture) : GpuTextureView(texture, 0, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
 }

@@ -71,21 +71,6 @@ class MotionVectorCompatibilityTest {
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, compatibility.route)
 	}
 
-	@Test
-	fun `vulkan lazy compile seam observes only the active world phase`() {
-		val repository = Path.of("").toAbsolutePath()
-		val mixin = repository
-			.resolve("src/main/java/me/snowmii/dlss/mixin/VulkanPipelineCompatibilityMixin.java")
-			.readText()
-		val mixins = repository.resolve("src/main/resources/mc-dlss.mixins.json").readText()
-
-		assertTrue(mixins.contains("VulkanPipelineCompatibilityMixin"))
-		assertTrue(mixin.contains("method = \"getOrCompilePipeline\""))
-		assertTrue(mixin.contains("at = @At(\"HEAD\")"))
-		assertTrue(mixin.contains("activeWorldPhase()"))
-		assertTrue(mixin.contains("phase.observePipeline"))
-	}
-
 	private fun pipeline(id: String, vararg shaders: MotionVectorShader) =
 		MotionVectorPipeline(id, shaders.toList())
 

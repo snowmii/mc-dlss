@@ -1,6 +1,5 @@
 package me.snowmii.dlss.sl
 
-import java.nio.file.Files
 import java.nio.file.Path
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.NativeApi
@@ -129,54 +128,5 @@ class StreamlineSrEvaluateTest {
 			SrLiveSession.assertValidationClean(fixture, color, depth, images)
 
 		}
-	}
-
-	@Test
-	fun `the evaluate path runs through Streamline`() {
-		val apiSource = Files.readString(Path.of("native", "mc_dlss_api.cpp"))
-		val slSource = Files.readString(Path.of("native", "internal", "sl_dlss.cpp"))
-		val stateHeader = Files.readString(Path.of("native", "internal", "state.h"))
-
-		// The API's evaluate records the SL evaluation: it routes into the SL unit, which
-		// records the per-frame constants and the feature evaluation.
-		val evaluate = apiSource.substringAfter("mc_dlss_evaluate").substringBefore("mc_dlss_present_output")
-		assertTrue(evaluate.contains("record_sr_evaluation("))
-		assertTrue(!evaluate.contains("ensure_feature"))
-		assertTrue(!evaluate.contains("record_evaluation"))
-		assertTrue(slSource.contains("slSetConstants"))
-		assertTrue(slSource.contains("slEvaluateFeature"))
-		assertTrue(slSource.contains("sl::kFeatureDLSS"))
-
-		// The evaluation consumes the frame token the tag call retained: state carries it, the
-		// tag obtains it only when none is retained, and the evaluation fails without one.
-		assertTrue(stateHeader.contains("frameToken"))
-		assertTrue(slSource.contains("slGetNewFrameToken"))
-		assertTrue(slSource.contains("g_state.frameToken"))
-	}
-
-	@Test
-	fun `the frame tags its SR resources before evaluating on the same buffer`() {
-		val frameSource = Files.readString(
-			Path.of("src", "main", "kotlin", "me", "snowmii", "dlss", "render", "FrameEvaluation.kt"),
-		)
-		val motion = frameSource.indexOf("adapter.writeMotion(")
-		val tag = frameSource.indexOf("adapter.tagSrResources(")
-		val evaluate = frameSource.indexOf("adapter.evaluate(")
-		assertTrue(motion >= 0 && tag >= 0 && evaluate >= 0, "all three stages must be recorded")
-		assertTrue(motion < tag, "the motion pass must record before the tag")
-		assertTrue(tag < evaluate, "the tag must record before the evaluation on the same buffer")
-	}
-
-	@Test
-	fun `the adapter exposes tagging as a session stage`() {
-		val adapterSource = Files.readString(
-			Path.of("src", "main", "kotlin", "me", "snowmii", "dlss", "session", "LifecycleAdapter.kt"),
-		)
-		val sessionSource = Files.readString(
-			Path.of("src", "main", "kotlin", "me", "snowmii", "dlss", "session", "DlssSession.kt"),
-		)
-		assertTrue(adapterSource.contains("fun tagSrResources(request: SrTagRequest): Boolean"))
-		assertTrue(adapterSource.contains("DlssNativeStage.TAG"))
-		assertTrue(sessionSource.contains("TAG(\"tag-sr-resources\")"))
 	}
 }

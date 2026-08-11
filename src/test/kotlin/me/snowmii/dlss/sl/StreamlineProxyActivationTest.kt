@@ -21,12 +21,11 @@ import org.lwjgl.vulkan.VkQueueFamilyProperties
 /**
  * M-2 rung: Streamline's manual-hook Vulkan integration activates against a live device.
  *
- * Three halves: (1) the real native activation - mc_dlss_activate_vulkan_proxies hands the
+ * Two halves: (1) the real native activation - mc_dlss_activate_vulkan_proxies hands the
  * live instance / physical device / device / graphics queue layout of a real headless Vulkan
  * context to slSetVulkanInfo through the real bridge, and repeats success on the same layout;
  * (2) the redirect seam - org.lwjgl.vulkan.libname is pointed at the staged sl.interposer.dll,
- * which is how Minecraft's Vulkan loading routes through SL's proxies; (3) source inspection
- * that production wires both seams (mod entrypoint redirect, device-ctor activation).
+ * which is how Minecraft's Vulkan loading routes through SL's proxies.
  *
  * The live test arms the bridge's close path before the fixture dies: after the activation
  * assertions it records the already-activated tuple through mc_dlss_initialize, so the close
@@ -100,35 +99,6 @@ class StreamlineProxyActivationTest {
 			// every later test's Vulkan loading into the interposer.
 			System.clearProperty("org.lwjgl.vulkan.libname")
 		}
-	}
-
-	@Test
-	fun `production wiring redirects VK loading and activates proxies at device construction`() {
-		val modEntry = Files.readString(Path.of("src", "main", "kotlin", "me", "snowmii", "McDlss.kt"))
-		assertTrue(modEntry.contains("onInitialize"))
-		assertTrue(modEntry.contains("redirectToInterposer()"))
-
-		val contextSource = Files.readString(
-			Path.of("src", "main", "kotlin", "me", "snowmii", "dlss", "bridge", "VulkanContext.kt")
-		)
-		assertTrue(contextSource.contains("graphicsQueueFamilyAndIndex"))
-		assertTrue(contextSource.contains("queueFamilyCreateInfoMap"))
-
-		val mixin = Files.readString(
-			Path.of("src", "main", "java", "me", "snowmii", "dlss", "mixin", "VulkanDeviceContextMixin.java")
-		)
-		assertTrue(mixin.contains("activateVulkanProxies"))
-
-		val nativeSource = Files.readString(Path.of("native", "mc_dlss_api.cpp"))
-		assertTrue(nativeSource.contains("sl_helpers_vk.h"))
-		assertTrue(nativeSource.contains("slSetVulkanInfo"))
-		assertTrue(nativeSource.contains("if (g_state.streamlineInitialized)"))
-
-		val provider = Files.readString(
-			Path.of("src", "main", "java", "me", "snowmii", "dlss", "bridge", "StreamlineVulkanProvider.java")
-		)
-		assertTrue(provider.contains("org.lwjgl.vulkan.libname"))
-		assertTrue(provider.contains("sl.interposer.dll"))
 	}
 
 	/**

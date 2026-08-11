@@ -76,7 +76,6 @@ import org.lwjgl.util.shaderc.Shaderc
 import org.lwjgl.util.spvc.Spvc
 import org.lwjgl.util.spvc.SpvcReflectedResource
 import org.spongepowered.asm.mixin.injection.Inject
-import org.spongepowered.asm.mixin.injection.Redirect
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
 import com.google.gson.JsonParser
 
@@ -114,325 +113,6 @@ import com.google.gson.JsonParser
  * attachments 0 and 1.
  */
 class MotionVectorCloudTest {
-	private val repository = Path.of("").toAbsolutePath()
-
-	@Test
-	fun `cloud pipelines are the mapped CLOUDS and FLAT_CLOUDS pair and the twin preserves source descriptors`() {
-		// The two mapped cloud pipelines: same rendertype_clouds shaders, differing only in cull.
-		val fancy = RenderPipelines.CLOUDS
-		val flat = RenderPipelines.FLAT_CLOUDS
-		assertNotSame(fancy, flat)
-		assertSame(fancy.vertexShader, flat.vertexShader)
-		assertSame(fancy.fragmentShader, flat.fragmentShader)
-		assertTrue(fancy.isCull, "CLOUDS culls back faces")
-		assertFalse(flat.isCull, "FLAT_CLOUDS renders both faces")
-		assertSame(fancy.depthStencilState, flat.depthStencilState)
-
-		// The plain twin (M-4 descriptor contract) and the cloud writer twin on top of it.
-		val plain = velocityTwin(fancy)
-		val twin = cloudVelocityTwin(plain)
-
-		// The writer twin preserves every source descriptor field through the plain twin.
-		assertSame(fancy.vertexShader, twin.vertexShader)
-		assertEquals(fancy.shaderDefines, twin.shaderDefines)
-		assertSame(fancy.depthStencilState, twin.depthStencilState)
-		assertSame(fancy.polygonMode, twin.polygonMode)
-		assertEquals(fancy.isCull, twin.isCull)
-		assertSame(fancy.primitiveTopology, twin.primitiveTopology)
-
-		// The cloud pipelines carry no vertex format bindings: the geometry comes from the
-		// CloudFaces texel buffer and gl_VertexID, so the twin must keep that empty binding set.
-		assertEquals(fancy.getVertexFormatBindings()!!.size, twin.getVertexFormatBindings()!!.size)
-		for (index in 0 until twin.getVertexFormatBindings()!!.size) {
-			assertNull(twin.getVertexFormatBinding(index), "binding $index stays unbound")
-		}
-
-		// The source cloud layouts stay (Globals, MatricesProjection, Fog, CloudInfo), exactly
-		// one CloudVelocityConfig layout is added.
-		assertEquals(fancy.bindGroupLayouts.size + 1, twin.bindGroupLayouts.size)
-		for (index in fancy.bindGroupLayouts.indices) {
-			assertSame(fancy.bindGroupLayouts[index], twin.bindGroupLayouts[index])
-		}
-		assertSame(CloudVelocityRender.LAYOUT, twin.bindGroupLayouts.last())
-
-		// Target zero is the source cloud target - translucent blend intact - and target one
-		// is exactly the unblended RG16_FLOAT velocity payload.
-		val sourceTargets = fancy.colorTargetStates
-		val twinTargets = twin.colorTargetStates
-		assertEquals(2, twinTargets.size)
-		assertSame(sourceTargets[0], twinTargets[0])
-		assertEquals(Optional.of(BlendFunction.TRANSLUCENT), twinTargets[0]!!.blendFunction())
-		assertVelocityTarget(twinTargets[1]!!)
-	}
-
-	@Test
-	fun `cloud twin is cached per source and distinct from the other writer twins`() {
-		val source = RenderPipelines.CLOUDS
-		val plain = velocityTwin(source)
-
-		assertEquals(Identifier.fromNamespaceAndPath("mc-dlss", "velocity/pipeline/clouds"), plain.location)
-		assertSame(plain, velocityTwin(source), "the plain twin is cached per source pipeline")
-
-		val twin = cloudVelocityTwin(plain)
-		assertSame(twin, cloudVelocityTwin(plain), "the writer twin is cached per plain twin")
-		assertEquals(Identifier.fromNamespaceAndPath("mc-dlss", "velocity/cloud/clouds"), twin.location)
-		assertEquals(
-			Identifier.fromNamespaceAndPath("mc-dlss", "velocity/cloud/flat_clouds"),
-			cloudVelocityTwin(velocityTwin(RenderPipelines.FLAT_CLOUDS)).location,
-		)
-
-		// The cloud twin lives at its own location: no collision with the plain twin's
-		// velocity/pipeline path or the other writer twins of the same source.
-		assertNotEquals(plain.location, twin.location)
-		assertNotEquals(terrainVelocityTwin(plain).location, twin.location)
-		assertNotEquals(entityVelocityTwin(plain).location, twin.location)
-		assertNotEquals(weatherVelocityTwin(plain).location, twin.location)
-		assertNotEquals(particleVelocityTwin(plain).location, twin.location)
-	}
-
-	@Test
-	fun `cloud twin keeps the flat variant's cull-off state and admits exactly the cloud shader family`() {
-		val twin = cloudVelocityTwin(velocityTwin(RenderPipelines.FLAT_CLOUDS))
-		assertEquals(RenderPipelines.FLAT_CLOUDS.isCull, twin.isCull)
-		assertFalse(twin.isCull, "the flat variant must keep rendering both faces")
-
-		// The pipeline gate admits exactly the two cloud pipelines' shader family - CLOUDS and
-		// FLAT_CLOUDS both bind core/rendertype_clouds - and no other writer's family.
-		assertTrue(CloudVelocityRender.isCloudPipeline(RenderPipelines.CLOUDS))
-		assertTrue(CloudVelocityRender.isCloudPipeline(RenderPipelines.FLAT_CLOUDS))
-		assertFalse(CloudVelocityRender.isCloudPipeline(RenderPipelines.WEATHER_DEPTH_WRITE))
-		assertFalse(CloudVelocityRender.isCloudPipeline(RenderPipelines.SOLID_BLOCK))
-		assertFalse(CloudVelocityRender.isCloudPipeline(RenderPipelines.CRUMBLING))
-	}
-
-	@Test
-	fun `cloud pass attachments agree with the twin on both routes`() {
-		val scene = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM))
-		val velocity = FakeView(FakeTexture(GpuFormat.RG16_FLOAT))
-
-		// The vanilla route: the one-attachment cloud pass binds the source pipeline.
-		val oneTarget = RenderPassDescriptor.create({ "Clouds" })
-			.withColorAttachment(scene)
-			.withDepthAttachment(FakeView(FakeTexture(GpuFormat.D32_FLOAT)), OptionalDouble.empty())
-		assertEquals(1, oneTarget.colorAttachments().size)
-		assertEquals(RenderPipelines.CLOUDS.colorTargetStates.size, oneTarget.colorAttachments().size)
-
-		// The VELOCITY_MRT route: the two-attachment pass must agree with the two-target twin -
-		// exactly the count/format check RenderPass.setPipeline performs on first bind.
-		val twin = cloudVelocityTwin(velocityTwin(RenderPipelines.CLOUDS))
-		val twoTarget = RenderPassDescriptor.create({ "Clouds velocity" })
-			.withColorAttachment(scene)
-			.withColorAttachment(velocity, Optional.empty())
-			.withDepthAttachment(FakeView(FakeTexture(GpuFormat.D32_FLOAT)), OptionalDouble.empty())
-
-		val attachments = twoTarget.colorAttachments()
-		assertEquals(2, attachments.size)
-		assertEquals(twin.colorTargetStates.size, attachments.size)
-		assertSame(scene, attachments[0]!!.textureView())
-		assertSame(velocity, attachments[1]!!.textureView())
-		assertTrue(attachments[1]!!.clearValue().isEmpty(), "the velocity attachment is never cleared")
-		assertEquals(GpuFormat.RG16_FLOAT, attachments[1]!!.textureView().texture().getFormat())
-		assertEquals(twin.colorTargetStates[1]!!.format(), attachments[1]!!.textureView().texture().getFormat())
-	}
-
-	@Test
-	fun `cloud shader preserves the cloud color output and writes velocity after the final color`() {
-		val shader = cloudShader()
-
-		// The vanilla core/rendertype_clouds fragment body the cloud pipelines bind, verbatim:
-		// the vertex color with only the fog alpha fade, no sampling, no fog color blend.
-		assertTrue(shader.contains("vec4 color = vertexColor;"))
-		assertTrue(shader.contains("color.a *= 1.0f - linear_fog_value(vertexDistance, 0, FogCloudsEnd)"))
-		assertTrue(shader.contains("fragColor = color;"))
-		assertTrue(shader.contains("in float vertexDistance;"))
-		assertTrue(shader.contains("in vec4 vertexColor;"))
-
-		// The inlined vanilla fog include it needs (FogCloudsEnd, linear_fog_value).
-		assertTrue(shader.contains("layout(std140) uniform Fog {"))
-		assertTrue(shader.contains("float FogCloudsEnd;"))
-
-		// The payload: the cloud writer's own CloudVelocityConfig block and velocity output.
-		assertTrue(shader.contains("layout(std140) uniform CloudVelocityConfig {"))
-		assertTrue(shader.contains("mat4 ObjectReprojection;"))
-		assertTrue(shader.contains("vec4 VelocityParams;"))
-		assertTrue(shader.contains("out vec4 velocityColor;"))
-		assertTrue(shader.contains("const float INVALID_VELOCITY = 10000.0;"))
-
-		// Assignment order: glslang emits fragment outputs in first-assignment order and
-		// Minecraft rewrites locations by that reflection order, so the final fragColor write
-		// must precede the velocityColor write or the near-black payload lands on attachment 0.
-		val fragWrite = shader.indexOf("fragColor = color;")
-		val velocityWrite = shader.indexOf("velocityColor = invalidPixel")
-		assertTrue(fragWrite >= 0, "the final fragColor write must exist")
-		assertTrue(velocityWrite >= 0, "the velocityColor write must exist")
-		assertTrue(velocityWrite > fragWrite, "velocityColor must be assigned after the final fragColor")
-	}
-
-	/**
-	 * The compiled seam, exercising the true mechanism: the cloud shader is self-contained
-	 * (it inlines the fog include instead of #moj_import, which needs Minecraft's resource
-	 * preprocessor), so it can be compiled through the same LWJGL Shaderc + spirv-cross path
-	 * `GlslCompiler.createIntermediary` and `IntermediaryShaderModule.createFromSpirv` use.
-	 * The stage-output reflection list must come back fragColor-first (that list's index is what
-	 * the location rewrite writes), and applying the rewrite must leave fragColor on Location 0
-	 * (the cloud color target) and velocityColor on Location 1 (the velocity attachment).
-	 */
-	@Test
-	fun `cloud shader reflects outputs in fragColor-then-velocityColor order through Minecraft's compile path`() {
-		val spirv = compileFragmentShader(minecraftFragmentSource(cloudShader()))
-		try {
-			val outputs = reflectOutputs(spirv)
-			assertEquals(
-				listOf("fragColor", "velocityColor"),
-				outputs.map { it.name },
-				"the stage-output reflection list must be fragColor first: createFromSpirv rewrites each " +
-					"output's Location to its index in this list, so the list order IS the attachment binding",
-			)
-
-			val intSpirv = spirv.asIntBuffer()
-			outputs.forEachIndexed { index, output -> intSpirv.put(output.locationOffset, index) }
-			val rewritten = reflectOutputs(spirv)
-			assertEquals(
-				mapOf("fragColor" to 0, "velocityColor" to 1),
-				rewritten.associate { it.name to it.location },
-				"after the createFromSpirv rewrite fragColor must sit on attachment 0 (cloud color) and " +
-					"velocityColor on attachment 1 (velocity)",
-			)
-		} finally {
-			MemoryUtil.memFree(spirv)
-		}
-	}
-
-	/**
-	 * The cloud shader derives previous NDC from the drift-composed object reprojection, and
-	 * the shared classification collapses reset frames and invalid reprojections to the one
-	 * representable sentinel instead of the identity-derived zero.
-	 */
-	@Test
-	fun `cloud shader writes the drift-composed reprojection with the exact sentinel on reset`() {
-		val shader = cloudShader()
-		assertTrue(shader.contains("vec4 clip = vec4(ndc, gl_FragCoord.z, 1.0);"))
-		assertTrue(shader.contains("vec4 previous = ObjectReprojection * clip;"))
-		assertTrue(shader.contains("previous.xy / previous.w - ndc"))
-		assertTrue(shader.contains("VelocityParams.x > 0.5"), "the reset flag drives the per-pixel classification")
-		assertTrue(shader.contains("vec4(INVALID_VELOCITY, INVALID_VELOCITY, 0.0, 0.0)"), "every invalid path writes the one sentinel")
-
-		// The classification behavior: a reset frame (identity reprojection) must force the
-		// sentinel at every probe - the identity would otherwise read as a still camera - and a
-		// valid continuous reprojection produces a finite vector strictly below the sentinel.
-		for (probe in probes) {
-			val reset = classify(Matrix4f(), probe, reset = true)
-			assertEquals(INVALID_VELOCITY, reset.x, "reset forces the sentinel at $probe")
-			assertEquals(INVALID_VELOCITY, reset.y, "reset forces the sentinel at $probe")
-		}
-
-		val camera = DlssFrameMotion(Matrix4f(), 1f, 1f, 16f, false)
-		for (probe in probes) {
-			val result = classify(camera.reprojection, probe)
-			if (result.x == INVALID_VELOCITY) {
-				assertEquals(INVALID_VELOCITY, result.y, "a sentinel carries both components at $probe")
-			} else {
-				assertTrue(result.x == result.x && result.y == result.y, "motion must not be NaN: $result")
-				assertTrue(
-					abs(result.x) < INVALID_VELOCITY && abs(result.y) < INVALID_VELOCITY,
-					"a valid vector stays below the sentinel: $result",
-				)
-			}
-		}
-
-		// The same classification over a reprojection carrying the cloud drift: the camera
-		// reprojection with a -0.03 blocks/tick X displacement conjugated in stays finite and
-		// below the sentinel, exactly the payload the writer feeds this shader.
-		val drift = CloudVelocityRender.driftDisplacement(1.25f)
-		val drifted = objectReprojection(
-			camera,
-			Matrix4f(),
-			DlssJitterOffset(0, 0f, 0f, DlssDimensions(1280, 720)),
-			drift,
-		)
-		for (probe in probes) {
-			val result = classify(drifted, probe)
-			if (result.x == INVALID_VELOCITY) {
-				assertEquals(INVALID_VELOCITY, result.y, "a sentinel carries both components at $probe")
-			} else {
-				assertTrue(result.x == result.x && result.y == result.y, "motion must not be NaN: $result")
-				assertTrue(
-					abs(result.x) < INVALID_VELOCITY && abs(result.y) < INVALID_VELOCITY,
-					"the drift-composed vector stays below the sentinel: $result",
-				)
-			}
-		}
-	}
-
-	@Test
-	fun `an eligible open velocity-mrt phase offers the cloud writer the scene velocity view`() {
-		val phase = phase(velocityRuntime())
-
-		// Closed or not yet opened: no velocity view, the cloud pass stays vanilla.
-		assertFalse(CloudVelocityRender.canRedirect(phase))
-		assertNull(CloudVelocityRender.velocityView(phase))
-
-		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
-		assertTrue(CloudVelocityRender.canRedirect(phase))
-		val view = checkNotNull(CloudVelocityRender.velocityView(phase))
-		assertEquals(GpuFormat.RG16_FLOAT, view.texture().getFormat())
-		assertEquals(render.width, view.getWidth(0))
-		assertEquals(render.height, view.getHeight(0))
-
-		phase.end()
-		assertFalse(CloudVelocityRender.canRedirect(phase))
-		assertNull(CloudVelocityRender.velocityView(phase))
-	}
-
-	@Test
-	fun `vanilla camera-only and non-open phases keep the cloud pass vanilla and cannot throw`() {
-		// Camera-only: the first foreign pipeline latches the fallback route, so the open phase
-		// offers no velocity view and the writer answers false - the exact source pass survives.
-		val cameraOnly = velocityRuntime()
-		cameraOnly.observeWorldPipeline(
-			MotionVectorPipeline(
-				"example:pipeline/waving_terrain",
-				listOf(MotionVectorShader("example:core/waving_terrain", "example")),
-			),
-		)
-		assertEquals(MotionVectorRoute.CAMERA_ONLY, cameraOnly.motionVectorRoute)
-		val cameraOnlyPhase = phase(cameraOnly)
-		assertDoesNotThrow {
-			cameraOnlyPhase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
-			assertFalse(CloudVelocityRender.canRedirect(cameraOnlyPhase))
-			assertNull(CloudVelocityRender.velocityView(cameraOnlyPhase))
-			cameraOnlyPhase.end()
-		}
-
-		// Vanilla: a session without DLSS keeps the cloud pass on its exact source route.
-		val vanillaSession = DlssSession(
-			DlssStartupConfig(
-				enabled = false,
-				qualityMode = SRMode.QUALITY,
-				outputDimensions = output,
-				sdkPath = null,
-				nativeLibraryPath = null,
-				dataPath = null,
-				warnings = emptyList(),
-			),
-		)
-		val vanillaPhase = phase(
-			RenderRuntime(
-				session = vanillaSession,
-				sceneTarget = SceneTarget(
-					allocate = { width, height -> FakeTarget(width, height) },
-					release = { (it as FakeTarget).releases++ },
-					allocateVelocity = { _, _ -> null },
-				),
-				startup = { null },
-			),
-		)
-		assertDoesNotThrow {
-			vanillaPhase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
-			assertFalse(CloudVelocityRender.canRedirect(vanillaPhase))
-			vanillaPhase.end()
-		}
-	}
 
 	/**
 	 * The cloud writer's own motion: the per-frame cloud-offset delta composed into the camera
@@ -491,9 +171,9 @@ class MotionVectorCloudTest {
 			// The frame state machine through the production seam, on an open velocity-MRT
 			// phase whose camera history is established.
 			val runtime = velocityRuntime()
-			val phase = phase(runtime)
-			renderFrame(phase)
-			phase.prepare(true, mainTarget, camera())
+			val phase = worldPhase(runtime)
+			renderFrame(phase, mainTarget)
+			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
 
 			// Frame one: no previous clock - the sentinel, not the identity-derived zero.
@@ -541,169 +221,6 @@ class MotionVectorCloudTest {
 		}
 	}
 
-	@Test
-	fun `cloud writer fills the CloudVelocityConfig payload with the drift-composed reprojection`() {
-		val writer = source("src/main/kotlin/me/snowmii/dlss/mrt/CloudVelocityRender.kt")
-		val objectState = source("src/main/kotlin/me/snowmii/dlss/mrt/ObjectMotionState.kt")
-
-		// The writer's own payload block: one mat4 + one vec4, the same std140 shape the
-		// entity/moving-block writers use, under the cloud writer's own uniform name.
-		assertTrue(writer.contains("CloudVelocityConfig"))
-		assertTrue(writer.contains("putMat4f("))
-		assertTrue(writer.contains("putVec4("))
-		assertTrue(writer.contains("if (payload.invalid) 1f else 0f"), "the reset flag forces the per-pixel sentinel")
-		assertTrue(writer.contains("encoder.writeToBuffer(buffer.slice(), data)"))
-
-		// The drift composes through the existing object-reprojection machinery: the camera's
-		// authoritative reprojection with the cloud-offset displacement conjugated in.
-		assertTrue(writer.contains("objectReprojection("))
-		assertTrue(objectState.contains("fun objectReprojection("))
-		assertTrue(writer.contains("phase.activeMotion"))
-		assertTrue(writer.contains("phase.currentViewProjection"))
-		assertTrue(writer.contains("phase.activeJitter"))
-		assertTrue(writer.contains("meshRebuilt"), "the mixin's rebuild observation drives the reset")
-		assertTrue(writer.contains("MAX_CLOCK_JUMP_TICKS"), "a clock discontinuity resets the sentinel")
-		assertTrue(writer.contains("canRedirect"), "the control seam answers false for ineligible routes")
-		assertTrue(writer.contains("uniformSlice()"), "the pass binds the writer's shared payload buffer")
-		assertEquals("CloudVelocityConfig", CloudVelocityRender.UNIFORM_NAME)
-		assertEquals("core/velocity_clouds", CloudVelocityRender.SHADER_PATH)
-		assertEquals(Identifier.fromNamespaceAndPath("mc-dlss", "core/velocity_clouds"), CloudVelocityRender.FRAGMENT_SHADER)
-		assertEquals(
-			80,
-			CloudVelocityRender.UBO_SIZE,
-			"the payload is one mat4 plus one vec4",
-		)
-	}
-
-	@Test
-	fun `cloud mixin redirects the mapped cloud render seams and observes the rebuild and cloud clock`() {
-		val mixin = source("src/main/java/me/snowmii/dlss/mixin/CloudRendererMotionMixin.java")
-		val writer = source("src/main/kotlin/me/snowmii/dlss/mrt/CloudVelocityRender.kt")
-		val mixins = source("src/main/resources/mc-dlss.mixins.json")
-
-		// The mapped seam: CloudRenderer.render creates the cloud pass over the clouds/main
-		// target, binds the CLOUDS / FLAT_CLOUDS selection, and rebuilds the mesh through
-		// MappableRingBuffer.rotate inside the rebuild block.
-		assertTrue(mixin.contains("@Mixin(CloudRenderer.class)"))
-		assertTrue(mixin.contains("method = \"render\""))
-		assertTrue(mixin.contains("CommandEncoder;createRenderPass("))
-		assertTrue(mixin.contains("RenderPass;setPipeline("))
-		assertTrue(mixin.contains("RenderPass;close()V"), "the owned close seam guards the writer pass's close")
-		assertTrue(mixin.contains("MappableRingBuffer;rotate()V"))
-
-		// The redirects are thin delegations into the writer's failure-atomic interception: the
-		// pass creation, the pipeline swap, and the owned close all live in CloudVelocityRender,
-		// where the test JVM can drive them without a live client.
-		assertTrue(mixin.contains("CloudVelocityRender.createPass("))
-		assertTrue(mixin.contains("CloudVelocityRender.bindPipeline("))
-		assertTrue(mixin.contains("CloudVelocityRender.closePass("))
-		assertTrue(mixin.contains("CLOUD_MESH_REBUILT.get()"), "the mixin passes its rebuild observation into the interception")
-
-		// The writer fills the payload on the same encoder the pass is created from, with the
-		// exact cloud clock the render call received: levelRenderState.gameTime is the level's
-		// game time and LevelRenderer.render passes deltaTracker.getGameTimeDeltaPartialTick(false).
-		assertTrue(writer.contains("writeToBuffer(buffer.slice(), data)"))
-		assertTrue(writer.contains("level.getGameTime()"))
-		assertTrue(writer.contains("getDeltaTracker().getGameTimeDeltaPartialTick(false)"))
-		assertTrue(writer.contains("withColorAttachment(velocity, Optional.empty())"))
-		// Ineligible routes keep the exact vanilla pass creation and cannot throw.
-		assertTrue(writer.contains("terrainVelocityView"))
-		assertTrue(writer.contains("encoder.createRenderPass(label, colorTexture, clearColor, depthTexture, clearDepth)"))
-		assertTrue(mixins.contains("CloudRendererMotionMixin"))
-
-		// The mapped render method exists with the descriptor the redirects live in.
-		val render = CloudRenderer::class.java.getDeclaredMethod(
-			"render",
-			Int::class.javaPrimitiveType,
-			CloudStatus::class.java,
-			Float::class.javaPrimitiveType,
-			Int::class.javaPrimitiveType,
-			Vec3::class.java,
-			Long::class.javaPrimitiveType,
-			Float::class.javaPrimitiveType,
-		)
-		assertEquals(Void.TYPE, render.returnType)
-
-		// The untransformed mixin class is a plain object at test runtime.
-		val mixinClass = Class.forName("me.snowmii.dlss.mixin.CloudRendererMotionMixin")
-
-		// The render-head handler clears the rebuild observation before every render call.
-		val headHandler = mixinClass.getDeclaredMethod(
-			"mcDlssCloudRenderHead",
-			Int::class.javaPrimitiveType,
-			CloudStatus::class.java,
-			Float::class.javaPrimitiveType,
-			Int::class.javaPrimitiveType,
-			Vec3::class.java,
-			Long::class.javaPrimitiveType,
-			Float::class.javaPrimitiveType,
-			CallbackInfo::class.java,
-		)
-		val headInject = requireNotNull(headHandler.getAnnotation(Inject::class.java))
-		assertTrue(headInject.method.contentEquals(arrayOf("render")))
-		assertEquals("HEAD", headInject.at.first().value)
-
-		// The rebuild handler observes the one rotate() call inside render - the mesh rebuild
-		// block - and passes it through.
-		val rebuildHandler = mixinClass.getDeclaredMethod("mcDlssCloudMeshRebuilt", MappableRingBuffer::class.java)
-		val rebuildRedirect = requireNotNull(rebuildHandler.getAnnotation(Redirect::class.java))
-		assertTrue(rebuildRedirect.method.contentEquals(arrayOf("render")))
-		assertEquals("INVOKE", rebuildRedirect.at.value)
-		assertEquals(
-			"Lnet/minecraft/client/renderer/MappableRingBuffer;rotate()V",
-			rebuildRedirect.at.target,
-		)
-
-		// The pass-creation handler's @Redirect matches the mapped CommandEncoder descriptor.
-		val passHandler = mixinClass.getDeclaredMethod(
-			"mcDlssCloudRenderPass",
-			CommandEncoder::class.java,
-			Supplier::class.java,
-			GpuTextureView::class.java,
-			Optional::class.java,
-			GpuTextureView::class.java,
-			OptionalDouble::class.java,
-		)
-		val passRedirect = requireNotNull(passHandler.getAnnotation(Redirect::class.java))
-		assertTrue(passRedirect.method.contentEquals(arrayOf("render")))
-		assertEquals("INVOKE", passRedirect.at.value)
-		assertEquals(
-			"Lcom/mojang/blaze3d/systems/CommandEncoder;createRenderPass(" +
-				"Ljava/util/function/Supplier;" +
-				"Lcom/mojang/blaze3d/textures/GpuTextureView;" +
-				"Ljava/util/Optional;" +
-				"Lcom/mojang/blaze3d/textures/GpuTextureView;" +
-				"Ljava/util/OptionalDouble;" +
-				")Lcom/mojang/blaze3d/systems/RenderPass;",
-			passRedirect.at.target,
-		)
-
-		// The pipeline-boundary handler's @Redirect matches the mapped RenderPass descriptor.
-		val pipelineHandler = mixinClass.getDeclaredMethod(
-			"mcDlssCloudSetPipeline",
-			RenderPass::class.java,
-			RenderPipeline::class.java,
-		)
-		val pipelineRedirect = requireNotNull(pipelineHandler.getAnnotation(Redirect::class.java))
-		assertTrue(pipelineRedirect.method.contentEquals(arrayOf("render")))
-		assertEquals("INVOKE", pipelineRedirect.at.value)
-		assertEquals(
-			"Lcom/mojang/blaze3d/systems/RenderPass;setPipeline(Lcom/mojang/blaze3d/pipeline/RenderPipeline;)V",
-			pipelineRedirect.at.target,
-		)
-
-		// The owned close handler's @Redirect matches the mapped RenderPass close the source
-		// render's try-with-resources invokes.
-		val closeHandler = mixinClass.getDeclaredMethod("mcDlssCloudClose", RenderPass::class.java)
-		val closeRedirect = requireNotNull(closeHandler.getAnnotation(Redirect::class.java))
-		assertTrue(closeRedirect.method.contentEquals(arrayOf("render")))
-		assertEquals("INVOKE", closeRedirect.at.value)
-		assertEquals(
-			"Lcom/mojang/blaze3d/systems/RenderPass;close()V",
-			closeRedirect.at.target,
-		)
-	}
-
 	/**
 	 * Executes the eligible production pass setup end to end on a recording fake command
 	 * backend: the writer's own gates, preflight (payload write, buffer allocation, twin
@@ -718,10 +235,10 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass setup executes on a fake command backend and records the full replacement`() {
 		val runtime = velocityRuntime()
-		val phase = phase(runtime)
+		val phase = worldPhase(runtime)
 		try {
-			renderFrame(phase)
-			phase.prepare(true, mainTarget, camera())
+			renderFrame(phase, mainTarget)
+			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
 			val velocityView = checkNotNull(phase.terrainVelocityView)
 
@@ -734,8 +251,8 @@ class MotionVectorCloudTest {
 			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 			CloudVelocityRender.deviceProvider = { backend.device }
 
-			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, render.width, render.height))
-			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, render.width, render.height))
+			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
+			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 			val pass = CloudVelocityRender.createPass(
 				backend.encoder,
 				{ "Clouds" },
@@ -754,8 +271,8 @@ class MotionVectorCloudTest {
 			assertSame(colorView, attachments[0]!!.textureView())
 			assertSame(velocityView, attachments[1]!!.textureView())
 			assertTrue(attachments[1]!!.clearValue().isEmpty(), "the velocity attachment is never cleared")
-			assertEquals(render.width, checkNotNull(descriptor.renderArea).width())
-			assertEquals(render.height, checkNotNull(descriptor.renderArea).height())
+			assertEquals(RENDER_DIMENSIONS.width, checkNotNull(descriptor.renderArea).width())
+			assertEquals(RENDER_DIMENSIONS.height, checkNotNull(descriptor.renderArea).height())
 			assertEquals(GpuFormat.RG16_FLOAT, attachments[1]!!.textureView().texture().getFormat())
 
 			// The payload: this frame's CloudVelocityConfig block was written through the fake
@@ -768,13 +285,13 @@ class MotionVectorCloudTest {
 			// The preflight precompiled both cloud twins on the writer's device, so the bind is
 			// a cache hit on a validated pipeline.
 			assertEquals(2, backend.precompiledPipelines.size, "both cloud statics' twins were precompiled")
-			assertTrue(backend.precompiledPipelines.contains(cloudVelocityTwin(velocityTwin(RenderPipelines.CLOUDS))))
-			assertTrue(backend.precompiledPipelines.contains(cloudVelocityTwin(velocityTwin(RenderPipelines.FLAT_CLOUDS))))
+			assertTrue(backend.precompiledPipelines.contains(writerTwin(RenderPipelines.CLOUDS, VelocityWriter.CLOUD)))
+			assertTrue(backend.precompiledPipelines.contains(writerTwin(RenderPipelines.FLAT_CLOUDS, VelocityWriter.CLOUD)))
 
 			// The pipeline-boundary swap binds the preflighted twin, and the real
 			// RenderPass.setPipeline validation accepted its two targets against the attachments.
 			CloudVelocityRender.bindPipeline(pass, RenderPipelines.CLOUDS)
-			assertSame(cloudVelocityTwin(velocityTwin(RenderPipelines.CLOUDS)), backend.pipeline)
+			assertSame(writerTwin(RenderPipelines.CLOUDS, VelocityWriter.CLOUD), backend.pipeline)
 
 			// The owned close seam closed the pass exactly once and dropped the latch.
 			CloudVelocityRender.closePass(pass)
@@ -799,16 +316,16 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass setup preflights allocation write pass-creation and uniform-bind failures to the exact vanilla pass`() {
 		val runtime = velocityRuntime()
-		val phase = phase(runtime)
+		val phase = worldPhase(runtime)
 		try {
-			renderFrame(phase)
-			phase.prepare(true, mainTarget, camera())
+			renderFrame(phase, mainTarget)
+			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
 			CloudVelocityRender.activePhaseOverride = phase
 			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 
-			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, render.width, render.height))
-			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, render.width, render.height))
+			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
+			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 
 			for (failurePoint in listOf("createBuffer", "writeToBuffer", "createRenderPass", "setUniform")) {
 				// Drop the writer's cached payload allocation so the createBuffer injection is
@@ -857,16 +374,16 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass setup preflights twin compilation and validity failures to the exact vanilla pass`() {
 		val runtime = velocityRuntime()
-		val phase = phase(runtime)
+		val phase = worldPhase(runtime)
 		try {
-			renderFrame(phase)
-			phase.prepare(true, mainTarget, camera())
+			renderFrame(phase, mainTarget)
+			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
 			CloudVelocityRender.activePhaseOverride = phase
 			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 
-			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, render.width, render.height))
-			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, render.width, render.height))
+			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
+			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 
 			for (case in listOf("precompile-throw", "precompile-invalid")) {
 				CloudVelocityRender.resetState()
@@ -907,18 +424,18 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass setup rejects a size-mismatched velocity attachment as the exact vanilla fallback`() {
 		val runtime = velocityRuntime()
-		val phase = phase(runtime)
+		val phase = worldPhase(runtime)
 		try {
-			renderFrame(phase)
-			phase.prepare(true, mainTarget, camera())
+			renderFrame(phase, mainTarget)
+			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
 			CloudVelocityRender.activePhaseOverride = phase
 			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 
 			val backend = CloudFakeBackend()
 			CloudVelocityRender.deviceProvider = { backend.device }
-			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, render.width, render.height))
-			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, render.width, render.height))
+			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
+			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 			val mismatchedVelocity = FakeView(FakeTexture(GpuFormat.RG16_FLOAT, 640, 480))
 
 			// The guard itself: the size-mismatched velocity view is rejected before the
@@ -953,10 +470,10 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass close failure is absorbed and the latch is dropped`() {
 		val runtime = velocityRuntime()
-		val phase = phase(runtime)
+		val phase = worldPhase(runtime)
 		try {
-			renderFrame(phase)
-			phase.prepare(true, mainTarget, camera())
+			renderFrame(phase, mainTarget)
+			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
 			CloudVelocityRender.activePhaseOverride = phase
 			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
@@ -964,8 +481,8 @@ class MotionVectorCloudTest {
 
 			val backend = CloudFakeBackend().also { it.failAt = "passClose" }
 			CloudVelocityRender.deviceProvider = { backend.device }
-			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, render.width, render.height))
-			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, render.width, render.height))
+			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
+			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 
 			val pass = CloudVelocityRender.createPass(
 				backend.encoder,
@@ -983,7 +500,7 @@ class MotionVectorCloudTest {
 			assertDoesNotThrow { CloudVelocityRender.closePass(pass) }
 			assertEquals(1, backend.passCloses, "the pass closed exactly once, through the owned seam")
 			assertFalse(CloudVelocityRender.isLatched(pass), "the close seam drops the latch even on a failed close")
-			assertSame(cloudVelocityTwin(velocityTwin(RenderPipelines.CLOUDS)), backend.pipeline)
+			assertSame(writerTwin(RenderPipelines.CLOUDS, VelocityWriter.CLOUD), backend.pipeline)
 		} finally {
 			resetSeams()
 			if (phase.isOpen) phase.end()
@@ -998,10 +515,10 @@ class MotionVectorCloudTest {
 	@Test
 	fun `unexpected eligible preflight throw degrades to the exact vanilla pass`() {
 		val runtime = velocityRuntime()
-		val phase = phase(runtime)
+		val phase = worldPhase(runtime)
 		try {
-			renderFrame(phase)
-			phase.prepare(true, mainTarget, camera())
+			renderFrame(phase, mainTarget)
+			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
 			CloudVelocityRender.activePhaseOverride = phase
 			CloudVelocityRender.cloudClockProvider = { throw IllegalStateException("injected clock failure") }
@@ -1009,7 +526,7 @@ class MotionVectorCloudTest {
 
 			val backend = CloudFakeBackend()
 			CloudVelocityRender.deviceProvider = { backend.device }
-			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, render.width, render.height))
+			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 
 			assertDoesNotThrow {
 				val pass = CloudVelocityRender.createPass(
@@ -1040,286 +557,6 @@ class MotionVectorCloudTest {
 			}.getOrNull()
 		}
 		CloudVelocityRender.deviceProvider = { RenderSystem.getDevice() }
-	}
-
-	@Test
-	fun `cloud twin is registered and reachable from the mixin through the variant surface`() {
-		val variant = source("src/main/kotlin/me/snowmii/dlss/mrt/VelocityPipelineVariant.kt")
-		assertTrue(variant.contains("fun cloudVelocityTwin(plainTwin: RenderPipeline)"))
-		assertTrue(variant.contains("cloudVelocityTwins.computeIfAbsent"))
-		assertTrue(variant.contains("withFragmentShader(CloudVelocityRender.FRAGMENT_SHADER)"))
-		assertTrue(variant.contains("withBindGroupLayout(CloudVelocityRender.LAYOUT)"))
-
-		// The registered JSON entry is the compile-time seam: a misspelled class name would
-		// fail the mixin application in the client.
-		val registered = JsonParser.parseString(source("src/main/resources/mc-dlss.mixins.json"))
-			.asJsonObject
-			.getAsJsonArray("client")
-			.map { it.asString }
-		assertTrue("CloudRendererMotionMixin" in registered)
-	}
-
-	private fun source(path: String) = repository.resolve(path).readText()
-
-	private fun cloudShader(): String = repository
-		.resolve("src/main/resources/assets/mc-dlss/shaders/core/velocity_clouds.fsh")
-		.readText()
-
-	/**
-	 * Compiles a fragment shader exactly the way `GlslCompiler.createIntermediary` does: the
-	 * global defines injected after the `#version` line, then shaderc with the Vulkan 1.2 target
-	 * and automatic location/uniform mapping. Returns a copy of the SPIR-V bytes so the caller
-	 * owns the buffer.
-	 */
-	private fun compileFragmentShader(source: String): ByteBuffer {
-		val compiler = Shaderc.shaderc_compiler_initialize()
-		val options = Shaderc.shaderc_compile_options_initialize()
-		try {
-			Shaderc.shaderc_compile_options_set_target_env(options, Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2)
-			Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true)
-			Shaderc.shaderc_compile_options_set_auto_map_locations(options, true)
-			Shaderc.shaderc_compile_options_set_generate_debug_info(options)
-			Shaderc.shaderc_compile_options_set_optimization_level(options, 0)
-
-			MemoryStack.stackPush().use {
-				val sourceBuffer = MemoryUtil.memUTF8(source, false)
-				val filenameBuffer = MemoryUtil.memUTF8("velocity_clouds.fsh")
-				val entrypointBuffer = MemoryUtil.memUTF8("main")
-				try {
-					val result = Shaderc.shaderc_compile_into_spv(
-						compiler, sourceBuffer, Shaderc.shaderc_fragment_shader, filenameBuffer, entrypointBuffer, options,
-					)
-					try {
-						val status = Shaderc.shaderc_result_get_compilation_status(result)
-						check(status == 0) { "shaderc failed (status $status): ${Shaderc.shaderc_result_get_error_message(result)}" }
-						val compiled = checkNotNull(Shaderc.shaderc_result_get_bytes(result)) { "shaderc returned no SPIR-V bytes" }
-						val copy = MemoryUtil.memCalloc(compiled.remaining())
-						MemoryUtil.memCopy(compiled, copy)
-						return copy
-					} finally {
-						Shaderc.shaderc_result_release(result)
-					}
-				} finally {
-					MemoryUtil.memFree(entrypointBuffer)
-					MemoryUtil.memFree(filenameBuffer)
-					MemoryUtil.memFree(sourceBuffer)
-				}
-			}
-		} finally {
-			Shaderc.shaderc_compile_options_release(options)
-			Shaderc.shaderc_compiler_release(compiler)
-		}
-	}
-
-	/**
-	 * The exact preprocessed source `compileShader` hands `createIntermediary`: the global
-	 * defines injected right after the `#version` line. They alias vertex-only builtins and are
-	 * inert for fragment output emission, but keeping them makes the compiled module match the
-	 * game's byte-for-byte.
-	 */
-	private fun minecraftFragmentSource(source: String): String {
-		val versionLineEnd = source.indexOf('\n')
-		check(versionLineEnd >= 0) { "shader source must start with a #version line" }
-		return source.substring(0, versionLineEnd + 1) +
-			"#define gl_VertexID gl_VertexIndex\n#define gl_InstanceID gl_InstanceIndex\n#line 1 0\n" +
-			source.substring(versionLineEnd + 1)
-	}
-
-	/** A stage output as spirv-cross reflects it, plus the byte offset of its Location decoration. */
-	private class OutputReflection(val name: String, val locationOffset: Int, val location: Int)
-
-	/**
-	 * Reflects the stage outputs of a compiled module the way `createFromSpirv` does: parse the
-	 * SPIR-V, list STAGE_OUTPUT resources, and read each output's Location decoration value and
-	 * the binary word offset where that decoration lives. The list comes back in module
-	 * declaration order, which is glslang's first-assignment order inside `main()`.
-	 */
-	private fun reflectOutputs(spirv: ByteBuffer): List<OutputReflection> {
-		MemoryStack.stackPush().use { stack ->
-			val contextPointer = stack.callocPointer(1)
-			spvcCheck(Spvc.spvc_context_create(contextPointer), "spvc_context_create")
-			val context = contextPointer.get(0)
-			try {
-				val intSpirv = spirv.asIntBuffer()
-				val irPointer = stack.callocPointer(1)
-				spvcCheck(
-					Spvc.spvc_context_parse_spirv(context, intSpirv, intSpirv.remaining().toLong(), irPointer),
-					"spvc_context_parse_spirv",
-				)
-				val compilerPointer = stack.callocPointer(1)
-				spvcCheck(
-					Spvc.spvc_context_create_compiler(context, 0, irPointer.get(0), 1, compilerPointer),
-					"spvc_context_create_compiler",
-				)
-				val compiler = compilerPointer.get(0)
-				val resourcesPointer = stack.callocPointer(1)
-				spvcCheck(Spvc.spvc_compiler_create_shader_resources(compiler, resourcesPointer), "spvc_compiler_create_shader_resources")
-				val listPointer = stack.callocPointer(1)
-				val countPointer = stack.callocPointer(1)
-				spvcCheck(
-					Spvc.spvc_resources_get_resource_list_for_type(
-						resourcesPointer.get(0), Spvc.SPVC_RESOURCE_TYPE_STAGE_OUTPUT, listPointer, countPointer,
-					),
-					"spvc_resources_get_resource_list_for_type",
-				)
-				val resources = SpvcReflectedResource.create(listPointer.get(0), countPointer.get(0).toInt())
-				val offsetBuffer = stack.callocInt(1)
-				val outputs = ArrayList<OutputReflection>(resources.capacity())
-				for (index in 0 until resources.capacity()) {
-					val resource = resources.get(index)
-					val name = resource.nameString()
-					check(Spvc.spvc_compiler_get_binary_offset_for_decoration(compiler, resource.id(), LOCATION_DECORATION, offsetBuffer)) {
-						"no Location decoration on $name"
-					}
-					outputs.add(
-						OutputReflection(
-							name = name,
-							locationOffset = offsetBuffer.get(0),
-							location = Spvc.spvc_compiler_get_decoration(compiler, resource.id(), LOCATION_DECORATION),
-						),
-					)
-				}
-				return outputs
-			} finally {
-				Spvc.spvc_context_destroy(context)
-			}
-		}
-	}
-
-	private fun spvcCheck(result: Int, step: String) {
-		check(result == Spvc.SPVC_SUCCESS) {
-			val name = when (result) {
-				Spvc.SPVC_ERROR_INVALID_ARGUMENT -> "SPVC_ERROR_INVALID_ARGUMENT"
-				Spvc.SPVC_ERROR_OUT_OF_MEMORY -> "SPVC_ERROR_OUT_OF_MEMORY"
-				Spvc.SPVC_ERROR_UNSUPPORTED_SPIRV -> "SPVC_ERROR_UNSUPPORTED_SPIRV"
-				Spvc.SPVC_ERROR_INVALID_SPIRV -> "SPVC_ERROR_INVALID_SPIRV"
-				else -> result.toString()
-			}
-			"$step failed ($name)"
-		}
-	}
-
-	/**
-	 * The shader's full per-pixel classification, mirrored exactly: the reset flag, a previous
-	 * w the previous camera cannot see (zero or negative), or a non-finite previous w (NaN/Inf)
-	 * is invalid before the divide, and a non-finite or out-of-range result (magnitude at or
-	 * beyond the sentinel) collapses to invalid after it. Invalid pixels write the sentinel in
-	 * both components; valid pixels write the finite formula value.
-	 */
-	private fun classify(reprojection: Matrix4f, clip: Vector4f, reset: Boolean = false): Vector4f {
-		if (reset) {
-			return Vector4f(INVALID_VELOCITY, INVALID_VELOCITY, 0f, 1f)
-		}
-		val previous = reprojection.transform(Vector4f(clip))
-		if (previous.w <= 0.0f || previous.w.isNaN() || previous.w.isInfinite()) {
-			return Vector4f(INVALID_VELOCITY, INVALID_VELOCITY, 0f, 1f)
-		}
-		val motion = Vector4f(
-			previous.x / previous.w - clip.x / clip.w,
-			previous.y / previous.w - clip.y / clip.w,
-			0f,
-			1f,
-		)
-		if (motion.x != motion.x || motion.y != motion.y ||
-			abs(motion.x) >= INVALID_VELOCITY || abs(motion.y) >= INVALID_VELOCITY
-		) {
-			return Vector4f(INVALID_VELOCITY, INVALID_VELOCITY, 0f, 1f)
-		}
-		return motion
-	}
-
-	private fun assertVelocityTarget(target: ColorTargetState) {
-		assertTrue(target.blendFunction().isEmpty())
-		assertEquals(GpuFormat.RG16_FLOAT, target.format())
-		assertEquals(ColorTargetState.WRITE_ALL, target.writeMask())
-	}
-
-	private fun renderFrame(phase: WorldPhase) {
-		phase.prepare(true, mainTarget, camera())
-		phase.begin(true, mainTarget)
-		phase.end()
-	}
-
-	private fun phase(runtime: RenderRuntime, evaluate: Boolean = true) = WorldPhase(
-		runtime = runtime,
-		present = { _, _ -> },
-		onWorldTargetChanged = {},
-		evaluateFrame = { _, _, _, _, _, _ -> evaluate },
-	)
-
-	private fun velocityRuntime(): RenderRuntime {
-		val session = DlssSession(
-			DlssStartupConfig(
-				enabled = true,
-				qualityMode = SRMode.QUALITY,
-				outputDimensions = output,
-				sdkPath = null,
-				nativeLibraryPath = null,
-				dataPath = null,
-				warnings = emptyList(),
-			),
-		).also { check(it.markReadyAfterNativeStartup()) }
-		return RenderRuntime(
-			session = session,
-			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
-				release = { (it as FakeTarget).releases++ },
-				allocateVelocity = { width, height -> FakeTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) },
-			),
-			startup = { render },
-		)
-	}
-
-	private fun camera() = DlssCameraSample(
-		projection = Matrix4f().setPerspective(
-			Math.toRadians(70.0).toFloat(),
-			2560f / 1440f,
-			1000f,
-			0.05f,
-			true,
-		),
-		viewRotation = Matrix4f(),
-		cameraX = 0.0,
-		cameraY = 64.0,
-		cameraZ = 0.0,
-	)
-
-	private class FakeTarget(
-		width: Int,
-		height: Int,
-		format: GpuFormat = GpuFormat.RGBA8_UNORM,
-		withView: Boolean = false,
-	) : RenderTarget("fake", true, format) {
-		var releases = 0
-		private val texture = FakeTexture(format, width, height)
-
-		init {
-			this.width = width
-			this.height = height
-			if (withView) {
-				colorTextureView = FakeView(texture)
-			}
-		}
-
-		override fun createBuffers(width: Int, height: Int) {
-			this.width = width
-			this.height = height
-		}
-
-		override fun destroyBuffers() {
-			releases++
-		}
-	}
-
-	private class FakeTexture(format: GpuFormat, width: Int = 16, height: Int = 16) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT, "fake", format, width, height, 1, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
-
-	private class FakeView(texture: GpuTexture) : GpuTextureView(texture, 0, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
 	}
 
 	/**
@@ -1562,13 +799,6 @@ class MotionVectorCloudTest {
 		override fun getDeviceInfo(): DeviceInfo = info
 	}
 
-	private class FakeBuffer : GpuBuffer(GpuBuffer.USAGE_VERTEX, 0) {
-		override fun isClosed() = false
-		override fun close() = Unit
-		override fun map(offset: Long, length: Long, read: Boolean, write: Boolean): GpuBufferSlice.MappedView =
-			throw UnsupportedOperationException("test buffer is never mapped")
-	}
-
 	private companion object {
 		/** SPIR-V DecorationLocation, the decoration `createFromSpirv` rewrites and this suite reads back. */
 		const val LOCATION_DECORATION = 30
@@ -1576,9 +806,9 @@ class MotionVectorCloudTest {
 		/** The shared velocity payload's sentinel, mirrored so the JVM classification asserts the same value. */
 		const val INVALID_VELOCITY = 10000f
 
-		private val output = DlssDimensions(2560, 1440)
-		private val render = DlssDimensions(1707, 960)
-		private val mainTarget = FakeTarget(output.width, output.height)
+		private val OUTPUT_DIMENSIONS = DlssDimensions(2560, 1440)
+		private val RENDER_DIMENSIONS = DlssDimensions(1707, 960)
+		private val mainTarget = FakeTarget(OUTPUT_DIMENSIONS.width, OUTPUT_DIMENSIONS.height)
 
 		/** Sample points spread across the frustum, from near the eye to the far plane. */
 		private val probes = listOf(

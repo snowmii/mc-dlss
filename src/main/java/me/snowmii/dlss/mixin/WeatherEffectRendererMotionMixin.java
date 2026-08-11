@@ -1,5 +1,7 @@
 package me.snowmii.dlss.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.RenderPass;
@@ -8,19 +10,18 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.mrt.TerrainVelocityUniforms;
 import me.snowmii.dlss.mrt.WeatherVelocityRender;
+import me.snowmii.dlss.mrt.VelocityWriter;
 import me.snowmii.dlss.render.WorldPhase;
 import net.minecraft.client.renderer.WeatherEffectRenderer;
 import org.joml.Vector4fc;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
 
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.function.Supplier;
 
-import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.weatherVelocityTwin;
-import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.velocityTwin;
+import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.writerTwin;
 
 /**
  * Adds the scene-sized velocity attachment to the weather pass and selects the weather writer
@@ -30,7 +31,7 @@ import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.velocityTwin;
  * {@code WeatherEffectRenderer.render} is the smallest remaining bespoke world pass: it
  * creates one pass over the weather target with {@code WEATHER_DEPTH_WRITE} or
  * {@code WEATHER_NO_DEPTH_WRITE} and draws the CPU-baked rain and snow columns. The pass is
- * created inline on a fresh command encoder, so the pass-creation redirect is the seam that
+ * created inline on a fresh command encoder, so the pass-creation handler is the seam that
  * carries the attachment, the payload write, and the pass shape together. While the phase
  * offers the scene velocity view, the pass is created with that RG16_FLOAT attachment at color
  * index 1, this frame's VelocityConfig payload is written on the same encoder (the terrain
@@ -43,14 +44,14 @@ import static me.snowmii.dlss.mrt.VelocityPipelineVariantKt.velocityTwin;
  * change.
  *
  * Outside the eligible phase or on the latched camera-only route, the velocity view is null
- * and both redirects fall through to the exact vanilla calls: the pass keeps one attachment
+ * and both handlers fall through to the exact vanilla calls: the pass keeps one attachment
  * and the source weather pipeline binds unchanged, so nothing this mixin does can throw.
  */
 @Mixin(WeatherEffectRenderer.class)
 public class WeatherEffectRendererMotionMixin {
 	private static final ThreadLocal<RenderPass> WEATHER_VELOCITY_PASS = new ThreadLocal<>();
 
-	@Redirect(
+	@WrapOperation(
 		method = "render",
 		at = @At(
 			value = "INVOKE",
@@ -63,12 +64,13 @@ public class WeatherEffectRendererMotionMixin {
 		final GpuTextureView colorTexture,
 		final Optional<Vector4fc> clearColor,
 		final GpuTextureView depthTexture,
-		final OptionalDouble clearDepth
+		final OptionalDouble clearDepth,
+		final Operation<RenderPass> original
 	) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
 		final GpuTextureView velocity = phase == null ? null : phase.getTerrainVelocityView();
 		if (velocity == null) {
-			return encoder.createRenderPass(label, colorTexture, clearColor, depthTexture, clearDepth);
+			return original.call(encoder, label, colorTexture, clearColor, depthTexture, clearDepth);
 		}
 
 		// This frame's VelocityConfig payload: the published camera reprojection and reset
@@ -90,23 +92,27 @@ public class WeatherEffectRendererMotionMixin {
 		return pass;
 	}
 
-	@Redirect(
+	@WrapOperation(
 		method = "render",
 		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderPass;setPipeline(Lcom/mojang/blaze3d/pipeline/RenderPipeline;)V")
 	)
-	private void mcDlssWeatherSetPipeline(final RenderPass pass, final RenderPipeline pipeline) {
+	private void mcDlssWeatherSetPipeline(
+		final RenderPass pass,
+		final RenderPipeline pipeline,
+		final Operation<Void> original
+	) {
 		if (WEATHER_VELOCITY_PASS.get() == pass) {
 			// The weather writer twin: the plain two-target velocity twin (which keeps the
 			// source fragment shader and is the M-4 descriptor contract) with the mc-dlss
 			// weather velocity shader and the existing VelocityConfig uniform layout layered
 			// on, so the pass writes jitter-stripped NDC camera motion into color target 1.
-			// The uniform block was written by the pass-creation redirect into the writer's
+			// The uniform block was written by the pass-creation handler into the writer's
 			// shared buffer this pass binds, so both weather draws read this frame's
 			// reprojection.
 			pass.setUniform(TerrainVelocityUniforms.UNIFORM_NAME, WeatherVelocityRender.uniformSlice());
-			pass.setPipeline(weatherVelocityTwin(velocityTwin(pipeline)));
+			original.call(pass, writerTwin(pipeline, VelocityWriter.WEATHER));
 		} else {
-			pass.setPipeline(pipeline);
+			original.call(pass, pipeline);
 		}
 	}
 }

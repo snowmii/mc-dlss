@@ -45,7 +45,7 @@ import kotlin.math.abs
  * two-attachment pass - the source cloud color target at index 0 unchanged, the scene-sized
  * RG16_FLOAT velocity view at index 1 - and the pipeline-boundary seam [bindPipeline] binds
  * the cached cloud writer twin, whose fragment shader ([FRAGMENT_SHADER], swapped in for the
- * source's core/rendertype_clouds shader by [VelocityPipelineVariantKt.cloudVelocityTwin])
+ * source's core/rendertype_clouds shader by [writerTwin] for [VelocityWriter.CLOUD])
  * reproduces the vanilla cloud color output (the vertex color with only the fog alpha fade)
  * and writes NDC motion into the velocity attachment. The
  * `CloudInfo`/`CloudFaces`/`DynamicTransforms` binds, the depth behavior, and the draw count
@@ -215,24 +215,7 @@ object CloudVelocityRender {
 		val invalid: Boolean,
 	)
 
-	/**
-	 * Whether the cloud pass may carry the scene velocity attachment.
-	 *
-	 * Non-null only inside an open world phase that latched the velocity-MRT route and holds a
-	 * scene target with a velocity companion - exactly the frames on which the pass-creation
-	 * redirect may add the velocity attachment at color index 1 and bind the cloud writer
-	 * twin. A closed phase, the camera-only fallback route, or a frame without a companion all
-	 * answer false, which keeps pass creation and source-pipeline binding exactly vanilla.
-	 */
-	@JvmStatic
-	fun canRedirect(phase: WorldPhase?): Boolean = phase != null && phase.terrainVelocityView != null
 
-	/**
-	 * The scene-sized RG16_FLOAT velocity view the cloud twin writes at color index 1, or
-	 * null when the cloud pass must stay vanilla.
-	 */
-	@JvmStatic
-	fun velocityView(phase: WorldPhase?): GpuTextureView? = if (canRedirect(phase)) phase!!.terrainVelocityView else null
 
 	/**
 	 * The open scene phase the cloud pass-creation redirect gates on, or null when the pass
@@ -571,7 +554,7 @@ object CloudVelocityRender {
 		val device = deviceProvider()
 		val twins = HashMap<RenderPipeline, RenderPipeline>()
 		for (source in CLOUD_PIPELINES) {
-			val twin = cloudVelocityTwin(velocityTwin(source))
+			val twin = writerTwin(source, VelocityWriter.CLOUD)
 			val compiled = device.precompilePipeline(twin)
 			check(compiled.isValid()) { "cloud twin ${twin.location} failed to compile" }
 			twins[source] = twin

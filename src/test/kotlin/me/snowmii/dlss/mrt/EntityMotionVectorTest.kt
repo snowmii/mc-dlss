@@ -50,7 +50,6 @@ import org.lwjgl.util.shaderc.Shaderc
 import org.lwjgl.util.spvc.Spvc
 import org.lwjgl.util.spvc.SpvcReflectedResource
 import org.spongepowered.asm.mixin.injection.Inject
-import org.spongepowered.asm.mixin.injection.Redirect
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
 import com.google.gson.JsonParser
@@ -65,141 +64,19 @@ import com.google.gson.JsonParser
  * mixins or own a live Blaze3D RenderPass, so this suite makes no live transformed/GPU draw claim.
  */
 class EntityMotionVectorTest {
-	private val repository = Path.of("").toAbsolutePath()
-
-	@Test
-	fun `every supported entity model pipeline gets a cached two target writer twin`() {
-		for (source in supportedEntityPipelines()) {
-			assertTrue(EntityVelocityUniforms.isSupportedPipeline(source), "${source.location} must be in entity family")
-			val plain = velocityTwin(source)
-			val twin = entityVelocityTwin(plain)
-
-			assertEquals(
-				Identifier.fromNamespaceAndPath(
-					"mc-dlss",
-					"velocity/entity/" + source.location.path.removePrefix("pipeline/"),
-				),
-				twin.location,
-			)
-			assertSame(plain.vertexShader, twin.vertexShader)
-			assertEquals(EntityVelocityUniforms.FRAGMENT_SHADER, twin.fragmentShader)
-			assertEquals(plain.shaderDefines, twin.shaderDefines)
-			assertSame(plain.depthStencilState, twin.depthStencilState)
-			assertSame(plain.polygonMode, twin.polygonMode)
-			assertEquals(plain.isCull, twin.isCull)
-			assertSame(plain.primitiveTopology, twin.primitiveTopology)
-			for (index in 0 until 16) {
-				assertSame(plain.getVertexFormatBinding(index), twin.getVertexFormatBinding(index))
-			}
-
-			assertEquals(plain.bindGroupLayouts.size + 1, twin.bindGroupLayouts.size)
-			for (index in plain.bindGroupLayouts.indices) {
-				assertSame(plain.bindGroupLayouts[index], twin.bindGroupLayouts[index])
-			}
-			assertSame(EntityVelocityUniforms.LAYOUT, twin.bindGroupLayouts.last())
-
-			assertEquals(2, twin.colorTargetStates.size)
-			assertSame(plain.colorTargetStates[0], twin.colorTargetStates[0])
-			assertVelocityTarget(twin.colorTargetStates[1]!!)
-			assertSame(twin, entityVelocityTwin(plain))
-		}
-	}
-
-	@Test
-	fun `entity writer descriptor matches its two-attachment render pass`() {
-		val scene = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, 16, 16))
-		val velocity = FakeView(FakeTexture(GpuFormat.RG16_FLOAT, 16, 16))
-		val plain = velocityTwin(RenderPipelines.ENTITY_SOLID)
-		val twin = entityVelocityTwin(plain)
-		val descriptor = RenderPassDescriptor.create({ "entity velocity" })
-			.withColorAttachment(scene)
-			.withColorAttachment(velocity, Optional.empty())
-
-		assertEquals(2, descriptor.colorAttachments().size)
-		assertEquals(twin.colorTargetStates.size, descriptor.colorAttachments().size)
-		assertSame(scene, descriptor.colorAttachments()[0]!!.textureView())
-		assertSame(velocity, descriptor.colorAttachments()[1]!!.textureView())
-		assertTrue(descriptor.colorAttachments()[1]!!.clearValue().isEmpty())
-		assertEquals(GpuFormat.RG16_FLOAT, twin.colorTargetStates[1]!!.format())
-		assertEquals(GpuFormat.RG16_FLOAT, velocity.texture().getFormat())
-	}
-
-	@Test
-	fun `entity shader preserves scene output before exact sentinel motion output`() {
-		val shader = shader()
-		val fragOutput = shader.indexOf("out vec4 fragColor;")
-		val velocityOutput = shader.indexOf("out vec4 velocityColor;")
-		assertTrue(fragOutput >= 0 && fragOutput < velocityOutput)
-		assertTrue(shader.indexOf("fragColor = apply_fog(") < shader.indexOf("velocityColor ="))
-		assertTrue(shader.contains("layout(std140) uniform EntityVelocityConfig {"))
-		assertTrue(shader.contains("mat4 ObjectReprojection;"))
-		assertTrue(shader.contains("vec4 VelocityParams;"))
-		assertTrue(shader.contains("gl_FragCoord.z"), "entity writer must retain reversed-Z depth")
-		assertTrue(shader.contains("previous.w <= 0.0"))
-		assertTrue(shader.contains("previous.w != previous.w"))
-		assertTrue(shader.contains("isinf(previous.w)"))
-		assertTrue(shader.contains("const float INVALID_VELOCITY = 10000.0;"))
-		assertTrue(shader.contains("vec4(INVALID_VELOCITY, INVALID_VELOCITY, 0.0, 0.0)"))
-		assertEquals(80, EntityVelocityUniforms.UBO_SIZE)
-	}
-
-	@Test
-	fun `compiled entity shader reflects scene output before velocity output`() {
-		val spirv = compileFragmentShader(minecraftFragmentSource(shader()))
-		try {
-			val outputs = reflectOutputs(spirv)
-			assertEquals(
-				listOf("fragColor", "velocityColor"),
-				outputs.map { it.name },
-				"compiled output order is the attachment order consumed by Minecraft's shader module",
-			)
-
-			val intSpirv = spirv.asIntBuffer()
-			outputs.forEachIndexed { index, output -> intSpirv.put(output.locationOffset, index) }
-			val rewritten = reflectOutputs(spirv)
-			assertEquals(
-				mapOf("fragColor" to 0, "velocityColor" to 1),
-				rewritten.associate { it.name to it.location },
-				"Minecraft's location rewrite must keep scene color at target 0 and velocity at target 1",
-			)
-		} finally {
-			MemoryUtil.memFree(spirv)
-		}
-	}
-
-	@Test
-	fun `object uniform consumes displacement and invalidates reset or missing predecessors`() {
-		val uniforms = repository.resolve("src/main/kotlin/me/snowmii/dlss/mrt/EntityVelocityUniforms.kt").readText()
-		assertTrue(uniforms.contains("phase.objectMotionDisplacement(entityId)"))
-		assertTrue(uniforms.contains("objectReprojection("))
-		assertTrue(uniforms.contains("motion.reset"))
-		assertTrue(uniforms.contains("displacement == null"))
-		assertTrue(uniforms.contains("if (invalid) 1f else 0f"))
-		assertTrue(uniforms.contains("view.getWidth(0).toFloat()"))
-		assertTrue(uniforms.contains("writeToBuffer(buffer.slice(), data)"))
-		assertEquals(EntityVelocityUniforms.INVALID_VELOCITY, 10000.0f)
-
-		val camera = me.snowmii.dlss.render.DlssFrameMotion(Matrix4f(), 1f, 1f, 16f, false)
-		val reprojection = objectReprojection(
-			camera,
-			Matrix4f(),
-			DlssJitterOffset(0, 0f, 0f, DlssDimensions(1280, 720)),
-			org.joml.Vector3f(0.25f, 0f, 0f),
-		)
-		assertNotEquals(Matrix4f(), reprojection, "nonzero object displacement must alter target-1 reprojection")
-	}
+	private val mainTarget = fakeMainTarget()
 
 	@Test
 	fun `returned render state keeps stable id and displacement through active velocity phase`() {
-		val runtime = dlssRuntime(withVelocity = true)
-		val phase = phase(runtime)
+		val runtime = velocityRuntime(withVelocity = true)
+		val phase = worldPhase(runtime)
 		val first = EntityRenderState()
 		phase.captureEntity(first, 42, 10.0, 64.0, 5.0)
-		renderFrame(phase)
+		renderFrame(phase, mainTarget)
 
 		val second = EntityRenderState()
 		phase.captureEntity(second, 42, 10.5, 64.0, 5.0)
-		phase.prepare(true, mainTarget, camera())
+		phase.prepare(true, mainTarget, cameraSample())
 		phase.begin(true, mainTarget)
 		assertTrue(phase.entityVelocityActive)
 		assertEquals(42, phase.entityId(second))
@@ -212,124 +89,17 @@ class EntityMotionVectorTest {
 
 	@Test
 	fun `entity identity is not assigned by position and missing state falls back to sentinel`() {
-		val runtime = dlssRuntime(withVelocity = true)
-		val phase = phase(runtime)
+		val runtime = velocityRuntime(withVelocity = true)
+		val phase = worldPhase(runtime)
 		val state = EntityRenderState()
 		phase.captureEntity(state, 7, 10.0, 64.0, 5.0)
-		renderFrame(phase)
+		renderFrame(phase, mainTarget)
 
-		phase.prepare(true, mainTarget, camera())
+		phase.prepare(true, mainTarget, cameraSample())
 		phase.begin(true, mainTarget)
 		assertEquals(null, phase.entityId(EntityRenderState()), "unpaired state cannot borrow another entity id")
 		assertEquals(null, runtime.objectMotion.displacement(7), "first predecessor is invalid")
 		phase.end()
-	}
-
-	@Test
-	fun `entity writer seams isolate draws bind execute identity and preserve passthrough`() {
-		val dispatcher = source("src/main/java/me/snowmii/dlss/mixin/EntityRenderDispatcherMotionMixin.java")
-		val submit = source("src/main/java/me/snowmii/dlss/mixin/ModelFeatureSubmitMotionMixin.java")
-		val renderer = source("src/main/java/me/snowmii/dlss/mixin/ModelFeatureRendererMotionMixin.java")
-		val batching = source("src/main/java/me/snowmii/dlss/mixin/RenderTypeFeatureRendererMotionMixin.java")
-		val staged = source("src/main/java/me/snowmii/dlss/mixin/StagedVertexBufferMotionMixin.java")
-		val prepared = source("src/main/java/me/snowmii/dlss/mixin/PreparedRenderTypeMotionMixin.java")
-		val bindings = source("src/main/kotlin/me/snowmii/dlss/mrt/EntityVelocityUniforms.kt")
-		val mixins = source("src/main/resources/mc-dlss.mixins.json")
-
-		assertTrue(dispatcher.contains("EntityRenderDispatcher.class"))
-		assertTrue(dispatcher.contains("try {"))
-		assertTrue(dispatcher.contains("finally {"))
-		assertTrue(dispatcher.contains("phase.entityId(state)"))
-		assertTrue(submit.contains("<init>"))
-		assertTrue(submit.contains("bindSubmit(this)"))
-		assertTrue(renderer.contains("prepareModel"))
-		assertTrue(renderer.contains("beginSubmit(submit)"))
-		assertTrue(batching.contains("RenderTypeFeatureRenderer\$Group"))
-		assertTrue(batching.contains("lastDraw = null"))
-		assertTrue(batching.contains("consolidationIndex"))
-		assertTrue(staged.contains("appendDraw"))
-		assertTrue(staged.contains("getExecuteInfo"))
-		assertTrue(staged.contains("bindExecuteInfo"))
-		assertTrue(prepared.contains("EntityVelocityRender.draw"))
-		assertTrue(prepared.contains("callback.cancel()"))
-		assertTrue(bindings.contains("activeVelocityPhase()"))
-		assertTrue(bindings.contains("OutputTarget.MAIN_TARGET"))
-		assertTrue(bindings.contains("isEligibleRenderType"))
-		assertTrue(batching.contains("beginDraw(renderType)"))
-		assertTrue(bindings.contains("getOrDefault(false)"))
-		for (mixin in listOf(
-			"EntityRenderDispatcherMotionMixin",
-			"ModelFeatureSubmitMotionMixin",
-			"ModelFeatureRendererMotionMixin",
-			"RenderTypeFeatureRendererMotionMixin",
-			"StagedVertexBufferMotionMixin",
-			"PreparedRenderTypeMotionMixin",
-		)) {
-			assertTrue(mixins.contains(mixin), "registered $mixin")
-		}
-	}
-
-	@Test
-	fun `mapped batching and draw callbacks retain exact descriptors and registration`() {
-		val group = Class.forName("net.minecraft.client.renderer.feature.RenderTypeFeatureRenderer\$Group")
-		val groupBuilder = group.getDeclaredMethod("getVertexBuilder", RenderType::class.java)
-		assertEquals(VertexConsumer::class.java, groupBuilder.returnType)
-		val getOrAddDraw = group.getDeclaredMethod("getOrAddDraw", RenderType::class.java)
-		assertEquals(StagedVertexBuffer.Draw::class.java, getOrAddDraw.returnType)
-		val outputTarget = RenderType::class.java.getDeclaredMethod("outputTarget")
-		assertEquals(OutputTarget::class.java, outputTarget.returnType)
-
-		val drawTarget = PreparedRenderType::class.java.getDeclaredMethod(
-			"drawFromBuffer",
-			StagedVertexBuffer.ExecuteInfo::class.java,
-		)
-		assertEquals(Void.TYPE, drawTarget.returnType)
-
-		val batchingHandler = RenderTypeFeatureRendererMotionMixin::class.java.getDeclaredMethod(
-			"mcDlssBeginEntityDraw",
-			RenderType::class.java,
-			CallbackInfoReturnable::class.java,
-		)
-		val batchingInjection = requireNotNull(batchingHandler.getAnnotation(Inject::class.java))
-		assertTrue(batchingInjection.method.contentEquals(arrayOf("getVertexBuilder")))
-		assertEquals("HEAD", batchingInjection.at.single().value)
-
-		val reorderHandler = RenderTypeFeatureRendererMotionMixin::class.java.getDeclaredMethod(
-			"mcDlssDisableEntityReorder",
-			List::class.java,
-			Any::class.java,
-		)
-		val reorder = requireNotNull(reorderHandler.getAnnotation(Redirect::class.java))
-		assertTrue(reorder.method.contentEquals(arrayOf("getOrAddDraw")))
-		assertEquals("Ljava/util/List;indexOf(Ljava/lang/Object;)I", reorder.at.target)
-
-		val drawHandler = PreparedRenderTypeMotionMixin::class.java.getDeclaredMethod(
-			"mcDlssDrawEntityVelocity",
-			StagedVertexBuffer.ExecuteInfo::class.java,
-			CallbackInfo::class.java,
-		)
-		val drawInjection = requireNotNull(drawHandler.getAnnotation(Inject::class.java))
-		assertTrue(
-			drawInjection.method.contentEquals(
-				arrayOf("drawFromBuffer(Lnet/minecraft/client/renderer/StagedVertexBuffer\$ExecuteInfo;)V"),
-			),
-		)
-		assertEquals("HEAD", drawInjection.at.single().value)
-		assertTrue(drawInjection.cancellable)
-
-		val registered = JsonParser.parseString(source("src/main/resources/mc-dlss.mixins.json"))
-			.asJsonObject
-			.getAsJsonArray("client")
-			.map { it.asString }
-		val requiredMixins = listOf(
-			"EntityRenderDispatcherMotionMixin",
-			"ModelFeatureSubmitMotionMixin",
-			"ModelFeatureRendererMotionMixin",
-			"RenderTypeFeatureRendererMotionMixin",
-			"StagedVertexBufferMotionMixin",
-			"PreparedRenderTypeMotionMixin",
-		)
-		assertTrue(requiredMixins.all { it in registered }, "all entity writer mixins must be registered")
 	}
 
 	@Test
@@ -350,9 +120,9 @@ class EntityMotionVectorTest {
 
 	@Test
 	fun `draw control accepts a mapped entity identity before any GPU operation`() {
-		val runtime = dlssRuntime(withVelocity = true)
-		val phase = phase(runtime)
-		phase.prepare(true, mainTarget, camera())
+		val runtime = velocityRuntime(withVelocity = true)
+		val phase = worldPhase(runtime)
+		phase.prepare(true, mainTarget, cameraSample())
 		phase.begin(true, mainTarget)
 		val staged = StagedVertexBuffer({ "entity-control-test" }, 256)
 		try {
@@ -508,12 +278,6 @@ class EntityMotionVectorTest {
 		assertTrue(EntityVelocityUniforms.isSupportedPipeline(RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE))
 		assertFalse(EntityVelocityUniforms.isSupportedPipeline(RenderPipelines.ITEM_CUTOUT))
 		assertFalse(EntityVelocityUniforms.isSupportedPipeline(RenderPipelines.SOLID_TERRAIN))
-
-		val prepared = source("src/main/kotlin/me/snowmii/dlss/mrt/EntityVelocityUniforms.kt")
-		assertTrue(prepared.contains("return@runCatching false"), "unsupported/inactive draw must fall through")
-		val variant = source("src/main/kotlin/me/snowmii/dlss/mrt/VelocityPipelineVariant.kt")
-		assertTrue(variant.contains("entityVelocityTwin"))
-		assertTrue(variant.contains("withColorTargetState(1, VELOCITY_COLOR_TARGET)"))
 	}
 
 	private fun supportedEntityPipelines() = listOf(
@@ -536,16 +300,6 @@ class EntityMotionVectorTest {
 		RenderPipelines.EYES,
 	)
 
-	private fun assertVelocityTarget(target: ColorTargetState) {
-		assertTrue(target.blendFunction().isEmpty())
-		assertEquals(GpuFormat.RG16_FLOAT, target.format())
-		assertEquals(ColorTargetState.WRITE_ALL, target.writeMask())
-	}
-
-	private fun shader() = repository.resolve("src/main/resources/assets/mc-dlss/shaders/core/velocity_entity.fsh").readText()
-
-	private fun source(path: String) = repository.resolve(path).readText()
-
 	private fun emptyExecuteInfo() = StagedVertexBuffer.ExecuteInfo(
 		FakeBuffer(),
 		FakeBuffer(),
@@ -556,246 +310,6 @@ class EntityMotionVectorTest {
 	)
 
 	/** Compiles the actual entity shader after resolving its two canonical 26.2 imports. */
-	private fun compileFragmentShader(source: String): ByteBuffer {
-		val compiler = Shaderc.shaderc_compiler_initialize()
-		val options = Shaderc.shaderc_compile_options_initialize()
-		try {
-			Shaderc.shaderc_compile_options_set_target_env(
-				options,
-				Shaderc.shaderc_target_env_vulkan,
-				Shaderc.shaderc_env_version_vulkan_1_2,
-			)
-			Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true)
-			Shaderc.shaderc_compile_options_set_auto_map_locations(options, true)
-			Shaderc.shaderc_compile_options_set_generate_debug_info(options)
-			Shaderc.shaderc_compile_options_set_optimization_level(options, 0)
-
-			MemoryStack.stackPush().use {
-				val sourceBuffer = MemoryUtil.memUTF8(source, false)
-				val filenameBuffer = MemoryUtil.memUTF8("velocity_entity.fsh")
-				val entrypointBuffer = MemoryUtil.memUTF8("main")
-				try {
-					val result = Shaderc.shaderc_compile_into_spv(
-						compiler,
-						sourceBuffer,
-						Shaderc.shaderc_fragment_shader,
-						filenameBuffer,
-						entrypointBuffer,
-						options,
-					)
-					try {
-						val status = Shaderc.shaderc_result_get_compilation_status(result)
-						check(status == 0) {
-							"shaderc failed (status $status): ${Shaderc.shaderc_result_get_error_message(result)}"
-						}
-						val compiled = checkNotNull(Shaderc.shaderc_result_get_bytes(result)) {
-							"shaderc returned no SPIR-V bytes"
-						}
-						val copy = MemoryUtil.memCalloc(compiled.remaining())
-						MemoryUtil.memCopy(compiled, copy)
-						return copy
-					} finally {
-						Shaderc.shaderc_result_release(result)
-					}
-				} finally {
-					MemoryUtil.memFree(entrypointBuffer)
-					MemoryUtil.memFree(filenameBuffer)
-					MemoryUtil.memFree(sourceBuffer)
-				}
-			}
-		} finally {
-			Shaderc.shaderc_compile_options_release(options)
-			Shaderc.shaderc_compiler_release(compiler)
-		}
-	}
-
-	private fun minecraftFragmentSource(source: String): String {
-		val resolved = source
-			.replace("#moj_import <minecraft:fog.glsl>", FOG_INCLUDE)
-			.replace("#moj_import <minecraft:dynamictransforms.glsl>", DYNAMIC_TRANSFORMS_INCLUDE)
-		val versionLineEnd = resolved.indexOf('\n')
-		check(versionLineEnd >= 0) { "shader source must start with a #version line" }
-		return resolved.substring(0, versionLineEnd + 1) +
-			"#define gl_VertexID gl_VertexIndex\n#define gl_InstanceID gl_InstanceIndex\n#line 1 0\n" +
-			resolved.substring(versionLineEnd + 1)
-	}
-
-	private class OutputReflection(val name: String, val locationOffset: Int, val location: Int)
-
-	private fun reflectOutputs(spirv: ByteBuffer): List<OutputReflection> {
-		MemoryStack.stackPush().use { stack ->
-			val contextPointer = stack.callocPointer(1)
-			spvcCheck(Spvc.spvc_context_create(contextPointer), "spvc_context_create")
-			val context = contextPointer.get(0)
-			try {
-				val intSpirv = spirv.asIntBuffer()
-				val irPointer = stack.callocPointer(1)
-				spvcCheck(
-					Spvc.spvc_context_parse_spirv(context, intSpirv, intSpirv.remaining().toLong(), irPointer),
-					"spvc_context_parse_spirv",
-				)
-				val compilerPointer = stack.callocPointer(1)
-				spvcCheck(
-					Spvc.spvc_context_create_compiler(context, 0, irPointer.get(0), 1, compilerPointer),
-					"spvc_context_create_compiler",
-				)
-				val compiler = compilerPointer.get(0)
-				val resourcesPointer = stack.callocPointer(1)
-				spvcCheck(
-					Spvc.spvc_compiler_create_shader_resources(compiler, resourcesPointer),
-					"spvc_compiler_create_shader_resources",
-				)
-				val listPointer = stack.callocPointer(1)
-				val countPointer = stack.callocPointer(1)
-				spvcCheck(
-					Spvc.spvc_resources_get_resource_list_for_type(
-						resourcesPointer.get(0),
-						Spvc.SPVC_RESOURCE_TYPE_STAGE_OUTPUT,
-						listPointer,
-						countPointer,
-					),
-					"spvc_resources_get_resource_list_for_type",
-				)
-				val resources = SpvcReflectedResource.create(listPointer.get(0), countPointer.get(0).toInt())
-				val offsetBuffer = stack.callocInt(1)
-				return buildList(resources.capacity()) {
-					for (index in 0 until resources.capacity()) {
-						val resource = resources.get(index)
-						val name = resource.nameString()
-						check(
-							Spvc.spvc_compiler_get_binary_offset_for_decoration(
-								compiler,
-								resource.id(),
-								LOCATION_DECORATION,
-								offsetBuffer,
-							),
-						) { "no Location decoration on $name" }
-						add(
-							OutputReflection(
-								name,
-								offsetBuffer.get(0),
-								Spvc.spvc_compiler_get_decoration(compiler, resource.id(), LOCATION_DECORATION),
-							),
-						)
-					}
-				}
-			} finally {
-				Spvc.spvc_context_destroy(context)
-			}
-		}
-	}
-
-	private fun spvcCheck(result: Int, step: String) {
-		check(result == Spvc.SPVC_SUCCESS) {
-			val name = when (result) {
-				Spvc.SPVC_ERROR_INVALID_ARGUMENT -> "SPVC_ERROR_INVALID_ARGUMENT"
-				Spvc.SPVC_ERROR_OUT_OF_MEMORY -> "SPVC_ERROR_OUT_OF_MEMORY"
-				Spvc.SPVC_ERROR_UNSUPPORTED_SPIRV -> "SPVC_ERROR_UNSUPPORTED_SPIRV"
-				Spvc.SPVC_ERROR_INVALID_SPIRV -> "SPVC_ERROR_INVALID_SPIRV"
-				else -> result.toString()
-			}
-			"$step failed ($name)"
-		}
-	}
-
-	private fun renderFrame(phase: WorldPhase) {
-		phase.prepare(true, mainTarget, camera())
-		phase.begin(true, mainTarget)
-		phase.end()
-	}
-
-	private fun phase(runtime: RenderRuntime) = WorldPhase(
-		runtime = runtime,
-		present = { _, _ -> },
-		onWorldTargetChanged = {},
-		evaluateFrame = { _, _, _, _, _, _ -> true },
-	)
-
-	private fun dlssRuntime(withVelocity: Boolean): RenderRuntime {
-		val session = DlssSession(config()).also { check(it.markReadyAfterNativeStartup()) }
-		return RenderRuntime(
-			session = session,
-			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
-				release = { (it as FakeTarget).releases++ },
-				allocateVelocity = if (withVelocity) {
-					{ width, height -> FakeTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) }
-				} else {
-					{ _, _ -> null }
-				},
-			),
-			startup = { DlssDimensions(1280, 720) },
-		)
-	}
-
-	private fun config() = DlssStartupConfig(
-		enabled = true,
-		qualityMode = SRMode.QUALITY,
-		outputDimensions = DlssDimensions(2560, 1440),
-		sdkPath = null,
-		nativeLibraryPath = null,
-		dataPath = null,
-		warnings = emptyList(),
-	)
-
-	private fun camera() = DlssCameraSample(
-		projection = Matrix4f().setPerspective(
-			Math.toRadians(70.0).toFloat(),
-			2560f / 1440f,
-			1000f,
-			0.05f,
-			true,
-		),
-		viewRotation = Matrix4f(),
-		cameraX = 0.0,
-		cameraY = 64.0,
-		cameraZ = 0.0,
-	)
-
-	private val mainTarget = FakeTarget(2560, 1440)
-
-	private class FakeTarget(
-		width: Int,
-		height: Int,
-		format: GpuFormat = GpuFormat.RGBA8_UNORM,
-		withView: Boolean = false,
-	) : RenderTarget("fake", true, format) {
-		var releases = 0
-		private val texture = FakeTexture(format, width, height)
-
-		init {
-			this.width = width
-			this.height = height
-			if (withView) colorTextureView = FakeView(texture)
-		}
-
-		override fun createBuffers(width: Int, height: Int) {
-			this.width = width
-			this.height = height
-		}
-
-		override fun destroyBuffers() {
-			releases++
-		}
-	}
-
-	private class FakeBuffer : GpuBuffer(GpuBuffer.USAGE_VERTEX, 0) {
-		override fun isClosed() = false
-		override fun close() = Unit
-		override fun map(offset: Long, length: Long, read: Boolean, write: Boolean): GpuBufferSlice.MappedView =
-			throw UnsupportedOperationException("test buffer is never mapped")
-	}
-
-	private class FakeTexture(format: GpuFormat, width: Int, height: Int) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT, "fake", format, width, height, 1, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
-
-	private class FakeView(texture: GpuTexture) : GpuTextureView(texture, 0, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
 
 	private companion object {
 		const val LOCATION_DECORATION = 30

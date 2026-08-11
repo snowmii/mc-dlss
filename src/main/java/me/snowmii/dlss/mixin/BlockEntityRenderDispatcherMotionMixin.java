@@ -1,5 +1,7 @@
 package me.snowmii.dlss.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.vertex.PoseStack;
 import me.snowmii.dlss.mrt.EntityVelocityWriterBindings;
 import me.snowmii.dlss.mrt.MovingBlockVelocityRender;
@@ -10,7 +12,6 @@ import net.minecraft.client.renderer.blockentity.state.PistonHeadRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
  * Brackets ordinary static block-entity model submission in a context that can never inherit an
@@ -19,7 +20,7 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  * Block-entity model geometry is staged through the same ModelFeatureRenderer batching and
  * PreparedRenderType draw seam as entity geometry, so without a positive bracket the submit
  * records constructed inside a block-entity renderer call could associate with whatever identity
- * happened to be on the thread. The redirect classifies the renderer first:
+ * happened to be on the thread. The handler classifies the renderer first:
  * {@link EntityVelocityWriterBindings#isStaticBlockEntityRenderer} admits only the mapped
  * renderers whose submit geometry is time-invariant (the lectern book and the copper golem
  * statue). For those, a try/finally block-entity context brackets the renderer invocation:
@@ -39,20 +40,21 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  */
 @Mixin(net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher.class)
 public class BlockEntityRenderDispatcherMotionMixin {
-	@Redirect(
+	@WrapOperation(
 		method = "submit",
 		at = @At(
 			value = "INVOKE",
 			target = "Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderer;submit(Lnet/minecraft/client/renderer/blockentity/state/BlockEntityRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/level/CameraRenderState;)V"
 		)
 	)
-	@SuppressWarnings({"rawtypes", "unchecked"})
+	@SuppressWarnings("rawtypes")
 	private void mcDlssSubmitBlockEntity(
 		final BlockEntityRenderer renderer,
 		final BlockEntityRenderState state,
 		final PoseStack poseStack,
 		final SubmitNodeCollector output,
-		final CameraRenderState camera
+		final CameraRenderState camera,
+		final Operation<Void> original
 	) {
 		// Positive static-family gate: only renderers whose submit geometry is time-invariant
 		// open the block-entity bracket. Dynamic-capable renderers keep the exact source call
@@ -68,12 +70,12 @@ public class BlockEntityRenderDispatcherMotionMixin {
 			if (MovingBlockVelocityRender.isPistonHeadRenderer(renderer.getClass()) && state instanceof PistonHeadRenderState pistonState) {
 				MovingBlockVelocityRender.capturePiston(pistonState);
 			}
-			renderer.submit(state, poseStack, output, camera);
+			original.call(renderer, state, poseStack, output, camera);
 			return;
 		}
 		EntityVelocityWriterBindings.beginBlockEntity();
 		try {
-			renderer.submit(state, poseStack, output, camera);
+			original.call(renderer, state, poseStack, output, camera);
 		} finally {
 			EntityVelocityWriterBindings.endBlockEntity();
 		}

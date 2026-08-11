@@ -37,7 +37,7 @@ import java.util.OptionalDouble
  * crumbling draws with a two-attachment pass - the source scene color at index 0 unchanged, the
  * scene-sized RG16_FLOAT velocity view at index 1 - and binds the cached crumbling writer twin,
  * whose fragment shader ([FRAGMENT_SHADER], swapped in for the source's
- * core/rendertype_crumbling shader by [VelocityPipelineVariantKt.crumblingVelocityTwin])
+ * core/rendertype_crumbling shader by [writerTwin] for [VelocityWriter.CRUMBLING])
  * reproduces the vanilla crumbling color output byte-identically (the alpha discard between the
  * vertex-color and ColorModulator multiplies included) and writes jitter-stripped NDC camera
  * motion into the velocity attachment.
@@ -217,7 +217,7 @@ object BreakingBlockVelocityRender {
 			// pass will consume. Nothing here mutates encoder or pass state - the twin is a pure
 			// cache lookup, the buffer is the writer's own cached allocation, and the rest are
 			// plain reads - so a failure here still leaves the exact source draw safe to replay.
-			val twin = crumblingVelocityTwin(velocityTwin(prepared.pipeline()))
+			val twin = writerTwin(prepared.pipeline(), VelocityWriter.CRUMBLING)
 			val payload = runCatching { buffer() }.getOrNull() ?: return false
 			val scissor = prepared.scissorState()
 			val scissorEnabled = scissor.enabled()

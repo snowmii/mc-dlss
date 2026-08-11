@@ -17,7 +17,7 @@ import org.lwjgl.system.MemoryStack
  * The terrain velocity writer's uniform contract: the bind-group layout, the sentinel, the
  * velocity fragment shader, and the per-frame block write.
  *
- * The terrain velocity twin - [VelocityPipelineVariantKt.terrainVelocityTwin] - swaps the
+ * The terrain velocity twin - [writerTwin] for [VelocityWriter.TERRAIN] - swaps the
  * mc-dlss velocity fragment shader into the plain two-target velocity twin and adds this
  * object's [LAYOUT], so the terrain chunk passes can write jitter-stripped NDC camera motion
  * into the velocity attachment at color index 1. The shader derives the motion from this

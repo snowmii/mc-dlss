@@ -21,27 +21,8 @@ class DlssStartupConfigTest {
 		assertTrue(config.warnings.isEmpty())
 	}
 
-	@Test
-	fun startupModesMapToStableNgxValues() {
-		listOf(
-			"quality" to SRMode.QUALITY,
-			"balanced" to SRMode.BALANCED,
-			"performance" to SRMode.PERFORMANCE,
-		).forEach { (propertyValue, expectedMode) ->
-			val properties = Properties().apply {
-				setProperty(ModConfig.MODE_PROPERTY, propertyValue)
-			}
-
-			assertEquals(expectedMode, ModConfig.from(properties).startupConfig.qualityMode)
-		}
-	}
-
-	@Test
-	fun startupModesExposeNgxQualityValues() {
-		assertEquals(2, SRMode.QUALITY.ngxValue)
-		assertEquals(1, SRMode.BALANCED.ngxValue)
-		assertEquals(0, SRMode.PERFORMANCE.ngxValue)
-	}
+	// Mode selection by property and the NGX value each mode carries are QualityModePresetTest's,
+	// which covers all six modes rather than three.
 
 	@Test
 	fun startupPropertiesSelectAllSupportedModesAndPaths() {

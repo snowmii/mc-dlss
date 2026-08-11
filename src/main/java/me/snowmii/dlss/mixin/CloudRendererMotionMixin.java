@@ -1,5 +1,7 @@
 package me.snowmii.dlss.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.RenderPass;
@@ -13,7 +15,6 @@ import org.joml.Vector4fc;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.Optional;
@@ -30,7 +31,7 @@ import java.util.function.Supplier;
  * transparency chain) with {@code CLOUDS} or {@code FLAT_CLOUDS} and draws the CPU-baked cloud
  * cells through the {@code CloudFaces} texel buffer, the {@code CloudInfo}/
  * {@code DynamicTransforms} uniforms, and one QUADS index draw. The pass is created inline on
- * the shared command encoder, so the pass-creation redirect is the seam that carries the
+ * the shared command encoder, so the pass-creation handler is the seam that carries the
  * attachment, the payload write, and the pass shape together. While the phase offers the scene
  * velocity view, {@link CloudVelocityRender} runs its failure-atomic interception: the
  * preflight (payload computation, payload-buffer allocation, twin construction and device
@@ -58,7 +59,7 @@ import java.util.function.Supplier;
  * {@code Minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false)}.
  *
  * Outside the eligible phase or on the latched camera-only route, the velocity view is null
- * and every redirect falls through to the exact vanilla calls: the pass keeps one attachment,
+ * and every handler falls through to the exact vanilla calls: the pass keeps one attachment,
  * the source cloud pipeline binds unchanged, and the source close is untouched - so nothing
  * this mixin does can throw, on any route.
  */
@@ -90,13 +91,13 @@ public class CloudRendererMotionMixin {
 	 * {@code render} sits in the rebuild block, so this handler fires exactly when the
 	 * {@code CloudFaces} mesh was regenerated this frame.
 	 */
-	@Redirect(
+	@WrapOperation(
 		method = "render",
 		at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/MappableRingBuffer;rotate()V")
 	)
-	private void mcDlssCloudMeshRebuilt(final MappableRingBuffer buffer) {
+	private void mcDlssCloudMeshRebuilt(final MappableRingBuffer buffer, final Operation<Void> original) {
 		CLOUD_MESH_REBUILT.set(true);
-		buffer.rotate();
+		original.call(buffer);
 	}
 
 	/**
@@ -105,8 +106,12 @@ public class CloudRendererMotionMixin {
 	 * two-attachment pass exists and answers the exact vanilla one-attachment pass on any
 	 * failure, so an eligible failure never throws and never leaves the source render with a
 	 * pass the source pipeline cannot bind.
+	 *
+	 * ponytail: the writer owns the vanilla fallback, so this handler does not call the operation
+	 * through. Give CloudVelocityRender's three seams an Operation (or a fallback lambda) if
+	 * another mod ever needs to wrap these calls inside CloudRenderer.render.
 	 */
-	@Redirect(
+	@WrapOperation(
 		method = "render",
 		at = @At(
 			value = "INVOKE",
@@ -119,7 +124,8 @@ public class CloudRendererMotionMixin {
 		final GpuTextureView colorTexture,
 		final Optional<Vector4fc> clearColor,
 		final GpuTextureView depthTexture,
-		final OptionalDouble clearDepth
+		final OptionalDouble clearDepth,
+		final Operation<RenderPass> original
 	) {
 		return CloudVelocityRender.createPass(
 			encoder, label, colorTexture, clearColor, depthTexture, clearDepth, CLOUD_MESH_REBUILT.get()
@@ -130,18 +136,22 @@ public class CloudRendererMotionMixin {
 	 * The pipeline-boundary handler: the source render call binds its {@code CLOUDS} or
 	 * {@code FLAT_CLOUDS} selection exactly once into the cloud pass, and the writer swaps
 	 * that selection for its cached two-target writer twin only when the pass-creation
-	 * redirect built the two-attachment shape and the preflight covered the selection. The
+	 * handler built the two-attachment shape and the preflight covered the selection. The
 	 * twin keeps every source descriptor field, so the {@code CloudInfo}/{@code CloudFaces}
 	 * uniforms the render call binds next resolve exactly as before; the CloudVelocityConfig
-	 * block was bound by the pass-creation redirect into the writer's shared buffer this pass
+	 * block was bound by the pass-creation handler into the writer's shared buffer this pass
 	 * reads, so the cloud draw reads this frame's reprojection. Every other pass or pipeline
 	 * binds the source pipeline unchanged.
 	 */
-	@Redirect(
+	@WrapOperation(
 		method = "render",
 		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderPass;setPipeline(Lcom/mojang/blaze3d/pipeline/RenderPipeline;)V")
 	)
-	private void mcDlssCloudSetPipeline(final RenderPass pass, final RenderPipeline pipeline) {
+	private void mcDlssCloudSetPipeline(
+		final RenderPass pass,
+		final RenderPipeline pipeline,
+		final Operation<Void> original
+	) {
 		CloudVelocityRender.bindPipeline(pass, pipeline);
 	}
 
@@ -151,11 +161,11 @@ public class CloudRendererMotionMixin {
 	 * pass and drops the latch. Every other pass (including the vanilla fallback pass) closes
 	 * exactly as the source render closes it.
 	 */
-	@Redirect(
+	@WrapOperation(
 		method = "render",
 		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderPass;close()V")
 	)
-	private void mcDlssCloudClose(final RenderPass pass) {
+	private void mcDlssCloudClose(final RenderPass pass, final Operation<Void> original) {
 		CloudVelocityRender.closePass(pass);
 	}
 }

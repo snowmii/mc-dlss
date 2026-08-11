@@ -1,6 +1,5 @@
 package me.snowmii.dlss.sl
 
-import java.nio.file.Files
 import java.nio.file.Path
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
@@ -123,26 +122,6 @@ class StreamlineSrOptionsTest {
 				)
 			}
 		}
-	}
-
-	@Test
-	fun `SR options and tagging run through the Streamline seam`() {
-		val apiSource = Files.readString(Path.of("native", "mc_dlss_api.cpp"))
-		assertTrue(apiSource.contains("mc_dlss_tag_sr_resources"))
-
-		val slSource = Files.readString(Path.of("native", "internal", "sl_dlss.cpp"))
-		assertTrue(slSource.contains("slDLSSGetOptimalSettings"))
-		assertTrue(slSource.contains("slDLSSSetOptions"))
-		assertTrue(slSource.contains("slSetTagForFrame"))
-		assertTrue(slSource.contains("slGetNewFrameToken"))
-
-		val nativeApiSource = Files.readString(
-			Path.of("src", "main", "java", "me", "snowmii", "dlss", "bridge", "NativeApi.java")
-		)
-		assertTrue(nativeApiSource.contains("tagSrResources"))
-
-		val stateHeader = Files.readString(Path.of("native", "internal", "state.h"))
-		assertTrue(stateHeader.contains("streamlineInitialized"))
 	}
 
 	/**

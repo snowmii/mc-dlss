@@ -140,30 +140,8 @@ class EnablementFallbackTest {
 		assertEquals(0xBAD00005.toInt(), fixture.session.failure?.resultCode)
 	}
 
-	@Test
-	fun `a full-resolution frame between DLSS frames resets the history`() {
-		val fixture = fixture()
-
-		fixture.frame(normalInWorldFrame = true)
-		fixture.frame(normalInWorldFrame = true)
-		fixture.frame(normalInWorldFrame = false)
-
-		fixture.frame(normalInWorldFrame = true)
-		assertTrue(fixture.motion!!.reset)
-	}
-
-	@Test
-	fun `a level change resets the history`() {
-		val fixture = fixture()
-
-		fixture.frame(normalInWorldFrame = true)
-		fixture.frame(normalInWorldFrame = true)
-		fixture.phase.resetHistory()
-
-		fixture.frame(normalInWorldFrame = true)
-		assertTrue(fixture.motion!!.reset)
-	}
-
+	// The vanilla-frame and level-change resets are MotionJitterTest's and LevelChangeResetTest's;
+	// this is the one wiring test that the discontinuity predicate reaches the production stack.
 	@Test
 	fun `a camera that jumped resets the history`() {
 		val fixture = fixture()

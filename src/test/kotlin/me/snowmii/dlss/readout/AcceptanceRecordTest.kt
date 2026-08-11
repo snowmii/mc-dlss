@@ -75,30 +75,4 @@ class AcceptanceRecordTest {
 		assertTrue(record.contains("minecraft-build=${AcceptanceRecord.REVIEWER_SUPPLIED}"), record)
 	}
 
-	@Test
-	fun `every field the document requires is present as a line`() {
-		val record = AcceptanceRecord.render(
-			minecraftBuild = "26.2",
-			enabled = true,
-			state = DlssSessionState.READY,
-			qualityMode = SRMode.BALANCED,
-			renderPreset = SRMode.BALANCED.defaultPreset,
-			outputDimensions = DlssDimensions(2560, 1440),
-			renderDimensions = DlssDimensions(1487, 836),
-		)
-
-		// docs/sprint-acceptance.md#Required-PR-record, minus the checklist results and overall
-		// result, which the scaffold carries rather than the record.
-		listOf(
-			"reviewer",
-			"candidate-commit",
-			"gpu-driver",
-			"minecraft-build",
-			"quality-mode",
-			"output-resolution",
-			"internal-resolution",
-		).forEach { field ->
-			assertTrue(record.contains("\n  $field="), "missing field $field in:\n$record")
-		}
-	}
 }

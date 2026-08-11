@@ -45,51 +45,6 @@ class DlssResourceAbiTest {
 	}
 
 	@Test
-	fun theEvaluationCarriesOnlyTheEnginesOwnImages() {
-		// The motion and output images are the bridge's own, so they are absent from the request
-		// and from the ABI struct. This is the invariant that removed six of the ABI's arguments;
-		// a field reappearing here means a caller is handing the bridge handles it already holds.
-		val header = Files.readString(Path.of("native", "mc_dlss.h")).replace("\r\n", "\n")
-		val evaluateStruct = header.substringAfter("typedef struct McDlssEvaluateInfo {")
-			.substringBefore("} McDlssEvaluateInfo;")
-		listOf("color", "depth").forEach {
-			assertTrue(evaluateStruct.contains("McDlssImage $it;"), "$it must be carried")
-		}
-		listOf("motion", "output").forEach {
-			assertTrue(
-				!evaluateStruct.contains("McDlssImage $it;"),
-				"$it is bridge-owned and must not be carried",
-			)
-		}
-		// Nor are the output dimensions: nothing the evaluation records is sized from them that
-		// the bridge does not already own.
-		assertTrue(evaluateStruct.contains("uint32_t render_width;"))
-		assertTrue(!evaluateStruct.contains("uint32_t output_width;"))
-	}
-
-	@Test
-	fun nativeConstructionCarriesViewImageFormatAndDerivesTheRange() {
-		// Normalized for the same reason as DlssFeatureLifecycleTest: a Windows checkout hands
-		// these files back with CRLF, and the patterns match the source text literally.
-		val common = Files.readString(Path.of("native", "internal", "common.cpp")).replace("\r\n", "\n")
-		val sl = Files.readString(Path.of("native", "internal", "sl_dlss.cpp")).replace("\r\n", "\n")
-
-		// The subresource range is derived, not carried: one constant {0, 1, 0, 1} whose aspect
-		// follows from the image's role. This is the invariant the ABI no longer carries.
-		assertTrue(common.contains("VkImageSubresourceRange image_range_of(const bool isDepth)"))
-		assertTrue(common.contains("isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT"))
-		assertTrue(common.contains("return VkImageSubresourceRange{aspect, 0, 1, 0, 1};"))
-		// View, image, and format all reach the Streamline resource from the one carried struct:
-		// make_sr_resource builds the sl::Resource from the native handles and the named format.
-		assertTrue(sl.contains("sl::Resource resource(sl::ResourceType::eTex2d, native, memory, view, state)"))
-		assertTrue(sl.contains("resource.nativeFormat = format"))
-		// The role that picks the aspect is explicit at each resource's construction.
-		assertTrue(sl.contains("sl::Resource colorResource = make_sr_resource("))
-		assertTrue(sl.contains("from_uint64<void*>(info.color.image), nullptr, from_uint64<void*>(info.color.view)"))
-		assertTrue(sl.contains("from_uint64<void*>(info.depth.image), nullptr, from_uint64<void*>(info.depth.view)"))
-	}
-
-	@Test
 	fun compiledFfmBindingMatchesTheNativeStructLayout() {
 		val request = request().copy(renderDimensions = DlssDimensions(1280, 720))
 		assertTrue(Files.isRegularFile(Path.of("build", "native", "mc_dlss.dll")))

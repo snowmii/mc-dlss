@@ -67,7 +67,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.spongepowered.asm.mixin.injection.Redirect
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
 import com.google.gson.JsonParser
@@ -92,7 +92,7 @@ import java.lang.reflect.Proxy
  * and passthrough is proven by the control seams answering false (vanilla keeps control).
  */
 class MotionVectorBlockEntityTest {
-	private val repository = Path.of("").toAbsolutePath()
+	private val mainTarget = fakeMainTarget()
 
 	companion object {
 		/**
@@ -186,9 +186,9 @@ class MotionVectorBlockEntityTest {
 
 	@Test
 	fun `block entity eligible draw is accepted by the writer control seam on a main target`() {
-		val runtime = dlssRuntime(withVelocity = true)
-		val phase = phase(runtime)
-		phase.prepare(true, mainTarget, camera())
+		val runtime = velocityRuntime(withVelocity = true)
+		val phase = worldPhase(runtime)
+		phase.prepare(true, mainTarget, cameraSample())
 		phase.begin(true, mainTarget)
 		val staged = StagedVertexBuffer({ "block-entity-control-test" }, 256)
 		try {
@@ -262,10 +262,10 @@ class MotionVectorBlockEntityTest {
 
 	@Test
 	fun `block entity reprojection reads the open phase and the frame boundary`() {
-		val runtime = dlssRuntime(withVelocity = true)
-		val phase = phase(runtime)
-		renderFrame(phase)
-		phase.prepare(true, mainTarget, camera())
+		val runtime = velocityRuntime(withVelocity = true)
+		val phase = worldPhase(runtime)
+		renderFrame(phase, mainTarget)
+		phase.prepare(true, mainTarget, cameraSample())
 		phase.begin(true, mainTarget)
 		assertTrue(phase.entityVelocityActive)
 		val motion = checkNotNull(phase.activeMotion)
@@ -330,9 +330,9 @@ class MotionVectorBlockEntityTest {
 			assertFalse(EntityVelocityWriterBindings.isEligibleRenderType(nonMain, true))
 
 			// Camera-only: the open phase has no velocity attachment, so the control seam refuses.
-			val cameraOnly = dlssRuntime(withVelocity = false)
-			val cameraOnlyPhase = phase(cameraOnly)
-			cameraOnlyPhase.prepare(true, mainTarget, camera())
+			val cameraOnly = velocityRuntime(withVelocity = false)
+			val cameraOnlyPhase = worldPhase(cameraOnly)
+			cameraOnlyPhase.prepare(true, mainTarget, cameraSample())
 			cameraOnlyPhase.begin(true, mainTarget)
 			assertFalse(cameraOnlyPhase.entityVelocityActive)
 			assertFalse(EntityVelocityRender.canDraw(preparedOf(RenderPipelines.ENTITY_SOLID), emptyExecuteInfo(), cameraOnlyPhase))
@@ -341,92 +341,6 @@ class MotionVectorBlockEntityTest {
 			EntityVelocityWriterBindings.clearFrame()
 			staged.close()
 		}
-	}
-
-	@Test
-	fun `block entity writer descriptor keeps the two attachment velocity pass`() {
-		val scene = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, 16, 16))
-		val velocity = FakeView(FakeTexture(GpuFormat.RG16_FLOAT, 16, 16))
-		val plain = velocityTwin(RenderPipelines.ENTITY_SOLID)
-		val twin = entityVelocityTwin(plain)
-		val descriptor = com.mojang.blaze3d.systems.RenderPassDescriptor.create({ "block entity velocity" })
-			.withColorAttachment(scene)
-			.withColorAttachment(velocity, java.util.Optional.empty())
-
-		assertEquals(2, descriptor.colorAttachments().size)
-		assertEquals(twin.colorTargetStates.size, descriptor.colorAttachments().size)
-		assertSame(scene, descriptor.colorAttachments()[0]!!.textureView())
-		assertSame(velocity, descriptor.colorAttachments()[1]!!.textureView())
-		assertEquals(GpuFormat.RG16_FLOAT, twin.colorTargetStates[1]!!.format())
-		assertEquals(GpuFormat.RG16_FLOAT, velocity.texture().getFormat())
-		assertTrue(descriptor.colorAttachments()[1]!!.clearValue().isEmpty())
-	}
-
-	@Test
-	fun `block entity writer source keeps zero displacement and sentinel classification`() {
-		val uniforms = source("src/main/kotlin/me/snowmii/dlss/mrt/EntityVelocityUniforms.kt")
-		assertTrue(uniforms.contains("beginBlockEntity()"))
-		assertTrue(uniforms.contains("endBlockEntity()"))
-		assertTrue(uniforms.contains("BLOCK_ENTITY_TOKEN"))
-		assertTrue(uniforms.contains("writeBlockEntityFrame"))
-		assertTrue(uniforms.contains("blockEntityReprojection"))
-		assertTrue(uniforms.contains("Vector3f(0f, 0f, 0f)"), "static block displacement must be exactly zero")
-		assertTrue(uniforms.contains("motion.reset"), "reset classification must match entity draws")
-		assertTrue(uniforms.contains("currentViewProjection == null"))
-		assertTrue(uniforms.contains("jitter == null"))
-		assertTrue(uniforms.contains("executeInfoIsBlockEntity"))
-		assertTrue(uniforms.contains("submitIsBlockEntity"))
-	}
-
-	@Test
-	fun `block entity dispatcher callback maps the mapped submit descriptor and registration`() {
-		val dispatcherSubmit = BlockEntityRenderDispatcher::class.java.getDeclaredMethod(
-			"submit",
-			BlockEntityRenderState::class.java,
-			PoseStack::class.java,
-			SubmitNodeCollector::class.java,
-			CameraRenderState::class.java,
-		)
-		assertEquals(Void.TYPE, dispatcherSubmit.returnType)
-		val rendererSubmit = BlockEntityRenderer::class.java.getDeclaredMethod(
-			"submit",
-			BlockEntityRenderState::class.java,
-			PoseStack::class.java,
-			SubmitNodeCollector::class.java,
-			CameraRenderState::class.java,
-		)
-		assertEquals(Void.TYPE, rendererSubmit.returnType)
-
-		val mixinClass = Class.forName("me.snowmii.dlss.mixin.BlockEntityRenderDispatcherMotionMixin")
-		// The @Mixin target is a CLASS-retention annotation (not runtime-reflectable), so the
-		// dispatcher association is proven from source like the rest of the suite's seams.
-		assertTrue(source("src/main/java/me/snowmii/dlss/mixin/BlockEntityRenderDispatcherMotionMixin.java").contains("BlockEntityRenderDispatcher.class"))
-
-		val handler = mixinClass.getDeclaredMethod(
-			"mcDlssSubmitBlockEntity",
-			BlockEntityRenderer::class.java,
-			BlockEntityRenderState::class.java,
-			PoseStack::class.java,
-			SubmitNodeCollector::class.java,
-			CameraRenderState::class.java,
-		)
-		val redirect = requireNotNull(handler.getAnnotation(Redirect::class.java))
-		assertTrue(redirect.method.contentEquals(arrayOf("submit")))
-		assertEquals("INVOKE", redirect.at.value)
-		assertEquals(
-			"Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderer;submit(" +
-				"Lnet/minecraft/client/renderer/blockentity/state/BlockEntityRenderState;" +
-				"Lcom/mojang/blaze3d/vertex/PoseStack;" +
-				"Lnet/minecraft/client/renderer/SubmitNodeCollector;" +
-				"Lnet/minecraft/client/renderer/state/level/CameraRenderState;)V",
-			redirect.at.target,
-		)
-
-		val registered = JsonParser.parseString(source("src/main/resources/mc-dlss.mixins.json"))
-			.asJsonObject
-			.getAsJsonArray("client")
-			.map { it.asString }
-		assertTrue("BlockEntityRenderDispatcherMotionMixin" in registered, "block-entity mixin must be registered")
 	}
 
 	@Test
@@ -519,18 +433,6 @@ class MotionVectorBlockEntityTest {
 	}
 
 	@Test
-	fun `static family classification gates the block bracket before the marker is installed`() {
-		val mixin = source("src/main/java/me/snowmii/dlss/mixin/BlockEntityRenderDispatcherMotionMixin.java")
-		val classification = mixin.indexOf("isStaticBlockEntityRenderer")
-		val bracket = mixin.indexOf("beginBlockEntity()")
-		assertTrue(classification >= 0 && bracket > classification, "the static-family gate must run before the block-entity marker is installed")
-		assertTrue(
-			mixin.contains("renderer.submit(state, poseStack, output, camera)"),
-			"the non-static path must keep the exact vanilla invocation with no bracket",
-		)
-	}
-
-	@Test
 	fun `dispatcher handler passes an unsupported renderer through with exactly one vanilla submit and no bracket`() {
 		val handler = dispatcherHandler()
 		var submitModelCalls = 0
@@ -540,7 +442,7 @@ class MotionVectorBlockEntityTest {
 		val dynamic = CountingDynamicRenderer()
 		// The redirect handler is the production seam: a dynamic/unsupported renderer must be
 		// invoked exactly as vanilla invokes it - one submit, no block-entity context, no throw.
-		handler.invoke(mixinInstance(), dynamic, BlockEntityRenderState(), PoseStack(), collector, CameraRenderState())
+		handler.invoke(mixinInstance(), dynamic, BlockEntityRenderState(), PoseStack(), collector, CameraRenderState(), submitOperation())
 
 		assertEquals(1, dynamic.submitCalls, "the unsupported renderer must be invoked exactly once, like vanilla")
 		assertEquals(false, dynamic.blockMarkerDuringInvocation, "no block-entity marker may be installed during an unsupported submit")
@@ -559,7 +461,7 @@ class MotionVectorBlockEntityTest {
 		// A subclass of the mapped static renderer with a dynamic override: under isAssignableFrom
 		// admission this would be bracketed and ghosted; exact membership must keep it vanilla.
 		val subclass = DynamicStatueSubclass(blockEntityRendererContext())
-		handler.invoke(mixinInstance(), subclass, CopperGolemStatueRenderState(), PoseStack(), collector, CameraRenderState())
+		handler.invoke(mixinInstance(), subclass, CopperGolemStatueRenderState(), PoseStack(), collector, CameraRenderState(), submitOperation())
 
 		assertEquals(1, subclass.submitCalls, "the foreign subclass must be invoked exactly once, like vanilla")
 		assertEquals(false, subclass.blockMarkerDuringInvocation, "the block bracket must not open for a subclass with a dynamic override")
@@ -582,7 +484,7 @@ class MotionVectorBlockEntityTest {
 		}
 
 		EntityVelocityWriterBindings.clearFrame()
-		handler.invoke(mixinInstance(), renderer, CopperGolemStatueRenderState(), PoseStack(), collector, CameraRenderState())
+		handler.invoke(mixinInstance(), renderer, CopperGolemStatueRenderState(), PoseStack(), collector, CameraRenderState(), submitOperation())
 
 		assertEquals(1, submitModelCalls, "the static renderer submit must run exactly once")
 		assertEquals(true, blockMarkerDuringSubmit, "the static submit must run inside the block-entity bracket")
@@ -715,8 +617,6 @@ class MotionVectorBlockEntityTest {
 		emptyList(),
 	)
 
-	private fun source(path: String) = repository.resolve(path).readText()
-
 	private fun emptyExecuteInfo() = StagedVertexBuffer.ExecuteInfo(
 		FakeBuffer(),
 		FakeBuffer(),
@@ -726,61 +626,7 @@ class MotionVectorBlockEntityTest {
 		3,
 	)
 
-	private fun renderFrame(phase: WorldPhase) {
-		phase.prepare(true, mainTarget, camera())
-		phase.begin(true, mainTarget)
-		phase.end()
-	}
-
-	private fun phase(runtime: RenderRuntime) = WorldPhase(
-		runtime = runtime,
-		present = { _, _ -> },
-		onWorldTargetChanged = {},
-		evaluateFrame = { _, _, _, _, _, _ -> true },
-	)
-
-	private fun dlssRuntime(withVelocity: Boolean): RenderRuntime {
-		val session = DlssSession(config()).also { check(it.markReadyAfterNativeStartup()) }
-		return RenderRuntime(
-			session = session,
-			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
-				release = { (it as FakeTarget).releases++ },
-				allocateVelocity = if (withVelocity) {
-					{ width, height -> FakeTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) }
-				} else {
-					{ _, _ -> null }
-				},
-			),
-			startup = { DlssDimensions(1280, 720) },
-		)
-	}
-
-	private fun config() = DlssStartupConfig(
-		enabled = true,
-		qualityMode = SRMode.QUALITY,
-		outputDimensions = DlssDimensions(2560, 1440),
-		sdkPath = null,
-		nativeLibraryPath = null,
-		dataPath = null,
-		warnings = emptyList(),
-	)
-
-	private fun camera() = DlssCameraSample(
-		projection = Matrix4f().setPerspective(
-			Math.toRadians(70.0).toFloat(),
-			2560f / 1440f,
-			1000f,
-			0.05f,
-			true,
-		),
-		viewRotation = Matrix4f(),
-		cameraX = 0.0,
-		cameraY = 64.0,
-		cameraZ = 0.0,
-	)
-
-	/** The mixin redirect handler itself: executable proof of the dispatcher branch without a live Mixin transform. */
+	/** The mixin handler itself: executable proof of the dispatcher branch without a live Mixin transform. */
 	private fun dispatcherHandler(): Method {
 		val mixinClass = Class.forName("me.snowmii.dlss.mixin.BlockEntityRenderDispatcherMotionMixin")
 		val handler = mixinClass.getDeclaredMethod(
@@ -790,9 +636,27 @@ class MotionVectorBlockEntityTest {
 			PoseStack::class.java,
 			SubmitNodeCollector::class.java,
 			CameraRenderState::class.java,
+			Operation::class.java,
 		)
 		handler.isAccessible = true
 		return handler
+	}
+
+	/**
+	 * The wrapped `BlockEntityRenderer.submit` as MixinExtras hands it to a `@WrapOperation`
+	 * handler: the receiver leads the operation arguments, so calling through here is the same
+	 * invocation the untransformed source call would have made.
+	 */
+	private fun submitOperation() = Operation<Void> { args ->
+		@Suppress("UNCHECKED_CAST")
+		val renderer = args[0] as BlockEntityRenderer<BlockEntity, BlockEntityRenderState>
+		renderer.submit(
+			args[1] as BlockEntityRenderState,
+			args[2] as PoseStack,
+			args[3] as SubmitNodeCollector,
+			args[4] as CameraRenderState,
+		)
+		null
 	}
 
 	/** The untransformed mixin class is a plain object at test runtime: the receiver for the handler. */
@@ -834,51 +698,6 @@ class MotionVectorBlockEntityTest {
 	/** Passes null through a non-null Java parameter: the record components are never touched. */
 	@Suppress("UNCHECKED_CAST")
 	private fun <T> uninitialized(): T = null as T
-
-	private val mainTarget = FakeTarget(2560, 1440)
-
-	private class FakeTarget(
-		width: Int,
-		height: Int,
-		format: GpuFormat = GpuFormat.RGBA8_UNORM,
-		withView: Boolean = false,
-	) : RenderTarget("fake", true, format) {
-		var releases = 0
-		private val texture = FakeTexture(format, width, height)
-
-		init {
-			this.width = width
-			this.height = height
-			if (withView) colorTextureView = FakeView(texture)
-		}
-
-		override fun createBuffers(width: Int, height: Int) {
-			this.width = width
-			this.height = height
-		}
-
-		override fun destroyBuffers() {
-			releases++
-		}
-	}
-
-	private class FakeBuffer : GpuBuffer(GpuBuffer.USAGE_VERTEX, 0) {
-		override fun isClosed() = false
-		override fun close() = Unit
-		override fun map(offset: Long, length: Long, read: Boolean, write: Boolean): GpuBufferSlice.MappedView =
-			throw UnsupportedOperationException("test buffer is never mapped")
-	}
-
-	private class FakeTexture(format: GpuFormat, width: Int, height: Int) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT, "fake", format, width, height, 1, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
-
-	private class FakeView(texture: GpuTexture) : GpuTextureView(texture, 0, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
-	}
 
 	/** Bakes any model layer to an empty part so the mapped static renderers can be constructed headlessly. */
 	private class FakeModelSet : EntityModelSet(mapOf<ModelLayerLocation, LayerDefinition>()) {

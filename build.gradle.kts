@@ -21,6 +21,29 @@ fun toolchainRoot(property: String, environment: String, default: String): File 
 		.get()
 		.let(::file)
 
+repositories {
+	exclusiveContent {
+		forRepository { maven("https://api.modrinth.com/maven") { name = "Modrinth" } }
+		filter { includeGroup("maven.modrinth") }
+	}
+	exclusiveContent {
+		forRepository {
+			maven("https://pkgs.dev.azure.com/djtheredstoner/DevAuth/_packaging/public/maven/v1") { name = "DevAuth" }
+		}
+		filter { includeGroup("me.djtheredstoner") }
+	}
+}
+
+// runClient-only mods, versions in gradle.properties. Blank version = mod not in the run.
+// Loose jars dropped in run/mods are loaded too, for anything without a Maven coordinate.
+fun DependencyHandlerScope.runtimeMod(property: String, coordinate: (String) -> String) {
+	providers.gradleProperty(property).orNull?.takeIf(String::isNotBlank)?.let {
+		// `localRuntime`, not `modRuntimeOnly`: 26.2 is deobfuscated, so Loom skips its remapping
+		// configurations entirely and published mods land on the run classpath unremapped.
+		"localRuntime"(coordinate(it)) { isTransitive = false }
+	}
+}
+
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft("com.mojang:minecraft:${providers.gradleProperty("minecraft_version").get()}")
@@ -31,6 +54,14 @@ dependencies {
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 	testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.4")
+
+	runtimeMod("modmenu_version") { "maven.modrinth:modmenu:$it" }
+	// Sodium owns terrain rendering, so it is also the compatibility canary for the mixin policy
+	// in AGENTS.md - it contends directly with the Vulkan chunk and pipeline seams.
+	runtimeMod("sodium_version") { "maven.modrinth:sodium:$it" }
+	// Real Microsoft login in dev, instead of the offline Player### profile whose session
+	// requests fail with 401 on every launch.
+	runtimeMod("devauth_version") { "me.djtheredstoner:DevAuth-fabric:$it" }
 }
 
 // A crashing JVM writes hs_err/replay dumps to its working directory, which for Gradle test
