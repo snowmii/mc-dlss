@@ -33,8 +33,24 @@ dependencies {
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.4")
 }
 
+// A crashing JVM writes hs_err/replay dumps to its working directory, which for Gradle test
+// workers is the project root. The DLSS native bridge can fault inside NVIDIA's own libraries,
+// and `forkEvery = 1` turns one bad run into one dump per test class, so every forked JVM is
+// pointed at build/jvm-crash instead of littering the repository root.
+fun <T> T.redirectJvmCrashDumps() where T : Task, T : JavaForkOptions {
+	val crashDirectory = layout.buildDirectory.dir("jvm-crash").get().asFile
+	// %p expands to the pid, keeping concurrent workers from overwriting each other.
+	jvmArgs(
+		"-XX:ErrorFile=${crashDirectory.resolve("hs_err_pid%p.log")}",
+		"-XX:ReplayDataFile=${crashDirectory.resolve("replay_pid%p.log")}",
+	)
+	// The JVM silently falls back to the working directory if the target is unwritable.
+	doFirst { crashDirectory.mkdirs() }
+}
+
 tasks.test {
 	useJUnitPlatform()
+	redirectJvmCrashDumps()
 	// Streamline's runtime accepts exactly one Vulkan device per process (its plugin manager
 	// refuses a second slSetVulkanInfo, and slShutdown cannot tear an initialized device down
 	// reliably), and the native bridge module is unloaded with every FFM library arena. Both
@@ -174,6 +190,8 @@ tasks.processResources {
 // launch.cfg, so the DLSS startup properties are set on the run task's JVM directly. Every
 // value is overridable, e.g. `./gradlew.bat runClient -Pmc.dlss.mode=performance`.
 tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configureEach {
+	redirectJvmCrashDumps()
+
 	// DLSS only supports Minecraft's Vulkan backend. Force it for every dev-client launch so a
 	// persisted OpenGL option cannot produce a misleading waiting-for-vulkan session.
 	args("--graphicsBackend", "vulkan")
