@@ -19,6 +19,7 @@
 		"LevelRendererWorldPhaseMixin",
 		"MinecraftLevelChangeMixin",
 		"WeatherEffectRendererMotionMixin",
+		"CloudRendererMotionMixin",
 		"VulkanBackendExtensionMixin",
 		"VulkanChunkSectionsToRenderMixin",
 		"VulkanDeviceContextMixin",
