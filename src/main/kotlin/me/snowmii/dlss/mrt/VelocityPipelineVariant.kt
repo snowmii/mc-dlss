@@ -92,6 +92,7 @@ fun weatherVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
 private val terrainVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val entityVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 private val weatherVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
+private val particleVelocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 
 private fun buildVelocityTwin(source: RenderPipeline): RenderPipeline {
 	val snippet = RenderPipeline.Snippet(
@@ -158,6 +159,60 @@ private fun buildEntityVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
 		.build()
 }
 
+/**
+ * Cached particle writer twin: the plain two-target velocity twin with the existing
+ * particle-body velocity shader and the existing VelocityConfig uniform layout layered on
+ * top.
+ *
+ * `QuadParticleFeatureRenderer.executeGroup` is the one method that draws both particle
+ * families - the solid group into the scene (main) target, the translucent group into the
+ * particles target - and the static `drawLayers` binds each layer's `OPAQUE_PARTICLE` /
+ * `TRANSLUCENT_PARTICLE` pipeline. The pass-creation redirect binds this twin only while an
+ * open VELOCITY_MRT phase offers the scene velocity view: the two-target shape comes from
+ * the plain twin, the swapped-in fragment shader is the weather writer's shader - which IS
+ * the vanilla `core/particle` fragment body verbatim plus the velocity-MRT payload write,
+ * and the particle pipelines bind `core/particle`, so particle color output stays
+ * byte-identical - and the added layout is the terrain writer's own `VelocityConfig` layout,
+ * because the particle writer fills that existing payload block rather than introducing a
+ * new uniform design. The mapped particle render state carries no stable previous identity,
+ * so the shader writes jitter-stripped NDC camera motion into the payload at color target 1
+ * exactly like the weather writer, with no particle history of its own. Everything else -
+ * vertex shader, defines, the other bind-group layouts, depth state, polygon mode, culling,
+ * all sixteen vertex bindings, primitive topology, and the first color target (the solid
+ * variant's unblended state or the translucent variant's blend) - is the plain twin's, so
+ * the pass's attachment count and format agree with the pipeline exactly as they do for the
+ * plain twin.
+ *
+ * Keyed by the plain twin (which is itself cached per source pipeline), so every particle
+ * pass bind after the first hits the lazy-compile cache. The twin lives at a distinct
+ * mc-dlss location - `velocity/particle/<name>` - so it never collides with the plain
+ * twin's `velocity/pipeline/<name>` location or the terrain/entity/weather writer twins.
+ */
+fun particleVelocityTwin(plainTwin: RenderPipeline): RenderPipeline =
+	particleVelocityTwins.computeIfAbsent(plainTwin, ::buildParticleVelocityTwin)
+
+private fun buildParticleVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
+	val snippet = RenderPipeline.Snippet(
+		Optional.of(plainTwin.vertexShader),
+		Optional.of(plainTwin.fragmentShader),
+		Optional.of(plainTwin.shaderDefines),
+		Optional.of(plainTwin.bindGroupLayouts),
+		plainTwin.colorTargetStates,
+		plainTwin.colorTargetStates?.size ?: 0,
+		Optional.ofNullable(plainTwin.depthStencilState),
+		Optional.of(plainTwin.polygonMode),
+		Optional.of(plainTwin.isCull),
+		plainTwin.vertexFormatBindings,
+		Optional.of(plainTwin.primitiveTopology),
+	)
+
+	return RenderPipeline.builder(snippet)
+		.withLocation(particleVelocityLocation(plainTwin.location))
+		.withFragmentShader(ParticleVelocityRender.FRAGMENT_SHADER)
+		.withBindGroupLayout(ParticleVelocityRender.LAYOUT)
+		.build()
+}
+
 private fun buildWeatherVelocityTwin(plainTwin: RenderPipeline): RenderPipeline {
 	val snippet = RenderPipeline.Snippet(
 		Optional.of(plainTwin.vertexShader),
@@ -217,6 +272,16 @@ private fun weatherVelocityLocation(plainTwinLocation: Identifier): Identifier {
 		"${VELOCITY_PATH_PREFIX}weather/$path"
 	}
 	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, weatherPath)
+}
+
+private fun particleVelocityLocation(plainTwinLocation: Identifier): Identifier {
+	val path = plainTwinLocation.path
+	val particlePath = if (path.startsWith("${VELOCITY_PATH_PREFIX}pipeline/")) {
+		"${VELOCITY_PATH_PREFIX}particle/" + path.removePrefix("${VELOCITY_PATH_PREFIX}pipeline/")
+	} else {
+		"${VELOCITY_PATH_PREFIX}particle/$path"
+	}
+	return Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, particlePath)
 }
 
 private const val VELOCITY_NAMESPACE = "mc-dlss"

@@ -11,6 +11,7 @@
 		"BlockEntityRenderDispatcherMotionMixin",
 		"ModelFeatureSubmitMotionMixin",
 		"ModelFeatureRendererMotionMixin",
+		"QuadParticleFeatureRendererMotionMixin",
 		"RenderTypeFeatureRendererMotionMixin",
 		"StagedVertexBufferMotionMixin",
 		"PreparedRenderTypeMotionMixin",
