@@ -5,6 +5,7 @@
 	"client": [
 		"GameRendererProjectionJitterMixin",
 		"GameRendererWorldTargetMixin",
+		"GuiRendererMixin",
 		"KeyboardHandlerControlsMixin",
 		"LevelExtractorCaptureMixin",
 		"EntityRenderDispatcherMotionMixin",
