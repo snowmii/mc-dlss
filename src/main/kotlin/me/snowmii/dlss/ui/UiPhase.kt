@@ -5,24 +5,31 @@ import com.mojang.blaze3d.systems.CommandEncoder
 import com.mojang.blaze3d.systems.RenderSystem
 
 /**
- * Scopes one in-world GUI window, the only window in which the transparent full-resolution
- * [UiTarget] stands in for Minecraft's main target.
+ * Scopes the in-world UI windows - the first-person hand and the GUI - in which the
+ * transparent full-resolution [UiTarget] stands in for Minecraft's main target.
  *
- * The window opens at the head of `GuiRenderer.render` and closes at its tail, mirroring how
- * [me.snowmii.dlss.render.WorldPhase] brackets `LevelRenderer.render`. While it is open
- * `GameRenderer.mainRenderTarget()` answers the UI target, so `GuiRenderer.draw`'s draw ranges -
- * the only getter readers inside the window - land in the transparent full-resolution target
- * instead of the world target. The GUI blur reads GameRenderer's private field rather than the
- * getter, and the hand and item draw earlier in `GameRenderer.renderLevel`, so both keep
- * sampling the vanilla main target; present, screenshots, and every post-GUI consumer read the
- * getter after the window closes and keep the vanilla target too.
+ * The hand window opens at the head of `GameRenderer.renderItemInHand` and closes at its tail,
+ * so `OutputTarget.MAIN_TARGET`'s draw-time resolution answers the UI target while hand and
+ * item features draw, and the screen effects and 3D crosshair that run right after in
+ * `GameRenderer.renderLevel` fall outside the window and keep the vanilla main target. The GUI
+ * window opens at the head of `GuiRenderer.render` and closes at its tail, so `GuiRenderer.draw`'s
+ * draw ranges land in the UI target too. The GUI blur reads GameRenderer's private field rather
+ * than the getter, and present, screenshots, and every post-GUI consumer read the getter after
+ * the last window closes and keep the vanilla target.
  *
- * The getter seam resolves world before UI: an open world phase's scene target wins over the
- * GUI window, and outside both windows the caller gets the vanilla main target. The two windows
- * never overlap in the real frame - the world phase closes at the tail of `LevelRenderer.render`,
- * long before `GuiRenderer.render` runs - so the ordering is defensive.
+ * Both windows share one held UI target, and the frame's transparent clear belongs to exactly
+ * one of them: the hand window always clears - it is the frame's first UI window - and the GUI
+ * window clears only when no hand window ran first, because the two windows never overlap in
+ * the real frame. Hand drawing itself is gated inside vanilla's method on HUD visibility,
+ * camera type, and game mode, so a hand window whose draw gate closed is just an empty clear.
  *
- * Opening the window acquires the UI target at the main target's size and clears it to
+ * The getter seam resolves world before UI: an open world phase's scene target wins over both
+ * windows, and outside all three the caller gets the vanilla main target. The windows never
+ * overlap in the real frame - the world phase closes at the tail of `LevelRenderer.render`, the
+ * hand window closes at the tail of `renderItemInHand`, both long before `GuiRenderer.render`
+ * runs - so the ordering is defensive.
+ *
+ * Opening a window acquires the UI target at the main target's size and clears it to
  * transparent black and the reversed-Z far plane, so a frame nothing draws on composites the
  * world untouched. The encoder is injected so the whole window is verifiable off the render
  * thread; [forMinecraft] supplies the production pair.
@@ -35,39 +42,82 @@ class UiPhase(
 	 */
 	private val encoder: () -> CommandEncoder = { RenderSystem.getDevice().createCommandEncoder() },
 ) : AutoCloseable {
-	/** True between [begin] and [end]. */
+	/** True between a window's [begin]/[beginHand] and [end]. */
 	var isOpen: Boolean = false
 		private set
 
 	/**
+	 * True once the frame's first UI window cleared the target, until the GUI window consumes
+	 * the handoff: the clear-once-per-frame ownership. The hand window sets it, the GUI window
+	 * reads it to decide whether its own clear is needed and consumes it, so the next frame's
+	 * hand window clears again. The hand window ignores it and always clears, which also
+	 * self-heals a handoff stranded by a frame that crashed between windows.
+	 */
+	private var clearedThisFrame = false
+
+	/**
 	 * Target `GameRenderer.mainRenderTarget()` must answer with, or null when the caller gets
-	 * the vanilla main target. Non-null only inside an open GUI window.
+	 * the vanilla main target. Non-null only inside an open hand or GUI window.
 	 */
 	val uiTargetOverride: RenderTarget?
 		get() = if (isOpen) target.current else null
 
 	/**
-	 * Opens the GUI window against the frame's main target: acquires the UI target at its size,
-	 * clears it for the frame, and makes the override visible.
+	 * Opens the hand window against the frame's main target: acquires the UI target at its size,
+	 * always clears it for the frame, and makes the override visible.
 	 *
-	 * A main target with no measurable size never opens the window, so a degenerate frame keeps
-	 * the vanilla target. An open window left behind by a failed frame - an exception between
-	 * `GuiRenderer.render`'s head and tail skips the close, and a leaked window would answer the
-	 * UI target for every later caller, present included - is dropped here rather than thrown on,
-	 * exactly as [me.snowmii.dlss.render.WorldPhase] discards a stale world phase.
+	 * The hand window is the frame's first UI window - `renderItemInHand` runs inside
+	 * `GameRenderer.renderLevel`, before `GuiRenderer.render` - so its clear is unconditional and
+	 * marks the frame as cleared for the GUI window behind it. A main target with no measurable
+	 * size never opens the window, so a degenerate frame keeps the vanilla target. An open
+	 * window left behind by a failed frame - an exception between `renderItemInHand`'s head and
+	 * tail skips the close, and a leaked window would answer the UI target for every later
+	 * caller, present included - is dropped here rather than thrown on, exactly as
+	 * [me.snowmii.dlss.render.WorldPhase] discards a stale world phase.
+	 */
+	fun beginHand(mainTarget: RenderTarget) {
+		if (openWindow(mainTarget, clear = true)) {
+			clearedThisFrame = true
+		}
+	}
+
+	/**
+	 * Opens the GUI window against the frame's main target: acquires the UI target at its size,
+	 * clears it only when no hand window cleared it for this frame, and makes the override
+	 * visible.
+	 *
+	 * The GUI window is the frame's last UI window, so it consumes the hand window's clear
+	 * handoff: a frame whose hand drew starts the GUI with an already-cleared target, and a
+	 * frame without a hand window - spectator, sleeping, hidden HUD, or any other frame where
+	 * vanilla drew no hand - clears here. A main target with no measurable size never opens the
+	 * window, so a degenerate frame keeps the vanilla target. An open window left behind by a
+	 * failed frame is dropped here rather than thrown on, exactly as [beginHand] does.
 	 */
 	fun begin(mainTarget: RenderTarget) {
+		openWindow(mainTarget, clear = !clearedThisFrame)
+		clearedThisFrame = false
+	}
+
+	/**
+	 * Opens one UI window: drops a window left open by a failed frame, acquires the UI target
+	 * at the main target's size, clears it for the frame when this window owns the clear, and
+	 * makes the override visible. Returns whether the window opened.
+	 */
+	private fun openWindow(mainTarget: RenderTarget, clear: Boolean): Boolean {
 		isOpen = false
 		if (mainTarget.width <= 0 || mainTarget.height <= 0) {
-			return
+			return false
 		}
 
 		target.acquire(mainTarget.width, mainTarget.height)
-		target.clear(encoder())
+		if (clear) {
+			target.clear(encoder())
+		}
 		isOpen = true
+		return true
 	}
 
-	/** Closes the GUI window, restoring the vanilla main target. The held UI target survives. */
+	/** Closes the open window, restoring the vanilla main target. The held UI target survives. */
 	fun end() {
 		isOpen = false
 	}
@@ -76,6 +126,7 @@ class UiPhase(
 		// A close during an open window drops the window first, so no caller can keep answering
 		// the UI target after its own target is gone.
 		isOpen = false
+		clearedThisFrame = false
 		target.close()
 	}
 

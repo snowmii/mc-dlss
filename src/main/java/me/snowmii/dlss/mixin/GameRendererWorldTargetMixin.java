@@ -12,22 +12,25 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Routes the mod's two windows into {@code GameRenderer.mainRenderTarget()}.
+ * Routes the mod's three windows into {@code GameRenderer.mainRenderTarget()}.
  *
  * {@code GameRenderer.mainRenderTarget()} is a plain getter, and GameRenderer's own uses read
  * the private field directly. Overriding the getter therefore reaches exactly the callers
  * outside GameRenderer: during an open world phase, the LevelRenderer frame graph, its
- * screen-size derived targets, and the sky pass; during an open GUI window, the GuiRenderer
- * draw ranges. Post chains, GUI blur, screenshots, hand and item, screen effects, and
+ * screen-size derived targets, and the sky pass; during an open hand window, the hand and item
+ * draw ranges inside {@code renderItemInHand}; during an open GUI window, the GuiRenderer
+ * draw ranges. Post chains, GUI blur, screenshots, screen effects, the 3D crosshair, and
  * presentation read the field and stay full-resolution.
  *
- * The world phase wins over the GUI window, and outside both windows the caller gets the
- * vanilla main target. The two windows never overlap - the world phase closes at the tail of
- * `LevelRenderer.render`, long before `GuiRenderer.render` runs - so the precedence is
+ * The world phase wins over both UI windows, and outside all three windows the caller gets the
+ * vanilla main target. The windows never overlap - the world phase closes at the tail of
+ * `LevelRenderer.render`, the hand window closes at the tail of `renderItemInHand`, and the GUI
+ * window opens long afterwards at the head of `GuiRenderer.render` - so the precedence is
  * defensive.
  *
  * Never initializes the DLSS runtime: this runs on every frame from many call sites, so it only
- * reads phases that `LevelRenderer.render` and `GuiRenderer.render` already opened.
+ * reads phases that `LevelRenderer.render`, `renderItemInHand`, and `GuiRenderer.render`
+ * already opened.
  */
 @Mixin(GameRenderer.class)
 public class GameRendererWorldTargetMixin {

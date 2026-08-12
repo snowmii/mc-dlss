@@ -3,6 +3,7 @@
 	"package": "me.snowmii.dlss.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+		"GameRendererHandPhaseMixin",
 		"GameRendererProjectionJitterMixin",
 		"GameRendererWorldTargetMixin",
 		"GuiRendererMixin",

@@ -104,7 +104,8 @@ object ClientRuntime : RenderLoopView, ActiveView {
 	override fun uiPhase(): UiPhase? {
 		if (!initialized) {
 			// The world phase is the single initializer: the UI phase shares its session gating
-			// and native startup, and a frame's world phase always runs before its GUI window.
+			// and native startup, and a frame's world phase always runs before its hand and GUI
+			// windows.
 			worldPhase()
 		}
 		return uiPhase
