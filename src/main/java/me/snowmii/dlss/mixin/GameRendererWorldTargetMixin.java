@@ -4,11 +4,16 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import me.snowmii.dlss.client.ClientRuntime;
+import me.snowmii.dlss.mrt.HandVelocityRender;
 import me.snowmii.dlss.render.WorldPhase;
 import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.Projection;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
+import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
@@ -32,6 +37,20 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  */
 @Mixin(GameRenderer.class)
 public class GameRendererWorldTargetMixin {
+	@Shadow
+	@Final
+	private RenderTarget mainRenderTarget;
+
+	/**
+	 * The projection the hand, item, and 3D crosshair draw with, read per frame so the hand
+	 * writer can compose the item's clip matrix. Only the world projection is jittered; this
+	 * one is the unjittered HUD projection, which is why the hand reprojection carries no
+	 * jitter terms.
+	 */
+	@Shadow
+	@Final
+	private Projection hudProjection;
+
 	@Inject(method = "mainRenderTarget", at = @At("HEAD"), cancellable = true)
 	private void mcDlssRedirectWorldTarget(final CallbackInfoReturnable<RenderTarget> info) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
@@ -75,6 +94,11 @@ public class GameRendererWorldTargetMixin {
 		final Operation<Void> original
 	) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
+		// Opens the hand velocity window before the hand submits: the pose capture seam
+		// composes this projection into the item's clip matrix. Runs on every frame the hand
+		// window runs - DLSS or vanilla - because the hand history advances unconditionally
+		// and every read of it is gated by the phase's own camera chain.
+		HandVelocityRender.beginHandFrame(this.hudProjection.getMatrix(new Matrix4f()));
 		try {
 			original.call(renderer, cameraState, deltaPartialTick, modelViewMatrix);
 			if (phase != null) {
@@ -85,6 +109,10 @@ public class GameRendererWorldTargetMixin {
 				phase.resetHistory();
 			}
 			throw failure;
+		} finally {
+			// The frame boundary for the hand pose history: captures become predecessors, and
+			// a slot the hand did not render loses its predecessor (the disappearance reset).
+			HandVelocityRender.endHandFrame();
 		}
 	}
 }

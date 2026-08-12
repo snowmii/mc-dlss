@@ -3,6 +3,7 @@ package me.snowmii.dlss.mrt
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.BindGroupLayout
 import com.mojang.blaze3d.pipeline.ColorTargetState
+import com.mojang.blaze3d.pipeline.DepthStencilState
 import com.mojang.blaze3d.pipeline.RenderPipeline
 import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
@@ -56,6 +57,18 @@ enum class VelocityWriter(
 	ENTITY("entity", EntityVelocityUniforms.FRAGMENT_SHADER, EntityVelocityUniforms.LAYOUT),
 	MOVING_BLOCK("movingblock", MovingBlockVelocityRender.FRAGMENT_SHADER, MovingBlockVelocityRender.LAYOUT),
 	CLOUD("cloud", CloudVelocityRender.FRAGMENT_SHADER, CloudVelocityRender.LAYOUT),
+	HAND("hand", HandVelocityRender.FRAGMENT_SHADER, HandVelocityRender.LAYOUT),
+	/**
+	 * The bare player-arm twin: the hand writer twins the `core/entity` family with the safe
+	 * entity velocity fragment, which mirrors the source entity color logic byte-for-byte under
+	 * the source's own defines (the arm's `ENTITY_TRANSLUCENT` carries `PER_FACE_LIGHTING` and
+	 * `ALPHA_CUTOUT`), and the entity payload layout it declares. The draw and the pose history
+	 * stay hand-owned; only the shader and layout descriptor are shared with the entity writer.
+	 */
+	HAND_ARM("hand_arm", EntityVelocityUniforms.FRAGMENT_SHADER, EntityVelocityUniforms.LAYOUT),
+	/** The map/custom-geometry twin: the hand writer twins the `core/text` family with its own
+	 * text velocity fragment and the hand payload layout. */
+	HAND_TEXT("hand_text", HandVelocityRender.TEXT_FRAGMENT_SHADER, HandVelocityRender.LAYOUT),
 	;
 
 	internal val cache = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
@@ -71,13 +84,27 @@ enum class VelocityWriter(
  * and the first color target with its blend — survives untouched, so the pass's color output
  * stays byte-identical to vanilla and only the payload at color target 1 is new.
  *
+ * [depthStencil] optionally replaces the source depth state in the twin. Only the hand writer
+ * uses it: the approved hand policy is always-pass with depth writes disabled, so the hand
+ * draws over the world depth and the post-scene fill keeps reading the world depth at hand
+ * pixels. Every other writer keeps the source depth state verbatim.
+ *
  * Keyed by the source pipeline, so every bind after the first hits Vulkan's lazy-compile cache.
  */
-fun writerTwin(source: RenderPipeline, writer: VelocityWriter): RenderPipeline =
-	writer.cache.computeIfAbsent(source) { build(velocityTwin(it), writerLocation(it, writer)) {
-		withFragmentShader(writer.fragmentShader)
-		withBindGroupLayout(writer.layout)
-	} }
+fun writerTwin(
+	source: RenderPipeline,
+	writer: VelocityWriter,
+	depthStencil: DepthStencilState? = null,
+): RenderPipeline =
+	writer.cache.computeIfAbsent(source) {
+		build(velocityTwin(it), writerLocation(it, writer)) {
+			withFragmentShader(writer.fragmentShader)
+			withBindGroupLayout(writer.layout)
+			if (depthStencil != null) {
+				withDepthStencilState(depthStencil)
+			}
+		}
+	}
 
 private val velocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 

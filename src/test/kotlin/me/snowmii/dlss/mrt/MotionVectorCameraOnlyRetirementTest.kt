@@ -139,12 +139,12 @@ class MotionVectorCameraOnlyRetirementTest {
 	@Test
 	fun `velocity writer surface exposes only the retained object-motion families`() {
 		assertEquals(
-			listOf("entity", "movingblock", "cloud"),
+			listOf("entity", "movingblock", "cloud", "hand", "hand_arm", "hand_text"),
 			VelocityWriter.entries.map { it.segment },
 			"only the retained object-motion writer families may exist",
 		)
 		assertEquals(
-			setOf("velocity_entity", "velocity_block", "velocity_clouds"),
+			setOf("velocity_entity", "velocity_block", "velocity_clouds", "velocity_hand", "velocity_text"),
 			VelocityWriter.entries.map { it.fragmentShader.path.removePrefix("core/") }.toSet(),
 			"the retained writers reference only the retained shader assets",
 		)
