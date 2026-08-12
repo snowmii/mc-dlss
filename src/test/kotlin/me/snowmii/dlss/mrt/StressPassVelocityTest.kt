@@ -197,8 +197,6 @@ class StressPassVelocityTest {
 
 	private fun stressShader(): String = repositorySource("src/main/resources/assets/mc-dlss/shaders/post/dlss_stress.fsh")
 
-	private fun terrainShader(): String = velocityShaderSource("velocity_terrain")
-
 	private fun sample() = DlssCameraSample(projection, Matrix4f(), 0.0, 64.0, 0.0)
 
 	private fun jitter(index: Int, pixelX: Float, pixelY: Float) =

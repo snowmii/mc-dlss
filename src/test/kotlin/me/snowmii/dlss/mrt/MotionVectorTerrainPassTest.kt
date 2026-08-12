@@ -1,8 +1,5 @@
 package me.snowmii.dlss.mrt
 
-import java.nio.file.Path
-import java.util.Optional
-import kotlin.io.path.readText
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneTarget
@@ -11,28 +8,22 @@ import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
 import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.pipeline.BlendFunction
-import com.mojang.blaze3d.pipeline.ColorTargetState
 import com.mojang.blaze3d.pipeline.RenderPipeline
-import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
 import net.minecraft.client.renderer.RenderPipelines
-import net.minecraft.resources.Identifier
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertSame
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Proves the terrain pass seam of the velocity MRT: while an eligible DLSS world phase is open,
- * `ChunkSectionsToRender.renderGroup` passes for the opaque and translucent terrain groups carry
- * one scene-sized RG16_FLOAT velocity attachment at color index 1 and bind the cached velocity
- * twin of the known Minecraft terrain pipelines; on the camera-only route or outside the
- * eligible phase, pass creation and source-pipeline binding stay exactly vanilla and never throw.
+ * Proves the terrain pass seam of the velocity MRT after the camera-only writer retirement:
+ * while an eligible DLSS world phase is open, `ChunkSectionsToRender.renderGroup` reads the
+ * scene-sized RG16_FLOAT velocity view - the seam that emits the pre-object-write sentinel
+ * clear ([TerrainVelocityPass], proven on the recording backend in
+ * [MotionVectorCameraOnlyRetirementTest]) - and on the camera-only route, the vanilla session,
+ * or a frame without a companion, pass creation and source-pipeline binding stay exactly
+ * vanilla and never throw.
  */
 class MotionVectorTerrainPassTest {
 	private val mainTarget = fakeMainTarget()
@@ -95,15 +86,15 @@ class MotionVectorTerrainPassTest {
 	}
 
 	@Test
-	fun `first foreign terrain pipeline classified before pass creation keeps that pass exactly vanilla`() {
+	fun `first foreign terrain pipeline latches camera-only and drops the velocity view`() {
 		val runtime = velocityRuntime()
 		val phase = worldPhase(runtime)
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 
-		// The renderGroup HEAD inject classifies every source pipeline the group will bind before
-		// the pass descriptor exists. An owned layer keeps the velocity shape; the first foreign
-		// layer then latches camera-only, and the pass-shape read that follows answers vanilla:
-		// one attachment, and the foreign source pipeline binds unchanged instead of a twin.
+		// The session's compatibility latch is observed at Vulkan's lazy-compile seam: an owned
+		// pipeline keeps the velocity shape; the first foreign pipeline latches camera-only,
+		// and the pass-shape read that follows answers vanilla - one attachment, and the
+		// foreign source pipeline binds unchanged.
 		phase.observePipeline(terrainPipeline(RenderPipelines.SOLID_TERRAIN))
 		assertNotNull(phase.terrainVelocityView)
 		phase.observePipeline(foreignTerrainPipeline())

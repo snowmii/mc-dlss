@@ -39,25 +39,21 @@ import org.junit.jupiter.api.Test
 /**
  * Proves the known-world velocity pipeline surface of M-4: every world pipeline the terrain
  * pass can bind forms a two-target velocity twin through [velocityTwin], that twin agrees with
- * the two-attachment render-pass shape the terrain seam builds, owned pipelines stay on the
- * velocity-MRT route, and the first foreign shader latches camera-only exactly once without
- * throwing and without disabling the eligible DLSS world route or its camera motion.
+ * the two-attachment render-pass shape, owned pipelines stay on the velocity-MRT route, and
+ * the first foreign shader latches camera-only exactly once without throwing and without
+ * disabling the eligible DLSS world route or its camera motion.
  *
  * The known-world enumeration is the actual source of truth for what the terrain pass binds:
  * the three [ChunkSectionLayer] pipelines (SOLID, CUTOUT, TRANSLUCENT) plus the WIREFRAME
- * debug override that `VulkanChunkSectionsToRenderMixin.mcDlssClassifyTerrainPipelines`
- * selects when the wireframe debug hotkey is on. Every one of them is a descriptor-level
- * proof: [velocityTwin] returns a [RenderPipeline] description and nothing here compiles a
- * pipeline on a device, which is exactly the lazy-compile risk this slice does not claim to
- * discharge — the twin's color-target shape is what a two-attachment pass would compile
- * against on its first `RenderPass.setPipeline`.
+ * debug override. Every one of them is a descriptor-level proof: [velocityTwin] returns a
+ * [RenderPipeline] description and nothing here compiles a pipeline on a device, which is
+ * exactly the lazy-compile risk this slice does not claim to discharge — the twin's
+ * color-target shape is what a two-attachment pass would compile against on its first
+ * `RenderPass.setPipeline`.
  *
- * Every surface is also bound to the production seams that consume it: the source-seam check
- * below fails when `VulkanChunkSectionsToRenderMixin` no longer classifies this exact
- * enumeration or no longer binds [velocityTwin] at its pipeline redirect, when
- * `VulkanPipelineCompatibilityMixin` no longer observes this exact pipeline shape at Vulkan's
- * lazy-compile seam, or when either mixin drops out of the registration file — so a removed or
- * broken production mixin cannot leave the descriptor and routing assertions above green.
+ * The terrain camera-motion writers are retired, so the terrain pass itself no longer binds
+ * these twins; the twin surface survives for the retained object-motion writers (entity,
+ * moving block, cloud) and the stress pass, which is where [velocityTwin] still lives.
  */
 class MotionVectorPipelineTest {
 	private val mainTarget = fakeMainTarget()
@@ -127,8 +123,8 @@ class MotionVectorPipelineTest {
 			onWorldTargetChanged = {},
 		)
 
-		// The foreign shader latches before pass creation, exactly as the renderGroup HEAD
-		// inject orders it.
+		// The foreign shader latches the session route before the world renders, exactly as the
+		// lazy-compile observation seam orders it.
 		runtime.observeWorldPipeline(foreignTerrainPipeline())
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, runtime.motionVectorRoute)
 

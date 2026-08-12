@@ -35,28 +35,26 @@ fun velocityTwin(source: RenderPipeline): RenderPipeline =
 	velocityTwins.computeIfAbsent(source) { plainTwin(it) }
 
 /**
- * The velocity payload writers, one per world pass family that has to fill the velocity
- * attachment itself.
+ * The velocity payload writers, one per retained object-motion world pass family.
  *
  * Each entry names the fragment shader swapped in for the source's and the one bind-group layout
  * added for the payload block that shader declares — Vulkan's lazy compile resolves the block by
- * name against the pipeline's layouts. Several writers deliberately share
- * [TerrainVelocityUniforms]' `VelocityConfig` design rather than introduce a payload of their own.
+ * name against the pipeline's layouts.
  *
  * [segment] is the twin's location segment, so a writer twin can never collide with the plain
  * twin's `velocity/pipeline/<name>` location or with another writer's.
+ *
+ * The camera-motion-only writer families (terrain, weather, particle, breaking block) are
+ * retired: those passes keep the exact vanilla one-attachment route and their pixels stay
+ * sentinel for the post-scene fill.
  */
 enum class VelocityWriter(
 	val segment: String,
 	val fragmentShader: Identifier,
 	val layout: BindGroupLayout,
 ) {
-	TERRAIN("terrain", TerrainVelocityUniforms.FRAGMENT_SHADER, TerrainVelocityUniforms.LAYOUT),
 	ENTITY("entity", EntityVelocityUniforms.FRAGMENT_SHADER, EntityVelocityUniforms.LAYOUT),
-	WEATHER("weather", WeatherVelocityRender.FRAGMENT_SHADER, WeatherVelocityRender.LAYOUT),
-	PARTICLE("particle", ParticleVelocityRender.FRAGMENT_SHADER, ParticleVelocityRender.LAYOUT),
 	MOVING_BLOCK("movingblock", MovingBlockVelocityRender.FRAGMENT_SHADER, MovingBlockVelocityRender.LAYOUT),
-	CRUMBLING("crumbling", BreakingBlockVelocityRender.FRAGMENT_SHADER, BreakingBlockVelocityRender.LAYOUT),
 	CLOUD("cloud", CloudVelocityRender.FRAGMENT_SHADER, CloudVelocityRender.LAYOUT),
 	;
 

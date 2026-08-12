@@ -1,6 +1,5 @@
 package me.snowmii.dlss.mixin;
 
-import me.snowmii.dlss.mrt.BreakingBlockVelocityRender;
 import me.snowmii.dlss.mrt.EntityVelocityRender;
 import me.snowmii.dlss.mrt.MovingBlockVelocityRender;
 import net.minecraft.client.renderer.StagedVertexBuffer;
@@ -10,7 +9,12 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Replaces supported main-target entity, piston moving-block, and breaking-block crumbling draws with the two-attachment velocity pass. */
+/**
+ * Replaces supported main-target entity and piston moving-block draws with the two-attachment
+ * velocity pass. The breaking-block crumbling camera-motion writer is retired: crumbling
+ * overlay draws keep the exact vanilla one-target route and their pixels stay sentinel for the
+ * post-scene fill.
+ */
 @Mixin(PreparedRenderType.class)
 public class PreparedRenderTypeMotionMixin {
 	@Inject(
@@ -24,11 +28,8 @@ public class PreparedRenderTypeMotionMixin {
 	) {
 		// The moving-block writer is checked first: its draws carry the packed long block-position
 		// identity in their own maps, so the entity writer's predicates answer false for them.
-		// The crumbling writer is checked last: its pipeline (core/rendertype_crumbling) shares
-		// nothing with the entity or block-shaped families, so the predicates never overlap.
 		if (MovingBlockVelocityRender.draw((PreparedRenderType)(Object)this, info) ||
-			EntityVelocityRender.draw((PreparedRenderType)(Object)this, info) ||
-			BreakingBlockVelocityRender.draw((PreparedRenderType)(Object)this, info)) {
+			EntityVelocityRender.draw((PreparedRenderType)(Object)this, info)) {
 			callback.cancel();
 		}
 	}

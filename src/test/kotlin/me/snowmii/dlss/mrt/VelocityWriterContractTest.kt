@@ -5,7 +5,6 @@ import com.mojang.blaze3d.pipeline.RenderPipeline
 import java.util.Optional
 import java.util.OptionalDouble
 import net.minecraft.client.renderer.RenderPipelines
-import net.minecraft.client.renderer.chunk.ChunkSectionLayer
 import net.minecraft.resources.Identifier
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -34,7 +33,6 @@ import org.lwjgl.system.MemoryUtil
 class VelocityWriterContractTest {
 	/** Every writer with the source pipelines it is bound for in production. */
 	private val writers: Map<VelocityWriter, List<RenderPipeline>> = mapOf(
-		VelocityWriter.TERRAIN to ChunkSectionLayer.entries.map { it.pipeline() } + RenderPipelines.WIREFRAME,
 		VelocityWriter.ENTITY to listOf(
 			RenderPipelines.ARMOR_CUTOUT_NO_CULL,
 			RenderPipelines.ARMOR_DECAL_CUTOUT_NO_CULL,
@@ -54,10 +52,7 @@ class VelocityWriterContractTest {
 			RenderPipelines.ENERGY_SWIRL,
 			RenderPipelines.EYES,
 		),
-		VelocityWriter.WEATHER to listOf(RenderPipelines.WEATHER_DEPTH_WRITE, RenderPipelines.WEATHER_NO_DEPTH_WRITE),
-		VelocityWriter.PARTICLE to listOf(RenderPipelines.OPAQUE_PARTICLE, RenderPipelines.TRANSLUCENT_PARTICLE),
 		VelocityWriter.MOVING_BLOCK to listOf(RenderPipelines.SOLID_BLOCK, RenderPipelines.CUTOUT_BLOCK),
-		VelocityWriter.CRUMBLING to listOf(RenderPipelines.CRUMBLING),
 		VelocityWriter.CLOUD to listOf(RenderPipelines.CLOUDS, RenderPipelines.FLAT_CLOUDS),
 	)
 
@@ -245,8 +240,8 @@ class VelocityWriterContractTest {
 
 					// The classification: one representable sentinel, decided before the divide.
 					assertTrue(
-						shader.contains("const float INVALID_VELOCITY = ${TerrainVelocityUniforms.INVALID_VELOCITY};"),
-						"$name must declare the same sentinel the JVM payload writer mirrors",
+						shader.contains("const float INVALID_VELOCITY = ${TerrainVelocityPass.INVALID_VELOCITY};"),
+						"$name must declare the same sentinel the JVM payload writers and the terrain clear mirror",
 					)
 					assertTrue(
 						shader.contains("vec4(INVALID_VELOCITY, INVALID_VELOCITY, 0.0, 0.0)"),
@@ -263,28 +258,11 @@ class VelocityWriterContractTest {
 			}
 
 	/**
-	 * Several writers deliberately fill the terrain writer's existing `VelocityConfig` block
-	 * instead of introducing a payload design of their own, and the particle writer reuses the
-	 * weather writer's shader outright. That sharing is the reason those writers have no payload
-	 * behavior of their own to prove.
+	 * The camera-motion-only writers (terrain, weather, particle, breaking block) are retired:
+	 * those passes keep the exact vanilla one-attachment route and their pixels stay sentinel
+	 * for the post-scene fill, so no writer surface remains for them to share a payload design
+	 * through. The retained object-motion writers keep their own payload blocks.
 	 */
-	@Test
-	fun `the writers that share a payload design share the exact layout and shader`() {
-		assertSame(TerrainVelocityUniforms.LAYOUT, WeatherVelocityRender.LAYOUT)
-		assertSame(TerrainVelocityUniforms.LAYOUT, ParticleVelocityRender.LAYOUT)
-		assertSame(TerrainVelocityUniforms.LAYOUT, BreakingBlockVelocityRender.LAYOUT)
-		assertSame(WeatherVelocityRender.FRAGMENT_SHADER, ParticleVelocityRender.FRAGMENT_SHADER)
-
-		// The block name the shader declares must match the layout entry, because Vulkan's lazy
-		// compile resolves shader-declared uniforms against the pipeline's layouts by name.
-		assertEquals("VelocityConfig", TerrainVelocityUniforms.UNIFORM_NAME)
-		for (name in listOf("velocity_terrain", "velocity_weather", "velocity_crumbling")) {
-			assertTrue(
-				velocityShaderSource(name).contains("uniform ${TerrainVelocityUniforms.UNIFORM_NAME} {"),
-				"$name declares the shared payload block",
-			)
-		}
-	}
 
 	private fun eachWriterPipeline(check: (VelocityWriter, RenderPipeline) -> Unit): List<DynamicTest> =
 		writers.flatMap { (writer, sources) ->

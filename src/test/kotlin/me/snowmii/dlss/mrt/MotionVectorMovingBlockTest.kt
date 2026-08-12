@@ -247,7 +247,6 @@ class MotionVectorMovingBlockTest {
 
 			// The entity predicates never see the moving-block identity: the maps are separate.
 			assertNull(EntityVelocityWriterBindings.executeInfoEntityId(info), "a moving-block draw must never read as an entity draw")
-			assertFalse(EntityVelocityWriterBindings.executeInfoIsBlockEntity(info), "a moving-block draw must never read as static block geometry")
 
 			// An unbound render state (a falling block) carries no identity at all.
 			val falling = MovingBlockRenderState()

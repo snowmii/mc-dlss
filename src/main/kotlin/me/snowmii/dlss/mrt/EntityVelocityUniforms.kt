@@ -17,13 +17,10 @@ import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitterOffset
 import me.snowmii.dlss.render.WorldPhase
 import net.minecraft.client.renderer.StagedVertexBuffer
-import net.minecraft.client.renderer.blockentity.CopperGolemStatueBlockRenderer
-import net.minecraft.client.renderer.blockentity.LecternRenderer
 import net.minecraft.client.renderer.rendertype.OutputTarget
 import net.minecraft.client.renderer.rendertype.PreparedRenderType
 import net.minecraft.client.renderer.rendertype.RenderType
 import org.joml.Matrix4f
-import org.joml.Vector3f
 import org.lwjgl.system.MemoryStack
 import java.util.HashMap
 import java.util.IdentityHashMap
@@ -31,15 +28,15 @@ import java.util.Optional
 import java.util.OptionalDouble
 
 /**
- * Per-entity and static block-entity motion uniform and draw binding contract for the velocity MRT.
+ * Per-entity motion uniform and draw binding contract for the velocity MRT.
  *
  * The entity twin keeps the source entity shader and all of its defines/layouts, then swaps only
  * the fragment shader and adds this block. A missing object predecessor, a reset camera/object
  * history, or a missing active world context sets [INVALID_VELOCITY] through [VelocityParams.x];
  * the fragment shader classifies every pixel before dividing its previous homogeneous coordinate.
- * A static block-entity draw reuses the same writer with an exactly zero displacement, so its
- * reprojection is the frame's camera reprojection and its invalid classification is the same
- * one entity draws apply.
+ *
+ * The static block-entity camera-motion writer is retired: static block-entity geometry keeps
+ * the exact vanilla route and its pixels stay sentinel for the post-scene fill.
  */
 object EntityVelocityUniforms {
 	const val INVALID_VELOCITY = 10000.0f
@@ -100,42 +97,6 @@ object EntityVelocityUniforms {
 		writePayload(encoder, buffer, reprojection, invalid, view)
 	}
 
-	/**
-	 * Classifies and computes the reprojection one static block-entity draw writes, or null when
-	 * the frame's camera history is missing or reset.
-	 *
-	 * A static block has no displacement of its own, so its object reprojection is exactly the
-	 * frame's camera reprojection - the camera-correct zero-displacement object motion the
-	 * invariant names. The invalid classification is the same one entity draws apply: a missing
-	 * published motion, a reset frame, a missing view-projection, or a missing jitter all mean
-	 * the draw must write the invalid sentinel instead of a fabricated vector. Null is that
-	 * sentinel signal; the writer writes [INVALID_VELOCITY] classification when this returns
-	 * null.
-	 */
-	@JvmStatic
-	fun blockEntityReprojection(
-		motion: DlssFrameMotion?,
-		currentViewProjection: Matrix4f?,
-		jitter: DlssJitterOffset?,
-	): Matrix4f? {
-		if (motion == null || motion.reset || currentViewProjection == null || jitter == null) {
-			return null
-		}
-		return objectReprojection(motion, currentViewProjection, jitter, ZERO_DISPLACEMENT)
-	}
-
-	/** Writes one static block-entity draw's zero-displacement motion on [encoder]. */
-	@JvmStatic
-	fun writeBlockEntityFrame(
-		encoder: CommandEncoder,
-		buffer: GpuBuffer,
-		phase: WorldPhase,
-		view: GpuTextureView,
-	) {
-		val reprojection = blockEntityReprojection(phase.activeMotion, phase.currentViewProjection, phase.activeJitter)
-		writePayload(encoder, buffer, reprojection ?: IDENTITY, reprojection == null, view)
-	}
-
 	private fun writePayload(
 		encoder: CommandEncoder,
 		buffer: GpuBuffer,
@@ -157,14 +118,12 @@ object EntityVelocityUniforms {
 		}
 	}
 
-	private val ZERO_DISPLACEMENT = Vector3f(0f, 0f, 0f)
-
 	private val IDENTITY = Matrix4f()
 	private val OWNED_SHADER_NAMESPACES = setOf("minecraft", "mc-dlss")
 }
 
 /**
- * Render-thread identity plumbing for CPU-baked entity and block-entity geometry.
+ * Render-thread identity plumbing for CPU-baked entity geometry.
  *
  * Minecraft's model submits do not carry their originating EntityRenderState. The entity
  * dispatcher therefore brackets each entity renderer call, the submit-record constructor copies
@@ -172,67 +131,15 @@ object EntityVelocityUniforms {
  * geometry is staged. The draw and ExecuteInfo maps then preserve the one-to-one id through the
  * batching and upload boundary, where a per-draw uniform is finally available.
  *
- * Ordinary static block-entity models ride the same batching and draw boundary but have no id
- * and no displacement of their own. Only the positive static renderer family opens the
- * block-entity bracket: [isStaticBlockEntityRenderer] admits the mapped renderers whose submit
- * geometry is time-invariant, and every other block-entity renderer keeps the exact source
- * route without a bracket, so an animated banner flag, chest lid, enchantment book, shulker
- * lid, bell, conduit, skull, spinning spawner display entity, or moving piston head can never
- * be misdrawn as static geometry. The bracket associates staged model geometry with
- * [BLOCK_ENTITY_TOKEN], which the id accessors hide: an adjacent entity's identity can never be
- * inherited, and the block-entity predicates let the shared writer draw them with the
- * zero-displacement camera reprojection. Any entity bracket - even an identity-less one - masks
- * the outer block context for its whole scope and restores it on exit, so a nested
- * EntityRenderDispatcher submit inside a block-entity renderer cannot inherit the block token.
+ * The static block-entity camera-motion writer is retired: block-entity renderers are invoked
+ * exactly as vanilla invokes them, with no bracket and no token, so their staged geometry is
+ * identity-less and keeps the exact source route - its pixels stay sentinel for the post-scene
+ * fill. An identity-less submit (a block entity, or an entity renderer invoked with no id) can
+ * never inherit an adjacent entity's identity, because every entity bracket removes the
+ * context on exit.
  */
 object EntityVelocityWriterBindings {
-	/**
-	 * The positive static block-entity renderer family.
-	 *
-	 * Read out of the mapped 26.2 `BlockEntityRenderers` registry: these are the renderers whose
-	 * `submit` stages time-invariant model geometry through the shared core/entity model
-	 * pipeline. Every other registered renderer is dynamic (banner flag wave, chest/shulker lid,
-	 * enchantment book, bell ring, conduit spin/bob, skull animation, vault spin, campfire item
-	 * rotation, beacon/end-gateway beam, decorated-pot wobble), stages non-model geometry
-	 * (shelf and brushable-block items, end portal cube, piston moving-block, structure/test
-	 * bounding box), or is explicitly out of scope (signs). Only the two classes below qualify.
-	 */
-	private val STATIC_BLOCK_ENTITY_RENDERERS: Set<Class<*>> = setOf(
-		LecternRenderer::class.java,
-		CopperGolemStatueBlockRenderer::class.java,
-	)
-
-	/**
-	 * Whether one block-entity renderer class is in the positive static model family.
-	 *
-	 * Membership is exact positive allowlist matching: a subclass of a static renderer - even
-	 * one that overrides `submit` with dynamic behavior - is never admitted, because the
-	 * bracket's zero-displacement reprojection is only sound for the exact mapped classes whose
-	 * submit geometry is time-invariant. The block-entity dispatcher consults this before
-	 * installing the block-entity marker: dynamic-capable and subclass renderers get no bracket
-	 * and no token, keeping their exact source route.
-	 */
-	@JvmStatic
-	fun isStaticBlockEntityRenderer(rendererClass: Class<*>): Boolean =
-		rendererClass in STATIC_BLOCK_ENTITY_RENDERERS
-
-	/**
-	 * The submit/draw marker for ordinary static block-entity geometry.
-	 *
-	 * Block-entity models are staged through the same [ModelFeatureRenderer] batching and
-	 * [PreparedRenderType] draw seam as entity models, but carry no entity identity and no
-	 * displacement of their own. The dispatcher bracket binds this sentinel instead of an id:
-	 * it is never a real Minecraft entity id (those are small positive ints), the id accessors
-	 * hide it ([submitEntityId] and [executeInfoEntityId] answer null for it), and only the
-	 * block-entity predicates expose it, so an adjacent entity's identity can never be inherited
-	 * and entity-id draws stay isolated.
-	 */
-	const val BLOCK_ENTITY_TOKEN = Int.MIN_VALUE
-
 	private val entityContext = ThreadLocal<Int?>()
-	private val blockEntityContext = ThreadLocal<Boolean>()
-	/** Depth of open entity renderer brackets; masks the outer block context even for null ids. */
-	private val entityBracketDepth = ThreadLocal<Int>()
 	private val submitContext = ThreadLocal<Int?>()
 	private val consolidationContext = ThreadLocal<Boolean>()
 	private val eligibleDrawContext = ThreadLocal<Boolean>()
@@ -246,33 +153,11 @@ object EntityVelocityWriterBindings {
 	@JvmStatic
 	fun beginEntity(entityId: Int?) {
 		if (entityId == null) entityContext.remove() else entityContext.set(entityId)
-		// Any entity bracket - including an identity-less one - masks an outer block-entity
-		// context: a nested EntityRenderDispatcher submit (e.g. a spawner display entity) must
-		// never inherit the block token. The outer context is untouched and resumes on endEntity.
-		entityBracketDepth.set((entityBracketDepth.get() ?: 0) + 1)
 	}
 
 	@JvmStatic
 	fun endEntity() {
 		entityContext.remove()
-		submitContext.remove()
-		val depth = (entityBracketDepth.get() ?: 1) - 1
-		if (depth <= 0) entityBracketDepth.remove() else entityBracketDepth.set(depth)
-	}
-
-	/**
-	 * Opens the block-entity bracket: clears any adjacent entity identity and marks the context
-	 * so [bindSubmit] associates staged model geometry with the block-entity marker instead.
-	 */
-	@JvmStatic
-	fun beginBlockEntity() {
-		entityContext.remove()
-		blockEntityContext.set(true)
-	}
-
-	@JvmStatic
-	fun endBlockEntity() {
-		blockEntityContext.remove()
 		submitContext.remove()
 	}
 
@@ -281,20 +166,12 @@ object EntityVelocityWriterBindings {
 		val entityId = entityContext.get()
 		if (entityId != null) {
 			submitIds[submit] = entityId
-		} else if (entityBracketDepth.get() == null && blockEntityContext.get() == true) {
-			// Only an identity-less submit outside any entity bracket may take the block token;
-			// a null-id entity inside a block bracket stays identity-less and keeps vanilla.
-			submitIds[submit] = BLOCK_ENTITY_TOKEN
 		}
 	}
 
-	/** The entity id one submit record belongs to, or null for block-entity and identity-less submits. */
+	/** The entity id one submit record belongs to, or null for identity-less submits. */
 	@JvmStatic
-	fun submitEntityId(submit: Any): Int? = submitIds[submit]?.takeIf { it != BLOCK_ENTITY_TOKEN }
-
-	/** Whether one submit record belongs to ordinary static block-entity geometry. */
-	@JvmStatic
-	fun submitIsBlockEntity(submit: Any): Boolean = submitIds[submit] == BLOCK_ENTITY_TOKEN
+	fun submitEntityId(submit: Any): Int? = submitIds[submit]
 
 	@JvmStatic
 	fun beginSubmit(submit: Any) {
@@ -417,13 +294,9 @@ object EntityVelocityWriterBindings {
 		executeInfoIds[info] = entityId
 	}
 
-	/** The entity id one prepared draw belongs to, or null for block-entity and identity-less draws. */
+	/** The entity id one prepared draw belongs to, or null for identity-less draws. */
 	@JvmStatic
-	fun executeInfoEntityId(info: StagedVertexBuffer.ExecuteInfo): Int? = executeInfoIds[info]?.takeIf { it != BLOCK_ENTITY_TOKEN }
-
-	/** Whether one prepared draw belongs to ordinary static block-entity geometry. */
-	@JvmStatic
-	fun executeInfoIsBlockEntity(info: StagedVertexBuffer.ExecuteInfo): Boolean = executeInfoIds[info] == BLOCK_ENTITY_TOKEN
+	fun executeInfoEntityId(info: StagedVertexBuffer.ExecuteInfo): Int? = executeInfoIds[info]
 
 	@JvmStatic
 	fun clearFrame() {
@@ -437,15 +310,13 @@ object EntityVelocityWriterBindings {
 		nonEntityDrawIndexes.clear()
 		submitContext.remove()
 		entityContext.remove()
-		blockEntityContext.remove()
-		entityBracketDepth.remove()
 	}
 }
 
 /**
- * The prepared entity/block-entity draw replacement. Returning false leaves PreparedRenderType's
- * exact vanilla one-target implementation in control, which is what vanilla, CAMERA_ONLY, foreign,
- * and non-main-output draws require.
+ * The prepared entity draw replacement. Returning false leaves PreparedRenderType's
+ * exact vanilla one-target implementation in control, which is what vanilla, CAMERA_ONLY,
+ * foreign, block-entity, and non-main-output draws require.
  */
 object EntityVelocityRender {
 	private var uniformBuffer: GpuBuffer? = null
@@ -461,8 +332,7 @@ object EntityVelocityRender {
 		prepared: PreparedRenderType,
 		info: StagedVertexBuffer.ExecuteInfo,
 		phase: WorldPhase?,
-	): Boolean = (EntityVelocityWriterBindings.executeInfoEntityId(info) != null ||
-		EntityVelocityWriterBindings.executeInfoIsBlockEntity(info)) &&
+	): Boolean = EntityVelocityWriterBindings.executeInfoEntityId(info) != null &&
 		phase?.entityVelocityActive == true &&
 		EntityVelocityUniforms.isSupportedPipeline(prepared.pipeline()) &&
 		prepared.outputTarget() === OutputTarget.MAIN_TARGET
@@ -471,9 +341,7 @@ object EntityVelocityRender {
 	fun draw(prepared: PreparedRenderType, info: StagedVertexBuffer.ExecuteInfo): Boolean = runCatching {
 			val phase = EntityVelocityUniforms.activeVelocityPhase() ?: return@runCatching false
 			if (!canDraw(prepared, info, phase)) return@runCatching false
-			val entityId = EntityVelocityWriterBindings.executeInfoEntityId(info)
-			val blockEntity = EntityVelocityWriterBindings.executeInfoIsBlockEntity(info)
-			if (entityId == null && !blockEntity) return@runCatching false
+			val entityId = EntityVelocityWriterBindings.executeInfoEntityId(info) ?: return@runCatching false
 
 			val scene = phase.worldTargetOverride ?: return@runCatching false
 			val renderTarget = prepared.outputTarget().getRenderTarget()
@@ -487,11 +355,7 @@ object EntityVelocityRender {
 			if (colorTexture == null || colorTexture !== scene.colorTextureView) return@runCatching false
 
 			val encoder = RenderSystem.getDevice().createCommandEncoder()
-			if (blockEntity) {
-				EntityVelocityUniforms.writeBlockEntityFrame(encoder, buffer(), phase, velocityTexture)
-			} else {
-				EntityVelocityUniforms.writeFrame(encoder, buffer(), phase, checkNotNull(entityId), velocityTexture)
-			}
+			EntityVelocityUniforms.writeFrame(encoder, buffer(), phase, entityId, velocityTexture)
 
 			val descriptor = RenderPassDescriptor.create { "Entity velocity draw with ${prepared.pipeline()}" }
 				.withColorAttachment(colorTexture, Optional.empty())
