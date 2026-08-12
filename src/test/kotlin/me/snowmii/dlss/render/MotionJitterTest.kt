@@ -1,4 +1,5 @@
 package me.snowmii.dlss.render
+import me.snowmii.dlss.nativeSource
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -172,6 +173,15 @@ class MotionJitterTest {
 
 		assertEquals(render.width / 2f, frame.motionScaleX)
 		assertEquals(render.height / 2f, frame.motionScaleY)
+	}
+
+	@Test
+	fun `Streamline converts NDC motion to pixels once`() {
+		val source = nativeSource("internal/sl_dlss.cpp")
+
+		// Streamline multiplies this normalized scale by render width/height before handing it
+		// to NGX. NDC spans two units edge-to-edge, so half converts NDC displacement to pixels.
+		assertTrue(source.contains("constants.mvecScale = sl::float2(0.5f, 0.5f);"))
 	}
 
 	@Test

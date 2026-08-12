@@ -163,11 +163,11 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // The jitter offset is pixel space, the unit the engine's sequence is in and the unit the
     // plugin passes through to NGX unchanged.
     constants.jitterOffset = sl::float2(info.jitter.x, info.jitter.y);
-    // The module's motion pass writes normalized device units, which already sit in [-1,1], so
-    // the scale that normalizes the buffer onto [-1,1] is one. (The plugin derives NGX's
-    // pixel-space MV scale from this value by multiplying it by the render width, so a pixel
-    // scale like the one NGX used to receive directly would be multiplied a second time.)
-    constants.mvecScale = sl::float2(1.0f, 1.0f);
+    // The module's motion pass writes NDC displacement. NDC spans two units edge-to-edge, so
+    // half normalizes that displacement to screen-width units. Streamline then multiplies this
+    // value by render width/height when it derives NGX's pixel-space MV scale; using one here
+    // doubles every vector and produces the radial smear visible during camera translation.
+    constants.mvecScale = sl::float2(0.5f, 0.5f);
     constants.reset = info.reset_history != 0 ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     // The motion pass writes camera motion (mc_dlss_motion.comp reprojects through the camera),
     // so the plugin must not compute its own: with eTrue it does not read the camera matrices.

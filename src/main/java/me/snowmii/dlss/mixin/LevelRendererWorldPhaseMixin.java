@@ -18,13 +18,11 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Opens the DLSS world phase at {@code LevelRenderer.render}.
+ * Scopes the DLSS world phase to {@code LevelRenderer.render}.
  *
- * The phase window spans the world scene plus the existing hand/item draw: it opens here, at the
- * head of render, and closes in {@code GameRenderer.renderLevel} immediately after the
- * {@code renderItemInHand} submission, so hand and item land in the low-resolution scene target
- * that DLSS upscales. Screen effects and the 3D crosshair stay outside the window, at output
- * resolution.
+ * Everything inside this method belongs to the world scene. Hand and item rendering happens
+ * later in {@code GameRenderer.renderLevel}, after this phase has evaluated DLSS, and therefore
+ * stays on vanilla's full-resolution path.
  *
  * The main target is read at HEAD, while the redirect is still inactive, so the phase always
  * measures the real full-size target and never sees its own override.
@@ -70,11 +68,13 @@ public class LevelRendererWorldPhaseMixin {
 		// upscales the finished scene (stress pass included) rather than a pre-effect one. The
 		// phase is handed along only to supply the velocity-MRT write context: null in exactly
 		// the sessions without a phase, so vanilla and camera-only frames keep the one-target
-		// stress pass and the stress pass itself still renders on every frame. The phase stays
-		// open past this tail: it closes in GameRenderer.renderLevel, immediately after the
-		// hand/item submission, so the hand renders into this same scene target and WorldPhase.end
-		// evaluates DLSS over world, stress pass, and hand together.
+		// stress pass and the stress pass itself still renders on every frame. The phase closes
+		// here, before GameRenderer submits hand/item features, so they use vanilla's full-size
+		// target and unjittered HUD projection.
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
 		StressRuntime.render(Minecraft.getInstance().gameRenderer.mainRenderTarget(), phase);
+		if (phase != null) {
+			phase.end();
+		}
 	}
 }

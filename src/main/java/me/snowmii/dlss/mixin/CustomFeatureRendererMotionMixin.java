@@ -32,13 +32,14 @@ public class CustomFeatureRendererMotionMixin {
 		)
 	)
 	private VertexConsumer mcDlssStageCustomSubmit(
+		final CustomFeatureRenderer renderer,
 		final RenderType renderType,
 		final Operation<VertexConsumer> original,
 		@Local final CustomFeatureRenderer.Submit submit
 	) {
 		HandVelocityWriterBindings.beginSubmit(submit);
 		try {
-			return original.call(renderType);
+			return original.call(renderer, renderType);
 		} finally {
 			HandVelocityWriterBindings.endSubmit();
 		}

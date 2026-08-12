@@ -78,9 +78,8 @@ data class DlssFrameMotion(
  * Nothing here touches `clip.z` or `clip.w` beyond the transforms themselves, so reversed-Z depth
  * keeps meaning what it meant.
  *
- * Deliberately left open, and the same open question the jitter carries: whether Minecraft's
- * Vulkan Y orientation needs the Y component negated before NGX reads it. A live DLSS frame is
- * the only thing that decides it, and it is one sign in one place either way.
+ * [DlssJitterOffset] owns the pixel-to-clip conversion. This composition consumes its clip-space
+ * form while evaluation sends the same signed pixel-space offset to DLSS.
  */
 class DlssCameraMotion(renderDimensions: DlssDimensions) {
 	init {

@@ -18,6 +18,8 @@ import net.minecraft.client.renderer.rendertype.RenderTypes
 import net.minecraft.resources.Identifier
 import net.minecraft.util.FormattedCharSequence
 import org.joml.Matrix4f
+import java.nio.file.Files
+import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -48,6 +50,25 @@ import org.junit.jupiter.api.Test
  * like the other writers.
  */
 class MotionVectorHandTest {
+	@Test
+	fun `world phase closes before vanilla hand submission`() {
+		val worldMixin = Files.readString(
+			Path.of("src/main/java/me/snowmii/dlss/mixin/LevelRendererWorldPhaseMixin.java"),
+		)
+		val handMixin = Files.readString(
+			Path.of("src/main/java/me/snowmii/dlss/mixin/GameRendererWorldTargetMixin.java"),
+		)
+		val stress = worldMixin.indexOf("StressRuntime.render")
+		val evaluate = worldMixin.indexOf("phase.end();")
+
+		assertTrue(stress >= 0)
+		assertTrue(evaluate > stress, "DLSS must evaluate at the end of world rendering")
+		assertFalse(
+			handMixin.contains("renderItemInHand"),
+			"hand submission must stay on vanilla post-DLSS path",
+		)
+	}
+
 	private val texture = Identifier.fromNamespaceAndPath("minecraft", "textures/item/diamond_sword.png")
 
 	private fun motion(reset: Boolean = false) = DlssFrameMotion(

@@ -8,9 +8,9 @@ import kotlin.math.ceil
  *
  * [pixelX] and [pixelY] are offsets from the pixel centre in *render-target* pixels, which is
  * the unit NGX's `InJitterOffsetX/Y` expects. [clipOffsetX] and [clipOffsetY] are the same
- * offset expressed as the normalized-device translation the world projection must carry, so a
- * frame's projection and its evaluation parameter are two views of one value rather than two
- * independent calculations that can drift apart.
+ * offset expressed as the normalized-device translation the world projection must carry. Minecraft's
+ * Vulkan viewport and Streamline jitter convention use the same signed offset on both axes, so these
+ * are two views of one value rather than independent calculations that can drift apart.
  */
 data class DlssJitterOffset(
 	val index: Int,

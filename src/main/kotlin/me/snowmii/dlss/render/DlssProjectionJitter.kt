@@ -15,9 +15,8 @@ import org.joml.Matrix4f
  * into a constant `offset` in normalized device coordinates - the same shift at every depth -
  * while `clip.z` and `clip.w` are untouched, so reversed-Z depth still means what it meant.
  *
- * Deliberately left open: whether Minecraft's Vulkan Y orientation needs [DlssJitterOffset]'s
- * Y offset negated before NGX sees it. Nothing short of a live DLSS frame decides that, and
- * the answer is one sign in one place either way.
+ * [DlssJitterOffset] owns the coordinate conversion. Minecraft's Vulkan viewport already handles
+ * framebuffer orientation, so projection and DLSS keep the same signed offset on both axes.
  */
 object DlssProjectionJitter {
 	/**

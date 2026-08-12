@@ -32,13 +32,14 @@ public class TextFeatureRendererMotionMixin {
 		)
 	)
 	private void mcDlssStageTextSubmit(
+		final Font.PreparedText preparedText,
 		final Font.GlyphVisitor glyphVisitor,
 		final Operation<Void> original,
 		@Local final TextFeatureRenderer.Submit submit
 	) {
 		HandVelocityWriterBindings.beginSubmit(submit);
 		try {
-			original.call(glyphVisitor);
+			original.call(preparedText, glyphVisitor);
 		} finally {
 			HandVelocityWriterBindings.endSubmit();
 		}
