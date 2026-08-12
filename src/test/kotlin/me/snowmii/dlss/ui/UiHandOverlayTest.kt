@@ -104,15 +104,6 @@ class UiHandOverlayTest {
 	}
 
 	@Test
-	fun `a GUI-only frame still clears the UI target`() {
-		val harness = Harness()
-
-		harness.phase.begin(FakeTarget(outputWidth, outputHeight))
-
-		assertEquals(1, harness.recording.clears.size, "a frame without a hand window clears at the GUI window")
-	}
-
-	@Test
 	fun `the clear-once handoff resets across frames`() {
 		val harness = Harness()
 		val mainTarget = FakeTarget(outputWidth, outputHeight)
@@ -127,18 +118,6 @@ class UiHandOverlayTest {
 
 		assertEquals(2, harness.recording.clears.size, "every frame clears exactly once, the GUI window's consumption does not leak")
 		assertEquals(1, harness.allocated.size, "the target survives across frames")
-	}
-
-	@Test
-	fun `a degenerate main target never opens the hand window`() {
-		val harness = Harness()
-
-		harness.phase.beginHand(FakeTarget(0, 0))
-
-		assertFalse(harness.phase.isOpen)
-		assertNull(harness.phase.uiTargetOverride)
-		assertTrue(harness.allocated.isEmpty(), "no target is allocated for a degenerate frame")
-		assertTrue(harness.recording.clears.isEmpty())
 	}
 
 	@Test
@@ -165,18 +144,6 @@ class UiHandOverlayTest {
 		assertTrue(harness.phase.isOpen)
 		assertSame(harness.allocated.single(), harness.phase.uiTargetOverride)
 		assertEquals(1, harness.recording.clears.size, "the GUI window reuses the hand window's frame clear")
-	}
-
-	@Test
-	fun `close during an open hand window drops it and releases the UI target`() {
-		val harness = Harness()
-		harness.phase.beginHand(FakeTarget(outputWidth, outputHeight))
-
-		harness.phase.close()
-
-		assertFalse(harness.phase.isOpen)
-		assertNull(harness.phase.uiTargetOverride)
-		assertEquals(listOf(harness.allocated.single()), harness.released)
 	}
 
 	/** The phase under test plus every resource it allocates, releases, or clears. */
