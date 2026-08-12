@@ -45,7 +45,10 @@ import org.lwjgl.PointerBuffer
  * camera-motion-only writer families - terrain, static block entity, weather, particle, and
  * breaking block - are gone from the writer surface, the mixin registration, the source tree,
  * and the shader assets, while the retained object-motion writers (entity, moving block,
- * cloud), the post-scene fill, and the terrain pass's sentinel clear stay.
+ * cloud), the post-scene fill, and the terrain pass's sentinel clear stay. The M-6 hand
+ * retirement rides the same ratchet: the first-person hand/item velocity writer, its mixin
+ * hooks, its shaders, and its suite are absent too, while the vanilla post-DLSS hand route
+ * outside the world phase stays untouched.
  *
  * Three seams carry the proof:
  *
@@ -139,12 +142,12 @@ class MotionVectorCameraOnlyRetirementTest {
 	@Test
 	fun `velocity writer surface exposes only the retained object-motion families`() {
 		assertEquals(
-			listOf("entity", "movingblock", "cloud", "hand", "hand_arm", "hand_text"),
+			listOf("entity", "movingblock", "cloud"),
 			VelocityWriter.entries.map { it.segment },
 			"only the retained object-motion writer families may exist",
 		)
 		assertEquals(
-			setOf("velocity_entity", "velocity_block", "velocity_clouds", "velocity_hand", "velocity_text"),
+			setOf("velocity_entity", "velocity_block", "velocity_clouds"),
 			VelocityWriter.entries.map { it.fragmentShader.path.removePrefix("core/") }.toSet(),
 			"the retained writers reference only the retained shader assets",
 		)
@@ -157,6 +160,14 @@ class MotionVectorCameraOnlyRetirementTest {
 		for (retired in listOf(
 			"WeatherEffectRendererMotionMixin",
 			"QuadParticleFeatureRendererMotionMixin",
+			// The retired hand/item writer hooks and their submit-identity copies.
+			"ItemInHandRendererMotionMixin",
+			"ItemFeatureRendererMotionMixin",
+			"ItemFeatureRendererSubmitMotionMixin",
+			"TextFeatureRendererMotionMixin",
+			"TextFeatureRendererSubmitMotionMixin",
+			"CustomFeatureRendererMotionMixin",
+			"CustomFeatureRendererSubmitMotionMixin",
 		)) {
 			assertFalse(registration.contains(retired), "$retired must be retired from the registration")
 		}
