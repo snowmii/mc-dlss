@@ -479,13 +479,47 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(const McDlssMotionInfo* in
 
         // On the camera-only route the motion pass is the first thing this module records in a
         // frame, so the frame's timing opens here and everything the chain costs falls inside
-        // it. The velocity route records no motion pass: its chain opens at
-        // mc_dlss_tag_sr_resources with the motion stage skipped, and this path stays exactly
-        // as it is.
+        // it. The velocity route's motion stage is the sentinel fill, which opens the chain at
+        // mc_dlss_fill_velocity instead; this path stays exactly as it is.
         const VkCommandBuffer recordingBuffer =
             from_uint64<VkCommandBuffer>(info->command_buffer);
         begin_frame_timing(recordingBuffer);
         const int32_t result = record_motion(*info);
+        if (result != kSuccess) {
+            return result;
+        }
+        mark_frame_timing(recordingBuffer, 1);
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_fill_velocity(const McDlssFillVelocityInfo* info) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_state.sessionReady) {
+            return kNotInitialized;
+        }
+        if (info == nullptr || info->command_buffer == 0 || info->reprojection == nullptr ||
+            !matches_configured_render_size(info->render_width, info->render_height) ||
+            !valid_image(info->depth) || !valid_image(info->velocity)) {
+            return kInvalidParameter;
+        }
+        // The destination is the module's own motion image - the sole Streamline motion
+        // source - so there is nothing to merge into until it has been acquired for the
+        // configuration this call names, exactly like the compute writer.
+        if (!images_match_configuration()) {
+            return kNotInitialized;
+        }
+
+        // On the velocity route the merge is the first thing this module records in a frame,
+        // so the frame's timing opens here and everything the dispatch costs falls inside it:
+        // the motion stage is measured work like the compute writer's, never a skipped stage.
+        const VkCommandBuffer recordingBuffer =
+            from_uint64<VkCommandBuffer>(info->command_buffer);
+        begin_frame_timing(recordingBuffer);
+        const int32_t result = record_velocity_fill(*info);
         if (result != kSuccess) {
             return result;
         }

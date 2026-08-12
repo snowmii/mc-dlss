@@ -56,14 +56,7 @@ void collect_timing(const uint32_t slot) noexcept {
     }
 
     const float toMilliseconds = g_timing.timestampPeriod / 1000000.0f;
-    // A skipped motion stage records no work, so its duration is pinned to zero rather than
-    // measured: the stamp-0-to-stamp-1 span of a skipped slot would only capture earlier
-    // command buffers still draining between the two stamps. The slot records the skip when
-    // it opens, and the flag is cleared with the read.
-    g_timing.motionMs = g_timing.motionSkipped[slot]
-        ? 0.0f
-        : static_cast<float>(stamps[1] - stamps[0]) * toMilliseconds;
-    g_timing.motionSkipped[slot] = false;
+    g_timing.motionMs = static_cast<float>(stamps[1] - stamps[0]) * toMilliseconds;
     g_timing.evaluateMs = static_cast<float>(stamps[2] - stamps[1]) * toMilliseconds;
     g_timing.presentMs = static_cast<float>(stamps[3] - stamps[2]) * toMilliseconds;
     g_timing.totalMs = static_cast<float>(stamps[3] - stamps[0]) * toMilliseconds;
@@ -96,7 +89,6 @@ void begin_frame_timing(const VkCommandBuffer commandBuffer) noexcept {
     const uint32_t slot = g_timing.nextSlot;
     collect_timing(slot);
     g_timing.pending[slot] = false;
-    g_timing.motionSkipped[slot] = false;
     g_timing.recordingSlot = slot;
     g_timing.nextSlot = (slot + 1) % kTimingSlotCount;
     vkCmdResetQueryPool(commandBuffer, g_timing.pool, slot * kTimingStampsPerSlot,
@@ -112,15 +104,6 @@ void mark_frame_timing(const VkCommandBuffer commandBuffer, const uint32_t index
     }
 
     write_timing_stamp(commandBuffer, index);
-}
-
-void mark_skipped_motion_timing(const VkCommandBuffer commandBuffer) noexcept {
-    if (g_timing.pool == VK_NULL_HANDLE || g_timing.writtenStamps != 1) {
-        return;
-    }
-
-    write_timing_stamp(commandBuffer, 1);
-    g_timing.motionSkipped[g_timing.recordingSlot] = true;
 }
 
 void destroy_timing() noexcept {

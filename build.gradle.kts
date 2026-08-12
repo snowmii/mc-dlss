@@ -102,8 +102,9 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 	val nativeSources = nativeDirectory.asFileTree.matching { include("**/*.cpp") }
 	val nativeHeaders = nativeDirectory.asFileTree.matching { include("**/*.h") }
 	val motionShader = nativeDirectory.file("mc_dlss_motion.comp")
+	val velocityFillShader = nativeDirectory.file("mc_dlss_velocity_fill.comp")
 	val outputDirectory = layout.buildDirectory.dir("native")
-	inputs.files(nativeSources, nativeHeaders, motionShader)
+	inputs.files(nativeSources, nativeHeaders, motionShader, velocityFillShader)
 	outputs.file(outputDirectory.map { it.file("mc_dlss.dll") })
 
 	doFirst {
@@ -134,10 +135,11 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 
 		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
 		val output = outputDir.resolve("mc_dlss.dll")
-		// The motion-vector shader is compiled to SPIR-V and emitted as a C initializer list,
-		// which internal/motion.cpp #includes into a constant array. Embedding it keeps the
+		// The motion-vector shaders are compiled to SPIR-V and emitted as C initializer lists,
+		// which internal/motion.cpp #includes into constant arrays. Embedding them keeps the
 		// bridge a single loadable file with no runtime search path for a shader blob beside it.
 		val motionSpirV = outputDir.resolve("mc_dlss_motion.spv.h")
+		val velocityFillSpirV = outputDir.resolve("mc_dlss_velocity_fill.spv.h")
 		// Object directory, not object file: with more than one source, /Fo must name a
 		// directory and must end in a separator, or cl.exe writes every object over the same
 		// name and links only the last one. The separator is a forward slash - which MSVC
@@ -153,6 +155,8 @@ val buildNativeDlss by tasks.registering(Exec::class) {
 			"call \"${vsDevCmd.absolutePath}\" -arch=x64 -host_arch=x64 && " +
 				"\"${glslc.absolutePath}\" -O --target-env=vulkan1.2 -mfmt=c " +
 				"-o \"${motionSpirV.absolutePath}\" \"${motionShader.asFile.absolutePath}\" && " +
+				"\"${glslc.absolutePath}\" -O --target-env=vulkan1.2 -mfmt=c " +
+				"-o \"${velocityFillSpirV.absolutePath}\" \"${velocityFillShader.asFile.absolutePath}\" && " +
 				"cl.exe /nologo /std:c++17 /EHsc /LD /O2 /DNOMINMAX /Fo\"${objectDirArgument}\" " +
 				// native/ first: the internal units include each other as "internal/<unit>.h"
 				// and the public header as "mc_dlss.h", both relative to it.

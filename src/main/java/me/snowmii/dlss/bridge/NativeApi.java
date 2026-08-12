@@ -106,6 +106,25 @@ public interface NativeApi {
 	int writeMotion(MotionRequest request);
 
 	/**
+	 * Records the post-scene velocity merge on the caller's command buffer: one dispatch samples
+	 * the engine's depth image and its sparse RG16_FLOAT velocity companion, copies every
+	 * non-sentinel object vector unchanged and reconstructs jitter-stripped camera motion for
+	 * every sentinel pixel, and writes the complete merged field into the native motion image.
+	 * On a reset frame the dispatch writes the invalid sentinel everywhere instead. The
+	 * companion is a sampled input only and is never bound as storage.
+	 *
+	 * <p>This has to precede {@link #tagSrResources} on the same buffer on the velocity-MRT
+	 * route: the native motion image is the sole Streamline motion source, and the evaluation
+	 * reads it.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int fillVelocity(FillVelocityRequest request) {
+		throw new UnsupportedOperationException("fillVelocity");
+	}
+
+	/**
 	 * Records the copy of the upscaled output image into an engine target, on the caller's
 	 * command buffer.
 	 *
@@ -128,12 +147,12 @@ public interface NativeApi {
 	 * Tags one frame's DLSS SR resources on the caller's command buffer, through Streamline's
 	 * frame-based resource tagging ({@code slGetNewFrameToken} + {@code slSetTagForFrame}).
 	 *
-	 * <p>The request carries the engine's colour and depth, plus the engine's RG16_FLOAT
-	 * velocity companion on the velocity-MRT route (absent as an all-zero image on the
-	 * camera-only route, where the native side tags the module's own motion image instead). The
-	 * bridge's own motion and output images are tagged from native state when they have been
-	 * acquired for the configured dimensions - until then the call still succeeds with just the
-	 * engine's inputs.
+	 * <p>The request carries the engine's colour and depth. The motion source is always the
+	 * bridge's own motion image - filled by {@link #writeMotion} on the camera-only route and
+	 * by {@link #fillVelocity} on the velocity-MRT route - so no engine velocity companion
+	 * crosses on the tag. The bridge's own motion and output images are tagged from native
+	 * state when they have been acquired for the configured dimensions; until then the call
+	 * still succeeds with just the engine's inputs.
 	 *
 	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
 	 * have to declare a call they never reach; {@link Native} overrides it.

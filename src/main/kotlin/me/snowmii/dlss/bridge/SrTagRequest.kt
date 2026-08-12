@@ -8,18 +8,13 @@ package me.snowmii.dlss.bridge
  * same buffer the frame's motion pass and evaluation are recorded on. [color] and [depth] are
  * the engine's render-sized colour and depth images.
  *
- * [velocity] is the engine's render-sized RG16_FLOAT velocity companion, tagged as the
- * motion-vector buffer on the velocity-MRT route. An all-zero [velocity] means the route
- * carries no velocity companion, and the native side tags the module's own motion image
- * instead - the camera-only path the compute writer fills.
- *
- * The bridge's own motion and output images are never carried here: they are tagged from
- * native state when they have been acquired for the configured dimensions, and skipped until
- * then.
+ * The motion source is never carried here: it is always the bridge's own motion image, tagged
+ * from native state once it has been acquired for the configured dimensions - the camera-only
+ * route fills it with [MotionRequest], the velocity-MRT route merges the scene companion into
+ * it with [FillVelocityRequest]. Direct companion tagging is retired.
  */
 data class SrTagRequest(
 	val commandBuffer: Long = 0,
 	val color: ImageBinding = ImageBinding(0, 0, 0),
 	val depth: ImageBinding = ImageBinding(0, 0, 0),
-	val velocity: ImageBinding = ImageBinding(0, 0, 0),
 )

@@ -337,6 +337,53 @@ typedef struct McDlssMotionInfo {
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(const McDlssMotionInfo* info);
 
 /*
+ * Post-scene velocity merge for the velocity-MRT route, recorded on the caller's command
+ * buffer.
+ *
+ * The engine's render-sized RG16_FLOAT velocity companion carries genuine object motion from
+ * the scene writers and the invalid sentinel everywhere else. One compute dispatch samples
+ * that companion (a render-attachment and sampled input, never a storage image) and the
+ * engine's depth image, copies every non-sentinel object vector unchanged into the module's
+ * own motion image, and reconstructs jitter-stripped camera reprojection for every pixel
+ * whose payload is still the sentinel - including newly observed dynamic geometry without
+ * object history. The complete merged field lands in the motion image
+ * mc_dlss_acquire_images returned, which is the sole Streamline motion source on every
+ * route.
+ *
+ * `reset` marks a frame with no valid predecessor, whose reprojection is the identity. Such
+ * a frame must not read the identity as a still camera, and the destination still holds the
+ * previous frame's merged field, so the dispatch writes the invalid sentinel everywhere
+ * instead of reconstructing anything.
+ *
+ * `reprojection` is 16 floats in column-major order, the same layout as McDlssMotionInfo.
+ * `render_width` and `render_height` must be the configured render dimensions, a check that
+ * the caller and the configuration still agree.
+ *
+ * The companion stays in GENERAL, the layout the engine rests it in: the fill owns an
+ * explicit barrier from the scene's color-attachment writes to its sampled reads, because
+ * layout equality alone is not synchronization. The motion image is left in GENERAL like the
+ * camera-only writer leaves it, and the depth image is handed back in the layout it arrived
+ * in.
+ *
+ * Records and never submits: like the other recording calls, the work is ordered by
+ * Minecraft's own graphics submission. Must precede mc_dlss_tag_sr_resources for the same
+ * frame on the same command buffer: the tag names the module's motion image as the
+ * motion-vector buffer, and the evaluation reads it. Calling before initialize, before
+ * configure, or before the images are acquired records nothing and fails.
+ */
+typedef struct McDlssFillVelocityInfo {
+    uint64_t command_buffer;
+    McDlssImage depth;
+    McDlssImage velocity;
+    const float* reprojection;
+    uint32_t render_width;
+    uint32_t render_height;
+    int32_t reset;
+} McDlssFillVelocityInfo;
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_fill_velocity(const McDlssFillVelocityInfo* info);
+
+/*
  * Copies the upscaled DLSS output into an engine image, recorded on the caller's command
  * buffer.
  *
@@ -408,20 +455,17 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
  * frame-based tagging (slGetNewFrameToken + slSetTagForFrame).
  *
  * `color` and `depth` are the engine's render-sized colour and depth images, tagged as the
- * scaling-input colour and the depth. `velocity` is the engine's render-sized RG16_FLOAT
- * velocity companion, tagged as the motion-vector buffer when present; an all-zero `velocity`
- * means the caller's route carries no companion, and the module's own motion image is tagged
- * as the motion-vector buffer instead (the camera-only path the compute writer fills). When
- * the module's own output image has been acquired for the configured dimensions
- * (mc_dlss_acquire_images), it is tagged as the scaling-output colour as well; until then the
- * call still succeeds with just the engine's inputs, so tagging can run from the first frame
- * on.
+ * scaling-input colour and the depth. The motion source is always the module's own motion
+ * image - filled by mc_dlss_write_motion on the camera-only route and by
+ * mc_dlss_fill_velocity on the velocity-MRT route - so no engine velocity companion is
+ * carried or tagged; direct companion tagging is retired. When the module's own output image
+ * has been acquired for the configured dimensions (mc_dlss_acquire_images), it is tagged as
+ * the scaling-output colour as well; until then the call still succeeds with just the
+ * engine's inputs, so tagging can run from the first frame on.
  *
- * A non-zero `velocity` also opens the frame's GPU timing chain with the motion stage skipped:
- * the velocity route records no compute motion pass, so this call is where the chain starts and
- * the skipped stage is recorded per slot, reporting a motion cost of exactly zero. The
- * camera-only route's chain is opened by mc_dlss_write_motion instead, and this call leaves it
- * alone.
+ * The frame's GPU timing chain is opened by whichever call recorded the motion stage - the
+ * compute writer on the camera-only route, the sentinel fill on the velocity route. This
+ * call opens neither, and tags only.
  *
  * Must be called after mc_dlss_bootstrap_streamline, mc_dlss_activate_vulkan_proxies, and
  * mc_dlss_configure. Records on and never submits `command_buffer`, like the other recording
@@ -431,7 +475,6 @@ typedef struct McDlssTagInfo {
     uint64_t command_buffer;
     McDlssImage color;
     McDlssImage depth;
-    McDlssImage velocity;
 } McDlssTagInfo;
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* info);

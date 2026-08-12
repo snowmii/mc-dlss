@@ -2,6 +2,7 @@ package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.DlssEvaluationImages
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.PresentTarget
@@ -74,10 +75,12 @@ class FrameEvaluation(
 	 *
 	 * [route] is the session's world-motion route and [velocity] the scene velocity companion
 	 * binding behind it. On [MotionVectorRoute.VELOCITY_MRT] the frame's motion source is that
-	 * companion: the compute camera-motion writer is not recorded and the companion is tagged as
-	 * the motion-vector buffer, so a frame without a companion is skipped rather than evaluated
-	 * against no motion at all. On [MotionVectorRoute.CAMERA_ONLY] the existing compute writer and
-	 * native motion image path stay exactly as they were, and any carried velocity is ignored.
+	 * companion: the post-scene compute fill samples it and the scene depth, merges the
+	 * complete field into the native motion image - object vectors copied, camera motion
+	 * reconstructed for sentinels - and that image is tagged as the motion source, so a frame
+	 * without a companion is skipped rather than evaluated against no motion at all. On
+	 * [MotionVectorRoute.CAMERA_ONLY] the existing compute writer and native motion image path
+	 * stay exactly as they were, and any carried velocity is ignored.
 	 */
 	fun evaluateFrame(
 		scene: SceneResources,
@@ -149,46 +152,54 @@ class FrameEvaluation(
 	): Boolean {
 		val handle = buffer.address()
 
-		// The motion source is the route's choice. On VELOCITY_MRT the scene velocity companion
-		// carries the frame's motion vectors, so the compute camera-motion writer is retired from
-		// this path and nothing fills the native motion image; on CAMERA_ONLY the compute writer
-		// stays exactly as before. A VELOCITY_MRT frame that reached here without a velocity
-		// companion has no motion source at all and is skipped: evaluating with no motion vectors
-		// is worse than one frame of the low-resolution present.
-		val motionSource = when (route) {
+		// The motion stage is the route's choice. On VELOCITY_MRT the post-scene fill merges the
+		// scene velocity companion into the native motion image - the sole Streamline motion
+		// source - while the compute camera-motion writer stays retired from this path; on
+		// CAMERA_ONLY the compute writer stays exactly as before. A VELOCITY_MRT frame that
+		// reached here without a velocity companion has no motion source at all and is skipped:
+		// evaluating with no motion vectors is worse than one frame of the low-resolution
+		// present.
+		val motionRecorded = when (route) {
 			MotionVectorRoute.VELOCITY_MRT -> {
 				if (velocity == null) {
 					return false
 				}
-				velocity
-			}
-
-			MotionVectorRoute.CAMERA_ONLY -> {
-				val wroteMotion = adapter.writeMotion(
-					MotionRequest(
+				// The fill comes first in the frame's recording, before the tag: it opens the
+				// native timing chain with a real motion stage, and the tag must find the native
+				// motion image already merged so the motion it names is complete.
+				adapter.fillVelocity(
+					FillVelocityRequest(
 						commandBuffer = handle,
 						depth = scene.depth,
+						velocity = velocity,
 						reprojection = FloatArray(16).also { motion.reprojection.get(it) },
+						reset = motion.reset,
 					),
 				)
-				if (!wroteMotion) {
-					return false
-				}
-				// The CAMERA_ONLY path tags no velocity: the native side tags the motion image
-				// the compute writer just filled, and a carried velocity must never replace it.
-				null
 			}
+
+			MotionVectorRoute.CAMERA_ONLY -> adapter.writeMotion(
+				MotionRequest(
+					commandBuffer = handle,
+					depth = scene.depth,
+					reprojection = FloatArray(16).also { motion.reprojection.get(it) },
+				),
+			)
+		}
+		if (!motionRecorded) {
+			return false
 		}
 
-		// The frame's SR resources tag between the motion pass and the evaluation, on the same
+		// The frame's SR resources tag between the motion stage and the evaluation, on the same
 		// buffer: the tag call obtains the Streamline frame token the evaluation consumes, and
-		// the DLSS plugin reads the tagged resources at evaluate time.
+		// the DLSS plugin reads the tagged resources at evaluate time. The motion source is
+		// always the native motion image - direct companion tagging is retired - so the tag
+		// request is route-independent.
 		val tagged = adapter.tagSrResources(
 			SrTagRequest(
 				commandBuffer = handle,
 				color = scene.color,
 				depth = scene.depth,
-				velocity = motionSource ?: ImageBinding(0, 0, 0),
 			),
 		)
 		if (!tagged) {

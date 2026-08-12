@@ -4,6 +4,7 @@ import me.snowmii.dlss.bridge.NativeException
 import me.snowmii.dlss.bridge.DlssEvaluationImages
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.PresentTarget
@@ -179,6 +180,30 @@ class LifecycleAdapter(
 	}
 
 	/**
+	 * Records the post-scene velocity merge on the caller's command buffer: one dispatch samples
+	 * the engine's depth image and its sparse RG16_FLOAT velocity companion, copies every
+	 * non-sentinel object vector unchanged and reconstructs jitter-stripped camera motion for
+	 * every sentinel pixel, and writes the complete merged field into the native motion image.
+	 * On a reset frame the dispatch writes the invalid sentinel everywhere instead.
+	 *
+	 * This has to precede [tagSrResources] on the same buffer: the native motion image is the
+	 * sole Streamline motion source, and the evaluation reads it.
+	 *
+	 * Latched under the same stage name as the compute writer: both are the frame's motion
+	 * stage, and a failure in either means the frame has no motion source.
+	 */
+	fun fillVelocity(request: FillVelocityRequest): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		val dimensions = renderDimensions ?: return false
+		return invokeStatus(DlssNativeStage.WRITE_MOTION) {
+			native.fillVelocity(request.copy(renderDimensions = dimensions))
+		}
+	}
+
+	/**
 	 * Tags this frame's SR resources on the caller's command buffer, through Streamline's
 	 * frame-based tagging (slGetNewFrameToken + slSetTagForFrame), and retains the frame token
 	 * the evaluation consumes.
@@ -187,8 +212,7 @@ class LifecycleAdapter(
 	 * constants and feature evaluation against the token this call obtained, and evaluating
 	 * with no retained token fails.
 	 */
-	fun tagSrResources(request: SrTagRequest): Boolean {
-		if (session.state != DlssSessionState.READY) {
+	fun tagSrResources(request: SrTagRequest): Boolean {		if (session.state != DlssSessionState.READY) {
 			return false
 		}
 

@@ -80,6 +80,24 @@ public final class Native implements AutoCloseable, NativeApi {
 		JAVA_INT.withName("render_height")
 	).withName("McDlssMotionInfo");
 
+	/**
+	 * {@code McDlssFillVelocityInfo}: command buffer, depth, velocity companion, reprojection
+	 * pointer, render size, and the reset flag.
+	 *
+	 * <p>76 bytes of fields in 80 bytes of struct: the 8-byte alignment of the pointer rounds
+	 * the size up, and the trailing padding is declared explicitly like the image struct's.
+	 */
+	private static final StructLayout FILL_LAYOUT = MemoryLayout.structLayout(
+		JAVA_LONG.withName("command_buffer"),
+		IMAGE_LAYOUT.withName("depth"),
+		IMAGE_LAYOUT.withName("velocity"),
+		ValueLayout.ADDRESS.withName("reprojection"),
+		JAVA_INT.withName("render_width"),
+		JAVA_INT.withName("render_height"),
+		JAVA_INT.withName("reset"),
+		MemoryLayout.paddingLayout(4)
+	).withName("McDlssFillVelocityInfo");
+
 	private static final StructLayout PRESENT_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
 		JAVA_LONG.withName("image"),
@@ -88,14 +106,14 @@ public final class Native implements AutoCloseable, NativeApi {
 	).withName("McDlssPresentInfo");
 
 	/**
-	 * {@code McDlssTagInfo}: the caller's command buffer followed by three {@code McDlssImage}
-	 * structs, 80 bytes with no padding of its own.
+	 * {@code McDlssTagInfo}: the caller's command buffer followed by two {@code McDlssImage}
+	 * structs, 56 bytes with no padding of its own. The motion source is never carried: the
+	 * native side always tags the module's own motion image.
 	 */
 	private static final StructLayout TAG_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
 		IMAGE_LAYOUT.withName("color"),
-		IMAGE_LAYOUT.withName("depth"),
-		IMAGE_LAYOUT.withName("velocity")
+		IMAGE_LAYOUT.withName("depth")
 	).withName("McDlssTagInfo");
 
 	private static VarHandle field(final StructLayout layout, final String... path) {
@@ -130,6 +148,18 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final VarHandle MOTION_RENDER_WIDTH = field(MOTION_LAYOUT, "render_width");
 	private static final VarHandle MOTION_RENDER_HEIGHT = field(MOTION_LAYOUT, "render_height");
 
+	private static final VarHandle FILL_COMMAND_BUFFER = field(FILL_LAYOUT, "command_buffer");
+	private static final VarHandle FILL_DEPTH_VIEW = field(FILL_LAYOUT, "depth", "view");
+	private static final VarHandle FILL_DEPTH_IMAGE = field(FILL_LAYOUT, "depth", "image");
+	private static final VarHandle FILL_DEPTH_FORMAT = field(FILL_LAYOUT, "depth", "format");
+	private static final VarHandle FILL_VELOCITY_VIEW = field(FILL_LAYOUT, "velocity", "view");
+	private static final VarHandle FILL_VELOCITY_IMAGE = field(FILL_LAYOUT, "velocity", "image");
+	private static final VarHandle FILL_VELOCITY_FORMAT = field(FILL_LAYOUT, "velocity", "format");
+	private static final VarHandle FILL_REPROJECTION = field(FILL_LAYOUT, "reprojection");
+	private static final VarHandle FILL_RENDER_WIDTH = field(FILL_LAYOUT, "render_width");
+	private static final VarHandle FILL_RENDER_HEIGHT = field(FILL_LAYOUT, "render_height");
+	private static final VarHandle FILL_RESET = field(FILL_LAYOUT, "reset");
+
 	private static final VarHandle IMAGE_VIEW = field(IMAGE_LAYOUT, "view");
 	private static final VarHandle IMAGE_IMAGE = field(IMAGE_LAYOUT, "image");
 	private static final VarHandle IMAGE_FORMAT = field(IMAGE_LAYOUT, "format");
@@ -146,9 +176,6 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final VarHandle TAG_DEPTH_VIEW = field(TAG_LAYOUT, "depth", "view");
 	private static final VarHandle TAG_DEPTH_IMAGE = field(TAG_LAYOUT, "depth", "image");
 	private static final VarHandle TAG_DEPTH_FORMAT = field(TAG_LAYOUT, "depth", "format");
-	private static final VarHandle TAG_VELOCITY_VIEW = field(TAG_LAYOUT, "velocity", "view");
-	private static final VarHandle TAG_VELOCITY_IMAGE = field(TAG_LAYOUT, "velocity", "image");
-	private static final VarHandle TAG_VELOCITY_FORMAT = field(TAG_LAYOUT, "velocity", "format");
 
 	private final Arena arena;
 	private final MethodHandle bootstrapStreamline;
@@ -174,9 +201,11 @@ public final class Native implements AutoCloseable, NativeApi {
 	 */
 	private final MemorySegment evaluateScratch;
 	private final MemorySegment motionScratch;
+	private final MemorySegment fillScratch;
 	private final MemorySegment presentScratch;
 	private final MemorySegment tagScratch;
 	private final MethodHandle writeMotion;
+	private final MethodHandle fillVelocity;
 	private final MethodHandle presentOutput;
 	private final MethodHandle evaluate;
 	private final MethodHandle tagSrResources;
@@ -272,6 +301,11 @@ public final class Native implements AutoCloseable, NativeApi {
 			"mc_dlss_write_motion",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssMotionInfo*
 		);
+		this.fillVelocity = bind(
+			lookup,
+			"mc_dlss_fill_velocity",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssFillVelocityInfo*
+		);
 		this.presentOutput = bind(
 			lookup,
 			"mc_dlss_present_output",
@@ -292,6 +326,7 @@ public final class Native implements AutoCloseable, NativeApi {
 		this.reprojectionScratch = arena.allocate(JAVA_FLOAT, 16);
 		this.evaluateScratch = arena.allocate(EVALUATE_LAYOUT);
 		this.motionScratch = arena.allocate(MOTION_LAYOUT);
+		this.fillScratch = arena.allocate(FILL_LAYOUT);
 		this.presentScratch = arena.allocate(PRESENT_LAYOUT);
 		this.tagScratch = arena.allocate(TAG_LAYOUT);
 	}
@@ -634,6 +669,30 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
+	public int fillVelocity(final FillVelocityRequest request) {
+		final float[] reprojection = request.getReprojection();
+		if (reprojection.length != 16) {
+			throw new IllegalArgumentException("Reprojection must be 16 column-major floats");
+		}
+		final DlssDimensions render = requireDimensions(request.getRenderDimensions(), "fill-velocity");
+		try {
+			final MemorySegment matrix = this.reprojectionScratch;
+			MemorySegment.copy(reprojection, 0, matrix, JAVA_FLOAT, 0, reprojection.length);
+			final MemorySegment info = this.fillScratch;
+			FILL_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
+			writeImage(info, FILL_DEPTH_VIEW, FILL_DEPTH_IMAGE, FILL_DEPTH_FORMAT, request.getDepth());
+			writeImage(info, FILL_VELOCITY_VIEW, FILL_VELOCITY_IMAGE, FILL_VELOCITY_FORMAT, request.getVelocity());
+			FILL_REPROJECTION.set(info, 0L, matrix);
+			FILL_RENDER_WIDTH.set(info, 0L, render.getWidth());
+			FILL_RENDER_HEIGHT.set(info, 0L, render.getHeight());
+			FILL_RESET.set(info, 0L, request.getReset() ? 1 : 0);
+			return (int)this.fillVelocity.invokeExact(info);
+		} catch (Throwable error) {
+			throw nativeError("fill-velocity", error);
+		}
+	}
+
+	@Override
 	public int presentOutput(final PresentTarget target) {
 		final DlssDimensions output = requireDimensions(target.getOutputDimensions(), "present-output");
 		try {
@@ -677,7 +736,6 @@ public final class Native implements AutoCloseable, NativeApi {
 			TAG_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
 			writeImage(info, TAG_COLOR_VIEW, TAG_COLOR_IMAGE, TAG_COLOR_FORMAT, request.getColor());
 			writeImage(info, TAG_DEPTH_VIEW, TAG_DEPTH_IMAGE, TAG_DEPTH_FORMAT, request.getDepth());
-			writeImage(info, TAG_VELOCITY_VIEW, TAG_VELOCITY_IMAGE, TAG_VELOCITY_FORMAT, request.getVelocity());
 			return (int)this.tagSrResources.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("tag-sr-resources", error);

@@ -66,6 +66,21 @@ class DlssResourceAbiTest {
 					),
 				),
 			)
+			// The velocity fill crosses the same boundary in the opposite shape: every field of
+			// McDlssFillVelocityInfo read back at the offset the real C compiler placed it.
+			assertEquals(
+				NativeApi.SUCCESS_RESULT,
+				native.fillVelocity(
+					FillVelocityRequest(
+						commandBuffer = 101L,
+						depth = ImageBinding(301L, 302L, 303),
+						velocity = ImageBinding(701L, 702L, 124),
+						reprojection = FloatArray(16) { it.toFloat() },
+						reset = true,
+						renderDimensions = DlssDimensions(1280, 720),
+					),
+				),
+			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				native.presentOutput(
@@ -127,6 +142,16 @@ class DlssResourceAbiTest {
 				return info->command_buffer == 101 &&
 					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
 					info->render_width == 1280 && info->render_height == 720;
+			}
+			__declspec(dllexport) int __cdecl mc_dlss_fill_velocity(const McDlssFillVelocityInfo* info) {
+				if (info == nullptr || info->reprojection == nullptr) return 0;
+				for (int i = 0; i < 16; ++i) {
+					if (info->reprojection[i] != static_cast<float>(i)) return 0;
+				}
+				return info->command_buffer == 101 &&
+					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
+					info->velocity.view == 701 && info->velocity.image == 702 && info->velocity.format == 124 &&
+					info->render_width == 1280 && info->render_height == 720 && info->reset == 1;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_present_output(const McDlssPresentInfo* info) {
 				if (info == nullptr) return 0;
