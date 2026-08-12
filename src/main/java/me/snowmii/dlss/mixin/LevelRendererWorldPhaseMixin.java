@@ -18,11 +18,13 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Scopes the DLSS world phase to {@code LevelRenderer.render}.
+ * Opens the DLSS world phase at {@code LevelRenderer.render}.
  *
- * This method, and not {@code GameRenderer.renderLevel}, is the right boundary: renderLevel also
- * contains hand and item rendering and screen effects, which the effort contract requires at
- * output resolution. Everything inside render belongs to the world scene.
+ * The phase window spans the world scene plus the existing hand/item draw: it opens here, at the
+ * head of render, and closes in {@code GameRenderer.renderLevel} immediately after the
+ * {@code renderItemInHand} submission, so hand and item land in the low-resolution scene target
+ * that DLSS upscales. Screen effects and the 3D crosshair stay outside the window, at output
+ * resolution.
  *
  * The main target is read at HEAD, while the redirect is still inactive, so the phase always
  * measures the real full-size target and never sees its own override.
@@ -51,7 +53,7 @@ public class LevelRendererWorldPhaseMixin {
 	}
 
 	@Inject(method = "render", at = @At("TAIL"))
-	private void mcDlssEndWorldPhase(
+	private void mcDlssRenderStressPass(
 		final GraphicsResourceAllocator resourceAllocator,
 		final DeltaTracker deltaTracker,
 		final boolean renderOutline,
@@ -62,17 +64,17 @@ public class LevelRendererWorldPhaseMixin {
 		final boolean shouldRenderSky,
 		final CallbackInfo info
 	) {
-		// Still inside the world phase, so this is the low-resolution scene target on a DLSS frame
-		// and the real main target on a vanilla one. The stress pass therefore pays its cost at
-		// whatever resolution the world was actually rendered at, which is the comparison it
-		// exists to make, and DLSS upscales the finished image rather than a pre-effect one. The
+		// Still inside the world phase - the low-resolution scene target on a DLSS frame, the real
+		// main target on a vanilla one - so the stress pass pays its cost at whatever resolution
+		// the world was actually rendered at, which is the comparison it exists to make, and DLSS
+		// upscales the finished scene (stress pass included) rather than a pre-effect one. The
 		// phase is handed along only to supply the velocity-MRT write context: null in exactly
 		// the sessions without a phase, so vanilla and camera-only frames keep the one-target
-		// stress pass and the stress pass itself still renders on every frame.
+		// stress pass and the stress pass itself still renders on every frame. The phase stays
+		// open past this tail: it closes in GameRenderer.renderLevel, immediately after the
+		// hand/item submission, so the hand renders into this same scene target and WorldPhase.end
+		// evaluates DLSS over world, stress pass, and hand together.
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
 		StressRuntime.render(Minecraft.getInstance().gameRenderer.mainRenderTarget(), phase);
-		if (phase != null) {
-			phase.end();
-		}
 	}
 }

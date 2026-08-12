@@ -26,10 +26,12 @@ import java.util.Optional
  *
  * [RenderRuntime] decides *whether* a frame is eligible and *what size* its target is.
  * This class decides *when* that target is visible to the renderer: the phase is opened at the
- * head of `LevelRenderer.render` and closed at its tail, and while it is open
- * [worldTargetOverride] is what `GameRenderer.mainRenderTarget()` answers. Everything outside
- * that window - post chains, GUI clear, screenshots, hand and item, screen effects, the 3D
- * crosshair, and presentation - keeps seeing the untouched full-size main target.
+ * head of `LevelRenderer.render` and closed in `GameRenderer.renderLevel` immediately after the
+ * existing `renderItemInHand` submission, and while it is open
+ * [worldTargetOverride] is what `GameRenderer.mainRenderTarget()` answers. The world scene, the
+ * stress pass, and the hand and item draw all land in the low-resolution scene target this way;
+ * everything outside that window - screen effects, the 3D crosshair, post chains, GUI clear,
+ * screenshots, and presentation - keeps seeing the untouched full-size main target.
  *
  * Closing an eligible phase evaluates DLSS and composes the upscaled result into the main target,
  * which is what everything drawn afterwards renders on top of at output resolution. A frame whose
@@ -195,10 +197,11 @@ class WorldPhase(
 	 *
 	 * Minecraft uploads the world projection in `GameRenderer.renderLevel`, before
 	 * `LevelRenderer.render` runs, so the route has to be known earlier than the phase can be
-	 * open - opening it that early would put hand, item, and screen effects behind the
-	 * low-resolution override too. Splitting the decision from the window is what keeps both
-	 * true, and the route is still decided exactly once per frame because [begin] consumes
-	 * this preparation rather than repeating it.
+	 * open - the window starts at the head of `LevelRenderer.render` and ends right after the
+	 * hand draw, and nothing before the world scene renders under the low-resolution override.
+	 * Splitting the decision from the window is what keeps both true, and the route is still
+	 * decided exactly once per frame because [begin] consumes this preparation rather than
+	 * repeating it.
 	 *
 	 * [camera] is the frame's camera as the projection seam sees it, and is what the runtime
 	 * derives camera-only motion from. It is null only when the phase is opened without the
@@ -209,10 +212,10 @@ class WorldPhase(
 		mainTarget: RenderTarget,
 		camera: DlssCameraSample? = null,
 	): DlssJitterOffset? {
-		// An exception thrown inside LevelRenderer.render skips the tail that closes the phase,
-		// and a frame that prepared but never rendered leaves one unconsumed. Both are dropped
-		// here rather than thrown on, because a stale phase must not turn one render failure
-		// into a permanent one.
+		// An exception thrown inside the world phase - LevelRenderer.render, or the hand draw
+		// before WorldPhase.end - skips the close, and a frame that prepared but never rendered
+		// leaves one unconsumed. Both are dropped here rather than thrown on, because a stale
+		// phase must not turn one render failure into a permanent one.
 		discard()
 
 		this.mainTarget = mainTarget
@@ -316,11 +319,12 @@ class WorldPhase(
 	 * Records this frame's DLSS work against the scene the world just rendered, and composes the
 	 * upscaled result into [destination]. Returns true when the destination holds it.
 	 *
-	 * Recorded here, at the tail of the world phase, because that is the first moment the scene
-	 * colour and depth are complete and the last moment before anything else in the frame touches
-	 * them - and because everything the frame draws after this point (hand and item, screen
-	 * effects, the 3D crosshair, HUD, and GUI) renders into that same destination at output
-	 * resolution, on top of the DLSS image.
+	 * Recorded when the phase closes, immediately after the existing hand/item draw: that is the
+	 * first moment the scene colour and depth are complete (world geometry, the stress pass, and
+	 * the hand all landed in it) and the last moment before anything else in the frame touches
+	 * them - and because everything the frame draws after this point (screen effects, the 3D
+	 * crosshair, HUD, and GUI) renders into that same destination at output resolution, on top
+	 * of the DLSS image.
 	 *
 	 * A frame missing its jitter, its motion, or the handles behind its targets is skipped: it went
 	 * through the phase without everything an evaluation needs, and DLSS reading a stale or absent
