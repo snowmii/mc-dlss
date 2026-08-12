@@ -168,13 +168,12 @@ VkDescriptorSet bind_velocity_fill_descriptors(const uint64_t depthView,
 
 // Destroys one pass in the reverse of creation order. Every handle is checked because this
 // also runs as the cleanup path of a partially created pass. Declared before the creator,
-// which uses it for exactly that cleanup path.
+// which uses it for exactly that cleanup path. This never stalls: a half-built pass was
+// never submitted, and the shutdown path performs the one device-wide stall before any
+// live pass's handles are freed.
 void destroy_dispatch_pass(DlssMotionPass& pass) noexcept {
     if (g_state.device != VK_NULL_HANDLE) {
-        // A fully built pass has been dispatched from; a half-built one never was, and the
-        // stall costs nothing there because nothing referencing it was ever submitted.
         if (pass.pipeline != VK_NULL_HANDLE) {
-            wait_device_idle();
             vkDestroyPipeline(g_state.device, pass.pipeline, nullptr);
         }
         if (pass.pipelineLayout != VK_NULL_HANDLE) {
@@ -340,8 +339,16 @@ int32_t create_dispatch_pass(DlssMotionPass& pass, const uint32_t* spirv, const 
 } // namespace
 
 void destroy_motion_pass() noexcept {
-    // The fill pass was created after the motion pass, so it goes first; each destroy waits
-    // only when its own pipeline was ever dispatched from.
+    // One shutdown stall covers both live passes before either is destroyed: each pass has
+    // been dispatched from, and the slice boundary admits no second device-idle wait. A
+    // half-built pass never reaches here - the create path cleans it up itself - but the
+    // pipeline checks keep a session that never built one of the two from stalling for it.
+    if (g_state.device != VK_NULL_HANDLE &&
+        (g_velocityFill.pass.pipeline != VK_NULL_HANDLE ||
+         g_state.motionPass.pipeline != VK_NULL_HANDLE)) {
+        wait_device_idle();
+    }
+    // The fill pass was created after the motion pass, so it goes first.
     destroy_dispatch_pass(g_velocityFill.pass);
     destroy_dispatch_pass(g_state.motionPass);
     g_velocityFill = VelocityFillPass{};
