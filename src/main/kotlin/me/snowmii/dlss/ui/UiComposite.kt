@@ -24,6 +24,12 @@ import net.minecraft.resources.Identifier
  *     (`source = ONE`, `destination = ONE_MINUS_SRC_ALPHA`), so the result is
  *     `ui.rgb + hudless.rgb * (1 - ui.a)` and a pixel nothing drew on stays exactly the world.
  *
+ * The frame wiring hands the same target in as the HUD-less source and the destination - the
+ * world already lives in the destination - and a pass that samples the very target it writes
+ * into is invalid on every backend, so the composite detects the alias and runs only the
+ * overlay then: the base copy would be a redundant self-blit of contents the destination
+ * already holds. Distinct inputs still compose through both passes.
+ *
  * The inputs are the (ui, hudless, destination) boundary: any three targets compose, which is
  * what makes the seam injectable and verifiable off the render thread. Neither pass binds
  * default uniforms: both pipelines carry only the IN_SAMPLER layout the blit shader actually
@@ -39,6 +45,10 @@ class UiComposite(
 	/**
 	 * Composes [ui] over [hudless] into [destination]. A missing color view on any input
 	 * writes nothing: the destination is never partially composited.
+	 *
+	 * When [hudless] and [destination] share one color view, the base pass is skipped: the
+	 * destination already holds the HUD-less world, and copying it into itself would sample
+	 * the very target the pass renders into. The UI overlays the destination as it is.
 	 */
 	fun render(encoder: CommandEncoder, ui: RenderTarget, hudless: RenderTarget, destination: RenderTarget) {
 		val uiColor = ui.colorTextureView ?: return
@@ -47,10 +57,12 @@ class UiComposite(
 
 		val nearest = sampler()
 
-		encoder.createRenderPass({ "DLSS UI composite base" }, destinationColor, Optional.empty()).use { pass ->
-			pass.setPipeline(HUDLESS_COPY_PIPELINE)
-			pass.bindTexture("InSampler", hudlessColor, nearest)
-			pass.draw(3, 1, 0, 0)
+		if (hudlessColor !== destinationColor) {
+			encoder.createRenderPass({ "DLSS UI composite base" }, destinationColor, Optional.empty()).use { pass ->
+				pass.setPipeline(HUDLESS_COPY_PIPELINE)
+				pass.bindTexture("InSampler", hudlessColor, nearest)
+				pass.draw(3, 1, 0, 0)
+			}
 		}
 		encoder.createRenderPass({ "DLSS UI composite overlay" }, destinationColor, Optional.empty()).use { pass ->
 			pass.setPipeline(UI_OVERLAY_PIPELINE)
@@ -62,6 +74,8 @@ class UiComposite(
 	companion object {
 		/**
 		 * The unblended RGBA8 copy: replaces the destination with the HUD-less world exactly.
+		 * Runs only when the HUD-less source is a target of its own; the aliased frame wiring
+		 * skips it and keeps the world already in the destination.
 		 *
 		 * Same screen-quad and blit shaders as the vanilla blit pipelines, with only the
 		 * IN_SAMPLER layout the shader reads, so the pass needs no default uniforms.

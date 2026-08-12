@@ -19,8 +19,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * while the redirect is still inactive, so the window always measures the real full-size target
  * and never sees its own override.
  *
- * The tail runs on every frame, but it only reads: a frame whose head never opened the window
- * (menu, no phase) has nothing to close.
+ * The tail runs on every frame: it closes the GUI window - the frame's last UI window - and
+ * bakes the frame's composite into the vanilla main target, so present, screenshots, and every
+ * post-GUI consumer read the getter with the frame's UI already in the main target. A frame
+ * whose head never opened the window (menu, no phase) has nothing to close or composite.
  */
 @Mixin(GuiRenderer.class)
 public class GuiRendererMixin {
@@ -43,7 +45,7 @@ public class GuiRendererMixin {
 	private void mcDlssEndUiPhase(final CallbackInfo info) {
 		final UiPhase phase = ClientRuntime.active().activeUiPhase();
 		if (phase != null) {
-			phase.end();
+			phase.endFrame();
 		}
 	}
 }

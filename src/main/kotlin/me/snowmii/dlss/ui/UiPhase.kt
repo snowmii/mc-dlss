@@ -12,16 +12,20 @@ import com.mojang.blaze3d.systems.RenderSystem
  * so `OutputTarget.MAIN_TARGET`'s draw-time resolution answers the UI target while hand and
  * item features draw, and the screen effects and 3D crosshair that run right after in
  * `GameRenderer.renderLevel` fall outside the window and keep the vanilla main target. The GUI
- * window opens at the head of `GuiRenderer.render` and closes at its tail, so `GuiRenderer.draw`'s
- * draw ranges land in the UI target too. The GUI blur reads GameRenderer's private field rather
- * than the getter, and present, screenshots, and every post-GUI consumer read the getter after
- * the last window closes and keep the vanilla target.
+ * window opens at the head of `GuiRenderer.render`; its tail closes the window and runs the
+ * frame's composite - one [UiComposite] that overlays the held UI target over the HUD-less
+ * world still in the main target, handed in as both the source and the destination so the
+ * composite skips its redundant base copy - so present, screenshots,
+ * and every post-GUI consumer read the getter after the last window closes and keep the vanilla
+ * main target with the frame's UI already baked in.
  *
  * Both windows share one held UI target, and the frame's transparent clear belongs to exactly
  * one of them: the hand window always clears - it is the frame's first UI window - and the GUI
  * window clears only when no hand window ran first, because the two windows never overlap in
  * the real frame. Hand drawing itself is gated inside vanilla's method on HUD visibility,
  * camera type, and game mode, so a hand window whose draw gate closed is just an empty clear.
+ * The hand window closes through [end] without compositing: the world, the screen effects, and
+ * the GUI still have to land in the main target after it.
  *
  * The getter seam resolves world before UI: an open world phase's scene target wins over both
  * windows, and outside all three the caller gets the vanilla main target. The windows never
@@ -41,6 +45,11 @@ class UiPhase(
 	 * window is drivable headless; production opens the render loop's device.
 	 */
 	private val encoder: () -> CommandEncoder = { RenderSystem.getDevice().createCommandEncoder() },
+	/**
+	 * Supplies the composite [endFrame] bakes the frame's UI with. Injected so the frame wiring
+	 * is verifiable off the render thread; production resolves the render loop's sampler cache.
+	 */
+	private val composite: () -> UiComposite = { UiComposite() },
 ) : AutoCloseable {
 	/** True between a window's [begin]/[beginHand] and [end]. */
 	var isOpen: Boolean = false
@@ -54,6 +63,13 @@ class UiPhase(
 	 * self-heals a handoff stranded by a frame that crashed between windows.
 	 */
 	private var clearedThisFrame = false
+
+	/**
+	 * The frame's real main target, stashed when a window opens and read back by [endFrame]
+	 * after the window closes, when the getter no longer answers the UI target. Read at HEAD,
+	 * while the redirect is still inactive, so it never sees the window's own override.
+	 */
+	private var frameMainTarget: RenderTarget? = null
 
 	/**
 	 * Target `GameRenderer.mainRenderTarget()` must answer with, or null when the caller gets
@@ -113,6 +129,7 @@ class UiPhase(
 		if (clear) {
 			target.clear(encoder())
 		}
+		frameMainTarget = mainTarget
 		isOpen = true
 		return true
 	}
@@ -120,6 +137,38 @@ class UiPhase(
 	/** Closes the open window, restoring the vanilla main target. The held UI target survives. */
 	fun end() {
 		isOpen = false
+	}
+
+	/**
+	 * Closes the GUI window and bakes the frame's UI over the HUD-less world, in that order: the
+	 * window closes first, so the getter answers the vanilla main target again before the
+	 * composite writes and no post-GUI consumer can read the UI target on a frame whose
+	 * composite failed.
+	 *
+	 * The composite is handed the frame's main target - stashed when the window opened and
+	 * still holding the HUD-less world, GUI blur included, that the GUI drew over - as both
+	 * the HUD-less source and the destination. Aliasing the two makes the base copy
+	 * redundant: a pass that samples the very target it writes into is invalid on every
+	 * backend, and the destination already holds the world. The composite therefore overlays
+	 * the held UI target over the world already in the main target, so the vanilla main
+	 * target becomes the permanent presentation source before present, screenshots, and
+	 * Tracy read the getter. The held UI target survives the bake.
+	 *
+	 * A frame whose window never opened - the menu, a null phase - or whose window failed to
+	 * open has nothing to composite and leaves the main target untouched, as does a missing UI
+	 * target or color view, which passes through the composite's own no-write guard.
+	 */
+	fun endFrame() {
+		val windowWasOpen = isOpen
+		val mainTarget = frameMainTarget
+		isOpen = false
+		frameMainTarget = null
+		if (!windowWasOpen || mainTarget == null) {
+			return
+		}
+
+		val ui = target.current ?: return
+		composite().render(encoder(), ui, mainTarget, mainTarget)
 	}
 
 	override fun close() {
