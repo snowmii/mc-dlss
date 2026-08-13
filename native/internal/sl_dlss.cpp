@@ -8,6 +8,7 @@
 #include <sl.h>
 #include <sl_core_api.h>
 #include <sl_dlss.h>
+#include <sl_dlss_g.h>
 
 /*
  * The Streamline DLSS surface of the module, layered above state like the NGX unit. The ABI
@@ -121,6 +122,58 @@ int32_t record_sr_options() noexcept {
     }
 
     const sl::Result result = slDLSSSetOptions(sl::ViewportHandle{0}, options);
+    return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
+}
+
+int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The record reads everything sized from the stored configuration, so a configuration
+    // that never stored dimensions (no successful mc_dlss_configure) cannot be recorded for.
+    if (!valid_dimensions(g_state.outputWidth, g_state.outputHeight, g_state.renderWidth,
+                          g_state.renderHeight)) {
+        return kInvalidParameter;
+    }
+
+    // The record is fixed at the contract's single multiplier: 2x. Every field is stated
+    // explicitly rather than inherited from the SDK defaults, because each one is a decision
+    // the guide calls out - retained resources for seamless pause/menu suspension, UI
+    // recomposition for the split's separate HUD-less/UI inputs, and the Vulkan-only
+    // eBlockNoClientQueues queue-parallelism mode, which lets DLSS-G run on its own queues
+    // instead of blocking the presenting queue. The host's obligation under that mode -
+    // waiting on DLSSGState::inputsProcessingCompletionFence before modifying or destroying
+    // the tagged inputs of a previously presented frame - is the frame-side discipline the
+    // M-11 present slice implements. The guide's set-options call validates little of this
+    // and the wrong form of any field records silently, so the record is a dense contract,
+    // not a convenience.
+    sl::DLSSGOptions options{};
+    options.mode = sl::DLSSGMode::eOn;
+    options.numFramesToGenerate = 1;
+    options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
+    options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockNoClientQueues;
+    options.enableUserInterfaceRecomposition = sl::Boolean::eTrue;
+    options.numBackBuffers = numBackBuffers;
+    // The depth/motion inputs are render-sized and the colour backbuffer is output-sized, the
+    // same size split the SR configuration already stores.
+    options.mvecDepthWidth = g_state.renderWidth;
+    options.mvecDepthHeight = g_state.renderHeight;
+    options.colorWidth = g_state.outputWidth;
+    options.colorHeight = g_state.outputHeight;
+    // Minecraft's backbuffer, HUD-less composite input, and UI target are all RGBA8_UNORM;
+    // the module's motion image is R16G16_SFLOAT; the depth is D32_SFLOAT. The formats are
+    // the same ones the module's own images and the engine's targets already use, declared
+    // here so the plugin allocates its internal resources against them.
+    options.colorBufferFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    options.mvecBufferFormat = static_cast<uint32_t>(kMotionFormat);
+    options.depthBufferFormat = VK_FORMAT_D32_SFLOAT;
+    options.hudLessBufferFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    options.uiBufferFormat = VK_FORMAT_R8G8B8A8_UNORM;
+
+    // The viewport is the same one the SR options, tags, and evaluation record against: the
+    // frame's resources tag on viewport 0 and the options must name the viewport they apply
+    // to.
+    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0}, options);
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
 

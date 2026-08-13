@@ -251,6 +251,27 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(
     uint32_t render_preset);
 
 /*
+ * Records the DLSS-G per-frame 2x options with Streamline's slDLSSGSetOptions.
+ *
+ * Must be called after mc_dlss_bootstrap_streamline and mc_dlss_activate_vulkan_proxies and
+ * after a successful mc_dlss_configure: the record answers FAIL_NotInitialized without a
+ * ready Streamline session and FAIL_InvalidParameter while the stored configuration still
+ * holds zero dimensions. The call owns no command buffer, tags nothing, and creates no
+ * feature - it only records what the next present applies.
+ *
+ * The record is fixed at the contract's single multiplier: mode eOn with
+ * numFramesToGenerate = 1 (2x). The retained-resources flag, the UI-recomposition switch,
+ * and the queue-parallelism mode are recorded explicitly rather than inherited from the SDK
+ * defaults, and the render/output extents and the five formats come from the stored
+ * configuration: the backbuffer, HUD-less, and UI buffers at output size in RGBA8_UNORM, the
+ * motion image at render size in R16G16_SFLOAT, and the depth at render size in D32_SFLOAT.
+ *
+ * `num_back_buffers` is the swapchain's expected image count, declared as the app knows it;
+ * adequacy against Streamline's requirement is verified live later in the milestone.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure_fg(uint32_t num_back_buffers);
+
+/*
  * Native-owned evaluation images.
  *
  * DLSS writes its upscaled result into an image the engine does not own, and

@@ -113,6 +113,25 @@ class LifecycleAdapter(
 	}
 
 	/**
+	 * Records the DLSS-G per-frame 2x options with the bridge, declaring the swapchain's
+	 * back-buffer count.
+	 *
+	 * The record is fixed at the contract's single multiplier (mode on, one generated frame)
+	 * and reads everything else from the configuration the last successful configure stored,
+	 * so the bridge checks the ready session and the stored dimensions itself; a failure here
+	 * latches the session exactly like any other native stage.
+	 */
+	fun configureFg(numBackBuffers: Int): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		return invokeStatus(DlssNativeStage.CONFIGURE) {
+			native.configureFg(numBackBuffers)
+		}
+	}
+
+	/**
 	 * Returns the native-owned motion and output images, or null when acquisition failed.
 	 *
 	 * A failure here latches the session exactly like any other native stage, because a session

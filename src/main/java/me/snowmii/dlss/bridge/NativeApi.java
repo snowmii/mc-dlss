@@ -67,6 +67,28 @@ public interface NativeApi {
 	);
 
 	/**
+	 * Records the DLSS-G per-frame 2x options with Streamline's {@code slDLSSGSetOptions}:
+	 * mode on, one generated frame per real one, retained resources while off, UI
+	 * recomposition, the queue mode, the declared back-buffer count, the render/output
+	 * extents from the stored configuration, and the five required formats.
+	 *
+	 * <p>Must be called after bootstrap and proxy activation and after a successful {@link
+	 * #configure(int, int, int, int, int, int)}: the record answers {@code FAIL_NotInitialized}
+	 * without a ready Streamline session and {@code FAIL_InvalidParameter} while the stored
+	 * dimensions are still zero.
+	 *
+	 * <p>{@code numBackBuffers} is the swapchain's expected image count, declared as the
+	 * caller knows it; adequacy against Streamline's requirement is verified live later in the
+	 * milestone.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int configureFg(int numBackBuffers) {
+		throw new UnsupportedOperationException("configureFg");
+	}
+
+	/**
 	 * Returns the native-owned motion and output images for the configured dimensions,
 	 * creating them on first use and reusing them while that configuration holds.
 	 *

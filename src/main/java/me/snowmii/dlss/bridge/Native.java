@@ -188,6 +188,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
+	private final MethodHandle configureFg;
 	private final MethodHandle acquireImages;
 	private final MethodHandle releaseImages;
 	private final MethodHandle waitDeviceIdle;
@@ -273,6 +274,14 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_configure",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT)
+		);
+		// Optional like bootstrapStreamline: the ABI-probe DLL the layout tests compile stubs
+		// the historical ABI surface and does not export the FG record yet, while every real
+		// build since this symbol exists carries it.
+		this.configureFg = bindOptional(
+			lookup,
+			"mc_dlss_configure_fg",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // num_back_buffers
 		);
 		this.acquireImages = bind(
 			lookup,
@@ -562,6 +571,16 @@ public final class Native implements AutoCloseable, NativeApi {
 			);
 		} catch (Throwable error) {
 			throw nativeError("configure", error);
+		}
+	}
+
+	@Override
+	public int configureFg(final int numBackBuffers) {
+		if (configureFg == null) throw new NativeException("configure-fg", new IllegalStateException("Native bridge lacks FG configure"));
+		try {
+			return (int)this.configureFg.invokeExact(numBackBuffers);
+		} catch (Throwable error) {
+			throw nativeError("configure-fg", error);
 		}
 	}
 

@@ -389,6 +389,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure_fg(const uint32_t num_back_buffers) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        // The record reads the stored configuration, so the same ready gates as the SR
+        // options hold: a session that never bootstrapped answers FAIL_NotInitialized, and a
+        // configuration that never stored dimensions answers FAIL_InvalidParameter.
+        return record_fg_options(num_back_buffers);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_acquire_images(McDlssImage* motion,
                                                          McDlssImage* output) {
     try {

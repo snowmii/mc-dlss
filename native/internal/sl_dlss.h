@@ -36,6 +36,14 @@ int32_t query_optimal_dimensions_sl(uint32_t outputWidth, uint32_t outputHeight,
 // carries for that mode. Requires sl_session_ready; returns kNotInitialized otherwise.
 int32_t record_sr_options() noexcept;
 
+// Records the DLSS-G per-frame 2x options with slDLSSGSetOptions: mode eOn, one generated
+// frame per real one, retained resources while off, UI recomposition, the queue-parallelism
+// mode, the declared back-buffer count, the render/output extents from the stored
+// configuration, and the five required formats. Requires sl_session_ready; returns
+// kNotInitialized without it and kInvalidParameter while the stored dimensions are still
+// zero (no successful mc_dlss_configure yet).
+int32_t record_fg_options(uint32_t numBackBuffers) noexcept;
+
 // Tags one frame's DLSS SR resources on the caller's command buffer via slGetNewFrameToken +
 // slSetTagForFrame. The engine's colour and depth are always tagged; the module's motion and
 // output images are tagged as well once they have been acquired for the configured size. The
