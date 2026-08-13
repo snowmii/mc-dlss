@@ -48,10 +48,27 @@ import org.junit.jupiter.api.Test
  * presentation stays correct. That is invisible to the green suite (no test can run a consumer
  * mixin) and to a clean single-machine run (only captured outputs differ, and nobody
  * screenshots every frame) — exactly the failure M-8's risk names.
+ *
+ * A consumer is reachable from either side: by targeting the consumer class itself
+ * ([Screenshot], [TracyFrameCapture]) or by owning the caller seam that feeds it
+ * (`Minecraft.renderFrame`, `KeyboardHandler.keyPress`). Both sides are ratcheted; the parsing
+ * recognizes every `@Mixin` target form and every injector's `method` attribute regardless of
+ * formatting or attribute order, so a differently formatted annotation is not a blind spot.
  */
 class CompositeRoutingTest {
 	/** The final-frame capture consumers, by simple class name. */
 	private val captureConsumers = listOf("Screenshot", "TracyFrameCapture")
+
+	/**
+	 * The caller seams that feed a capture: `Minecraft.renderFrame` (the present blit plus the
+	 * Tracy capture) and `KeyboardHandler.keyPress` (the F2 grab). A mixin injecting on one of
+	 * these sits between the composite bake and the capture it feeds, with the same invisible
+	 * effect as targeting the consumer class.
+	 */
+	private val consumerCallerSeams = mapOf(
+		"Minecraft" to "renderFrame",
+		"KeyboardHandler" to "keyPress",
+	)
 
 	private val mixinDir = Path.of("src/main/java/me/snowmii/dlss/mixin")
 
@@ -68,10 +85,33 @@ class CompositeRoutingTest {
 	}
 
 	@Test
+	fun `no unowned mixin injects on a consumer caller seam`() {
+		// The one sanctioned owner: KeyboardHandlerControlsMixin only reads the key event to
+		// cycle DLSS settings and never touches the render target, so its keyPress injection is
+		// unrelated to the F2 grab. It still reports its reviewed hit below, so the expectation
+		// proves both that no new owner appeared and that the sanctioned one stayed unchanged.
+		val hits = mixinSources()
+			.flatMap { (file, source) ->
+				consumerSeamHits(source).map { (clazz, method) -> "$clazz.$method -> $file" }
+			}
+			.sorted()
+
+		assertEquals(
+			listOf("KeyboardHandler.keyPress -> KeyboardHandlerControlsMixin.java"),
+			hits,
+			"the present blit, the Tracy capture, and the F2 grab must keep reading the vanilla main target - no new mixin may own a consumer caller seam: $hits",
+		)
+	}
+
+	@Test
 	fun `the mainRenderTarget routing point is unique and getter-scoped`() {
 		val routingPoints = mixinSources()
-			.filter { (_, source) -> source.contains("@Inject(method = \"mainRenderTarget\"") }
-			.map { it.first }
+			.flatMap { (file, source) ->
+				injectorBodies(source)
+					.filter { body -> methodNames(body).any { it.substringBefore('(') == "mainRenderTarget" } }
+					.map { file }
+			}
+			.sorted()
 
 		assertEquals(
 			listOf("GameRendererWorldTargetMixin.java"),
@@ -86,14 +126,79 @@ class CompositeRoutingTest {
 		return files.map { it.name to it.readText() }
 	}
 
-	/** The class names a file's `@Mixin` annotation targets: simple names and `targets =` FQNs. */
+	/**
+	 * The class names a file's `@Mixin` annotations target, in every valid form: simple, FQN,
+	 * and inner-class literals; `value =`; single and array forms of `targets =`; and the bare
+	 * string form. Class literals contribute their simple name, string targets their last
+	 * package segment.
+	 */
 	private fun mixinTargets(source: String): List<String> =
-		Regex("""@Mixin\((.*?)\)""").findAll(source)
+		Regex("""@Mixin\s*\((.*?)\)""").findAll(source)
 			.flatMap { match ->
-				Regex("""([A-Za-z_$][\w$]*)\s*\.\s*class""")
-					.findAll(match.groupValues[1])
+				val args = match.groupValues[1]
+				Regex("""([A-Za-z_$][\w$]*)\s*\.\s*class""").findAll(args)
 					.map { it.groupValues[1] } +
-					Regex("""targets\s*=\s*"([^"]+)"""").findAll(match.groupValues[1]).map { it.groupValues[1].substringAfterLast('.') }
+					Regex(""""([^"]+)"""").findAll(args)
+						.map { it.groupValues[1].substringAfterLast('.') }
 			}
 			.toList()
+
+	/**
+	 * The `(class, method)` caller-seam hits of a file: one entry per injector whose target
+	 * class is a consumer caller seam and whose `method` attribute names that seam's method.
+	 * Sanctioned files still report their reviewed hit, so the expected value below proves both
+	 * that no new owner appeared and that the sanctioned one stayed exactly as reviewed.
+	 */
+	private fun consumerSeamHits(source: String): List<Pair<String, String>> {
+		val targets = mixinTargets(source).toSet()
+		return injectorBodies(source)
+			.flatMap { body -> methodNames(body) }
+			.flatMap { method ->
+				consumerCallerSeams
+					.filter { (clazz, seamMethod) -> clazz in targets && method.substringBefore('(') == seamMethod }
+					.keys
+					.map { it to method.substringBefore('(') }
+			}
+	}
+
+	/**
+	 * The bodies of every annotation with parentheses in the source, in order. Quoted
+	 * parentheses (descriptors like `"drawFromBuffer(...)V"`) and nested annotations are
+	 * handled, so attribute order and formatting never hide an injection.
+	 */
+	private fun annotationBodies(source: String): List<String> {
+		val bodies = mutableListOf<String>()
+		val annotation = Regex("""@(\w+)\s*\(""")
+		for (match in annotation.findAll(source)) {
+			var depth = 1
+			var i = match.range.last + 1
+			var inString = false
+			while (i < source.length && depth > 0) {
+				when (val c = source[i]) {
+					'"' -> inString = !inString
+					'(' -> if (!inString) depth++
+					')' -> if (!inString) depth--
+				}
+				i++
+			}
+			if (depth == 0) {
+				bodies += source.substring(match.range.last + 1, i - 1)
+			}
+		}
+		return bodies
+	}
+
+	/** The bodies of every injector annotation: any annotation carrying a `method` attribute. */
+	private fun injectorBodies(source: String): List<String> =
+		annotationBodies(source).filter { body -> Regex("""method\s*=""").containsMatchIn(body) }
+
+	/** The method names an injector body targets, single or array form, in attribute order. */
+	private fun methodNames(body: String): List<String> {
+		val names = mutableListOf<String>()
+		Regex("""method\s*=\s*"([^"]+)"""").findAll(body).forEach { names += it.groupValues[1] }
+		Regex("""method\s*=\s*\{([^}]*)}""").findAll(body).forEach { array ->
+			Regex(""""([^"]+)"""").findAll(array.groupValues[1]).forEach { names += it.groupValues[1] }
+		}
+		return names
+	}
 }
