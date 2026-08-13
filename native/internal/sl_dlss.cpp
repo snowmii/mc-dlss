@@ -251,6 +251,11 @@ int32_t record_present_handoff() noexcept {
     }
     g_state.srTagFrameIndexRecorded = false;
     g_state.fgTagFrameIndexRecorded = false;
+    // The handoff is the composed frame's terminal act: it consumes the frame token the
+    // evaluation retained for the FG re-declaration, so the next frame's tags obtain a fresh
+    // token under a fresh index instead of re-recording over this frame's present-lifetime
+    // records.
+    g_state.frameToken = nullptr;
     return kSuccess;
 }
 
@@ -280,6 +285,23 @@ sl::Resource make_tagged_resource(void* native, void* memory, void* view, uint32
 // per-frame constants or its begin event fails (sl.dlss returns eErrorMissingConstants), and
 // the frame token chained through slSetConstants and slEvaluateFeature must be the one the
 // frame's resources were tagged with, so both record against the retained token.
+// The module's motion image is the one evaluation input the caller's restore does not cover:
+// mc_dlss_evaluate returns the engine's colour and depth to where Minecraft expects them but
+// leaves the motion image in the read state, and the SR-only path never read it again until
+// the next frame's transitions. The composed present-driven frame reads it differently: the
+// FG tag declared the motion image in the engine-resting layout (kEngineRestingLayout) for
+// its whole valid-until-present lifetime, so the evaluation has to end with the image
+// actually resting in GENERAL - the composed frame must leave every FG-tagged resource in
+// the layout its tag declared, and the module's own image keeps the same between-frame
+// discipline the motion pass documents. The restore runs whether or not the evaluation
+// succeeded, matching the caller's own restore discipline for the engine's images.
+static void restore_motion_to_engine_resting_layout(const VkCommandBuffer commandBuffer) noexcept {
+    const uint64_t motionImage = to_uint64(g_state.motionImage.image);
+    record_layout_transition(commandBuffer, g_state.motionImage.image, image_range_of(false),
+                             current_layout_of(motionImage), kEngineRestingLayout);
+    note_layout_after_transition(motionImage, kEngineRestingLayout);
+}
+
 int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
                              VkCommandBuffer commandBuffer) noexcept {
     sl::FrameToken* frameToken = g_state.frameToken;
@@ -312,7 +334,18 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
 
     sl::Result result = slSetConstants(constants, *frameToken, sl::ViewportHandle{0});
     if (result != sl::Result::eOk) {
-        g_state.frameToken = nullptr;
+        // A failed frame has no history the next one could reuse, so the SR-only frame
+        // consumes its token here. The composed frame keeps it instead: its FG tag
+        // re-declares the shared inputs in the engine-resting layout after the evaluation,
+        // and the present handoff consumes the token when it accepts the frame.
+        if (!g_state.fgTagFrameIndexRecorded) {
+            g_state.frameToken = nullptr;
+        }
+        // The evaluation never recorded, but the caller's transitions above still moved the
+        // motion image into the read state before this call; the frame's tags survive a
+        // failed evaluation, so the image goes back to the layout its FG tag declared rather
+        // than being left for the present path to find in the wrong state.
+        restore_motion_to_engine_resting_layout(commandBuffer);
         return static_cast<int32_t>(result);
     }
 
@@ -324,9 +357,19 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // void*. Applying address-of here would pass the address of this local handle variable; SL
     // would forward that stack address to NGX as a VkCommandBuffer and corrupt the process.
     result = slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, 1, commandBuffer);
-    // The frame consumed its token whether the evaluation succeeded or failed: a failed frame
-    // has no history the next one could reuse, and the next tag must obtain a fresh token.
-    g_state.frameToken = nullptr;
+    // The SR-only frame consumed its token whether the evaluation succeeded or failed: a
+    // failed frame has no history the next one could reuse, and the next tag must obtain a
+    // fresh token. The composed frame keeps it instead: its FG tag re-declares the shared
+    // depth and motion slots in the engine-resting layout after the evaluation (the
+    // declaration the present path reads), and the present handoff consumes the token when
+    // it accepts the frame.
+    if (!g_state.fgTagFrameIndexRecorded) {
+        g_state.frameToken = nullptr;
+    }
+    // The composed frame's FG tag declared the motion image GENERAL for its whole lifetime,
+    // so the evaluation must leave it there - on the success path exactly as on the
+    // constants-failure path above.
+    restore_motion_to_engine_resting_layout(commandBuffer);
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
 
@@ -499,9 +542,11 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     }
 
     // The frame token is shared with the SR tag for the same frame: whichever tag records
-    // first obtains it, the other reuses it, and the frame's evaluation consumes it. Reusing
-    // rather than advancing keeps every tag of one frame on one frame index, which is what
-    // the present-time DLSS-G evaluation reads them under.
+    // first obtains it, the other reuses it, and the frame's evaluation and present handoff
+    // consume it between them. Reusing rather than advancing keeps every tag of one frame on
+    // one frame index, which is what the present-time DLSS-G evaluation reads them under; the
+    // composed frame's second FG call after the evaluation reuses the retained token the same
+    // way, so its re-declaration lands on the same frame index too.
     sl::Result result = sl::Result::eOk;
     if (g_state.frameToken == nullptr) {
         result = slGetNewFrameToken(g_state.frameToken);
@@ -521,7 +566,12 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     // and nothing in this call transitions them. SL reads the tagged resources at present
     // time, and the guide requires the declared state to be the layout they are in then; the
     // evaluation and present slices own the transitions that move the inputs before DLSS-G
-    // reads them and must update these declared states with them.
+    // reads them and must update these declared states with them. The composed frame does
+    // exactly that with its second call to this function: the SR evaluation records between
+    // the two calls, so the first call's shared depth and motion declarations are what the
+    // evaluation overwrites with its own SHADER_READ_ONLY records and the second call
+    // re-declares the slots in the engine-resting layout the images actually rest in after
+    // the evaluation's restore - the declaration the present path reads.
     sl::Resource depthResource = make_tagged_resource(
         from_uint64<void*>(info.depth.image), nullptr, from_uint64<void*>(info.depth.view),
         kEngineRestingLayout, renderWidth, renderHeight, info.depth.format);
