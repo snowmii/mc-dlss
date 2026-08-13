@@ -44,6 +44,27 @@ int32_t record_sr_options() noexcept;
 // zero (no successful mc_dlss_configure yet).
 int32_t record_fg_options(uint32_t numBackBuffers) noexcept;
 
+// Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
+// frame token and the SR/FG tag records and indexes. Called wherever the frame those records
+// name can no longer reach a present - configuration replacement, reset, and image release -
+// so a stale record can never satisfy a later handoff once the configuration it was recorded
+// for was replaced or the frame's resources are gone.
+void invalidate_frame_eligibility() noexcept;
+
+// Records the frame's present-handoff eligibility: re-records the stored DLSS-G 2x options
+// through slDLSSGSetOptions with the back-buffer count the last successful
+// mc_dlss_configure_fg declared, accepting exactly one complete current-frame SR+FG tag set
+// under equal frame indexes. Requires sl_session_ready, recorded FG options, the module's
+// images at the configured size, and both tag records fresh under one frame index; missing
+// options, partial tags, and consumed/stale eligibility return kInvalidParameter before
+// anything is re-recorded, so a refused handoff leaves the tag state and the options exactly
+// as they were. A successful handoff consumes the frame's tag set by clearing both sides'
+// records; each side's next successful tag record re-arms only its own half, so the set is
+// eligible again only when both sides re-record under equal indexes. Records no GPU work:
+// the frame's tagged resources stay in the layouts the tags declared (GENERAL depth and
+// motion) until Streamline's present path consumes them.
+int32_t record_present_handoff() noexcept;
+
 // Tags one frame's DLSS SR resources on the caller's command buffer via slGetNewFrameToken +
 // slSetTagForFrame. The engine's colour and depth are always tagged; the module's motion and
 // output images are tagged as well once they have been acquired for the configured size. The

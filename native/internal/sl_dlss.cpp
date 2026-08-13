@@ -125,28 +125,20 @@ int32_t record_sr_options() noexcept {
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
 
-int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
-    if (!sl_session_ready()) {
-        return kNotInitialized;
-    }
-    // The record reads everything sized from the stored configuration, so a configuration
-    // that never stored dimensions (no successful mc_dlss_configure) cannot be recorded for.
-    if (!valid_dimensions(g_state.outputWidth, g_state.outputHeight, g_state.renderWidth,
-                          g_state.renderHeight)) {
-        return kInvalidParameter;
-    }
-
-    // The record is fixed at the contract's single multiplier: 2x. Every field is stated
-    // explicitly rather than inherited from the SDK defaults, because each one is a decision
-    // the guide calls out - retained resources for seamless pause/menu suspension, UI
-    // recomposition for the split's separate HUD-less/UI inputs, and the Vulkan-only
-    // eBlockNoClientQueues queue-parallelism mode, which lets DLSS-G run on its own queues
-    // instead of blocking the presenting queue. The host's obligation under that mode -
-    // waiting on DLSSGState::inputsProcessingCompletionFence before modifying or destroying
-    // the tagged inputs of a previously presented frame - is the frame-side discipline the
-    // M-11 present slice implements. The guide's set-options call validates little of this
-    // and the wrong form of any field records silently, so the record is a dense contract,
-    // not a convenience.
+// The DLSS-G 2x option record, shared by mc_dlss_configure_fg (which stores it with the
+// caller's back-buffer count) and the per-frame present handoff (which re-records it with
+// the stored count). The record is fixed at the contract's single multiplier: 2x. Every
+// field is stated explicitly rather than inherited from the SDK defaults, because each one
+// is a decision the guide calls out - retained resources for seamless pause/menu
+// suspension, UI recomposition for the split's separate HUD-less/UI inputs, and the
+// Vulkan-only eBlockNoClientQueues queue-parallelism mode, which lets DLSS-G run on its own
+// queues instead of blocking the presenting queue. The host's obligation under that mode -
+// waiting on DLSSGState::inputsProcessingCompletionFence before modifying or destroying
+// the tagged inputs of a previously presented frame - is the frame-side discipline the M-11
+// present slice implements. The guide's set-options call validates little of this and the
+// wrong form of any field records silently, so the record is a dense contract, not a
+// convenience.
+sl::DLSSGOptions make_fg_options(const uint32_t numBackBuffers) noexcept {
     sl::DLSSGOptions options{};
     options.mode = sl::DLSSGMode::eOn;
     options.numFramesToGenerate = 1;
@@ -169,19 +161,96 @@ int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
     options.depthBufferFormat = VK_FORMAT_D32_SFLOAT;
     options.hudLessBufferFormat = VK_FORMAT_R8G8B8A8_UNORM;
     options.uiBufferFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    return options;
+}
+
+int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The record reads everything sized from the stored configuration, so a configuration
+    // that never stored dimensions (no successful mc_dlss_configure) cannot be recorded for.
+    if (!valid_dimensions(g_state.outputWidth, g_state.outputHeight, g_state.renderWidth,
+                          g_state.renderHeight)) {
+        return kInvalidParameter;
+    }
 
     // The viewport is the same one the SR options, tags, and evaluation record against: the
     // frame's resources tag on viewport 0 and the options must name the viewport they apply
     // to.
-    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0}, options);
+    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0}, make_fg_options(numBackBuffers));
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
     // The record succeeded, so the stored configuration now has DLSS-G options the frame's
-    // tag can gate on. reset_state clears the flag with the rest of the struct, and a later
-    // mc_dlss_configure clears it when it replaces the configuration those options were
-    // recorded against.
+    // tag can gate on, and the back-buffer count those options were validated with is stored
+    // for the per-frame handoff to re-record. reset_state clears both with the rest of the
+    // struct, and a later mc_dlss_configure clears the flag when it replaces the
+    // configuration those options were recorded against.
     g_state.fgOptionsRecorded = true;
+    g_state.fgNumBackBuffers = numBackBuffers;
+    return kSuccess;
+}
+
+// Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
+// frame token and the SR/FG tag records and indexes. Called wherever the frame those records
+// name can no longer reach a present - configuration replacement, reset, and image release -
+// so a stale record can never satisfy a later handoff once the configuration it was recorded
+// for was replaced or the frame's resources are gone.
+void invalidate_frame_eligibility() noexcept {
+    // The retained token belongs to a frame whose records are being dropped with it: the
+    // next tag must obtain a fresh token rather than advance the frame under a stale one.
+    g_state.frameToken = nullptr;
+    // Both tag records and their indexes clear together: a handoff reads the two sides as
+    // one set, so one side can never outlive the other's invalidation.
+    g_state.srTagFrameIndexRecorded = false;
+    g_state.lastSrTagFrameIndex = 0;
+    g_state.fgTagFrameIndexRecorded = false;
+    g_state.lastFgTagFrameIndex = 0;
+}
+
+int32_t record_present_handoff() noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The handoff re-records the options a successful mc_dlss_configure_fg stored, so a
+    // session whose options never recorded - or whose configuration was replaced since -
+    // has nothing to hand off with. Same gate as the FG tag.
+    if (!g_state.fgOptionsRecorded) {
+        return kInvalidParameter;
+    }
+    // The FG tags reference the module's motion image; a handoff for a tag set whose motion
+    // source no longer exists at the configured size would hand the present path a frame
+    // that references a destroyed resource.
+    if (!images_match_configuration()) {
+        return kInvalidParameter;
+    }
+    // The present-time DLSS-G path reads the frame's SR and FG tags together, so the handoff
+    // only accepts a frame both tag sets recorded under the same frame index. A missing
+    // record is a partial tag set; unequal records are the stale frame the FG tag left
+    // behind when it failed, or one side re-tagged without the other. The same check is also
+    // the exactly-one-handoff rule: a successful handoff consumes the set by clearing both
+    // sides' freshness flags, so a set that already handed off reads as two stale records
+    // here. Each side's next successful tag record re-arms only its own half, and the set is
+    // eligible again only when both halves are fresh once more - repeating one side alone
+    // can never revive a consumed handoff while the counterpart is stale.
+    if (!g_state.srTagFrameIndexRecorded || !g_state.fgTagFrameIndexRecorded) {
+        return kInvalidParameter;
+    }
+    if (g_state.lastSrTagFrameIndex != g_state.lastFgTagFrameIndex) {
+        return kInvalidParameter;
+    }
+
+    // Re-record the stored 2x options with the back-buffer count the configuration was
+    // validated with: the guide requires slDLSSGSetOptions per frame, and the record must
+    // not drift from the count mc_dlss_configure_fg accepted. Every refusal above returned
+    // before this point, so a rejected handoff re-records nothing and clears nothing.
+    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0}, make_fg_options(g_state.fgNumBackBuffers));
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    g_state.srTagFrameIndexRecorded = false;
+    g_state.fgTagFrameIndexRecorded = false;
     return kSuccess;
 }
 
@@ -391,6 +460,10 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // frame re-records the same index.
     g_state.srTagFrameIndexRecorded = true;
     g_state.lastSrTagFrameIndex = static_cast<uint32_t>(*frameToken);
+    // The record marks only the SR side of the tag set fresh: a set a handoff consumed stays
+    // consumed until the FG side also records, so repeating only this tag can never revive
+    // eligibility whose counterpart is still stale. In production every frame re-tags both
+    // sides under a fresh token, so per-side freshness and a per-frame re-arm coincide.
     return kSuccess;
 }
 
@@ -534,6 +607,8 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     // re-records the same index instead of a later one.
     g_state.fgTagFrameIndexRecorded = true;
     g_state.lastFgTagFrameIndex = static_cast<uint32_t>(*frameToken);
+    // Same per-side freshness as the SR tag: the record marks only the FG side fresh, and a
+    // set a handoff consumed stays consumed until the SR side also records.
     return kSuccess;
 }
 

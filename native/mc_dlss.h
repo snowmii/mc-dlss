@@ -560,12 +560,40 @@ typedef struct McDlssFgTagInfo {
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo* info);
 
+/*
+ * Records the frame's present-handoff eligibility: re-records the stored DLSS-G 2x options
+ * through slDLSSGSetOptions with the back-buffer count the last successful
+ * mc_dlss_configure_fg declared, accepting exactly one complete current-frame SR+FG tag set
+ * under equal frame indexes.
+ *
+ * The guide requires slDLSSGSetOptions per frame, and the present-driven DLSS-G path reads
+ * the frame's SR and FG tags at present time, so this is the call the mod makes once per
+ * frame immediately before Present: the handoff only accepts a frame whose DLSS-G options
+ * recorded for the stored configuration, whose module images exist at the configured size,
+ * and whose SR and FG tags both recorded fresh under the same frame index (the token-reuse
+ * equality mc_dlss_query_tagged_frame_indexes reports). Missing options, partial tags, and
+ * consumed eligibility - a tag set that already handed off - answer FAIL_InvalidParameter
+ * before anything is re-recorded, so a refused handoff clears no tag state and re-records no
+ * options. A successful handoff consumes the frame's tag set by clearing both sides' tag
+ * records; each side's next successful tag record re-arms only its own half, so the set is
+ * eligible again only when both sides re-record under equal indexes - repeating one side
+ * alone stays refused.
+ *
+ * Records no GPU work: the frame's tagged resources stay in the layouts the tags declared
+ * (GENERAL depth and motion, eValidUntilPresent lifetime) until Streamline's present path
+ * consumes them. Must be called after mc_dlss_bootstrap_streamline,
+ * mc_dlss_activate_vulkan_proxies, mc_dlss_configure, mc_dlss_configure_fg, and
+ * mc_dlss_acquire_images.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);
 
 /*
  * mc_dlss_reset releases the module-owned images and drops the retained Streamline frame
- * token, so the next tag obtains a fresh token; the session stays ready for the next
+ * token and the SR/FG tag records, so the next tag obtains a fresh token and a handoff
+ * cannot accept a tag set recorded before the reset; the session stays ready for the next
  * acquire. mc_dlss_close releases the module-owned Vulkan resources (timing, motion pass,
  * images) and the retained frame token, shuts the process-wide Streamline runtime down
  * (while the caller's device is still alive), and forgets the bootstrap, proxy, and session

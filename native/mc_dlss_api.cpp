@@ -385,6 +385,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
         // for the new dimensions, so a tag can never name resources the recorded options do
         // not describe.
         g_state.fgOptionsRecorded = false;
+        // The frame eligibility belongs to the configuration too: a tag set recorded under
+        // the replaced configuration - and the retained token of the frame it was tagged
+        // under - must not satisfy a handoff for frames recorded under the new one, so the
+        // records and the token clear with the options.
+        invalidate_frame_eligibility();
         // The SL session gate lives inside record_sr_options: configuring against a bootstrap
         // without a recorded device stores nothing the recording calls could use and answers
         // FAIL_NotInitialized, exactly where the retired direct-NGX ready gate used to sit.
@@ -438,6 +443,10 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_release_images(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         release_images();
+        // A handoff reads the frame's tags against the module's images; with the images
+        // gone, those tag records name resources that no longer exist, so the eligibility
+        // they armed clears with them rather than surviving a later re-acquire.
+        invalidate_frame_eligibility();
         return kSuccess;
     } catch (...) {
         return kFailure;
@@ -651,6 +660,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo*
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return record_present_handoff();
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo* info) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -731,10 +749,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
         }
         // The images belong to the configuration, so a reset drops them with it rather than
         // leaving orphans the next acquire would have to recognise. The retained Streamline
-        // frame token belongs to a frame that will never evaluate, so it goes too: the next
-        // tag must obtain a fresh token rather than advance the frame under a stale one.
+        // frame token and the SR/FG tag records belong to the same never-presented frame, so
+        // they go with them: the next tag must obtain a fresh token, and a handoff must not
+        // accept a tag set recorded before the reset once the images re-acquire.
         release_images();
-        g_state.frameToken = nullptr;
+        invalidate_frame_eligibility();
         return kSuccess;
     } catch (...) {
         return kFailure;

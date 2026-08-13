@@ -210,6 +210,25 @@ public interface NativeApi {
 	}
 
 	/**
+	 * Records the frame's present-handoff eligibility: re-records the stored DLSS-G 2x
+	 * options through {@code slDLSSGSetOptions} with the back-buffer count the last
+	 * successful {@link #configureFg(int)} declared, accepting exactly one complete
+	 * current-frame SR+FG tag set under equal frame indexes.
+	 *
+	 * <p>Missing options, partial tags (one of the two tag sets never recorded), and
+	 * consumed eligibility (the frame's tag set already handed off) are refused without
+	 * side effects: a refused handoff clears no tag state and re-records no options. The
+	 * call owns no command buffer and records no GPU work - the frame's tagged resources
+	 * stay in the layouts the tags declared until Streamline's present path consumes them.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int presentHandoff() {
+		throw new UnsupportedOperationException("presentHandoff");
+	}
+
+	/**
 	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features (DLSS, DLSS-G,
 	 * Reflex) require the device to enable, as {@code slGetFeatureRequirements} reports them
 	 * through {@code mc_dlss_query_device_feature_12}.

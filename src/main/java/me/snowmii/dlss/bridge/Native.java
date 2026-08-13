@@ -237,6 +237,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle evaluate;
 	private final MethodHandle tagSrResources;
 	private final MethodHandle tagFgResources;
+	private final MethodHandle presentHandoff;
 	private final MethodHandle reset;
 	private final MethodHandle close;
 	private boolean closed;
@@ -372,6 +373,14 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_tag_fg_resources",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssFgTagInfo*
+		);
+		// Optional like configureFg: the ABI-probe DLL the layout tests compile stubs the
+		// historical ABI surface and does not export the present-handoff record yet, while
+		// every real build since this symbol exists carries it.
+		this.presentHandoff = bindOptional(
+			lookup,
+			"mc_dlss_present_handoff",
+			FunctionDescriptor.of(JAVA_INT)
 		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
 		this.close = bind(lookup, "mc_dlss_close", FunctionDescriptor.of(JAVA_INT));
@@ -848,6 +857,16 @@ public final class Native implements AutoCloseable, NativeApi {
 			throw new IllegalStateException(stage + " requires dimensions stamped by the adapter");
 		}
 		return dimensions;
+	}
+
+	@Override
+	public int presentHandoff() {
+		if (presentHandoff == null) throw new NativeException("present-handoff", new IllegalStateException("Native bridge lacks present handoff"));
+		try {
+			return (int)this.presentHandoff.invokeExact();
+		} catch (Throwable error) {
+			throw nativeError("present-handoff", error);
+		}
 	}
 
 	public int reset() {

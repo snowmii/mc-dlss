@@ -95,6 +95,12 @@ struct DlssState {
     // this - tagging resources whose extents/formats no options were recorded for would hand
     // the plugin a frame it has no configuration to interpret.
     bool fgOptionsRecorded = false;
+    // The back-buffer count the last successful mc_dlss_configure_fg declared, stored so the
+    // per-frame present handoff re-records the DLSS-G options with the same count the
+    // configuration was validated against. The handoff takes no parameters: it can only
+    // re-record what a successful configure stored, and re-recording a caller-supplied value
+    // each frame would let the per-frame record drift from the validated configuration.
+    uint32_t fgNumBackBuffers = 0;
     DlssOwnedImage motionImage;
     DlssOwnedImage outputImage;
     DlssMotionPass motionPass;
@@ -113,6 +119,16 @@ struct DlssState {
     // than advancing the frame), and the test asserts the two records are equal. The booleans
     // separate "never recorded" from a genuine index of 0; a failed tag records nothing, and
     // reset_state clears all four with the rest of the struct.
+    //
+    // The booleans are also the per-side present-handoff freshness of the current tag set:
+    // each tag call marks only its own side fresh, the handoff accepts only a set whose two
+    // sides are both fresh under equal indexes, and a successful handoff consumes the set by
+    // clearing both flags. Consumed eligibility is therefore exactly "one of the two flags is
+    // clear": repeating only one tag side after a handoff re-arms only that side, and the set
+    // stays refused until the counterpart records too - a partial re-tag can never revive a
+    // consumed handoff on its own. Configuration replacement, reset, and image release clear
+    // all four (with the retained token) through invalidate_frame_eligibility, so records
+    // from a replaced configuration or a released image lifecycle can never satisfy a handoff.
     bool srTagFrameIndexRecorded = false;
     uint32_t lastSrTagFrameIndex = 0;
     bool fgTagFrameIndexRecorded = false;
@@ -123,6 +139,13 @@ extern DlssState g_state;
 extern std::mutex g_mutex;
 
 void reset_state() noexcept;
+
+// Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
+// frame token and the SR/FG tag records and indexes. Called wherever the frame those records
+// name can no longer reach a present - configuration replacement, reset, and image release -
+// so a stale record can never satisfy a later handoff once the configuration it was recorded
+// for was replaced or the frame's resources are gone.
+void invalidate_frame_eligibility() noexcept;
 
 // The module's own images have to exist, at the size the configuration stores, before anything
 // can be recorded into or out of them - and before they can be tagged for a frame.

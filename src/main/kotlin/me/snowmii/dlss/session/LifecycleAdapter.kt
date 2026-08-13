@@ -274,6 +274,27 @@ class LifecycleAdapter(
 	}
 
 	/**
+	 * Records the frame's present-handoff eligibility with the bridge: re-records the stored
+	 * DLSS-G 2x options with the back-buffer count the last successful [configureFg]
+	 * declared, and accepts exactly one complete current-frame SR+FG tag set under equal
+	 * frame indexes.
+	 *
+	 * Missing options, partial tags, and consumed eligibility are refused without side
+	 * effects, and a refusal here latches the session exactly like any other native stage -
+	 * a frame that cannot hand off must not present as if it could. The call records no GPU
+	 * work and owns no command buffer.
+	 */
+	fun presentHandoff(): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		return invokeStatus(DlssNativeStage.PRESENT_HANDOFF) {
+			native.presentHandoff()
+		}
+	}
+
+	/**
 	 * Records the copy of the upscaled output into [destination], on the caller's command buffer.
 	 *
 	 * The destination size is the session's configured output, not a parameter: the copy is the
