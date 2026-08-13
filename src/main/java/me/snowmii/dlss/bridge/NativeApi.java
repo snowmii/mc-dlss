@@ -232,6 +232,22 @@ public interface NativeApi {
 	}
 
 	/**
+	 * The Streamline frame indices the last {@link #tagSrResources} and {@link #tagFgResources}
+	 * calls tagged under, as the runtime numbered them through {@code slGetNewFrameToken} and
+	 * reported by {@code mc_dlss_query_tagged_frame_indexes}.
+	 *
+	 * <p>One frame's SR and FG tags must land under the same index: the FG tag reuses the frame
+	 * token the SR tag obtained and retained rather than calling {@code slGetNewFrameToken}
+	 * again, and equality of the pair is the behavior-level oracle the composed rung asserts. A
+	 * tag that advanced the frame instead would record a strictly later index under its slot.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #queryDeviceFeatures12()}.
+	 */
+	default TaggedFrameIndexes taggedFrameIndexes() {
+		throw new UnsupportedOperationException("taggedFrameIndexes");
+	}
+
+	/**
 	 * The extra Vulkan queues Streamline's loaded features require the host to create, summed
 	 * across features as {@code slGetFeatureRequirements} reports them through
 	 * {@code mc_dlss_query_queue_requirements}.

@@ -107,6 +107,16 @@ struct DlssState {
     // against it and it is cleared), so a tag always precedes an evaluate and the next frame's
     // tag obtains the next token. reset_state clears it with the rest of the struct.
     sl::FrameToken* frameToken = nullptr;
+    // The Streamline frame indices the last SR and FG tag calls recorded under, exposed by
+    // mc_dlss_query_tagged_frame_indexes as the composed-rung oracle: one frame's SR and FG
+    // tags must land under the same index (the FG tag reuses the SR tag's retained token rather
+    // than advancing the frame), and the test asserts the two records are equal. The booleans
+    // separate "never recorded" from a genuine index of 0; a failed tag records nothing, and
+    // reset_state clears all four with the rest of the struct.
+    bool srTagFrameIndexRecorded = false;
+    uint32_t lastSrTagFrameIndex = 0;
+    bool fgTagFrameIndexRecorded = false;
+    uint32_t lastFgTagFrameIndex = 0;
 };
 
 extern DlssState g_state;

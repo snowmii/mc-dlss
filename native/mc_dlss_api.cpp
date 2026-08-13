@@ -465,6 +465,27 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_frame_timings(float* motion_ms, f
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_tagged_frame_indexes(
+    uint32_t* sr_frame_index,
+    uint32_t* fg_frame_index) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (sr_frame_index == nullptr || fg_frame_index == nullptr) {
+            return kInvalidParameter;
+        }
+        // Equality of two never-recorded slots is meaningless, so the query refuses until
+        // both tag calls have actually recorded an index.
+        if (!g_state.srTagFrameIndexRecorded || !g_state.fgTagFrameIndexRecorded) {
+            return kNotInitialized;
+        }
+        *sr_frame_index = g_state.lastSrTagFrameIndex;
+        *fg_frame_index = g_state.lastFgTagFrameIndex;
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_device_idle(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);

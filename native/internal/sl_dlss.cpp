@@ -384,6 +384,13 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
         g_state.frameToken = nullptr;
         return static_cast<int32_t>(result);
     }
+    // The frame index this call tagged under, recorded for the composed-rung oracle
+    // (mc_dlss_query_tagged_frame_indexes): the test asserts the SR and FG tags of one frame
+    // landed under the same index. Recorded only after the tag succeeded, so a failed tag
+    // claims nothing; the index is read from the token itself, so a second tag of the same
+    // frame re-records the same index.
+    g_state.srTagFrameIndexRecorded = true;
+    g_state.lastSrTagFrameIndex = static_cast<uint32_t>(*frameToken);
     return kSuccess;
 }
 
@@ -519,6 +526,14 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
         g_state.frameToken = nullptr;
         return static_cast<int32_t>(result);
     }
+    // The frame index this call tagged under, recorded for the composed-rung oracle
+    // (mc_dlss_query_tagged_frame_indexes): the test asserts the SR and FG tags of one frame
+    // landed under the same index, which is exactly the token-reuse behaviour this function
+    // documents. Recorded only after the tag succeeded, so a failed tag claims nothing; the
+    // index is read from the token itself, so when the SR tag retained the token this call
+    // re-records the same index instead of a later one.
+    g_state.fgTagFrameIndexRecorded = true;
+    g_state.lastFgTagFrameIndex = static_cast<uint32_t>(*frameToken);
     return kSuccess;
 }
 

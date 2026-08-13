@@ -172,6 +172,22 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_queue_requirements(
     uint32_t* extra_optical_flow_queues);
 
 /*
+ * The Streamline frame indices the last mc_dlss_tag_sr_resources and
+ * mc_dlss_tag_fg_resources calls tagged under, as the runtime numbered them.
+ *
+ * One frame's SR and FG tags must land under the same index: the FG tag reuses the frame
+ * token the SR tag obtained and retained (slGetNewFrameToken is not called again while a
+ * token is retained), and equality of the two records is the oracle that proves it. A tag
+ * that advanced the frame instead would record a strictly later index under the FG slot.
+ *
+ * Both pointers are written on success. Answers not-initialized until both tag calls have
+ * recorded at least once, because equality of two never-recorded slots is meaningless.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_tagged_frame_indexes(
+    uint32_t* sr_frame_index,
+    uint32_t* fg_frame_index);
+
+/*
  * Validates and records the live Vulkan tuple the module's own images and motion pass are
  * allocated against, and nothing else: the retired direct-NGX initialization no longer runs
  * behind it. Must be called after mc_dlss_bootstrap_streamline and

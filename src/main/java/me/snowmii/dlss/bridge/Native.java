@@ -209,6 +209,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryDeviceFeature12;
 	private final MethodHandle queryDeviceFeature13;
 	private final MethodHandle queryQueueRequirements;
+	private final MethodHandle queryTaggedFrameIndexes;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
@@ -285,6 +286,14 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_query_queue_requirements",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
+		);
+		// Optional like tagFgResources: the ABI-probe DLL the layout tests compile stubs the
+		// historical ABI surface and does not export the frame-index oracle yet, while every
+		// real build since this symbol exists carries it.
+		this.queryTaggedFrameIndexes = bindOptional(
+			lookup,
+			"mc_dlss_query_tagged_frame_indexes",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
 		this.initialize = bind(
 			lookup,
@@ -539,6 +548,23 @@ public final class Native implements AutoCloseable, NativeApi {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-queue-requirements", error);
+		}
+	}
+
+	@Override
+	public TaggedFrameIndexes taggedFrameIndexes() {
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment sr = callArena.allocate(JAVA_INT);
+			final MemorySegment fg = callArena.allocate(JAVA_INT);
+			final int result = (int)this.queryTaggedFrameIndexes.invokeExact(sr, fg);
+			if (result != SUCCESS) {
+				throw new NativeException("query-tagged-frame-indexes", result);
+			}
+			return new TaggedFrameIndexes(sr.get(JAVA_INT, 0), fg.get(JAVA_INT, 0));
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-tagged-frame-indexes", error);
 		}
 	}
 
