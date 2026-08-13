@@ -50,23 +50,27 @@ import org.junit.jupiter.api.Test
  * screenshots every frame) — exactly the failure M-8's risk names.
  *
  * A consumer is reachable from either side: by targeting the consumer class itself
- * ([Screenshot], [TracyFrameCapture]) or by owning the caller seam that feeds it
- * (`Minecraft.renderFrame`, `KeyboardHandler.keyPress`). Both sides are ratcheted; the parsing
- * recognizes every `@Mixin` target form and every injector's `method` attribute regardless of
- * formatting or attribute order, so a differently formatted annotation is not a blind spot.
+ * ([Screenshot], [TracyFrameCapture]) or by owning the caller seam that feeds it -
+ * `KeyboardHandler.keyPress` for the F2 grab is ratcheted here, while the reads inside
+ * `Minecraft.renderFrame` (the present blit and the Tracy capture) are covered by the
+ * `mainRenderTarget` routing-point ratchet below. The parsing recognizes every `@Mixin`
+ * target form and every injector's `method` attribute regardless of formatting or
+ * attribute order, so a differently formatted annotation is not a blind spot.
  */
 class CompositeRoutingTest {
 	/** The final-frame capture consumers, by simple class name. */
 	private val captureConsumers = listOf("Screenshot", "TracyFrameCapture")
 
 	/**
-	 * The caller seams that feed a capture: `Minecraft.renderFrame` (the present blit plus the
-	 * Tracy capture) and `KeyboardHandler.keyPress` (the F2 grab). A mixin injecting on one of
-	 * these sits between the composite bake and the capture it feeds, with the same invisible
-	 * effect as targeting the consumer class.
+	 * The caller seam that feeds the F2 grab: `KeyboardHandler.keyPress` calls
+	 * `Screenshot.grab(Minecraft)`. A mixin injecting on it sits between the composite bake
+	 * and the capture it feeds, with the same invisible effect as targeting the consumer
+	 * class. The present blit and the Tracy capture are not listed here - a mixin on
+	 * `Minecraft.renderFrame` is not necessarily a capture owner (the FG reconfigure mixin
+	 * modifies a vsync read at the head of the method, before either consumer exists) - and
+	 * their render-target reads are covered by the routing-point ratchet.
 	 */
 	private val consumerCallerSeams = mapOf(
-		"Minecraft" to "renderFrame",
 		"KeyboardHandler" to "keyPress",
 	)
 
@@ -99,7 +103,7 @@ class CompositeRoutingTest {
 		assertEquals(
 			listOf("KeyboardHandler.keyPress -> KeyboardHandlerControlsMixin.java"),
 			hits,
-			"the present blit, the Tracy capture, and the F2 grab must keep reading the vanilla main target - no new mixin may own a consumer caller seam: $hits",
+			"the F2 grab must keep reading the vanilla main target - no new mixin may own a consumer caller seam: $hits",
 		)
 	}
 

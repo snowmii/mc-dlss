@@ -19,12 +19,14 @@
 		"PreparedRenderTypeMotionMixin",
 		"LevelRendererWorldPhaseMixin",
 		"MinecraftLevelChangeMixin",
+		"MinecraftSurfaceConfigurationMixin",
 		"CloudRendererMotionMixin",
 		"VulkanBackendExtensionMixin",
 		"VulkanChunkSectionsToRenderMixin",
 		"VulkanDeviceContextMixin",
 		"VulkanInstanceExtensionMixin",
-		"VulkanPipelineCompatibilityMixin"
+		"VulkanPipelineCompatibilityMixin",
+		"VulkanGpuSurfaceSwapchainMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

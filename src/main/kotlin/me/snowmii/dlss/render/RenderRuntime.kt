@@ -19,6 +19,8 @@ import net.minecraft.client.renderer.entity.state.EntityRenderState
 import org.joml.Matrix4f
 import java.util.IdentityHashMap
 import me.snowmii.dlss.session.LifecycleAdapter
+import me.snowmii.dlss.fg.FgSurfacePolicy
+import net.minecraft.client.Minecraft
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.textures.GpuTextureView
 
@@ -71,6 +73,12 @@ class RenderRuntime(
 	private val reconfigure: ((SRMode, SRModelPreset) -> DlssDimensions?)? = null,
 	/** Session compatibility latch populated by world-pipeline compilation. */
 	private val motionVectors: MotionVectorCompatibility = MotionVectorCompatibility(),
+	/**
+	 * The FG-mode surface policy the swapchain seams read and the controls toggle: whether
+	 * frame generation is active, what vsync the reconfigure path must read, and what minimum
+	 * image count the swapchain needs for the declared DLSS-G back buffers.
+	 */
+	val frameGeneration: FgSurfacePolicy = FgSurfacePolicy(),
 	/**
 	 * Blocks until the device has finished every frame already submitted, or does nothing for a
 	 * runtime with no device behind it.
@@ -457,7 +465,14 @@ class RenderRuntime(
 				readout,
 			), reconfigure = adapter::reconfigure,
 			motionVectors = MotionVectorCompatibility(diagnostics),
-			quiesce = { adapter.waitDeviceIdle() }, startup = {
+			quiesce = { adapter.waitDeviceIdle() },
+			// Every FG mode transition recreates the swapchain through Minecraft's own
+			// reconfigure path, so the next frame's renderFrame reconfigures the surface under
+			// the new policy. The flag itself is only a boolean write, safe from the client
+			// thread where the controls toggle it; the reconfigure happens between frames.
+			frameGeneration = FgSurfacePolicy(
+				invalidateSurfaceConfiguration = { Minecraft.getInstance().invalidateSurfaceConfiguration() },
+			), startup = {
 				val context = VulkanContextRegistry.getCurrent()
 				val sdkPath = session.config.sdkPath
 				val dataPath = session.config.dataPath

@@ -12,8 +12,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * The review keys: F6 toggles DLSS, F7 cycles the quality mode, F8 cycles the preset, and F9
- * toggles the GPU stress pass the DLSS comparison is measured under.
+ * The review keys: F6 toggles DLSS, F7 cycles the quality mode, F8 cycles the preset, F9
+ * toggles the GPU stress pass the DLSS comparison is measured under, and F10 toggles frame
+ * generation, recreating the swapchain on every transition.
  *
  * Every acceptance criterion here is closed by a human watching one client, and two of them are
  * comparisons between DLSS on and DLSS off. Without a key, making that comparison means quitting,
@@ -36,6 +37,7 @@ public class KeyboardHandlerControlsMixin {
 	private static final int MC_DLSS_KEY_MODE = 296; // GLFW_KEY_F7
 	private static final int MC_DLSS_KEY_PRESET = 297; // GLFW_KEY_F8
 	private static final int MC_DLSS_KEY_STRESS = 298; // GLFW_KEY_F9
+	private static final int MC_DLSS_KEY_FG = 299; // GLFW_KEY_F10
 
 	@Inject(method = "keyPress", at = @At("HEAD"))
 	private void mcDlssHandleReviewKeys(final long handle, final int action, final KeyEvent event, final CallbackInfo info) {
@@ -63,6 +65,7 @@ public class KeyboardHandlerControlsMixin {
 			case MC_DLSS_KEY_TOGGLE -> controls.toggleEnabled();
 			case MC_DLSS_KEY_MODE -> controls.cycleQualityMode();
 			case MC_DLSS_KEY_PRESET -> controls.cyclePreset();
+			case MC_DLSS_KEY_FG -> controls.toggleFrameGeneration();
 			default -> {
 			}
 		}

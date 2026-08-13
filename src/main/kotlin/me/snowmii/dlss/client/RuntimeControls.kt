@@ -1,4 +1,5 @@
 package me.snowmii.dlss.client
+import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
@@ -29,6 +30,23 @@ class RuntimeControls(
 	private val runtime: RenderRuntime,
 	private val announce: (String) -> Unit,
 ) {
+	/**
+	 * The FG surface policy Minecraft's swapchain seams read, owned by the runtime so the
+	 * policy's production invalidation wiring stays at the composition root.
+	 */
+	val surfacePolicy: FgSurfacePolicy
+		get() = runtime.frameGeneration
+
+	/**
+	 * Switches FG off or back on. Every real transition recreates the swapchain through
+	 * Minecraft's own reconfigure path, exactly once, so the frames that follow run under
+	 * the non-FIFO and back-buffer policy the mode needs.
+	 */
+	fun toggleFrameGeneration() {
+		surfacePolicy.setFrameGenerationActive(!surfacePolicy.active)
+		announce(readout())
+	}
+
 	/** Switches DLSS off or back on, then reports what the frames after this one will be. */
 	fun toggleEnabled() {
 		runtime.setEnabled(!runtime.runtimeEnabled)
@@ -72,6 +90,7 @@ class RuntimeControls(
 		}
 		val internal = runtime.renderDimensions?.toString() ?: "not chosen yet"
 		return "DLSS $state" +
+			" | fg ${if (surfacePolicy.active) "on" else "off"}" +
 			" | mode ${runtime.qualityMode.propertyValue}" +
 			" | preset ${runtime.renderPreset.propertyValue}" +
 			" | internal $internal" +
