@@ -68,7 +68,9 @@ bool valid_dimensions(uint32_t outputWidth, uint32_t outputHeight, uint32_t rend
                       uint32_t renderHeight) noexcept;
 
 // An image the caller carried across the ABI is usable only with all three fields present:
-// a zero handle or an undefined format is a caller that did not fill the struct.
+// a zero handle or an undefined format is a caller that did not fill the struct. The check
+// here is structural only - the DLSS-G tag, whose roles fix the format against the recorded
+// options, enforces those formats at its own call site.
 bool valid_image(const McDlssImage& image) noexcept;
 
 // Engine images are single-level, single-layer 2D images - Minecraft's Vulkan backend creates

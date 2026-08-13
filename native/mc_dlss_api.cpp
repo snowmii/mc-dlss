@@ -380,6 +380,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
         g_state.renderHeight = render_height;
         g_state.qualityMode = quality_mode;
         g_state.renderPreset = render_preset;
+        // A new stored configuration invalidates the DLSS-G options recorded against the
+        // previous one: the FG tag refuses to run until mc_dlss_configure_fg re-records them
+        // for the new dimensions, so a tag can never name resources the recorded options do
+        // not describe.
+        g_state.fgOptionsRecorded = false;
         // The SL session gate lives inside record_sr_options: configuring against a bootstrap
         // without a recorded device stores nothing the recording calls could use and answers
         // FAIL_NotInitialized, exactly where the retired direct-NGX ready gate used to sit.
@@ -608,6 +613,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
             return kInvalidParameter;
         }
         return tag_sr_resources(*info);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo* info) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (info == nullptr) {
+            return kInvalidParameter;
+        }
+        return tag_fg_resources(*info);
     } catch (...) {
         return kFailure;
     }

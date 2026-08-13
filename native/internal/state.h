@@ -89,6 +89,12 @@ struct DlssState {
     uint32_t renderHeight = 0;
     uint32_t qualityMode = 0;
     uint32_t renderPreset = 0;
+    // Whether the DLSS-G options recorded successfully for the currently stored
+    // configuration: the last mc_dlss_configure_fg answered success and no later
+    // mc_dlss_configure or reset has replaced the configuration since. The FG tag gates on
+    // this - tagging resources whose extents/formats no options were recorded for would hand
+    // the plugin a frame it has no configuration to interpret.
+    bool fgOptionsRecorded = false;
     DlssOwnedImage motionImage;
     DlssOwnedImage outputImage;
     DlssMotionPass motionPass;

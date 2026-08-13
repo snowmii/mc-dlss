@@ -184,6 +184,32 @@ public interface NativeApi {
 	}
 
 	/**
+	 * Tags one frame's DLSS-G resources on the caller's command buffer, through Streamline's
+	 * frame-based resource tagging ({@code slGetNewFrameToken} + {@code slSetTagForFrame}).
+	 *
+	 * <p>The request carries the engine's render-sized depth (D32_SFLOAT) and its output-sized
+	 * HUD-less colour and UI colour+alpha targets (both R8G8B8A8_UNORM); the formats must match
+	 * the ones {@link #configureFg} recorded, and anything else is refused. The motion source
+	 * is always the bridge's own motion image - filled by {@link #writeMotion} on the
+	 * camera-only route and by {@link #fillVelocity} on the velocity-MRT route - so no engine
+	 * velocity companion crosses on the tag. The call is refused until {@link #configureFg}
+	 * recorded the DLSS-G options and the bridge's own motion image was acquired for the
+	 * configured dimensions: the frame's four tags always record together, never as a partial
+	 * set. The backbuffer/output chain is present interception rather than a tag, so no output
+	 * image is carried.
+	 *
+	 * <p>The frame token this call obtains and retains is shared with {@link #tagSrResources}
+	 * for the same frame: a repeated tag reuses the token rather than advancing the frame, and
+	 * the frame's evaluation consumes it.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int tagFgResources(FgTagRequest request) {
+		throw new UnsupportedOperationException("tagFgResources");
+	}
+
+	/**
 	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features (DLSS, DLSS-G,
 	 * Reflex) require the device to enable, as {@code slGetFeatureRequirements} reports them
 	 * through {@code mc_dlss_query_device_feature_12}.

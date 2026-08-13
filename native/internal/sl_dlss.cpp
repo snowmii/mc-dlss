@@ -174,17 +174,25 @@ int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
     // frame's resources tag on viewport 0 and the options must name the viewport they apply
     // to.
     const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0}, options);
-    return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    // The record succeeded, so the stored configuration now has DLSS-G options the frame's
+    // tag can gate on. reset_state clears the flag with the rest of the struct, and a later
+    // mc_dlss_configure clears it when it replaces the configuration those options were
+    // recorded against.
+    g_state.fgOptionsRecorded = true;
+    return kSuccess;
 }
 
 // Builds the sl::Resource description for one tagged image. `native` is the VkImage and `view`
 // the VkImageView the ABI carried (or this module allocated), `state` is the layout the
-// evaluation reads or writes the image in (the layout this module's own transitions establish
+// feature reads or writes the image in (the layout this module's own transitions establish
 // immediately before it), and `width`/`height`/`format` are the dimensions and format the tag
 // names - the configured render size for the inputs, the output size for the output. All four
 // resources are single-level, single-layer 2D images.
-sl::Resource make_sr_resource(void* native, void* memory, void* view, uint32_t state,
-                              uint32_t width, uint32_t height, uint32_t format) noexcept {
+sl::Resource make_tagged_resource(void* native, void* memory, void* view, uint32_t state,
+                                  uint32_t width, uint32_t height, uint32_t format) noexcept {
     sl::Resource resource(sl::ResourceType::eTex2d, native, memory, view, state);
     resource.width = width;
     resource.height = height;
@@ -298,19 +306,19 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // kDlssOutputLayout on the same recording immediately before the evaluation. Declaring the
     // resting layouts instead would make the plugin record a barrier whose oldLayout no longer
     // matches the image's actual layout, which validation rejects.
-    sl::Resource colorResource = make_sr_resource(
+    sl::Resource colorResource = make_tagged_resource(
         from_uint64<void*>(info.color.image), nullptr, from_uint64<void*>(info.color.view),
         kDlssInputLayout, renderWidth, renderHeight, info.color.format);
-    sl::Resource depthResource = make_sr_resource(
+    sl::Resource depthResource = make_tagged_resource(
         from_uint64<void*>(info.depth.image), nullptr, from_uint64<void*>(info.depth.view),
         kDlssInputLayout, renderWidth, renderHeight, info.depth.format);
-    sl::Resource motionResource = make_sr_resource(
+    sl::Resource motionResource = make_tagged_resource(
         reinterpret_cast<void*>(g_state.motionImage.image),
         reinterpret_cast<void*>(g_state.motionImage.memory),
         reinterpret_cast<void*>(g_state.motionImage.view),
         kDlssInputLayout, renderWidth, renderHeight,
         static_cast<uint32_t>(kMotionFormat));
-    sl::Resource outputResource = make_sr_resource(
+    sl::Resource outputResource = make_tagged_resource(
         reinterpret_cast<void*>(g_state.outputImage.image),
         reinterpret_cast<void*>(g_state.outputImage.memory),
         reinterpret_cast<void*>(g_state.outputImage.view),
@@ -372,6 +380,141 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // opaque pointer and this module only ever records on it, never submits.
     // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
     result = slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, numTags, commandBuffer);
+    if (result != sl::Result::eOk) {
+        g_state.frameToken = nullptr;
+        return static_cast<int32_t>(result);
+    }
+    return kSuccess;
+}
+
+int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    if (info.command_buffer == 0 || !valid_image(info.depth) || !valid_image(info.hudless) ||
+        !valid_image(info.ui)) {
+        return kInvalidParameter;
+    }
+    // The tagged formats must be exactly the ones the FG options recorded: the plugin
+    // allocates its internal resources against the option-declared formats, and a tag that
+    // names a different format hands it a resource whose description disagrees with its
+    // allocation. Each check names the option field the tag must match (depthBufferFormat,
+    // hudLessBufferFormat, uiBufferFormat).
+    if (info.depth.format != static_cast<uint32_t>(VK_FORMAT_D32_SFLOAT) ||
+        info.hudless.format != static_cast<uint32_t>(VK_FORMAT_R8G8B8A8_UNORM) ||
+        info.ui.format != static_cast<uint32_t>(VK_FORMAT_R8G8B8A8_UNORM)) {
+        return kInvalidParameter;
+    }
+    const VkCommandBuffer commandBuffer = from_uint64<VkCommandBuffer>(info.command_buffer);
+
+    // The tag is only meaningful against the configuration the frame was recorded for: the
+    // DLSS-G options must have recorded successfully for the stored configuration (a tag
+    // before mc_dlss_configure_fg succeeded names resources no options interpret), and the
+    // module's motion image must exist at the configured size (there is nothing to tag as
+    // the motion source before mc_dlss_acquire_images). Both are fixed before the first
+    // frame can be tagged; either missing is a caller out of order, not a frame to skip, so
+    // the call refuses instead of submitting a partial tag set.
+    if (!g_state.fgOptionsRecorded || !images_match_configuration()) {
+        return kInvalidParameter;
+    }
+
+    // The frame token is shared with the SR tag for the same frame: whichever tag records
+    // first obtains it, the other reuses it, and the frame's evaluation consumes it. Reusing
+    // rather than advancing keeps every tag of one frame on one frame index, which is what
+    // the present-time DLSS-G evaluation reads them under.
+    sl::Result result = sl::Result::eOk;
+    if (g_state.frameToken == nullptr) {
+        result = slGetNewFrameToken(g_state.frameToken);
+        if (result != sl::Result::eOk) {
+            return static_cast<int32_t>(result);
+        }
+    }
+    sl::FrameToken* frameToken = g_state.frameToken;
+
+    const uint32_t renderWidth = g_state.renderWidth;
+    const uint32_t renderHeight = g_state.renderHeight;
+    const uint32_t outputWidth = g_state.outputWidth;
+    const uint32_t outputHeight = g_state.outputHeight;
+
+    // The declared state is the layout the images rest in when the frame is tagged: Minecraft
+    // rests every texture in GENERAL and the motion fill leaves the module's image in GENERAL,
+    // and nothing in this call transitions them. SL reads the tagged resources at present
+    // time, and the guide requires the declared state to be the layout they are in then; the
+    // evaluation and present slices own the transitions that move the inputs before DLSS-G
+    // reads them and must update these declared states with them.
+    sl::Resource depthResource = make_tagged_resource(
+        from_uint64<void*>(info.depth.image), nullptr, from_uint64<void*>(info.depth.view),
+        kEngineRestingLayout, renderWidth, renderHeight, info.depth.format);
+    sl::Resource hudlessResource = make_tagged_resource(
+        from_uint64<void*>(info.hudless.image), nullptr, from_uint64<void*>(info.hudless.view),
+        kEngineRestingLayout, outputWidth, outputHeight, info.hudless.format);
+    sl::Resource uiResource = make_tagged_resource(
+        from_uint64<void*>(info.ui.image), nullptr, from_uint64<void*>(info.ui.view),
+        kEngineRestingLayout, outputWidth, outputHeight, info.ui.format);
+    sl::Resource motionResource = make_tagged_resource(
+        reinterpret_cast<void*>(g_state.motionImage.image),
+        reinterpret_cast<void*>(g_state.motionImage.memory),
+        reinterpret_cast<void*>(g_state.motionImage.view),
+        kEngineRestingLayout, renderWidth, renderHeight,
+        static_cast<uint32_t>(kMotionFormat));
+
+    // Each resource chains the subresource range its role names. The plugin derives the NGX
+    // resource's range from the tag and defaults to a colour aspect when none is chained, which
+    // would hand NGX a colour-aspect depth image; the ranges are file-static because the plugin
+    // reads them when it builds the NGX resources, after this call has returned.
+    static sl::SubresourceRange depthRange{};
+    depthRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthRange.baseMipLevel = 0;
+    depthRange.levelCount = 1;
+    depthRange.baseArrayLayer = 0;
+    depthRange.layerCount = 1;
+    static sl::SubresourceRange hudlessRange{};
+    hudlessRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    hudlessRange.baseMipLevel = 0;
+    hudlessRange.levelCount = 1;
+    hudlessRange.baseArrayLayer = 0;
+    hudlessRange.layerCount = 1;
+    static sl::SubresourceRange uiRange{};
+    uiRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    uiRange.baseMipLevel = 0;
+    uiRange.levelCount = 1;
+    uiRange.baseArrayLayer = 0;
+    uiRange.layerCount = 1;
+    static sl::SubresourceRange motionRange{};
+    motionRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    motionRange.baseMipLevel = 0;
+    motionRange.levelCount = 1;
+    motionRange.baseArrayLayer = 0;
+    motionRange.layerCount = 1;
+    depthResource.next = &depthRange;
+    hudlessResource.next = &hudlessRange;
+    uiResource.next = &uiRange;
+    motionResource.next = &motionRange;
+
+    // Every tag covers the whole image: the depth and motion inputs are the configured render
+    // size, the HUD-less and UI buffers the configured output size, and all four start at the
+    // origin. The HUD-less and UI buffers are output-sized because DLSS-G composites the
+    // generated frame against them at present time.
+    const sl::Extent renderExtent{0, 0, renderWidth, renderHeight};
+    const sl::Extent outputExtent{0, 0, outputWidth, outputHeight};
+    sl::ResourceTag tags[4]{};
+    tags[0] = sl::ResourceTag(&depthResource, sl::kBufferTypeDepth,
+                              sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+    tags[1] = sl::ResourceTag(&hudlessResource, sl::kBufferTypeHUDLessColor,
+                              sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
+    tags[2] = sl::ResourceTag(&uiResource, sl::kBufferTypeUIColorAndAlpha,
+                              sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
+    // The motion source is the module's own motion image on every route, filled with the
+    // same NDC motion payload the DLSS-G evaluation expects; the pre-checks above already
+    // refused the call until that image exists at the configured size, so all four tags
+    // always record together.
+    tags[3] = sl::ResourceTag(&motionResource, sl::kBufferTypeMotionVectors,
+                              sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+
+    // The command buffer is the caller's shared recording: slSetTagForFrame takes it as an
+    // opaque pointer and this module only ever records on it, never submits.
+    // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
+    result = slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, 4, commandBuffer);
     if (result != sl::Result::eOk) {
         g_state.frameToken = nullptr;
         return static_cast<int32_t>(result);

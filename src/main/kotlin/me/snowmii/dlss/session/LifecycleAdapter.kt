@@ -4,6 +4,7 @@ import me.snowmii.dlss.bridge.NativeException
 import me.snowmii.dlss.bridge.DlssEvaluationImages
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.dlss.bridge.FgTagRequest
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
@@ -237,6 +238,27 @@ class LifecycleAdapter(
 
 		return invokeStatus(DlssNativeStage.TAG) {
 			native.tagSrResources(request)
+		}
+	}
+
+	/**
+	 * Tags this frame's DLSS-G resources on the caller's command buffer, through Streamline's
+	 * frame-based tagging (slGetNewFrameToken + slSetTagForFrame): the engine's render-sized
+	 * depth and its output-sized HUD-less colour and UI colour+alpha targets, plus the bridge's
+	 * own motion image once it has been acquired. The frame token the tag obtains and retains
+	 * is shared with the SR tag for the same frame, and the frame's evaluation consumes it.
+	 *
+	 * Latched under the same stage name as the SR tag: both are the frame's resource-tag
+	 * stage, and a failure in either means the frame's features have no tags to evaluate
+	 * against. The stage enum's wire name still says SR; splitting it is a later slice.
+	 */
+	fun tagFgResources(request: FgTagRequest): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		return invokeStatus(DlssNativeStage.TAG) {
+			native.tagFgResources(request)
 		}
 	}
 

@@ -500,6 +500,50 @@ typedef struct McDlssTagInfo {
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* info);
 
+/*
+ * Tags one frame's DLSS-G resources on the caller's command buffer, through Streamline's
+ * frame-based tagging (slGetNewFrameToken + slSetTagForFrame).
+ *
+ * `depth` is the engine's render-sized depth image, tagged as the DLSS-G depth input.
+ * `hudless` is the engine's output-sized HUD-less colour, tagged as the DLSS-G HUD-less
+ * input; `ui` is the engine's output-sized UI colour+alpha target, tagged as the DLSS-G UI
+ * input. The motion source is always the module's own motion image - filled by
+ * mc_dlss_write_motion on the camera-only route and by mc_dlss_fill_velocity on the
+ * velocity-MRT route - so no engine velocity companion is carried or tagged. The backbuffer/
+ * output chain is present interception rather than a tag, so no output image is carried or
+ * tagged here.
+ *
+ * The tagged formats are fixed to the ones mc_dlss_configure_fg records: the depth must be
+ * VK_FORMAT_D32_SFLOAT and both colour buffers VK_FORMAT_R8G8B8A8_UNORM; anything else
+ * answers FAIL_InvalidParameter, because the plugin allocates its internal resources against
+ * the option-declared formats and a tag naming a different format would disagree with them.
+ * The call also answers FAIL_InvalidParameter until mc_dlss_configure_fg has recorded the
+ * DLSS-G options for the stored configuration and mc_dlss_acquire_images has created the
+ * module's images at the configured dimensions: the frame's four tags - depth, motion,
+ * HUD-less, and UI - always record together, never as a partial set.
+ *
+ * The declared layouts name where the images rest when the frame is tagged: Minecraft rests
+ * every texture in GENERAL and the motion fill leaves the module's image in GENERAL, and
+ * nothing in this call transitions them. The later evaluation and present slices own the
+ * transitions that move the inputs before DLSS-G reads them and must update the declared
+ * layouts with them.
+ *
+ * The frame token this call obtains and retains is shared with mc_dlss_tag_sr_resources for
+ * the same frame: a repeated tag reuses the token rather than advancing the frame, and the
+ * frame's evaluation consumes it. Must be called after mc_dlss_bootstrap_streamline,
+ * mc_dlss_activate_vulkan_proxies, mc_dlss_configure, mc_dlss_configure_fg, and
+ * mc_dlss_acquire_images. Records on and never submits `command_buffer`, like the other
+ * recording calls.
+ */
+typedef struct McDlssFgTagInfo {
+    uint64_t command_buffer;
+    McDlssImage depth;
+    McDlssImage hudless;
+    McDlssImage ui;
+} McDlssFgTagInfo;
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo* info);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);
 

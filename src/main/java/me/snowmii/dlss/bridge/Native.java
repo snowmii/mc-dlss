@@ -116,6 +116,19 @@ public final class Native implements AutoCloseable, NativeApi {
 		IMAGE_LAYOUT.withName("depth")
 	).withName("McDlssTagInfo");
 
+	/**
+	 * {@code McDlssFgTagInfo}: the caller's command buffer followed by three {@code McDlssImage}
+	 * structs - depth, HUD-less colour, UI colour+alpha - 80 bytes with no padding of its own.
+	 * The motion source is never carried: the native side always tags the module's own motion
+	 * image, like the SR tag does.
+	 */
+	private static final StructLayout FG_TAG_LAYOUT = MemoryLayout.structLayout(
+		JAVA_LONG.withName("command_buffer"),
+		IMAGE_LAYOUT.withName("depth"),
+		IMAGE_LAYOUT.withName("hudless"),
+		IMAGE_LAYOUT.withName("ui")
+	).withName("McDlssFgTagInfo");
+
 	private static VarHandle field(final StructLayout layout, final String... path) {
 		final MemoryLayout.PathElement[] elements = new MemoryLayout.PathElement[path.length];
 		for (int index = 0; index < path.length; index++) {
@@ -177,6 +190,17 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final VarHandle TAG_DEPTH_IMAGE = field(TAG_LAYOUT, "depth", "image");
 	private static final VarHandle TAG_DEPTH_FORMAT = field(TAG_LAYOUT, "depth", "format");
 
+	private static final VarHandle FG_TAG_COMMAND_BUFFER = field(FG_TAG_LAYOUT, "command_buffer");
+	private static final VarHandle FG_TAG_DEPTH_VIEW = field(FG_TAG_LAYOUT, "depth", "view");
+	private static final VarHandle FG_TAG_DEPTH_IMAGE = field(FG_TAG_LAYOUT, "depth", "image");
+	private static final VarHandle FG_TAG_DEPTH_FORMAT = field(FG_TAG_LAYOUT, "depth", "format");
+	private static final VarHandle FG_TAG_HUDLESS_VIEW = field(FG_TAG_LAYOUT, "hudless", "view");
+	private static final VarHandle FG_TAG_HUDLESS_IMAGE = field(FG_TAG_LAYOUT, "hudless", "image");
+	private static final VarHandle FG_TAG_HUDLESS_FORMAT = field(FG_TAG_LAYOUT, "hudless", "format");
+	private static final VarHandle FG_TAG_UI_VIEW = field(FG_TAG_LAYOUT, "ui", "view");
+	private static final VarHandle FG_TAG_UI_IMAGE = field(FG_TAG_LAYOUT, "ui", "image");
+	private static final VarHandle FG_TAG_UI_FORMAT = field(FG_TAG_LAYOUT, "ui", "format");
+
 	private final Arena arena;
 	private final MethodHandle bootstrapStreamline;
 	private final MethodHandle activateVulkanProxies;
@@ -205,11 +229,13 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MemorySegment fillScratch;
 	private final MemorySegment presentScratch;
 	private final MemorySegment tagScratch;
+	private final MemorySegment fgTagScratch;
 	private final MethodHandle writeMotion;
 	private final MethodHandle fillVelocity;
 	private final MethodHandle presentOutput;
 	private final MethodHandle evaluate;
 	private final MethodHandle tagSrResources;
+	private final MethodHandle tagFgResources;
 	private final MethodHandle reset;
 	private final MethodHandle close;
 	private boolean closed;
@@ -330,6 +356,14 @@ public final class Native implements AutoCloseable, NativeApi {
 			"mc_dlss_tag_sr_resources",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssTagInfo*
 		);
+		// Optional like configureFg: the ABI-probe DLL the layout tests compile stubs the
+		// historical ABI surface and does not export the FG tag yet, while every real build
+		// since this symbol exists carries it.
+		this.tagFgResources = bindOptional(
+			lookup,
+			"mc_dlss_tag_fg_resources",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssFgTagInfo*
+		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
 		this.close = bind(lookup, "mc_dlss_close", FunctionDescriptor.of(JAVA_INT));
 		this.reprojectionScratch = arena.allocate(JAVA_FLOAT, 16);
@@ -338,6 +372,7 @@ public final class Native implements AutoCloseable, NativeApi {
 		this.fillScratch = arena.allocate(FILL_LAYOUT);
 		this.presentScratch = arena.allocate(PRESENT_LAYOUT);
 		this.tagScratch = arena.allocate(TAG_LAYOUT);
+		this.fgTagScratch = arena.allocate(FG_TAG_LAYOUT);
 	}
 
 	public static Native open(final Path libraryPath) {
@@ -758,6 +793,21 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.tagSrResources.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("tag-sr-resources", error);
+		}
+	}
+
+	@Override
+	public int tagFgResources(final FgTagRequest request) {
+		if (tagFgResources == null) throw new NativeException("tag-fg-resources", new IllegalStateException("Native bridge lacks FG tag"));
+		try {
+			final MemorySegment info = this.fgTagScratch;
+			FG_TAG_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
+			writeImage(info, FG_TAG_DEPTH_VIEW, FG_TAG_DEPTH_IMAGE, FG_TAG_DEPTH_FORMAT, request.getDepth());
+			writeImage(info, FG_TAG_HUDLESS_VIEW, FG_TAG_HUDLESS_IMAGE, FG_TAG_HUDLESS_FORMAT, request.getHudless());
+			writeImage(info, FG_TAG_UI_VIEW, FG_TAG_UI_IMAGE, FG_TAG_UI_FORMAT, request.getUi());
+			return (int)this.tagFgResources.invokeExact(info);
+		} catch (Throwable error) {
+			throw nativeError("tag-fg-resources", error);
 		}
 	}
 

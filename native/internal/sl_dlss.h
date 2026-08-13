@@ -51,6 +51,17 @@ int32_t record_fg_options(uint32_t numBackBuffers) noexcept;
 // repeated tag for the same frame reuses the token rather than advancing the frame.
 int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept;
 
+// Tags one frame's DLSS-G resources on the caller's command buffer via slGetNewFrameToken +
+// slSetTagForFrame: the engine's render-sized depth (D32_SFLOAT), its output-sized HUD-less
+// colour and UI colour+alpha (both R8G8B8A8_UNORM), and the module's own motion image as the
+// motion-vector source. The formats must match the ones the FG options recorded. All four tag
+// with eValidUntilPresent against the same frame token the SR tag obtains and retains for the
+// frame, so a repeated tag reuses the token rather than advancing the frame and the frame's
+// evaluation consumes it. Requires the FG options to have recorded successfully for the
+// stored configuration and the module's images to exist at the configured size; returns
+// kInvalidParameter before either.
+int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept;
+
 // Records the frame's DLSS SR evaluation on the caller's command buffer: the per-frame
 // constants (slSetConstants) and then the feature evaluation (slEvaluateFeature), both on the
 // frame token mc_dlss_tag_sr_resources obtained and retained for this frame. Consuming the
