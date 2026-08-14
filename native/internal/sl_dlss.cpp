@@ -452,6 +452,50 @@ int32_t wait_fg_inputs_idle() noexcept {
         state.lastPresentInputsProcessingCompletionFenceValue);
 }
 
+int32_t query_fg_state(uint32_t* status, uint32_t* numFramesPresented,
+                       uint64_t* lastPresentInputsProcessingFenceValue,
+                       uint64_t* inputsProcessingCompletionFence) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The state is the DLSS-G plugin's answer for the viewport the recorded options named,
+    // so the same gates as the FG tag and the input wait hold: no options record means no
+    // DLSS-G state exists to read. The status-to-off fallback is the status-owning slice's
+    // job, not this read's; the read reports whatever status the plugin holds.
+    if (!g_state.fgOptionsRecorded) {
+        return kInvalidParameter;
+    }
+    // All four outputs are required: the read fills a caller-provided snapshot, and a null
+    // output is a caller that did not fill the call - the same refusal as the other
+    // out-parameter queries in the module.
+    if (status == nullptr || numFramesPresented == nullptr ||
+        lastPresentInputsProcessingFenceValue == nullptr ||
+        inputsProcessingCompletionFence == nullptr) {
+        return kInvalidParameter;
+    }
+
+    // The options argument stays null like the input wait's state query: the snapshot this
+    // read needs is the status, the presented-frame counter, and the input fence + value,
+    // not a VRAM estimate, and the guide calls the estimate query needlessly expensive.
+    sl::DLSSGState state{};
+    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{0}, state, nullptr);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    // The status is reported as the raw word: eDLSSGStatusOk is zero and every failure bit
+    // is its own mask, so the snapshot carries the word for the caller to compare against
+    // the enum's bit vocabulary rather than a boolean that would hide which bit is set.
+    *status = static_cast<uint32_t>(state.status);
+    // The counter counts presents since the previous state query, so each read resets it; a
+    // caller that wants a window between two reads must read once before it and once after.
+    *numFramesPresented = state.numFramesActuallyPresented;
+    // The fence and its value travel together exactly as the input wait reads them, so the
+    // snapshot a caller takes can be handed to wait_fg_inputs_value unchanged.
+    *lastPresentInputsProcessingFenceValue = state.lastPresentInputsProcessingCompletionFenceValue;
+    *inputsProcessingCompletionFence = reinterpret_cast<uint64_t>(state.inputsProcessingCompletionFence);
+    return kSuccess;
+}
+
 // Builds the sl::Resource description for one tagged image. `native` is the VkImage and `view`
 // the VkImageView the ABI carried (or this module allocated), `state` is the layout the
 // feature reads or writes the image in (the layout this module's own transitions establish

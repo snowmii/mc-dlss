@@ -660,6 +660,26 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_value(uint64_t vk_device
                                                                uint64_t semaphore,
                                                                uint64_t value);
 
+/*
+ * Reads the live DLSS-G state through slDLSSGGetState: the DLSSGStatus word, the count of
+ * frames actually presented since the previous state query, the value the input-processing
+ * completion timeline semaphore last reached, and the semaphore handle itself.
+ *
+ * The present-generation proof reads this through the ABI to observe the interposed
+ * vkQueuePresentKHR path working: eDLSSGStatusOk (word zero) after presents, a presented-
+ * frame counter that advances across a present window, and a completion-fence value that
+ * advances with every presented frame the plugin processed - the same value
+ * mc_dlss_wait_fg_inputs_idle waits on, read from the same query, so the two always travel
+ * together. Refuses FAIL_NotInitialized while the Streamline session is not ready and
+ * FAIL_InvalidParameter while the DLSS-G options have not recorded (the same gates as
+ * mc_dlss_tag_fg_resources) or any output pointer is null. The read performs no GPU work
+ * and never blocks.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_state(uint32_t* status,
+                                                         uint32_t* num_frames_presented,
+                                                         uint64_t* last_present_inputs_processing_fence_value,
+                                                         uint64_t* inputs_processing_completion_fence);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);
 

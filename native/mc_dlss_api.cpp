@@ -704,6 +704,20 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_value(uint64_t vk_device
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_state(
+    uint32_t* status, uint32_t* num_frames_presented,
+    uint64_t* last_present_inputs_processing_fence_value,
+    uint64_t* inputs_processing_completion_fence) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_fg_state(status, num_frames_presented,
+                              last_present_inputs_processing_fence_value,
+                              inputs_processing_completion_fence);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo* info) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);

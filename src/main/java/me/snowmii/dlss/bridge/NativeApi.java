@@ -298,6 +298,30 @@ public interface NativeApi {
 	}
 
 	/**
+	 * One snapshot of Streamline's live DLSS-G state, read through {@code slDLSSGGetState}
+	 * by {@code mc_dlss_query_fg_state}: the raw {@code DLSSGStatus} word (zero is
+	 * {@code eDLSSGStatusOk}, every failure is its own bit), the count of frames actually
+	 * presented since the previous state query (each read resets it), the value the
+	 * input-processing completion timeline semaphore last reached for the presented frames'
+	 * inputs, and the semaphore handle itself.
+	 *
+	 * <p>The present-generation proof reads this to observe the interposed {@code vkQueuePresentKHR}
+	 * path working: the status word after presents, a presented-frame counter that advances
+	 * across a present window, and a completion-fence value that advances with every presented
+	 * frame the plugin processed - the same value {@link #waitFgInputsIdle()} waits on, read
+	 * from the same query, so the two always travel together. Answers {@code FAIL_NotInitialized}
+	 * while the Streamline session is not ready and {@code FAIL_InvalidParameter} while the
+	 * DLSS-G options have not recorded, the same gates as {@link #tagFgResources(FgTagRequest)}.
+	 * The read performs no GPU work and never blocks.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a query they never reach; {@link Native} overrides it.
+	 */
+	default FgState queryFgState() {
+		throw new UnsupportedOperationException("queryFgState");
+	}
+
+	/**
 	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features (DLSS, DLSS-G,
 	 * Reflex) require the device to enable, as {@code slGetFeatureRequirements} reports them
 	 * through {@code mc_dlss_query_device_feature_12}.

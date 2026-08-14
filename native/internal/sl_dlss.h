@@ -134,6 +134,19 @@ int32_t wait_fg_inputs_idle() noexcept;
 // no module or Streamline state.
 int32_t wait_fg_inputs_value(uint64_t vkDevice, uint64_t semaphore, uint64_t value) noexcept;
 
+// Reads the live DLSS-G state through slDLSSGGetState: the status word, the count of frames
+// actually presented since the previous state query, the value the input-processing
+// completion timeline semaphore last reached for the presented frames' inputs, and the
+// semaphore handle itself. Requires the ready session (kNotInitialized) and the recorded
+// DLSS-G options (kInvalidParameter), the same gates as the FG tag and the input wait; a
+// session whose options never recorded has no DLSS-G state to read. All four outputs are
+// required - a null output is a caller that did not fill the call (kInvalidParameter).
+// The call itself performs no GPU work and never blocks: the fence value is what the
+// present-generation rung polls to observe the interposed present path processing frames.
+int32_t query_fg_state(uint32_t* status, uint32_t* numFramesPresented,
+                       uint64_t* lastPresentInputsProcessingFenceValue,
+                       uint64_t* inputsProcessingCompletionFence) noexcept;
+
 } // namespace mc_dlss
 
 #endif

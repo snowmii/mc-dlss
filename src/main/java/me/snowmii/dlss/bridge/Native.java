@@ -213,6 +213,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryTaggedFrameIndexes;
 	private final MethodHandle queryPresentMarkers;
 	private final MethodHandle waitFgInputsValue;
+	private final MethodHandle queryFgState;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
@@ -415,6 +416,13 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_wait_fg_inputs_value",
 			FunctionDescriptor.of(JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG)
+		);
+		// Optional like waitFgInputsValue: the ABI-probe DLL does not export the DLSS-G state
+		// read either, while every real build since this symbol exists carries it.
+		this.queryFgState = bindOptional(
+			lookup,
+			"mc_dlss_query_fg_state",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
 		this.close = bind(lookup, "mc_dlss_close", FunctionDescriptor.of(JAVA_INT));
@@ -959,6 +967,31 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.waitFgInputsValue.invokeExact(vkDevice, semaphore, value);
 		} catch (Throwable error) {
 			throw nativeError("wait-fg-inputs-value", error);
+		}
+	}
+
+	@Override
+	public FgState queryFgState() {
+		if (queryFgState == null) throw new NativeException("query-fg-state", new IllegalStateException("Native bridge lacks the FG state query"));
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment status = callArena.allocate(JAVA_INT);
+			final MemorySegment numFramesPresented = callArena.allocate(JAVA_INT);
+			final MemorySegment fenceValue = callArena.allocate(JAVA_LONG);
+			final MemorySegment fence = callArena.allocate(JAVA_LONG);
+			final int result = (int)this.queryFgState.invokeExact(status, numFramesPresented, fenceValue, fence);
+			if (result != SUCCESS) {
+				throw new NativeException("query-fg-state", result);
+			}
+			return new FgState(
+				status.get(JAVA_INT, 0),
+				numFramesPresented.get(JAVA_INT, 0),
+				(long)fenceValue.get(JAVA_LONG, 0),
+				(long)fence.get(JAVA_LONG, 0)
+			);
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-fg-state", error);
 		}
 	}
 
