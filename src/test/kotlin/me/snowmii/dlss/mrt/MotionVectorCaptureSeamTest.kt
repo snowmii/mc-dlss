@@ -248,7 +248,7 @@ class MotionVectorCaptureSeamTest {
 		runtime = runtime,
 		present = { _, _ -> },
 		onWorldTargetChanged = {},
-		evaluateFrame = { _, _, _, _, _, _ -> evaluate() },
+		evaluateFrame = { _, _, _, _, _, _, _ -> evaluate() },
 	)
 
 	private fun renderDlssFrame(phase: WorldPhase) {

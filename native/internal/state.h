@@ -135,6 +135,11 @@ struct DlssState {
     sl::FrameToken* frameToken = nullptr;
     // Present-start arms this retained token; present-end consumes it after queue present.
     bool presentTokenArmed = false;
+    // Whether the armed bracket's PRESENT_START marker actually reached the plugin.
+    // present_end emits the closing marker only after a successful START, and consumes an
+    // armed bracket whose START never emitted exactly like a successful one - the frame
+    // presented either way, so nothing may be left for a later present to open.
+    bool presentStartEmitted = false;
     // The Streamline frame indices the last SR and FG tag calls recorded under, exposed by
     // mc_dlss_query_tagged_frame_indexes as the composed-rung oracle: one frame's SR and FG
     // tags must land under the same index (the FG tag reuses the SR tag's retained token rather

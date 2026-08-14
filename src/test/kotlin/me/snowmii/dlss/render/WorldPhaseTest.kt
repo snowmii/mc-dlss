@@ -26,6 +26,7 @@ class WorldPhaseTest {
 
 	private val presented = mutableListOf<Pair<RenderTarget, RenderTarget>>()
 	private val evaluated = mutableListOf<Triple<RenderTarget, DlssJitterOffset, DlssFrameMotion>>()
+	private val evaluatedCameras = mutableListOf<DlssCameraSample?>()
 	private var targetChanges = 0
 	private var presentedWhenEvaluated = -1
 	private val evaluatedDestinations = mutableListOf<RenderTarget>()
@@ -199,8 +200,9 @@ class WorldPhaseTest {
 	@Test
 	fun `an eligible frame is evaluated with the jitter and motion it rendered with, before it is presented`() {
 		val phase = phase(readyRuntime())
+		val preparedCamera = camera()
 
-		val jitter = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = camera())
+		val jitter = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = preparedCamera)
 		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
 
@@ -208,6 +210,10 @@ class WorldPhaseTest {
 		assertSame(worldTarget, evaluatedTarget)
 		assertEquals(jitter, evaluatedJitter)
 		assertTrue(evaluatedMotion.reset, "the first frame of a session has no history to reproject against")
+		// The camera travels as the evaluation callback's own parameter: the phase snapshots the
+		// seam's matrices when prepare stores the sample, and the evaluation reads the snapshot,
+		// never the phase's field, which close clears before the evaluation runs.
+		assertEquals(preparedCamera, evaluatedCameras.single())
 		// DLSS reads the scene the world rendered; presenting first would hand it the frame after.
 		assertEquals(0, presentedWhenEvaluated)
 		assertEquals(1, presented.size)
@@ -241,6 +247,26 @@ class WorldPhaseTest {
 	}
 
 	@Test
+	fun `the evaluation reads the camera as prepared, not as the renderer later rewrote it`() {
+		val phase = phase(readyRuntime())
+		val preparedCamera = camera()
+		val preparedProjection = Matrix4f(preparedCamera.projection)
+		val preparedRotation = Matrix4f(preparedCamera.viewRotation)
+
+		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = preparedCamera)
+		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		// Minecraft reuses the sample's matrices across frames: the seam's originals are
+		// rewritten in place once the renderer moves on. The snapshot taken by prepare is what
+		// the evaluation must read, not these live values.
+		preparedCamera.projection.m30(99f).m31(99f).m32(99f)
+		preparedCamera.viewRotation.m10(9f).m11(9f).m12(9f)
+		phase.end()
+
+		assertEquals(preparedProjection, evaluatedCameras.single()!!.projection)
+		assertEquals(preparedRotation, evaluatedCameras.single()!!.viewRotation)
+	}
+
+	@Test
 	fun `a vanilla frame is never evaluated`() {
 		val phase = phase(readyRuntime())
 
@@ -259,6 +285,7 @@ class WorldPhaseTest {
 		phase.end()
 
 		assertTrue(evaluated.isEmpty())
+		assertTrue(evaluatedCameras.isEmpty())
 		assertEquals(1, presented.size)
 	}
 
@@ -274,9 +301,10 @@ class WorldPhaseTest {
 		runtime = runtime,
 		present = { scene, main -> presented += scene to main },
 		onWorldTargetChanged = { targetChanges++ },
-		evaluateFrame = { rendered, destination, jitter, motion, route, velocity ->
+		evaluateFrame = { rendered, destination, jitter, motion, route, velocity, camera ->
 			presentedWhenEvaluated = presented.size
 			evaluated += Triple(rendered, jitter, motion)
+			evaluatedCameras += camera
 			evaluatedDestinations += destination
 			composes
 		},

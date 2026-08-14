@@ -74,6 +74,19 @@ class FgPresentMarkersTest {
 				bridge.presentHandoff(),
 				"presentHandoff before bootstrap must answer FAIL_NotInitialized",
 			)
+			// Pre-ready, the present calls stay refusals like the handoff: the no-op contract
+			// covers the armed/unarmed present of a READY session, not a session that never
+			// bootstrapped.
+			assertEquals(
+				FAIL_NOT_INITIALIZED,
+				bridge.presentStart(),
+				"presentStart before bootstrap must answer FAIL_NotInitialized",
+			)
+			assertEquals(
+				FAIL_NOT_INITIALIZED,
+				bridge.presentEnd(),
+				"presentEnd before bootstrap must answer FAIL_NotInitialized",
+			)
 			assertEquals(
 				null,
 				bridge.presentMarkersOrNull(),
@@ -152,6 +165,26 @@ class FgPresentMarkersTest {
 					null,
 					bridge.presentMarkersOrNull(),
 					"recording the FG options must not emit present markers",
+				)
+
+				// An unarmed present - the SR-only or skipped present of a session that never
+				// handed off - must no-op: the present mixin fires on every present, and a
+				// refusal here would latch the session on a frame that simply did not compose.
+				// Both calls succeed, neither emits a marker, and the oracle stays silent.
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.presentStart(),
+					"an unarmed presentStart must no-op instead of refusing",
+				)
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.presentEnd(),
+					"an unarmed presentEnd must no-op instead of refusing",
+				)
+				assertEquals(
+					null,
+					bridge.presentMarkersOrNull(),
+					"unarmed present calls must not emit present markers",
 				)
 
 				assertEquals(
@@ -356,6 +389,11 @@ class FgPresentMarkersTest {
 					"the complete equal-index tag set must arm once",
 				)
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentStart())
+				// A second START for the same bracket - a present that threw between START and
+				// END - must no-op: the bracket is already open, and a second marker for the
+				// same frame would corrupt the correlation. The marker assertions below would
+				// catch a leaked second event.
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentStart())
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentEnd())
 				val firstMarkers = bridge.presentMarkers()
 				assertEquals(
@@ -549,6 +587,133 @@ class FgPresentMarkersTest {
 					},
 					"every bracket in the event log must be PRESENT_START then PRESENT_END under " +
 						"one frame index: ${secondMarkers.events}",
+				)
+
+				// The END-only-after-START discipline: a third complete set hands off, and the
+				// END arrives without a START. The END must not emit a marker for a bracket no
+				// START opened - the log stays exactly at the second bracket - and must still
+				// consume the armed bracket, so the START and END that follow the consumed
+				// present no-op instead of opening a stale bracket under a stale token.
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.tagFgResources(
+						FgTagRequest(
+							commandBuffer = frame.address(),
+							depth = ImageBinding(
+								depth.view(),
+								depth.image(),
+								VK10.VK_FORMAT_D32_SFLOAT,
+							),
+							hudless = ImageBinding(
+								hudless.view(),
+								hudless.image(),
+								VK10.VK_FORMAT_R8G8B8A8_UNORM,
+							),
+							ui = ImageBinding(
+								ui.view(),
+								ui.image(),
+								VK10.VK_FORMAT_R8G8B8A8_UNORM,
+							),
+						),
+					),
+					"the third frame's FG tag must re-record under a fresh token after the consumed bracket",
+				)
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.tagSrResources(
+						SrTagRequest(
+							commandBuffer = frame.address(),
+							color = ImageBinding(
+								color.view(),
+								color.image(),
+								VK10.VK_FORMAT_R8G8B8A8_UNORM,
+							),
+							depth = ImageBinding(
+								depth.view(),
+								depth.image(),
+								VK10.VK_FORMAT_D32_SFLOAT,
+							),
+						),
+					),
+					"the third frame's SR tag must record after its FG tag",
+				)
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.evaluate(
+						EvaluationRequest(
+							commandBuffer = frame.address(),
+							color = ImageBinding(
+								color.view(),
+								color.image(),
+								VK10.VK_FORMAT_R8G8B8A8_UNORM,
+							),
+							depth = ImageBinding(
+								depth.view(),
+								depth.image(),
+								VK10.VK_FORMAT_D32_SFLOAT,
+							),
+							jitter = Vec2(0.25f, -0.5f),
+							motionScale = Vec2(1f, 1f),
+							frameTimeMilliseconds = 16.6f,
+							resetHistory = true,
+							renderDimensions = dimensions,
+						),
+					),
+					"the third frame's SR evaluation must record under the fresh retained token",
+				)
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.tagFgResources(
+						FgTagRequest(
+							commandBuffer = frame.address(),
+							depth = ImageBinding(
+								depth.view(),
+								depth.image(),
+								VK10.VK_FORMAT_D32_SFLOAT,
+							),
+							hudless = ImageBinding(
+								hudless.view(),
+								hudless.image(),
+								VK10.VK_FORMAT_R8G8B8A8_UNORM,
+							),
+							ui = ImageBinding(
+								ui.view(),
+								ui.image(),
+								VK10.VK_FORMAT_R8G8B8A8_UNORM,
+							),
+						),
+					),
+					"the third frame's FG tag must re-record after its evaluation",
+				)
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.presentHandoff(),
+					"the third complete tag set must arm once",
+				)
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.presentEnd(),
+					"an END without a START must no-op and consume the armed bracket",
+				)
+				assertEquals(
+					secondMarkers,
+					bridge.presentMarkers(),
+					"an END without a START must not emit a marker for a bracket no START opened",
+				)
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.presentStart(),
+					"a consumed bracket's START must no-op",
+				)
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.presentEnd(),
+					"a consumed bracket's END must no-op",
+				)
+				assertEquals(
+					secondMarkers,
+					bridge.presentMarkers(),
+					"a consumed bracket must emit nothing for later presents",
 				)
 				fixture.endSubmitAndWait(frame)
 			}

@@ -645,8 +645,12 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void);
  * The marker call reaches the plugin directly and is recorded in the present-marker log
  * immediately; the frame's tag set was already consumed by the handoff, so the bracket's
  * half is the token armed by mc_dlss_present_handoff and consumed by mc_dlss_present_end.
- * Answers FAIL_NotInitialized while the Streamline session is not ready and
- * FAIL_InvalidParameter when no handoff armed the bracket (or the frame token is gone).
+ * Answers FAIL_NotInitialized while the Streamline session is not ready. A present without
+ * an armed bracket - an SR-only or skipped frame, or any present of a session that never
+ * handed off - is a no-op success: the present seam fires on every present, and a refusal
+ * would fail a frame that simply did not compose. A second START for an already-open
+ * bracket (a present that threw between START and END) is the same no-op, so one frame
+ * can never receive two START markers.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_start(void);
 
@@ -655,12 +659,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_start(void);
  * retained token, on the caller's (present) thread immediately after the queue present
  * returned, and consumes the bracket.
  *
- * The END closes the bracket the START opened around the queue present. Whether the marker
- * call succeeded or failed, the bracket is the composed frame's terminal act: the frame is
- * consumed exactly like a successful one, so a retry cannot emit a second START for the same
- * frame, and the next frame's tags obtain a fresh token under a fresh index. Answers
- * FAIL_NotInitialized while the Streamline session is not ready and FAIL_InvalidParameter
- * when no handoff armed the bracket (or the frame token is gone).
+ * The END closes the bracket the START opened around the queue present, and emits only
+ * after a START actually reached the plugin: a bracket whose START never emitted (its
+ * marker call failed, or the END arrived without one) closes without a marker, so the
+ * log never reads an END without its START. Whether the marker call succeeded or failed,
+ * the bracket is the composed frame's terminal act: the frame is consumed exactly like a
+ * successful one, so a retry cannot emit a second START for the same frame, and the next
+ * frame's tags obtain a fresh token under a fresh index. Answers FAIL_NotInitialized
+ * while the Streamline session is not ready; a present without an armed bracket is a
+ * no-op success like the START.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_end(void);
 

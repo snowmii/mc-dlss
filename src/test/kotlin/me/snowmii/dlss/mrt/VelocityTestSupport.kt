@@ -101,7 +101,7 @@ internal fun worldPhase(runtime: RenderRuntime, evaluate: Boolean = true) = Worl
 	runtime = runtime,
 	present = { _, _ -> },
 	onWorldTargetChanged = {},
-	evaluateFrame = { _, _, _, _, _, _ -> evaluate },
+	evaluateFrame = { _, _, _, _, _, _, _ -> evaluate },
 )
 
 /** Runs one complete phase so the frame boundary advances: prepare, begin, end. */

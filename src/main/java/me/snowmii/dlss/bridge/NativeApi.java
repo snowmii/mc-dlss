@@ -232,8 +232,15 @@ public interface NativeApi {
 	 * Emits the PRESENT_START Reflex marker of the armed present bracket under the frame's
 	 * retained token, immediately before the queue present. The DLSS-G plugin correlates the
 	 * presented frame with its common constants through this marker, so a frame presented
-	 * without it never generates. Answers {@code FAIL_NotInitialized} while the session is
-	 * not ready and {@code FAIL_InvalidParameter} when no handoff armed the bracket.
+	 * without it never generates.
+	 *
+	 * <p>An unarmed present is a no-op success: an SR-only or skipped frame, or any present
+	 * without a successful {@link #presentHandoff()} arming the bracket, has no bracket to
+	 * open - and the present seam fires on every present, so a refusal would latch the
+	 * session on a frame that simply did not compose. Only a bracket a successful handoff
+	 * armed emits the START, and exactly once: a present that threw between START and END
+	 * leaves the bracket open, and a second START for the same frame is the same no-op.
+	 * Answers {@code FAIL_NotInitialized} while the session is not ready.
 	 *
 	 * <p>Default-implemented for the same reason as {@link #presentHandoff()}.
 	 */
@@ -244,8 +251,16 @@ public interface NativeApi {
 	/**
 	 * Emits the PRESENT_END Reflex marker of the armed present bracket under the frame's
 	 * retained token, immediately after the queue present returned, and consumes the
-	 * bracket: whether the marker succeeded or failed, the frame is consumed exactly like a
-	 * successful one, so the next frame's tags obtain a fresh token under a fresh index.
+	 * bracket: the retained token and the tag set's handoff eligibility clear whether the
+	 * marker succeeded or failed, so the next frame's tags obtain a fresh token under a
+	 * fresh index.
+	 *
+	 * <p>An unarmed present has no bracket to close and is the same no-op success as the
+	 * START. The END marker closes only a bracket a START actually opened - a START that
+	 * failed never leaves an open bracket, and the log must never read an END without its
+	 * START - but an armed bracket whose START never emitted is consumed here exactly like
+	 * a successful one, so a failed START cannot leave a stale bracket for a later present
+	 * to open. Answers {@code FAIL_NotInitialized} while the session is not ready.
 	 *
 	 * <p>Default-implemented for the same reason as {@link #presentHandoff()}.
 	 */

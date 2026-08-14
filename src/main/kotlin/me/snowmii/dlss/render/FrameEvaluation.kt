@@ -364,10 +364,14 @@ class FrameEvaluation(
 	 * [DlssCameraSample.projection] is already the jitter-free view-to-clip projection the
 	 * world rendered with (the jitter is applied after the seam captures it), so it converts
 	 * into [CameraConstants.viewToClip] through [rowMajorOf]; the clip-to-view inverse follows
-	 * from it. The orthonormal basis comes from the view rotation: its columns are the
-	 * view-space axes expressed in world coordinates, so column 0 is the camera's right,
-	 * column 1 its up, and column 2 is view-space +Z - the direction *behind* the camera,
-	 * hence the sign flip for the forward the plugin expects (the direction the camera looks).
+	 * from it. The orthonormal basis comes from the view rotation's rows: JOML names its
+	 * elements m<column><row>, so row c of the matrix is (m0c, m1c, m2c) - the view-space
+	 * axes expressed in world coordinates. Row 0 is the camera's right (view-space +X),
+	 * row 1 its up (view-space +Y), and row 2 is view-space +Z - the direction *behind*
+	 * the camera, hence the sign flip for the forward the plugin expects (the direction the
+	 * camera looks). Reading the columns instead would hand the plugin the world axes
+	 * expressed in view space - the transpose - which only coincides with the basis for the
+	 * identity.
 	 */
 	private fun cameraConstants(camera: DlssCameraSample): CameraConstants {
 		val rotation = camera.viewRotation
@@ -379,9 +383,9 @@ class FrameEvaluation(
 				camera.cameraY.toFloat(),
 				camera.cameraZ.toFloat(),
 			),
-			right = floatArrayOf(rotation.m00(), rotation.m01(), rotation.m02()),
-			up = floatArrayOf(rotation.m10(), rotation.m11(), rotation.m12()),
-			fwd = floatArrayOf(-rotation.m20(), -rotation.m21(), -rotation.m22()),
+			right = floatArrayOf(rotation.m00(), rotation.m10(), rotation.m20()),
+			up = floatArrayOf(rotation.m01(), rotation.m11(), rotation.m21()),
+			fwd = floatArrayOf(-rotation.m02(), -rotation.m12(), -rotation.m22()),
 		)
 	}
 

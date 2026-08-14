@@ -6,6 +6,7 @@ import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.LifecycleAdapter
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Proxy
@@ -54,6 +55,17 @@ class DlssResourceAbiTest {
 		// padding declaration, a transposed pair, a field of the wrong width - reads back as a
 		// value the probe rejects rather than as a silently wrong frame.
 		Native.open(compileAbiProbe()).use { native ->
+			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluate(request))
+			// The camera's six arrays are fixed-length ABI fields: a malformed array is a
+			// caller bug the boundary must refuse before any byte of the reused scratch is
+			// written - a shorter array would leave the field's tail holding the previous
+			// frame's floats, and a longer one would write past the field.
+			malformedCameras().forEach { malformed ->
+				assertThrows(IllegalArgumentException::class.java) {
+					native.evaluate(request.copy(camera = malformed))
+				}
+			}
+			// The refusals left the scratch intact: a valid camera still crosses unchanged.
 			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluate(request))
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
@@ -120,13 +132,26 @@ class DlssResourceAbiTest {
 				uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_evaluate(const McDlssEvaluateInfo* info) {
 				if (info == nullptr) return 0;
-				return info->command_buffer == 101 &&
+				if (!(info->command_buffer == 101 &&
 					info->color.view == 201 && info->color.image == 202 && info->color.format == 203 &&
 					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
 					info->jitter.x == 0.25f && info->jitter.y == -0.5f &&
 					info->motion_scale.x == 1.25f && info->motion_scale.y == 1.5f &&
 					info->render_width == 1280 && info->render_height == 720 &&
-					info->frame_time_milliseconds == 16.7f && info->reset_history == 1;
+					info->frame_time_milliseconds == 16.7f && info->reset_history == 1)) {
+					return 0;
+				}
+				for (int i = 0; i < 16; ++i) {
+					if (info->camera.view_to_clip[i] != static_cast<float>(i + 1)) return 0;
+					if (info->camera.clip_to_view[i] != static_cast<float>(101 + i)) return 0;
+				}
+				for (int i = 0; i < 3; ++i) {
+					if (info->camera.pos[i] != static_cast<float>(201 + i)) return 0;
+					if (info->camera.right[i] != static_cast<float>(301 + i)) return 0;
+					if (info->camera.up[i] != static_cast<float>(401 + i)) return 0;
+					if (info->camera.fwd[i] != static_cast<float>(501 + i)) return 0;
+				}
+				return 1;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_tag_sr_resources(const McDlssTagInfo* info) {
 				if (info == nullptr) return 0;
@@ -234,6 +259,20 @@ class DlssResourceAbiTest {
 		motionScale = Vec2(1.25f, 1.5f),
 		frameTimeMilliseconds = 16.7f,
 		resetHistory = true,
+		camera = CAMERA,
+	)
+
+	/**
+	 * One malformed variant per camera array: each is a length the ABI field cannot hold, so
+	 * the boundary must refuse it before the struct is written.
+	 */
+	private fun malformedCameras(): List<CameraConstants> = listOf(
+		CAMERA.copy(viewToClip = FloatArray(15)),
+		CAMERA.copy(clipToView = FloatArray(17)),
+		CAMERA.copy(pos = FloatArray(2)),
+		CAMERA.copy(right = FloatArray(4)),
+		CAMERA.copy(up = FloatArray(1)),
+		CAMERA.copy(fwd = FloatArray(0)),
 	)
 
 	private fun config(outputDimensions: DlssDimensions) = DlssStartupConfig(
@@ -245,4 +284,16 @@ class DlssResourceAbiTest {
 		dataPath = null,
 		warnings = emptyList(),
 	)
+
+	private companion object {
+		/** The standing-in camera whose floats the ABI probe verifies field by field. */
+		private val CAMERA = CameraConstants(
+			viewToClip = FloatArray(16) { (it + 1).toFloat() },
+			clipToView = FloatArray(16) { (101 + it).toFloat() },
+			pos = floatArrayOf(201f, 202f, 203f),
+			right = floatArrayOf(301f, 302f, 303f),
+			up = floatArrayOf(401f, 402f, 403f),
+			fwd = floatArrayOf(501f, 502f, 503f),
+		)
+	}
 }

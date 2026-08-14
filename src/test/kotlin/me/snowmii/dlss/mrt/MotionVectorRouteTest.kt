@@ -142,7 +142,7 @@ class MotionVectorRouteTest {
 	fun `the world phase hands the velocity route and the velocity view into the evaluation`() {
 		val runtime = velocityRuntime()
 		var handed: Pair<MotionVectorRoute, GpuTextureView?>? = null
-		val phase = worldPhase(runtime) { _, _, _, _, route, velocity ->
+		val phase = worldPhase(runtime) { _, _, _, _, route, velocity, _ ->
 			handed = route to velocity
 			true
 		}
@@ -168,7 +168,7 @@ class MotionVectorRouteTest {
 		)
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, runtime.motionVectorRoute)
 		var handed: Pair<MotionVectorRoute, GpuTextureView?>? = null
-		val phase = worldPhase(runtime) { _, _, _, _, route, velocity ->
+		val phase = worldPhase(runtime) { _, _, _, _, route, velocity, _ ->
 			handed = route to velocity
 			true
 		}
@@ -273,6 +273,7 @@ class MotionVectorRouteTest {
 			DlssFrameMotion,
 			MotionVectorRoute,
 			GpuTextureView?,
+			DlssCameraSample?,
 		) -> Boolean,
 	) = WorldPhase(
 		runtime = runtime,

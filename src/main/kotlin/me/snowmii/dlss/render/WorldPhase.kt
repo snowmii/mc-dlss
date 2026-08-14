@@ -54,10 +54,14 @@ class WorldPhase(
 	 * types, and everything else here is verifiable off the render thread. [route] is the
 	 * session's world-motion route and [velocityView] the scene velocity companion view behind
 	 * it, captured at close time so the evaluation can feed the velocity MRT to Streamline on
-	 * the velocity route and keep the compute writer on the camera-only route.
+	 * the velocity route and keep the compute writer on the camera-only route. [camera] is the
+	 * frame's camera as the projection seam sampled it, snapshotted when [prepare] stored it
+	 * (the seam's matrices are reused across frames) and read at close time: the phase clears
+	 * its own field as it closes, so the sample travels as a parameter rather than as a field
+	 * the production wiring would read after the clear.
 	 */
-	private val evaluateFrame: (RenderTarget, RenderTarget, DlssJitterOffset, DlssFrameMotion, MotionVectorRoute, GpuTextureView?) -> Boolean =
-		{ _, _, _, _, _, _ -> false },
+	private val evaluateFrame: (RenderTarget, RenderTarget, DlssJitterOffset, DlssFrameMotion, MotionVectorRoute, GpuTextureView?, DlssCameraSample?) -> Boolean =
+		{ _, _, _, _, _, _, _ -> false },
 	/**
 	 * Formats and emits the session's reporting lines, fed by this phase and by the evaluation.
 	 */
@@ -67,7 +71,7 @@ class WorldPhase(
 	private var mainTarget: RenderTarget? = null
 	private var prepared = false
 	private var lastResolved: RenderTarget? = null
-	/** The frame's camera as the projection seam sampled it, carried from [prepare] to [end]. */
+	/** The frame's camera as the projection seam sampled it, snapshotted at [prepare] and carried to [end]. */
 	private var camera: DlssCameraSample? = null
 
 	/** True between [begin] and [end]. */
@@ -209,8 +213,11 @@ class WorldPhase(
 	 * repeating it.
 	 *
 	 * [camera] is the frame's camera as the projection seam sees it, and is what the runtime
-	 * derives camera-only motion from. It is null only when the phase is opened without the
-	 * projection seam having run, which publishes no motion for that frame.
+	 * derives camera-only motion from. The phase snapshots the sample's matrices before
+	 * storing it, because Minecraft reuses them across frames: the caller's original may keep
+	 * changing after [prepare] returns without reaching the evaluation. It is null only when
+	 * the phase is opened without the projection seam having run, which publishes no motion
+	 * for that frame.
 	 */
 	fun prepare(
 		normalInWorldFrame: Boolean,
@@ -224,12 +231,24 @@ class WorldPhase(
 		discard()
 
 		this.mainTarget = mainTarget
-		this.camera = camera
+		// Minecraft reuses the sample's matrices across frames, so the stored sample must not
+		// reference the seam's live ones: snapshot before storing, and the evaluation reads
+		// this frame's camera no matter what the renderer rewrites before the phase closes.
+		val snapshot = camera?.let {
+			DlssCameraSample(
+				projection = Matrix4f(it.projection),
+				viewRotation = Matrix4f(it.viewRotation),
+				cameraX = it.cameraX,
+				cameraY = it.cameraY,
+				cameraZ = it.cameraZ,
+			)
+		}
+		this.camera = snapshot
 		scene = if (mainTarget.width > 0 && mainTarget.height > 0) {
 			runtime.beginWorldPhase(
 				normalInWorldFrame,
 				DlssDimensions(mainTarget.width, mainTarget.height),
-				camera,
+				snapshot,
 			)
 		} else {
 			null
@@ -314,7 +333,7 @@ class WorldPhase(
 		var completedDlssFrame = false
 		try {
 			if (rendered != null && destination != null) {
-				completedDlssFrame = evaluate(rendered, destination, jitter, motion, route, velocityView)
+				completedDlssFrame = evaluate(rendered, destination, jitter, motion, route, velocityView, camera)
 			}
 		} finally {
 			runtime.endWorldPhase(completedDlssFrame)
@@ -348,12 +367,13 @@ class WorldPhase(
 		motion: DlssFrameMotion?,
 		route: MotionVectorRoute,
 		velocityView: GpuTextureView?,
+		camera: DlssCameraSample?,
 	): Boolean {
 		if (jitter == null || motion == null) {
 			return false
 		}
 
-		return evaluateFrame(rendered, destination, jitter, motion, route, velocityView)
+		return evaluateFrame(rendered, destination, jitter, motion, route, velocityView, camera)
 	}
 
 	/**
@@ -400,21 +420,18 @@ class WorldPhase(
 		/** Production wiring: a real blit, a real sky-renderer reset, and the session readout. */
 		@JvmStatic
 		fun forMinecraft(runtime: RenderRuntime, readout: SessionReadout): WorldPhase {
-			// The frame's camera travels through the phase rather than through the lambda's
-			// parameters (whose arity the test doubles construct against): the evaluation
-			// lambda reads the field of the very instance it belongs to. The reference is
-			// late-bound because the lambda is a constructor argument and cannot capture the
-			// instance under construction any other way; it is only invoked at [end], long
-			// after construction finished.
-			lateinit var phase: WorldPhase
-			phase = WorldPhase(
+			// The frame's camera travels as a lambda parameter: [end] captures the sample before
+			// it clears the phase's field and passes the captured value through [evaluate] into
+			// this lambda, so the production evaluation always reads the frame's own camera
+			// rather than a field the close already nulled.
+			return WorldPhase(
 				runtime = runtime,
 				present = ::blitSceneToMainTarget,
 				onWorldTargetChanged = {
 					Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.shouldResetSkyRenderer = true
 				},
 				readout = readout,
-				evaluateFrame = { rendered, destination, jitter, motion, route, velocityView ->
+				evaluateFrame = { rendered, destination, jitter, motion, route, velocityView, camera ->
 					val evaluation = runtime.frameEvaluation
 					val resources = sceneResourcesOf(rendered)
 					val destinationImage = (destination.colorTextureView as? VulkanGpuTextureView)
@@ -430,12 +447,11 @@ class WorldPhase(
 							destinationImage,
 							route,
 							velocityBindingOf(velocityView),
-							phase.camera,
+							camera,
 						)
 					}
 				},
 			)
-			return phase
 		}
 
 		/**

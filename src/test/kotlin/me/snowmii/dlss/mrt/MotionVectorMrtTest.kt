@@ -327,7 +327,7 @@ class MotionVectorMrtTest {
 			runtime = runtime,
 			present = { _, _ -> },
 			onWorldTargetChanged = {},
-			evaluateFrame = { _, _, jitter, motion, route, velocityView ->
+			evaluateFrame = { _, _, jitter, motion, route, velocityView, _ ->
 				records += ClosedFrame(route, velocityView, jitter, motion)
 				true
 			},

@@ -938,6 +938,20 @@ public final class Native implements AutoCloseable, NativeApi {
 	@Override
 	public int evaluate(final EvaluationRequest request) {
 		final DlssDimensions render = requireDimensions(request.getRenderDimensions(), "evaluate");
+		// The camera's six arrays are fixed-length fields of the ABI struct: an array of any
+		// other length would either read past its field or leave the field's tail holding the
+		// previous frame's floats through the reused scratch - a partially-written camera no
+		// diagnostic would catch. The check runs before any byte of the scratch is written,
+		// so a refused camera never half-corrupts the struct a later valid call reads.
+		final CameraConstants camera = request.getCamera();
+		if (camera != null) {
+			requireCameraLength(camera.getViewToClip(), 16, "viewToClip");
+			requireCameraLength(camera.getClipToView(), 16, "clipToView");
+			requireCameraLength(camera.getPos(), 3, "pos");
+			requireCameraLength(camera.getRight(), 3, "right");
+			requireCameraLength(camera.getUp(), 3, "up");
+			requireCameraLength(camera.getFwd(), 3, "fwd");
+		}
 		try {
 			final MemorySegment info = this.evaluateScratch;
 			EVALUATE_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
@@ -955,7 +969,6 @@ public final class Native implements AutoCloseable, NativeApi {
 			// slSetConstants records it together with the jitter and reset flag under the frame's
 			// retained token. The scratch is reused across calls, so a null camera zeroes the
 			// region rather than leaking the previous frame's camera into this one.
-			final CameraConstants camera = request.getCamera();
 			if (camera == null) {
 				info.asSlice(EVALUATE_CAMERA_OFFSET, CAMERA_LAYOUT.byteSize()).fill((byte)0);
 			} else {
@@ -969,6 +982,17 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.evaluate.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("evaluate", error);
+		}
+	}
+
+	/**
+	 * One camera array must be exactly its ABI field's length: shorter would leave the
+	 * field's tail holding stale floats from the reused scratch, longer would write past
+	 * the field into the next one.
+	 */
+	private static void requireCameraLength(final float[] values, final int expected, final String field) {
+		if (values == null || values.length != expected) {
+			throw new IllegalArgumentException("Camera " + field + " must be exactly " + expected + " floats");
 		}
 	}
 

@@ -13,7 +13,9 @@ import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.PresentTarget
 import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.VulkanContext
+import me.snowmii.dlss.bridge.rowMajorOf
 import me.snowmii.dlss.mrt.MotionVectorRoute
+import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitter
 import me.snowmii.dlss.render.DlssJitterOffset
@@ -160,6 +162,106 @@ class FgFrameCompositionTest {
 		assertEquals(1, harness.submits, "a failed recording still hands its buffer back")
 	}
 
+	@Test
+	fun `the prepared camera is threaded through the evaluation and extracted into the ABI basis`() {
+		val calls = RecordingNative()
+		val harness = harness(calls, FgSurfacePolicy(), null)
+
+		// A yawed camera, so the view rotation's columns and rows differ: extracting the rows
+		// instead of the columns hands the plugin the transpose of the basis.
+		val yaw = Math.toRadians(37.0).toFloat()
+		val rotation = Matrix4f().rotationY(yaw)
+		val projection = Matrix4f().perspective(1.2f, 16f / 9f, 0.05f, 1000f)
+		val sample = DlssCameraSample(
+			projection = projection,
+			viewRotation = rotation,
+			cameraX = 12.0,
+			cameraY = 64.0,
+			cameraZ = -48.0,
+		)
+
+		assertTrue(
+			harness.evaluation.evaluateFrame(
+				scene(),
+				jitter(),
+				motion(),
+				DESTINATION,
+				MotionVectorRoute.CAMERA_ONLY,
+				camera = sample,
+			),
+			"the frame's camera must travel with the evaluation exactly as the production wiring sends it",
+		)
+
+		// The production wiring proof: the camera sample that reached the evaluation is the
+		// one the adapter handed the bridge, converted into the flat ABI constants.
+		val constants = calls.evaluateRequests.single().camera
+		requireNotNull(constants)
+		// JOML names its elements m<column><row>, so the view rotation's column c is
+		// (m0c, m1c, m2c): the view-space axes expressed in world coordinates. Column 0 is
+		// the camera's right, column 1 its up, and column 2 is view-space +Z - behind the
+		// camera, hence the sign flip for fwd.
+		assertTrue(
+			constants.right.contentEquals(floatArrayOf(rotation.m00(), rotation.m10(), rotation.m20())),
+			"cameraRight must be the view rotation's column 0 (view-space +X in world)",
+		)
+		assertTrue(
+			constants.up.contentEquals(floatArrayOf(rotation.m01(), rotation.m11(), rotation.m21())),
+			"cameraUp must be the view rotation's column 1 (view-space +Y in world)",
+		)
+		assertTrue(
+			constants.fwd.contentEquals(floatArrayOf(-rotation.m02(), -rotation.m12(), -rotation.m22())),
+			"cameraFwd must be the negated view rotation's column 2 (view-space +Z is behind)",
+		)
+		// The yawed rotation discriminates the two readings: the row extraction the fix
+		// replaced would flip the z sign of right and the x sign of fwd - the transpose,
+		// which only coincides with the basis for the identity.
+		assertTrue(
+			contentEqualsTolerant(
+				constants.right,
+				floatArrayOf(kotlin.math.cos(yaw), 0f, kotlin.math.sin(yaw)),
+			),
+			"a yawed camera's right must be its world-space right, got " +
+				constants.right.contentToString(),
+		)
+		assertTrue(
+			contentEqualsTolerant(
+				constants.fwd,
+				floatArrayOf(kotlin.math.sin(yaw), 0f, -kotlin.math.cos(yaw)),
+			),
+			"a yawed camera's fwd must be its world-space view direction, got " +
+				constants.fwd.contentToString(),
+		)
+		assertTrue(
+			constants.viewToClip.contentEquals(rowMajorOf(projection)),
+			"viewToClip must be the sample's unjittered projection in row-major ABI layout",
+		)
+		assertTrue(
+			constants.clipToView.contentEquals(rowMajorOf(Matrix4f(projection).invert())),
+			"clipToView must be the inverse projection in row-major ABI layout",
+		)
+		assertTrue(
+			constants.pos.contentEquals(floatArrayOf(12f, 64f, -48f)),
+			"cameraPos must be the sample's world position",
+		)
+	}
+
+	/**
+	 * Element-wise float compare that treats -0.0f as 0.0f and tolerates rounding, so a
+	 * basis vector whose components the matrix stores as exact zeros (or their negations)
+	 * compares against the literal expectation.
+	 */
+	private fun contentEqualsTolerant(actual: FloatArray, expected: FloatArray): Boolean {
+		if (actual.size != expected.size) {
+			return false
+		}
+		for (i in actual.indices) {
+			if (kotlin.math.abs(actual[i] - expected[i]) > 1e-5f) {
+				return false
+			}
+		}
+		return true
+	}
+
 	/**
 	 * Builds the production evaluation seam over a recording fake: a READY session through the
 	 * real [LifecycleAdapter], a fake context that counts buffer recordings and submissions,
@@ -257,6 +359,7 @@ class FgFrameCompositionTest {
 		val order = mutableListOf<String>()
 		val fgTags = mutableListOf<FgTagRequest>()
 		val fgConfigures = mutableListOf<Int>()
+		val evaluateRequests = mutableListOf<EvaluationRequest>()
 		var handoffs = 0
 
 		override fun initialize(
@@ -330,6 +433,7 @@ class FgFrameCompositionTest {
 
 		override fun evaluate(request: EvaluationRequest): Int {
 			order += "evaluate"
+			evaluateRequests += request
 			return NativeApi.SUCCESS_RESULT
 		}
 	}

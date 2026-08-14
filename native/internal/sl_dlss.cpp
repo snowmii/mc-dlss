@@ -205,6 +205,7 @@ void invalidate_frame_eligibility() noexcept {
     // next tag must obtain a fresh token rather than advance the frame under a stale one.
     g_state.frameToken = nullptr;
     g_state.presentTokenArmed = false;
+    g_state.presentStartEmitted = false;
     // Both tag records and their indexes clear together: a handoff reads the two sides as
     // one set, so one side can never outlive the other's invalidation.
     g_state.srTagFrameIndexRecorded = false;
@@ -255,25 +256,46 @@ int32_t record_present_handoff() noexcept {
 
 int32_t present_start() noexcept {
     if (!sl_session_ready()) return kNotInitialized;
-    if (!g_state.presentTokenArmed || g_state.frameToken == nullptr) return kInvalidParameter;
+    // An unarmed present - an SR-only or skipped frame, or any present of a session that
+    // never handed off - has no bracket to open: the marker is a no-op success rather than
+    // a refusal, because the present seam fires on every present and a refusal would latch
+    // the session on a frame that simply did not compose. An already-open bracket (a
+    // present that threw between START and END) is the same no-op: its START already
+    // reached the plugin, and a second START for the same frame would corrupt the
+    // correlation. The START emits only under a bracket a successful handoff armed.
+    if (!g_state.presentTokenArmed || g_state.presentStartEmitted ||
+        g_state.frameToken == nullptr) {
+        return kSuccess;
+    }
     const sl::FrameToken* token = g_state.frameToken;
     const sl::Result result = slPCLSetMarker(sl::PCLMarker::ePresentStart, *token);
     if (result != sl::Result::eOk) return static_cast<int32_t>(result);
+    g_state.presentStartEmitted = true;
     record_present_marker_event(kPresentMarkerStart, token);
     return kSuccess;
 }
 
 int32_t present_end() noexcept {
     if (!sl_session_ready()) return kNotInitialized;
-    if (!g_state.presentTokenArmed || g_state.frameToken == nullptr) return kInvalidParameter;
-    const sl::FrameToken* token = g_state.frameToken;
-    const sl::Result result = slPCLSetMarker(sl::PCLMarker::ePresentEnd, *token);
-    if (result == sl::Result::eOk) record_present_marker_event(kPresentMarkerEnd, token);
-    // The bracket is the composed frame's terminal act either way: the END marker reached
-    // the plugin or the present path failed, and neither leaves this frame anything a retry
-    // could present again. The tag records were already consumed by the handoff; what the
-    // END consumes is the retained token the whole frame recorded under, so the next
-    // frame's tags obtain a fresh token under a fresh index.
+    // An unarmed present has no bracket to close: same no-op success as the START.
+    if (!g_state.presentTokenArmed) {
+        return kSuccess;
+    }
+    // The END marker closes only a bracket a START actually opened: without a successful
+    // START (its marker call failed, or the END arrived without one) there is no open
+    // bracket to close, and the log must never read an END without its START. Either way
+    // the bracket is the composed frame's terminal act: an armed bracket whose START never
+    // emitted is consumed here exactly like a successful one, so its failure cannot leave
+    // a stale bracket for a later present to open. What the END consumes is the retained
+    // token the whole frame recorded under, so the next frame's tags obtain a fresh token
+    // under a fresh index.
+    sl::Result result = sl::Result::eOk;
+    if (g_state.presentStartEmitted && g_state.frameToken != nullptr) {
+        const sl::FrameToken* token = g_state.frameToken;
+        result = slPCLSetMarker(sl::PCLMarker::ePresentEnd, *token);
+        if (result == sl::Result::eOk) record_present_marker_event(kPresentMarkerEnd, token);
+    }
+    g_state.presentStartEmitted = false;
     g_state.presentTokenArmed = false;
     g_state.srTagFrameIndexRecorded = false;
     g_state.fgTagFrameIndexRecorded = false;

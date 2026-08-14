@@ -40,12 +40,12 @@ data class CameraConstants(
 	val viewToClip: FloatArray,
 	/** Row-major clip-to-view inverse, 16 floats. */
 	val clipToView: FloatArray,
-	/** Camera position in world space. */
+	/** Camera position in world space, 3 floats. */
 	val pos: FloatArray,
-	/** World-space direction of view-space +X. */
+	/** World-space direction of view-space +X, 3 floats. */
 	val right: FloatArray,
-	/** World-space direction of view-space +Y. */
+	/** World-space direction of view-space +Y, 3 floats. */
 	val up: FloatArray,
-	/** World-space direction of view-space -Z, where the camera looks. */
+	/** World-space direction of view-space -Z, where the camera looks, 3 floats. */
 	val fwd: FloatArray,
 )
