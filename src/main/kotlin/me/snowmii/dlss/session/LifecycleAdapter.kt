@@ -295,6 +295,50 @@ class LifecycleAdapter(
 	}
 
 	/**
+	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
+	 * completed, on the caller's (present/render) thread and through the Vulkan device.
+	 *
+	 * The DLSS-G options record the eBlockNoClientQueues queue-parallelism mode, under which
+	 * the plugin reads the tagged inputs of a presented frame on its own queues after Present;
+	 * the guide requires the host to wait on the completion fence the bridge reads via
+	 * slDLSSGGetState before it modifies or destroys those inputs in a later frame. The runtime
+	 * calls this at the start of an FG-active frame, before the world phase rewrites the tagged
+	 * depth, motion, HUD-less, and UI inputs.
+	 *
+	 * One refusal is expected in production and is benign: while no DLSS-G options have
+	 * recorded yet - the first FG frame, or the first frame after FG switched back on - the
+	 * bridge answers FAIL_InvalidParameter, and there is nothing to wait for because no frame
+	 * has been presented through DLSS-G (a configuration replacement, whose frames also find
+	 * the options invalidated, already stalled the device through [waitDeviceIdle]). Every
+	 * other failure latches the session exactly like any other native stage, and the routing
+	 * decision reads the latched state.
+	 */
+	fun waitFgInputsIdle(): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		val result = try {
+			native.waitFgInputsIdle()
+		} catch (error: NativeException) {
+			latch(DlssNativeStage.WAIT_FG_INPUTS, error)
+			return false
+		} catch (error: Throwable) {
+			latch(DlssNativeStage.WAIT_FG_INPUTS, error)
+			return false
+		}
+
+		return when (result) {
+			NATIVE_SUCCESS -> true
+			FAIL_INVALID_PARAMETER -> true
+			else -> {
+				session.latchFailure(DlssNativeFailure(DlssNativeStage.WAIT_FG_INPUTS, result))
+				false
+			}
+		}
+	}
+
+	/**
 	 * Records the copy of the upscaled output into [destination], on the caller's command buffer.
 	 *
 	 * The destination size is the session's configured output, not a parameter: the copy is the
@@ -358,5 +402,8 @@ class LifecycleAdapter(
 
 	private companion object {
 		const val NATIVE_SUCCESS = NativeApi.SUCCESS_RESULT
+
+		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
+		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
 	}
 }

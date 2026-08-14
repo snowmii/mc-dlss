@@ -259,6 +259,54 @@ int32_t record_present_handoff() noexcept {
     return kSuccess;
 }
 
+int32_t wait_fg_inputs_idle() noexcept {
+    // The fence belongs to a presented DLSS-G frame, so a session that never bootstrapped or
+    // never recorded a Vulkan device cannot answer the wait: same readiness gate as every
+    // Streamline call. The device handle is required by vkWaitForFences itself, so a session
+    // whose tuple mc_dlss_initialize never recorded is part of this refusal rather than a
+    // fence wait against a null device.
+    if (!sl_session_ready() || g_state.device == VK_NULL_HANDLE) {
+        return kNotInitialized;
+    }
+    // The wait protects the inputs of a frame that was presented through DLSS-G, and the
+    // options record is what names those inputs and their back-buffer count; a session whose
+    // options never recorded has no presented frame whose input processing this call could
+    // wait for. Same gate as the FG tag.
+    if (!g_state.fgOptionsRecorded) {
+        return kInvalidParameter;
+    }
+
+    // The fence is read fresh per call: the plugin allocates it lazily and signals it after
+    // every present's input processing, so the state query is what tells this call whether
+    // there is anything to wait on. The options argument stays null - the state this call
+    // needs is the fence, not a VRAM estimate, and the guide calls the estimate query
+    // needlessly expensive per frame.
+    sl::DLSSGState state{};
+    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{0}, state, nullptr);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    // A null fence means the plugin has no input processing in flight to wait for - the
+    // typical case before the first present - and there is nothing this call could wait on,
+    // so it is a no-op success rather than a refusal: the caller's frame may proceed.
+    if (state.inputsProcessingCompletionFence == nullptr) {
+        return kSuccess;
+    }
+
+    // The wait deliberately does not look at state.status: the status-to-off fallback is the
+    // status-owning slice's job, and gating this wait on it would starve the very frame whose
+    // inputs are still being read. The fence is the plugin-internal VkFence the guide says to
+    // wait on; on Vulkan the binary fence's signal is the completion, so vkWaitForFences
+    // without a value is the whole wait. The timeout is infinite because the fence is
+    // signaled by GPU work that will complete: a finite timeout would turn a transient stall
+    // into a latched fallback instead of a wait.
+    const VkFence fence =
+        from_uint64<VkFence>(static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(
+            state.inputsProcessingCompletionFence)));
+    const VkResult wait = vkWaitForFences(g_state.device, 1, &fence, VK_TRUE, UINT64_MAX);
+    return wait == VK_SUCCESS ? kSuccess : kFailure;
+}
+
 // Builds the sl::Resource description for one tagged image. `native` is the VkImage and `view`
 // the VkImageView the ABI carried (or this module allocated), `state` is the layout the
 // feature reads or writes the image in (the layout this module's own transitions establish

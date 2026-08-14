@@ -587,6 +587,27 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo*
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void);
 
+/*
+ * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
+ * completed, on the caller's (present/render) thread and through the Vulkan device.
+ *
+ * The DLSS-G options record eBlockNoClientQueues, under which the DLSS-G plugin reads the
+ * tagged inputs of a presented frame on its own queues after Present; the programming guide
+ * requires the host to wait on DLSSGState::inputsProcessingCompletionFence - read fresh via
+ * slDLSSGGetState - before it modifies or destroys those inputs in a later frame. This is the
+ * call the mod makes at the start of an FG-active frame, before the world phase rewrites the
+ * tagged depth, motion, HUD-less, and UI inputs.
+ *
+ * Refuses FAIL_NotInitialized while the Streamline session is not ready (bootstrap and proxy
+ * activation not both complete, or the Vulkan device tuple never recorded) and
+ * FAIL_InvalidParameter while the DLSS-G options have not recorded for the stored
+ * configuration, the same gates as mc_dlss_tag_fg_resources. A null fence - the plugin has
+ * not allocated one, as before the first present - is a no-op success: there is no input
+ * processing in flight to wait for. The call deliberately does not look at the reported
+ * DLSSGStatus; the status-to-off fallback is a later slice's own.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_idle(void);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);
 

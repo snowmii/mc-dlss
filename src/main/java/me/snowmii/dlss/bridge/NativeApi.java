@@ -229,6 +229,31 @@ public interface NativeApi {
 	}
 
 	/**
+	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
+	 * completed, on the caller's (present/render) thread and through the Vulkan device.
+	 *
+	 * <p>The DLSS-G options record the {@code eBlockNoClientQueues} queue-parallelism mode,
+	 * under which the DLSS-G plugin reads the tagged inputs of a presented frame on its own
+	 * queues after Present; the programming guide requires the host to wait on
+	 * {@code DLSSGState::inputsProcessingCompletionFence} - read fresh via
+	 * {@code slDLSSGGetState} - before it modifies or destroys those inputs in a later frame.
+	 * This is the call the mod makes at the start of an FG-active frame, before the world phase
+	 * rewrites the tagged depth, motion, HUD-less, and UI inputs.
+	 *
+	 * <p>Answers {@code FAIL_NotInitialized} while the Streamline session is not ready and
+	 * {@code FAIL_InvalidParameter} while the DLSS-G options have not recorded for the stored
+	 * configuration; a null fence (no input processing in flight, as before the first present)
+	 * is a no-op success. The bridge does not look at the reported DLSS-G status: the
+	 * status-to-off fallback is a later slice's own.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int waitFgInputsIdle() {
+		throw new UnsupportedOperationException("waitFgInputsIdle");
+	}
+
+	/**
 	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features (DLSS, DLSS-G,
 	 * Reflex) require the device to enable, as {@code slGetFeatureRequirements} reports them
 	 * through {@code mc_dlss_query_device_feature_12}.

@@ -91,6 +91,19 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept;
 int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
                              VkCommandBuffer commandBuffer) noexcept;
 
+// Blocks until Streamline's DLSS-G input processing for the previously presented frame has
+// completed, on the caller's (present/render) thread and through the Vulkan device.
+//
+// The DLSS-G options record eBlockNoClientQueues, under which the plugin reads the tagged
+// inputs of a presented frame on its own queues after Present; the guide requires the host to
+// wait on DLSSGState::inputsProcessingCompletionFence (read via slDLSSGGetState) before it
+// modifies or destroys those inputs in a later frame. A null fence - the plugin has not
+// allocated one, as before the first present - is a no-op success. Requires the ready
+// session (kNotInitialized) and the recorded DLSS-G options (kInvalidParameter) like the FG
+// tag; the wait deliberately does not look at DLSSGState::status, whose fallback is the
+// status-owning slice's to drive.
+int32_t wait_fg_inputs_idle() noexcept;
+
 } // namespace mc_dlss
 
 #endif

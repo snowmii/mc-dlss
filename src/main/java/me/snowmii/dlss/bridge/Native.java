@@ -238,6 +238,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle tagSrResources;
 	private final MethodHandle tagFgResources;
 	private final MethodHandle presentHandoff;
+	private final MethodHandle waitFgInputsIdle;
 	private final MethodHandle reset;
 	private final MethodHandle close;
 	private boolean closed;
@@ -380,6 +381,14 @@ public final class Native implements AutoCloseable, NativeApi {
 		this.presentHandoff = bindOptional(
 			lookup,
 			"mc_dlss_present_handoff",
+			FunctionDescriptor.of(JAVA_INT)
+		);
+		// Optional like presentHandoff: the ABI-probe DLL the layout tests compile stubs the
+		// historical ABI surface and does not export the input-completion wait yet, while
+		// every real build since this symbol exists carries it.
+		this.waitFgInputsIdle = bindOptional(
+			lookup,
+			"mc_dlss_wait_fg_inputs_idle",
 			FunctionDescriptor.of(JAVA_INT)
 		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
@@ -866,6 +875,16 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.presentHandoff.invokeExact();
 		} catch (Throwable error) {
 			throw nativeError("present-handoff", error);
+		}
+	}
+
+	@Override
+	public int waitFgInputsIdle() {
+		if (waitFgInputsIdle == null) throw new NativeException("wait-fg-inputs", new IllegalStateException("Native bridge lacks FG input wait"));
+		try {
+			return (int)this.waitFgInputsIdle.invokeExact();
+		} catch (Throwable error) {
+			throw nativeError("wait-fg-inputs", error);
 		}
 	}
 

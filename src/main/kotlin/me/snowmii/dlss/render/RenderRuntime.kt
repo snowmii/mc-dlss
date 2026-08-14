@@ -89,6 +89,19 @@ class RenderRuntime(
 	 * several frames later inside an unrelated semaphore wait.
 	 */
 	quiesce: () -> Unit = {},
+	/**
+	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
+	 * completed, or does nothing for a runtime without FG wiring.
+	 *
+	 * Runs on the render thread at the start of every FG-active frame, before the world phase
+	 * rewrites the DLSS-G-tagged inputs (the scene depth, the native motion image, and the
+	 * HUD-less and UI targets). Under the recorded eBlockNoClientQueues mode the plugin reads
+	 * those inputs asynchronously after Present, so the wait is what retires the resource-reuse
+	 * race between the previous frame's DLSS-G processing and this frame's rewrites. A wait
+	 * failure latches the session through the adapter; the routing decision below then reads
+	 * the latched state and degrades the frame to vanilla.
+	 */
+	private val waitForFgInputs: () -> Unit = {},
 ) : AutoCloseable {
 	private val resources = FrameResources(sceneTarget, frameEvaluation, quiesce)
 	private val phase = WorldPhaseState()
@@ -236,6 +249,17 @@ class RenderRuntime(
 			// nothing to continue into a session that never started.
 			releaseFrameState(releaseImages = false)
 			return null
+		}
+
+		// The frame is about to rewrite the DLSS-G-tagged inputs - the world phase renders into
+		// the scene depth, the motion pass overwrites the native motion image, and the split
+		// renders into the HUD-less and UI targets - so the previously presented frame's input
+		// processing must be complete first. The wait runs on every FG-active frame, whatever
+		// this frame's route: a vanilla-routed frame (menu, loading) rewrites the same persistent
+		// targets the last FG frame's tags still name. A wait failure latches the session inside
+		// the adapter, and the routing decision below then degrades this frame to vanilla.
+		if (frameGeneration.active) {
+			waitForFgInputs()
 		}
 
 		val route = routeFrame(normalInWorldFrame, outputDimensions)
@@ -478,6 +502,11 @@ class RenderRuntime(
 			), reconfigure = adapter::reconfigure,
 			motionVectors = MotionVectorCompatibility(diagnostics),
 			quiesce = { adapter.waitDeviceIdle() },
+			// The frame-start wait for the previously presented frame's DLSS-G input processing
+			// runs through the same adapter as the frame's recording, on the render thread: the
+			// runtime asks before the world phase rewrites the tagged inputs, and a refused or
+			// failed wait degrades through the session state exactly like any other native stage.
+			waitForFgInputs = { adapter.waitFgInputsIdle() },
 			// Every FG mode transition recreates the swapchain through Minecraft's own
 			// reconfigure path, so the next frame's renderFrame reconfigures the surface under
 			// the new policy. The flag itself is only a boolean write, safe from the client
