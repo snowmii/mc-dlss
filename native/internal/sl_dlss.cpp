@@ -9,6 +9,7 @@
 #include <sl_core_api.h>
 #include <sl_dlss.h>
 #include <sl_dlss_g.h>
+#include <sl_pcl.h>
 
 /*
  * The Streamline DLSS surface of the module, layered above state like the NGX unit. The ABI
@@ -194,9 +195,10 @@ int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
 
 // Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
 // frame token and the SR/FG tag records and indexes. Called wherever the frame those records
-// name can no longer reach a present - configuration replacement, reset, and image release -
-// so a stale record can never satisfy a later handoff once the configuration it was recorded
-// for was replaced or the frame's resources are gone.
+// name can no longer reach a present - configuration replacement, reset, image release, and
+// a failed slSetTagForFrame - so a stale record can never satisfy a later handoff once the
+// configuration it was recorded for was replaced, the frame's resources are gone, or the
+// frame's tag call failed.
 void invalidate_frame_eligibility() noexcept {
     // The retained token belongs to a frame whose records are being dropped with it: the
     // next tag must obtain a fresh token rather than advance the frame under a stale one.
@@ -207,6 +209,23 @@ void invalidate_frame_eligibility() noexcept {
     g_state.lastSrTagFrameIndex = 0;
     g_state.fgTagFrameIndexRecorded = false;
     g_state.lastFgTagFrameIndex = 0;
+}
+
+// Appends one marker this module actually emitted to the present-marker event log: the
+// per-type count, the total count, and the ring slot. The ring keeps only the most recent
+// events; the counts are cumulative, so the exactly-one-START-and-one-END-per-handoff oracle
+// stays exact once the ring has wrapped.
+static void record_present_marker_event(const PresentMarkerType type,
+                                        const sl::FrameToken* frameToken) noexcept {
+    const uint32_t frameIndex = static_cast<uint32_t>(*frameToken);
+    g_state.presentMarkerLog[g_state.presentMarkerEventCount % kPresentMarkerLogSize] =
+        PresentMarkerEvent{type, frameIndex};
+    g_state.presentMarkerEventCount += 1;
+    if (type == kPresentMarkerStart) {
+        g_state.presentMarkerStartCount += 1;
+    } else {
+        g_state.presentMarkerEndCount += 1;
+    }
 }
 
 int32_t record_present_handoff() noexcept {
@@ -240,6 +259,17 @@ int32_t record_present_handoff() noexcept {
     if (g_state.lastSrTagFrameIndex != g_state.lastFgTagFrameIndex) {
         return kInvalidParameter;
     }
+    // A handoff without a retained frame token has no frame index the markers could be
+    // emitted under and no present the re-recorded options could serve: the refusal lands
+    // before the options re-record and before the marker calls dereference the token, so it
+    // emits no markers and re-records nothing, like every refusal above. The gates above
+    // make this unreachable in practice - a complete equal-index tag set is only ever
+    // produced alongside a retained token, and every path that drops the token drops the tag
+    // records with it - but the marker emission dereferences the token, so the check is the
+    // guard that keeps a null token from ever reaching a marker call.
+    if (g_state.frameToken == nullptr) {
+        return kNotInitialized;
+    }
 
     // Re-record the stored 2x options with the back-buffer count the configuration was
     // validated with: the guide requires slDLSSGSetOptions per frame, and the record must
@@ -249,6 +279,51 @@ int32_t record_present_handoff() noexcept {
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
+
+    // Emit the present bracket under the frame's retained token, PRESENT_START then
+    // PRESENT_END. The DLSS-G guide requires the frame index carried by the Reflex present
+    // markers to match the frame index carried by the common constants ("Make sure that
+    // frame index provided with the common constants is matching the presented frame (i.e.
+    // frame index provided with Reflex markers ReflexMarker::ePresentStart and
+    // ReflexMarker::ePresentEnd)"); this module records the constants, the SR/FG tags, and
+    // both markers against the same retained token, so all four name one frame index. The
+    // DLSS-G plugin correlates the presented frame with its constants through PRESENT_START
+    // and disables generation for the frame without it, so a frame whose markers could not
+    // be emitted must not hand off.
+    sl::FrameToken* frameToken = g_state.frameToken;
+    const sl::Result startResult = slPCLSetMarker(sl::PCLMarker::ePresentStart, *frameToken);
+    if (startResult != sl::Result::eOk) {
+        // No marker reached the plugin and nothing was recorded: the frame's tag set and
+        // retained token stay in place, so the caller may retry the handoff for the same
+        // frame - a retry re-emits the first START, not a duplicate.
+        return static_cast<int32_t>(startResult);
+    }
+    // The START reached the plugin under the frame's token: the event log records it
+    // immediately, so a handoff whose END fails reads truthfully as one START event and no
+    // END rather than as a pair that never happened.
+    record_present_marker_event(kPresentMarkerStart, frameToken);
+    const sl::Result endResult = slPCLSetMarker(sl::PCLMarker::ePresentEnd, *frameToken);
+    if (endResult != sl::Result::eOk) {
+        // The frame's PRESENT_START is already out to the plugin, so this frame must never
+        // be presented through a retry: a retry would emit a second PRESENT_START for the
+        // same frame (START, START, END), and the plugin correlates the presented frame
+        // through the first. The handoff consumes the frame exactly as a successful one
+        // would - clearing both tag sides' records and the retained token - so a later
+        // handoff can only act on a fresh tag set under a fresh token. The pair is still
+        // recorded only after the END succeeds: the log holds the START event, no END
+        // event, and the END error returns.
+        g_state.srTagFrameIndexRecorded = false;
+        g_state.fgTagFrameIndexRecorded = false;
+        g_state.frameToken = nullptr;
+        return static_cast<int32_t>(endResult);
+    }
+    record_present_marker_event(kPresentMarkerEnd, frameToken);
+    // The bracket recorded under the frame index the token names, for the present-marker
+    // oracle: the event log answers the START and END events this handoff actually emitted,
+    // in order, each under its frame index (which the handoff's own gates just proved equal
+    // to the SR/FG tag indexes), and the per-type counts prove the exactly-once half - each
+    // successful handoff adds exactly one START and one END. Recorded only after both
+    // marker calls succeeded, so a handoff whose END marker failed claims no END event.
     g_state.srTagFrameIndexRecorded = false;
     g_state.fgTagFrameIndexRecorded = false;
     // The handoff is the composed frame's terminal act: it consumes the frame token the
@@ -256,6 +331,39 @@ int32_t record_present_handoff() noexcept {
     // token under a fresh index instead of re-recording over this frame's present-lifetime
     // records.
     g_state.frameToken = nullptr;
+    return kSuccess;
+}
+
+int32_t query_present_markers(uint32_t* startCount, uint32_t* endCount, uint32_t* eventCount,
+                              uint32_t* events, const uint32_t eventsCapacity) noexcept {
+    if (startCount == nullptr || endCount == nullptr || eventCount == nullptr ||
+        events == nullptr) {
+        return kInvalidParameter;
+    }
+    // The oracle answers only once this session actually emitted a marker: before that
+    // there is no event any marker was emitted under, and the refusal is exactly what makes
+    // "refused or pre-ready handoffs emit no markers" observable to the test - a handoff
+    // that leaked markers would populate the log before the test expects it to.
+    if (g_state.presentMarkerEventCount == 0) {
+        return kNotInitialized;
+    }
+    *startCount = g_state.presentMarkerStartCount;
+    *endCount = g_state.presentMarkerEndCount;
+    *eventCount = g_state.presentMarkerEventCount;
+    // The ring holds the most recent min(eventCount, kPresentMarkerLogSize) events, oldest
+    // first: the slot at eventCount % kPresentMarkerLogSize holds the oldest kept event (it
+    // is the next to be overwritten), and the kept events follow it around the ring.
+    const uint32_t kept = g_state.presentMarkerEventCount < kPresentMarkerLogSize
+                              ? g_state.presentMarkerEventCount
+                              : kPresentMarkerLogSize;
+    const uint32_t copied = eventsCapacity < kept ? eventsCapacity : kept;
+    const uint32_t oldest = (g_state.presentMarkerEventCount - kept) % kPresentMarkerLogSize;
+    for (uint32_t i = 0; i < copied; ++i) {
+        const PresentMarkerEvent& event =
+            g_state.presentMarkerLog[(oldest + i) % kPresentMarkerLogSize];
+        events[i * 2] = static_cast<uint32_t>(event.type);
+        events[i * 2 + 1] = event.frameIndex;
+    }
     return kSuccess;
 }
 
@@ -578,7 +686,11 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
     result = slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, numTags, commandBuffer);
     if (result != sl::Result::eOk) {
-        g_state.frameToken = nullptr;
+        // A failed tag leaves the frame with no valid SR record, and the token the attempt
+        // used is not a token any later record may be reused under: the whole in-flight set
+        // drops with the token, so neither this call's half-records nor the counterpart
+        // tag's records can satisfy a later handoff against a fresh token.
+        invalidate_frame_eligibility();
         return static_cast<int32_t>(result);
     }
     // The frame index this call tagged under, recorded for the composed-rung oracle
@@ -731,7 +843,14 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
     result = slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, 4, commandBuffer);
     if (result != sl::Result::eOk) {
-        g_state.frameToken = nullptr;
+        // A failed tag leaves the frame with no valid FG record, and the token the attempt
+        // used is not a token any later record may be reused under: the whole in-flight set
+        // drops with the token, so neither this call's half-records nor the counterpart
+        // tag's records can satisfy a later handoff against a fresh token. On the composed
+        // frame this call is the post-evaluation re-declaration too, whose failure must drop
+        // the SR record and token it re-recorded against exactly as any other tag failure
+        // does.
+        invalidate_frame_eligibility();
         return static_cast<int32_t>(result);
     }
     // The frame index this call tagged under, recorded for the composed-rung oracle

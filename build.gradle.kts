@@ -180,6 +180,7 @@ val streamlineRuntime = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK"
 	.resolve("bin/x64")
 val streamlineRuntimeFiles = listOf(
 	"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
+	"sl.pcl.dll",
 	"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
 )
 

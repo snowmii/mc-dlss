@@ -577,7 +577,10 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo*
  * options. A successful handoff consumes the frame's tag set by clearing both sides' tag
  * records; each side's next successful tag record re-arms only its own half, so the set is
  * eligible again only when both sides re-record under equal indexes - repeating one side
- * alone stays refused.
+ * alone stays refused. A handoff whose PRESENT_START marker succeeded but whose PRESENT_END
+ * marker failed also consumes the frame exactly like a successful one: its START already
+ * reached the Reflex plugin, so a retry would emit a second START for the same frame, and
+ * the FAIL result returns with the frame ineligible instead.
  *
  * Records no GPU work: the frame's tagged resources stay in the layouts the tags declared
  * (GENERAL depth and motion, eValidUntilPresent lifetime) until Streamline's present path
@@ -586,6 +589,37 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo*
  * mc_dlss_acquire_images.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void);
+
+/*
+ * The present-marker oracle: how many PRESENT_START and PRESENT_END markers this module has
+ * actually emitted (per-type cumulative counts), how many marker events in total, and the
+ * recent event log in emission order. Each log entry is a (type, frame index) pair: the
+ * type is 0 for PRESENT_START and 1 for PRESENT_END, and the frame index is the Streamline
+ * frame token the marker was emitted under.
+ *
+ * The frame index must equal the frame indexes the frame's SR and FG tags (and the common
+ * constants) recorded under: the handoff emits both markers against the same retained
+ * frame token the tags and the constants used, so the log's equality is what proves the
+ * present bracket correlates with the frame DLSS-G generates. The per-type counts must each
+ * advance by exactly one per successful handoff and stay unchanged across refused or
+ * pre-ready handoffs, which is what proves the "exactly one PRESENT_START then PRESENT_END"
+ * half of the present-marker contract: the START and END events are recorded separately and
+ * in emission order, so a handoff whose END marker failed reads as one START event and no
+ * END rather than as a pair that never happened.
+ *
+ * `events` receives the most recent events in emission order, at most `events_capacity`
+ * pairs (and never more than the module's log holds); the counts answer the whole session.
+ * All four out-pointers are written on success. Answers FAIL_NotInitialized until at least
+ * one marker was actually emitted; the oracle is module history rather than per-frame
+ * eligibility, so it keeps answering across later refusals and resets of the frame's
+ * eligibility, and only reset_state clears it.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_present_markers(
+    uint32_t* start_count,
+    uint32_t* end_count,
+    uint32_t* event_count,
+    uint32_t* events,
+    uint32_t events_capacity);
 
 /*
  * Blocks until Streamline's DLSS-G input processing for the previously presented frame has

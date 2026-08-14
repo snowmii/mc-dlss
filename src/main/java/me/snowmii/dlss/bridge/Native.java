@@ -13,6 +13,7 @@ import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -210,6 +211,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryDeviceFeature13;
 	private final MethodHandle queryQueueRequirements;
 	private final MethodHandle queryTaggedFrameIndexes;
+	private final MethodHandle queryPresentMarkers;
 	private final MethodHandle waitFgInputsValue;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
@@ -297,6 +299,21 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_query_tagged_frame_indexes",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
+		);
+		// Optional like queryTaggedFrameIndexes: the ABI-probe DLL does not export the
+		// present-marker oracle either, while every real build since this symbol exists
+		// carries it.
+		this.queryPresentMarkers = bindOptional(
+			lookup,
+			"mc_dlss_query_present_markers",
+			FunctionDescriptor.of(
+				JAVA_INT,
+				ValueLayout.ADDRESS, // start_count
+				ValueLayout.ADDRESS, // end_count
+				ValueLayout.ADDRESS, // event_count
+				ValueLayout.ADDRESS, // events
+				JAVA_INT // events_capacity
+			)
 		);
 		this.initialize = bind(
 			lookup,
@@ -591,6 +608,45 @@ public final class Native implements AutoCloseable, NativeApi {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-tagged-frame-indexes", error);
+		}
+	}
+
+	@Override
+	public PresentMarkerEvents presentMarkers() {
+		if (queryPresentMarkers == null) throw new NativeException("query-present-markers", new IllegalStateException("Native bridge lacks the present-marker oracle"));
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment startCount = callArena.allocate(JAVA_INT);
+			final MemorySegment endCount = callArena.allocate(JAVA_INT);
+			final MemorySegment eventCount = callArena.allocate(JAVA_INT);
+			final MemorySegment events = callArena.allocate((long) PresentMarkerEvents.LOG_CAPACITY * 2 * JAVA_INT.byteSize());
+			final int result = (int)this.queryPresentMarkers.invokeExact(
+				startCount,
+				endCount,
+				eventCount,
+				events,
+				PresentMarkerEvents.LOG_CAPACITY
+			);
+			if (result != SUCCESS) {
+				throw new NativeException("query-present-markers", result);
+			}
+			final int total = eventCount.get(JAVA_INT, 0);
+			final int readable = Math.min(total, PresentMarkerEvents.LOG_CAPACITY);
+			final List<PresentMarkerEvent> log = new ArrayList<>(readable);
+			for (int i = 0; i < readable; i++) {
+				final int type = events.get(JAVA_INT, (long) i * 2 * JAVA_INT.byteSize());
+				final int frameIndex = events.get(JAVA_INT, ((long) i * 2 + 1) * JAVA_INT.byteSize());
+				log.add(new PresentMarkerEvent(PresentMarkerType.fromNative(type), frameIndex));
+			}
+			return new PresentMarkerEvents(
+				startCount.get(JAVA_INT, 0),
+				endCount.get(JAVA_INT, 0),
+				total,
+				List.copyOf(log)
+			);
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-present-markers", error);
 		}
 	}
 

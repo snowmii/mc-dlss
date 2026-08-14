@@ -27,6 +27,25 @@ namespace mc_dlss {
 // to track frame completion it has no way to observe.
 constexpr uint32_t kMotionDescriptorRing = 4;
 
+// The two Reflex present markers this module emits at the present handoff, and the type tag
+// the present-marker event log records each emitted marker under. The ABI exposes the raw
+// values through mc_dlss_query_present_markers.
+enum PresentMarkerType : uint32_t {
+    kPresentMarkerStart = 0,
+    kPresentMarkerEnd = 1,
+};
+
+// One present-marker event as the log records it: the marker type and the Streamline frame
+// index (the retained token) the marker was emitted under.
+struct PresentMarkerEvent {
+    PresentMarkerType type;
+    uint32_t frameIndex;
+};
+
+// The number of events the present-marker log ring retains. The ring keeps the most recent
+// events for the ordered read-back; the per-type counts stay cumulative beyond it.
+constexpr uint32_t kPresentMarkerLogSize = 16;
+
 struct DlssOwnedImage {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -126,13 +145,30 @@ struct DlssState {
     // clearing both flags. Consumed eligibility is therefore exactly "one of the two flags is
     // clear": repeating only one tag side after a handoff re-arms only that side, and the set
     // stays refused until the counterpart records too - a partial re-tag can never revive a
-    // consumed handoff on its own. Configuration replacement, reset, and image release clear
-    // all four (with the retained token) through invalidate_frame_eligibility, so records
-    // from a replaced configuration or a released image lifecycle can never satisfy a handoff.
+    // consumed handoff on its own. Configuration replacement, reset, image release, and a
+    // failed slSetTagForFrame all clear the four (with the retained token) through
+    // invalidate_frame_eligibility, so records from a replaced configuration, a released
+    // image lifecycle, or a failed tag call can never satisfy a handoff.
     bool srTagFrameIndexRecorded = false;
     uint32_t lastSrTagFrameIndex = 0;
     bool fgTagFrameIndexRecorded = false;
     uint32_t lastFgTagFrameIndex = 0;
+    // The present-marker event log: one entry per PRESENT_START or PRESENT_END marker this
+    // module actually emitted to Streamline, in emission order, each under the frame index
+    // (the retained token) the marker was emitted with. The START is recorded the moment its
+    // slPCLSetMarker call succeeds; the END only after its own call succeeds, so a handoff
+    // whose END failed after its START reached the plugin reads truthfully as one START
+    // event and no END event - never as a pair. The per-type counts are cumulative across
+    // the session; the ring keeps only the most recent kPresentMarkerLogSize events for the
+    // ordered read-back. The log is history, not per-frame eligibility: it is neither
+    // cleared by invalidate_frame_eligibility nor consumed by a later handoff, so it keeps
+    // answering after the frame's eligibility is dropped. reset_state clears it with the
+    // rest of the struct, which is what makes the pre-ready refusal of a fresh fork
+    // observable.
+    uint32_t presentMarkerStartCount = 0;
+    uint32_t presentMarkerEndCount = 0;
+    uint32_t presentMarkerEventCount = 0;
+    PresentMarkerEvent presentMarkerLog[kPresentMarkerLogSize] = {};
 };
 
 extern DlssState g_state;
@@ -142,9 +178,10 @@ void reset_state() noexcept;
 
 // Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
 // frame token and the SR/FG tag records and indexes. Called wherever the frame those records
-// name can no longer reach a present - configuration replacement, reset, and image release -
-// so a stale record can never satisfy a later handoff once the configuration it was recorded
-// for was replaced or the frame's resources are gone.
+// name can no longer reach a present - configuration replacement, reset, image release, and
+// a failed slSetTagForFrame - so a stale record can never satisfy a later handoff once the
+// configuration it was recorded for was replaced, the frame's resources are gone, or the
+// frame's tag call failed.
 void invalidate_frame_eligibility() noexcept;
 
 // The module's own images have to exist, at the size the configuration stores, before anything

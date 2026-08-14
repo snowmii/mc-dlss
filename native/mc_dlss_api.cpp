@@ -34,7 +34,7 @@ namespace {
 
 constexpr char kProjectId[] = "50f68c51-c7be-49bd-a875-f73045f88d27";
 constexpr char kEngineVersion[] = "Minecraft 26.2";
-constexpr sl::Feature kStreamlineFeatures[] = {sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex};
+constexpr sl::Feature kStreamlineFeatures[] = {sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL};
 
 // The manual-hook Vulkan preferences this module always uses, shared by every bootstrap (a
 // close's slShutdown tears the runtime down and reset_state forgets the bootstrap, so the
@@ -664,6 +664,21 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         return record_present_handoff();
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_present_markers(
+    uint32_t* start_count,
+    uint32_t* end_count,
+    uint32_t* event_count,
+    uint32_t* events,
+    uint32_t events_capacity) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_present_markers(start_count, end_count, event_count, events,
+                                     events_capacity);
     } catch (...) {
         return kFailure;
     }

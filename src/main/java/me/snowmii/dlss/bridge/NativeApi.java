@@ -229,6 +229,30 @@ public interface NativeApi {
 	}
 
 	/**
+	 * The present-marker oracle: how many PRESENT_START and PRESENT_END markers this module
+	 * has actually emitted (per-type cumulative counts), the total event count, and the
+	 * recent event log in emission order, as reported by {@code mc_dlss_query_present_markers}.
+	 *
+	 * <p>Each event names the marker type and the Streamline frame index (the retained frame
+	 * token) it was emitted under. The index must equal the frame indexes the frame's SR/FG
+	 * tags and its common constants recorded under: the handoff emits both markers against
+	 * the same retained frame token the tags and the constants used, so the events' index
+	 * equality with {@link #taggedFrameIndexes()} is what proves the present bracket
+	 * correlates with the frame DLSS-G generates. The per-type counts must each advance by
+	 * exactly one per successful handoff and stay unchanged across refused or pre-ready
+	 * handoffs, which is what proves the "exactly one PRESENT_START then PRESENT_END" half
+	 * of the present-marker contract: the START and END events are recorded separately and
+	 * in emission order, so a handoff whose END marker failed reads as one START event and
+	 * no END rather than as a pair that never happened.
+	 *
+	 * <p>Answers {@code FAIL_NotInitialized} until at least one marker was actually emitted.
+	 * Default-implemented for the same reason as {@link #queryDeviceFeatures12()}.
+	 */
+	default PresentMarkerEvents presentMarkers() {
+		throw new UnsupportedOperationException("presentMarkers");
+	}
+
+	/**
 	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
 	 * completed, on the caller's (present/render) thread and through the Vulkan device.
 	 *

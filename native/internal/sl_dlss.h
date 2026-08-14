@@ -59,11 +59,31 @@ void invalidate_frame_eligibility() noexcept;
 // options, partial tags, and consumed/stale eligibility return kInvalidParameter before
 // anything is re-recorded, so a refused handoff leaves the tag state and the options exactly
 // as they were. A successful handoff consumes the frame's tag set by clearing both sides'
-// records; each side's next successful tag record re-arms only its own half, so the set is
-// eligible again only when both sides re-record under equal indexes. Records no GPU work:
-// the frame's tagged resources stay in the layouts the tags declared (GENERAL depth and
-// motion) until Streamline's present path consumes them.
+// records and the retained token; each side's next successful tag record re-arms only its
+// own half, so the set is eligible again only when both sides re-record under equal indexes.
+// A handoff whose PRESENT_START succeeded but whose PRESENT_END failed also consumes the
+// frame exactly like a successful one: its START already reached the plugin, so a retry
+// would emit a second START for the same frame, and the error returns with the frame
+// ineligible instead. Records no GPU work: the frame's tagged resources stay in the layouts
+// the tags declared (GENERAL depth and motion) until Streamline's present path consumes
+// them.
 int32_t record_present_handoff() noexcept;
+
+// The present-marker oracle: reports how many PRESENT_START and PRESENT_END markers this
+// module has actually emitted (per-type cumulative counts), the total event count, and the
+// recent event log in emission order. Each log entry is a (type, frame index) pair: the
+// type is a PresentMarkerType value and the frame index is the Streamline frame token the
+// marker was emitted under. The index must equal the frame indexes the SR/FG tags and the
+// common constants recorded under - all four record against the same retained frame token -
+// and the counts must each advance by exactly one per successful handoff, which is what
+// proves the "exactly one PRESENT_START then PRESENT_END per handoff" half of the
+// present-marker invariant: the START and END events are recorded separately and in order,
+// so a handoff whose END failed reads as one START event and no END rather than as a pair.
+// Answers kInvalidParameter on null out-pointers and kNotInitialized until at least one
+// marker was actually emitted (the same refusal a fresh fork's module answers, which is what
+// makes "refused or pre-ready handoffs emit no markers" observable).
+int32_t query_present_markers(uint32_t* startCount, uint32_t* endCount, uint32_t* eventCount,
+                              uint32_t* events, uint32_t eventsCapacity) noexcept;
 
 // Tags one frame's DLSS SR resources on the caller's command buffer via slGetNewFrameToken +
 // slSetTagForFrame. The engine's colour and depth are always tagged; the module's motion and
