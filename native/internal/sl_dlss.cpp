@@ -259,12 +259,50 @@ int32_t record_present_handoff() noexcept {
     return kSuccess;
 }
 
+// Blocks until the DLSS-G plugin's input-processing timeline semaphore reaches `value`, on
+// the caller's thread and through the Vulkan device. `value` is the value the plugin
+// reported under lastPresentInputsProcessingCompletionFenceValue for the inputs the last
+// present consumed; the wait is for that exact value because the plugin signals the
+// semaphore with the processing's completion value, and waiting for anything lower would
+// let the caller reuse inputs the plugin still reads.
+static int32_t wait_on_inputs_semaphore(const VkDevice device, const VkSemaphore semaphore,
+                                        const uint64_t value) noexcept {
+    // The plugin-internal fence the state reports is a Vulkan timeline semaphore: the wait
+    // is the value-aware vkWaitSemaphores with VkSemaphoreWaitInfo, not vkWaitForFences,
+    // which would hand a VkFence-typed call a VkSemaphore handle. The flags stay zero - the
+    // wait is for the reported value to be reached, not for any value up to it - and the
+    // timeout is infinite because the semaphore is signaled by GPU work that will complete:
+    // a finite timeout would turn a transient stall into a latched fallback instead of a
+    // wait.
+    const VkSemaphoreWaitInfo waitInfo{
+        VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+        nullptr,
+        0,
+        1,
+        &semaphore,
+        &value,
+    };
+    const VkResult wait = vkWaitSemaphores(device, &waitInfo, UINT64_MAX);
+    return wait == VK_SUCCESS ? kSuccess : kFailure;
+}
+
+int32_t wait_fg_inputs_value(const uint64_t vkDevice, const uint64_t semaphore,
+                             const uint64_t value) noexcept {
+    // The wait needs both real handles: a null device or semaphore is a caller that did not
+    // fill the call, and vkWaitSemaphores against either would be undefined behaviour.
+    if (vkDevice == 0 || semaphore == 0) {
+        return kInvalidParameter;
+    }
+    return wait_on_inputs_semaphore(from_uint64<VkDevice>(vkDevice),
+                                    from_uint64<VkSemaphore>(semaphore), value);
+}
+
 int32_t wait_fg_inputs_idle() noexcept {
-    // The fence belongs to a presented DLSS-G frame, so a session that never bootstrapped or
-    // never recorded a Vulkan device cannot answer the wait: same readiness gate as every
-    // Streamline call. The device handle is required by vkWaitForFences itself, so a session
-    // whose tuple mc_dlss_initialize never recorded is part of this refusal rather than a
-    // fence wait against a null device.
+    // The wait protects the inputs of a presented DLSS-G frame, so a session that never
+    // bootstrapped or never recorded a Vulkan device cannot answer it: same readiness gate
+    // as every Streamline call. The device handle is required by vkWaitSemaphores itself, so
+    // a session whose tuple mc_dlss_initialize never recorded is part of this refusal rather
+    // than a semaphore wait against a null device.
     if (!sl_session_ready() || g_state.device == VK_NULL_HANDLE) {
         return kNotInitialized;
     }
@@ -276,17 +314,18 @@ int32_t wait_fg_inputs_idle() noexcept {
         return kInvalidParameter;
     }
 
-    // The fence is read fresh per call: the plugin allocates it lazily and signals it after
-    // every present's input processing, so the state query is what tells this call whether
-    // there is anything to wait on. The options argument stays null - the state this call
-    // needs is the fence, not a VRAM estimate, and the guide calls the estimate query
+    // The semaphore and its value are read fresh per call: the plugin allocates the
+    // semaphore lazily and signals it with each present's input-processing completion value,
+    // so the state query is what tells this call whether there is anything to wait on and
+    // under which value. The options argument stays null - the state this call needs is the
+    // semaphore and the value, not a VRAM estimate, and the guide calls the estimate query
     // needlessly expensive per frame.
     sl::DLSSGState state{};
     const sl::Result result = slDLSSGGetState(sl::ViewportHandle{0}, state, nullptr);
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
-    // A null fence means the plugin has no input processing in flight to wait for - the
+    // A null semaphore means the plugin has no input processing in flight to wait for - the
     // typical case before the first present - and there is nothing this call could wait on,
     // so it is a no-op success rather than a refusal: the caller's frame may proceed.
     if (state.inputsProcessingCompletionFence == nullptr) {
@@ -295,16 +334,14 @@ int32_t wait_fg_inputs_idle() noexcept {
 
     // The wait deliberately does not look at state.status: the status-to-off fallback is the
     // status-owning slice's job, and gating this wait on it would starve the very frame whose
-    // inputs are still being read. The fence is the plugin-internal VkFence the guide says to
-    // wait on; on Vulkan the binary fence's signal is the completion, so vkWaitForFences
-    // without a value is the whole wait. The timeout is infinite because the fence is
-    // signaled by GPU work that will complete: a finite timeout would turn a transient stall
-    // into a latched fallback instead of a wait.
-    const VkFence fence =
-        from_uint64<VkFence>(static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(
-            state.inputsProcessingCompletionFence)));
-    const VkResult wait = vkWaitForFences(g_state.device, 1, &fence, VK_TRUE, UINT64_MAX);
-    return wait == VK_SUCCESS ? kSuccess : kFailure;
+    // inputs are still being read. The value is the one the plugin reported for the
+    // previously presented frame's inputs, read from the same state query that delivered the
+    // semaphore, so the two always travel together.
+    return wait_on_inputs_semaphore(
+        g_state.device,
+        from_uint64<VkSemaphore>(static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(
+            state.inputsProcessingCompletionFence))),
+        state.lastPresentInputsProcessingCompletionFenceValue);
 }
 
 // Builds the sl::Resource description for one tagged image. `native` is the VkImage and `view`

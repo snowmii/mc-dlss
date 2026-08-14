@@ -96,13 +96,23 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
 //
 // The DLSS-G options record eBlockNoClientQueues, under which the plugin reads the tagged
 // inputs of a presented frame on its own queues after Present; the guide requires the host to
-// wait on DLSSGState::inputsProcessingCompletionFence (read via slDLSSGGetState) before it
-// modifies or destroys those inputs in a later frame. A null fence - the plugin has not
-// allocated one, as before the first present - is a no-op success. Requires the ready
-// session (kNotInitialized) and the recorded DLSS-G options (kInvalidParameter) like the FG
-// tag; the wait deliberately does not look at DLSSGState::status, whose fallback is the
-// status-owning slice's to drive.
+// wait on DLSSGState::inputsProcessingCompletionFence - a Vulkan timeline semaphore on this
+// API, read together with DLSSGState::lastPresentInputsProcessingCompletionFenceValue via
+// slDLSSGGetState - before it modifies or destroys those inputs in a later frame. A null
+// semaphore - the plugin has not allocated one, as before the first present - is a no-op
+// success. Requires the ready session (kNotInitialized) and the recorded DLSS-G options
+// (kInvalidParameter) like the FG tag; the wait deliberately does not look at
+// DLSSGState::status, whose fallback is the status-owning slice's to drive.
 int32_t wait_fg_inputs_idle() noexcept;
+
+// The wait oracle: performs the same value-aware timeline-semaphore wait the session-driven
+// entry above performs, on explicit Vulkan device and semaphore handles and an explicit
+// value. Exposed across the ABI so the value-aware wait is provable without a live
+// Streamline session - the headless proof creates its own timeline semaphore, waits for a
+// value the semaphore has not reached, and observes the wait block until the value is
+// signaled. Requires non-null device and semaphore handles (kInvalidParameter) and touches
+// no module or Streamline state.
+int32_t wait_fg_inputs_value(uint64_t vkDevice, uint64_t semaphore, uint64_t value) noexcept;
 
 } // namespace mc_dlss
 

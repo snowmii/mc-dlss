@@ -235,15 +235,16 @@ public interface NativeApi {
 	 * <p>The DLSS-G options record the {@code eBlockNoClientQueues} queue-parallelism mode,
 	 * under which the DLSS-G plugin reads the tagged inputs of a presented frame on its own
 	 * queues after Present; the programming guide requires the host to wait on
-	 * {@code DLSSGState::inputsProcessingCompletionFence} - read fresh via
-	 * {@code slDLSSGGetState} - before it modifies or destroys those inputs in a later frame.
+	 * {@code DLSSGState::inputsProcessingCompletionFence} - a Vulkan timeline semaphore on this
+	 * API, read together with its value {@code DLSSGState::lastPresentInputsProcessingCompletionFenceValue}
+	 * via {@code slDLSSGGetState} - before it modifies or destroys those inputs in a later frame.
 	 * This is the call the mod makes at the start of an FG-active frame, before the world phase
 	 * rewrites the tagged depth, motion, HUD-less, and UI inputs.
 	 *
 	 * <p>Answers {@code FAIL_NotInitialized} while the Streamline session is not ready and
 	 * {@code FAIL_InvalidParameter} while the DLSS-G options have not recorded for the stored
-	 * configuration; a null fence (no input processing in flight, as before the first present)
-	 * is a no-op success. The bridge does not look at the reported DLSS-G status: the
+	 * configuration; a null semaphore (no input processing in flight, as before the first
+	 * present) is a no-op success. The bridge does not look at the reported DLSS-G status: the
 	 * status-to-off fallback is a later slice's own.
 	 *
 	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
@@ -251,6 +252,25 @@ public interface NativeApi {
 	 */
 	default int waitFgInputsIdle() {
 		throw new UnsupportedOperationException("waitFgInputsIdle");
+	}
+
+	/**
+	 * The wait oracle: performs the same value-aware Vulkan timeline-semaphore wait
+	 * {@link #waitFgInputsIdle()} performs, on explicit device and semaphore handles and an
+	 * explicit value, so the wait's value semantics are provable without a live Streamline
+	 * session. The headless proof creates its own timeline semaphore, waits for a value the
+	 * semaphore has not reached, and observes the call block until that value is signaled;
+	 * waiting for any lower value (or treating the semaphore as a VkFence) would answer
+	 * immediately and fail the proof.
+	 *
+	 * <p>Answers {@code FAIL_InvalidParameter} when either handle is null. Touches no module
+	 * or Streamline state and blocks on the device like the session-driven entry.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int waitFgInputsValue(long vkDevice, long semaphore, long value) {
+		throw new UnsupportedOperationException("waitFgInputsValue");
 	}
 
 	/**

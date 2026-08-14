@@ -593,20 +593,38 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void);
  *
  * The DLSS-G options record eBlockNoClientQueues, under which the DLSS-G plugin reads the
  * tagged inputs of a presented frame on its own queues after Present; the programming guide
- * requires the host to wait on DLSSGState::inputsProcessingCompletionFence - read fresh via
- * slDLSSGGetState - before it modifies or destroys those inputs in a later frame. This is the
- * call the mod makes at the start of an FG-active frame, before the world phase rewrites the
- * tagged depth, motion, HUD-less, and UI inputs.
+ * requires the host to wait on DLSSGState::inputsProcessingCompletionFence - a Vulkan
+ * timeline semaphore on this API, read together with its value
+ * DLSSGState::lastPresentInputsProcessingCompletionFenceValue via slDLSSGGetState - before it
+ * modifies or destroys those inputs in a later frame. This is the call the mod makes at the
+ * start of an FG-active frame, before the world phase rewrites the tagged depth, motion,
+ * HUD-less, and UI inputs.
  *
  * Refuses FAIL_NotInitialized while the Streamline session is not ready (bootstrap and proxy
  * activation not both complete, or the Vulkan device tuple never recorded) and
  * FAIL_InvalidParameter while the DLSS-G options have not recorded for the stored
- * configuration, the same gates as mc_dlss_tag_fg_resources. A null fence - the plugin has
- * not allocated one, as before the first present - is a no-op success: there is no input
+ * configuration, the same gates as mc_dlss_tag_fg_resources. A null semaphore - the plugin
+ * has not allocated one, as before the first present - is a no-op success: there is no input
  * processing in flight to wait for. The call deliberately does not look at the reported
  * DLSSGStatus; the status-to-off fallback is a later slice's own.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_idle(void);
+
+/*
+ * The wait oracle: performs the same value-aware Vulkan timeline-semaphore wait
+ * mc_dlss_wait_fg_inputs_idle performs, on explicit device and semaphore handles and an
+ * explicit value, so the wait's value semantics are provable without a live Streamline
+ * session. The headless proof creates its own timeline semaphore, waits for a value the
+ * semaphore has not reached, and observes the call block until that value is signaled;
+ * waiting for any lower value (or treating the semaphore as a VkFence) would answer
+ * immediately and fail the proof.
+ *
+ * Refuses FAIL_InvalidParameter when either handle is null. Touches no module or Streamline
+ * state and blocks on the device like the session-driven entry.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_value(uint64_t vk_device,
+                                                               uint64_t semaphore,
+                                                               uint64_t value);
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);

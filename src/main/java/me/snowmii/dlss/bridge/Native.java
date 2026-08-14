@@ -210,6 +210,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryDeviceFeature13;
 	private final MethodHandle queryQueueRequirements;
 	private final MethodHandle queryTaggedFrameIndexes;
+	private final MethodHandle waitFgInputsValue;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
@@ -390,6 +391,13 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_wait_fg_inputs_idle",
 			FunctionDescriptor.of(JAVA_INT)
+		);
+		// Optional like waitFgInputsIdle: the ABI-probe DLL does not export the wait oracle
+		// either, while every real build since this symbol exists carries it.
+		this.waitFgInputsValue = bindOptional(
+			lookup,
+			"mc_dlss_wait_fg_inputs_value",
+			FunctionDescriptor.of(JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG)
 		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
 		this.close = bind(lookup, "mc_dlss_close", FunctionDescriptor.of(JAVA_INT));
@@ -885,6 +893,16 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.waitFgInputsIdle.invokeExact();
 		} catch (Throwable error) {
 			throw nativeError("wait-fg-inputs", error);
+		}
+	}
+
+	@Override
+	public int waitFgInputsValue(long vkDevice, long semaphore, long value) {
+		if (waitFgInputsValue == null) throw new NativeException("wait-fg-inputs-value", new IllegalStateException("Native bridge lacks the FG input value wait oracle"));
+		try {
+			return (int)this.waitFgInputsValue.invokeExact(vkDevice, semaphore, value);
+		} catch (Throwable error) {
+			throw nativeError("wait-fg-inputs-value", error);
 		}
 	}
 

@@ -678,6 +678,17 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_idle(void) {
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_value(uint64_t vk_device,
+                                                               uint64_t semaphore,
+                                                               uint64_t value) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return wait_fg_inputs_value(vk_device, semaphore, value);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo* info) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
