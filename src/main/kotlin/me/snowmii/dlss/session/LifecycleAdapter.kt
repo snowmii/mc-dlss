@@ -4,6 +4,7 @@ import me.snowmii.dlss.bridge.NativeException
 import me.snowmii.dlss.bridge.DlssEvaluationImages
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.dlss.bridge.FgState
 import me.snowmii.dlss.bridge.FgTagRequest
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.MotionRequest
@@ -285,14 +286,15 @@ class LifecycleAdapter(
 	 * work and owns no command buffer.
 	 */
 	fun presentHandoff(): Boolean {
-		if (session.state != DlssSessionState.READY) {
-			return false
-		}
-
-		return invokeStatus(DlssNativeStage.PRESENT_HANDOFF) {
-			native.presentHandoff()
-		}
+		if (session.state != DlssSessionState.READY) return false
+		return invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentHandoff() }
 	}
+
+	fun presentStart(): Boolean = session.state == DlssSessionState.READY &&
+		invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentStart() }
+
+	fun presentEnd(): Boolean = session.state == DlssSessionState.READY &&
+		invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentEnd() }
 
 	/**
 	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
@@ -335,6 +337,20 @@ class LifecycleAdapter(
 				session.latchFailure(DlssNativeFailure(DlssNativeStage.WAIT_FG_INPUTS, result))
 				false
 			}
+		}
+	}
+
+	fun queryFgState(): FgState? {
+		if (session.state != DlssSessionState.READY) {
+			return null
+		}
+
+		// Read-only window onto the plugin, never a session stage: a query that fails must not
+		// latch the session, it just shows the monitor nothing.
+		return try {
+			native.queryFgState()
+		} catch (_: Throwable) {
+			null
 		}
 	}
 

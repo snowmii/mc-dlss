@@ -1,6 +1,7 @@
 package me.snowmii.dlss.readout
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.dlss.bridge.FgState
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.dlss.session.SRMode
@@ -51,9 +52,10 @@ class SessionReadout(
 		frame: DlssFrameDecision?,
 		facts: SessionFacts,
 		frameTimings: () -> DlssFrameTimings?,
+		fgState: () -> FgState? = { null },
 	) {
 		reportFirstPhase(mainTarget, scene, frame, facts)
-		sampleWorldFrameRate(scene, frame, frameTimings)
+		sampleWorldFrameRate(scene, frame, frameTimings, fgState)
 	}
 
 	/**
@@ -125,6 +127,7 @@ class SessionReadout(
 		scene: RenderTarget?,
 		frame: DlssFrameDecision?,
 		frameTimings: () -> DlssFrameTimings?,
+		fgState: () -> FgState?,
 	) {
 		val now = System.nanoTime()
 		if (sampleStartedAt == 0L) {
@@ -144,12 +147,13 @@ class SessionReadout(
 		// a frame rate that did not change while the chain costs a millisecond is a client whose
 		// frames are bounded by something other than the GPU.
 		emit(
-			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s".format(
+			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s".format(
 				fps,
 				sampledFrames,
 				frame?.route ?: DlssFrameRoute.VANILLA,
 				scene?.let { "${it.width}x${it.height}" } ?: "main-target",
 				frameTimings() ?: "unmeasured",
+				fgMonitorSuffix(fgState(), fps),
 			),
 		)
 		sampleStartedAt = now
@@ -182,6 +186,23 @@ class SessionReadout(
 
 	companion object {
 		private const val SAMPLE_INTERVAL_NANOS = 5_000_000_000L
+
+		/**
+		 * The DLSS-G monitor suffix for the frame-rate line: actual presented FPS, status word,
+		 * and input-processing completion fence. Streamline reports the number of real plus
+		 * generated presentations per app frame, so its documented calculation is app FPS times
+		 * that value. A factor of two is the 2x-generation proof; an advancing fence proves the
+		 * plugin is reading presented frames' tagged inputs.
+		 */
+		fun fgMonitorSuffix(fg: FgState?, appFps: Double): String = if (fg == null) {
+			""
+		} else {
+			", fg=presented=%.1f status=%d fence=%d".format(
+				appFps * fg.numFramesPresented,
+				fg.status,
+				fg.lastPresentInputsProcessingFenceValue,
+			)
+		}
 
 		/** Formats and drops, for tests that assert on the phase's own behavior. */
 		val NOOP: SessionReadout = SessionReadout({})

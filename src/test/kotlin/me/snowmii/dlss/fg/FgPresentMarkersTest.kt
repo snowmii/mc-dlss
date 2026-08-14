@@ -353,8 +353,10 @@ class FgPresentMarkersTest {
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.presentHandoff(),
-					"the complete equal-index tag set must hand off once",
+					"the complete equal-index tag set must arm once",
 				)
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentStart())
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentEnd())
 				val firstMarkers = bridge.presentMarkers()
 				assertEquals(
 					1,
@@ -506,8 +508,10 @@ class FgPresentMarkersTest {
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.presentHandoff(),
-					"the re-recorded complete tag set must hand off once",
+					"the re-recorded complete tag set must arm once",
 				)
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentStart())
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentEnd())
 				val secondMarkers = bridge.presentMarkers()
 				assertEquals(
 					2,

@@ -1,8 +1,10 @@
 package me.snowmii.dlss.render
+import me.snowmii.dlss.bridge.CameraConstants
 import me.snowmii.dlss.bridge.DlssEvaluationImages
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.dlss.bridge.FgState
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.MotionRequest
@@ -11,10 +13,12 @@ import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.Vec2
 import me.snowmii.dlss.bridge.VulkanContext
 import me.snowmii.dlss.bridge.VulkanContextRegistry
+import me.snowmii.dlss.bridge.rowMajorOf
 import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.session.LifecycleAdapter
+import org.joml.Matrix4f
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
@@ -97,6 +101,9 @@ class FrameEvaluation(
 	private var images: DlssEvaluationImages? = null
 	private var reportedFirstEvaluation = false
 
+	fun presentStart(): Boolean = adapter.presentStart()
+	fun presentEnd(): Boolean = adapter.presentEnd()
+
 	/** The native-owned images this evaluation writes into, or null before the first frame. */
 	val evaluationImages: DlssEvaluationImages?
 		get() = images
@@ -115,6 +122,12 @@ class FrameEvaluation(
 	 * without a companion is skipped rather than evaluated against no motion at all. On
 	 * [MotionVectorRoute.CAMERA_ONLY] the existing compute writer and native motion image path
 	 * stay exactly as they were, and any carried velocity is ignored.
+	 *
+	 * [camera] is the frame's camera as the world projection seam sampled it, threaded into
+	 * the evaluation's `slSetConstants` so the DLSS-G plugin interpolates the generated
+	 * frame's camera from the real one. A null camera records a zero-filled camera; production
+	 * always carries one (a frame whose camera was never observed publishes no motion, so
+	 * evaluation is skipped before it is reached).
 	 */
 	fun evaluateFrame(
 		scene: SceneResources,
@@ -123,12 +136,13 @@ class FrameEvaluation(
 		destinationImage: Long = NO_DESTINATION,
 		route: MotionVectorRoute = MotionVectorRoute.CAMERA_ONLY,
 		velocity: ImageBinding? = null,
+		camera: DlssCameraSample? = null,
 	): Boolean {
 		val vulkan = context() ?: return false
 		val held = images ?: adapter.acquireImages()?.also { images = it } ?: return false
 
 		val buffer = vulkan.recordCommandBuffer()
-		val recorded = record(buffer, scene, jitter, motion, held, route, velocity) &&
+		val recorded = record(buffer, scene, jitter, motion, held, route, velocity, camera) &&
 			(destinationImage == NO_DESTINATION || present(buffer, destinationImage))
 		// Submitted on every path: see the class comment - an abandoned buffer is what actually
 		// breaks the renderer, not a failed evaluation.
@@ -144,6 +158,12 @@ class FrameEvaluation(
 	 * only changes as fast as frames complete and the call crosses the ABI to read it.
 	 */
 	fun sampleTimings(): DlssFrameTimings? = adapter.frameTimings()
+
+	/**
+	 * The DLSS-G plugin's live state for the frame-rate monitor, or null when no session is
+	 * ready. Read-only: the monitor reports, it never gates or latches the session.
+	 */
+	fun sampleFgState(): FgState? = adapter.queryFgState()
 
 	/**
 	 * Releases the native-owned images.
@@ -183,6 +203,7 @@ class FrameEvaluation(
 		held: DlssEvaluationImages,
 		route: MotionVectorRoute,
 		velocity: ImageBinding?,
+		camera: DlssCameraSample?,
 	): Boolean {
 		val handle = buffer.address()
 
@@ -281,6 +302,7 @@ class FrameEvaluation(
 				motionScale = Vec2(motion.motionScaleX, motion.motionScaleY),
 				frameTimeMilliseconds = motion.frameTimeMillis,
 				resetHistory = motion.reset,
+				camera = camera?.let(::cameraConstants),
 			),
 		)
 		if (!evaluated) {
@@ -333,6 +355,33 @@ class FrameEvaluation(
 			depthImage = scene.depth.image,
 			motionImage = held.motion.image,
 			outputImage = held.output.image,
+		)
+	}
+
+	/**
+	 * Converts one camera sample into the flat ABI constants the evaluation carries.
+	 *
+	 * [DlssCameraSample.projection] is already the jitter-free view-to-clip projection the
+	 * world rendered with (the jitter is applied after the seam captures it), so it converts
+	 * into [CameraConstants.viewToClip] through [rowMajorOf]; the clip-to-view inverse follows
+	 * from it. The orthonormal basis comes from the view rotation: its columns are the
+	 * view-space axes expressed in world coordinates, so column 0 is the camera's right,
+	 * column 1 its up, and column 2 is view-space +Z - the direction *behind* the camera,
+	 * hence the sign flip for the forward the plugin expects (the direction the camera looks).
+	 */
+	private fun cameraConstants(camera: DlssCameraSample): CameraConstants {
+		val rotation = camera.viewRotation
+		return CameraConstants(
+			viewToClip = rowMajorOf(camera.projection),
+			clipToView = rowMajorOf(Matrix4f(camera.projection).invert()),
+			pos = floatArrayOf(
+				camera.cameraX.toFloat(),
+				camera.cameraY.toFloat(),
+				camera.cameraZ.toFloat(),
+			),
+			right = floatArrayOf(rotation.m00(), rotation.m01(), rotation.m02()),
+			up = floatArrayOf(rotation.m10(), rotation.m11(), rotation.m12()),
+			fwd = floatArrayOf(-rotation.m20(), -rotation.m21(), -rotation.m22()),
 		)
 	}
 

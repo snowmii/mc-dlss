@@ -3,6 +3,7 @@
 
 #include "internal/common.h"
 
+#include "mc_dlss.h"
 #include <sl_core_types.h>
 
 #include <mutex>
@@ -132,6 +133,8 @@ struct DlssState {
     // against it and it is cleared), so a tag always precedes an evaluate and the next frame's
     // tag obtains the next token. reset_state clears it with the rest of the struct.
     sl::FrameToken* frameToken = nullptr;
+    // Present-start arms this retained token; present-end consumes it after queue present.
+    bool presentTokenArmed = false;
     // The Streamline frame indices the last SR and FG tag calls recorded under, exposed by
     // mc_dlss_query_tagged_frame_indexes as the composed-rung oracle: one frame's SR and FG
     // tags must land under the same index (the FG tag reuses the SR tag's retained token rather
@@ -169,6 +172,15 @@ struct DlssState {
     uint32_t presentMarkerEndCount = 0;
     uint32_t presentMarkerEventCount = 0;
     PresentMarkerEvent presentMarkerLog[kPresentMarkerLogSize] = {};
+    // Whether the camera constants of a successful slSetConstants are recorded: the last
+    // successful evaluation's camera, exposed by mc_dlss_query_camera_constants as the
+    // constants oracle. Recorded only after slSetConstants answered eOk, so the oracle
+    // means "the constants the plugin actually received", and reset_state clears it with
+    // the rest of the struct, which is what makes the pre-evaluation refusal of a fresh
+    // fork observable. Zero-filled by default: a caller without a camera records zeros
+    // exactly as the evaluation recorded them.
+    bool cameraConstantsRecorded = false;
+    McDlssCameraConstants lastCameraConstants{};
 };
 
 extern DlssState g_state;

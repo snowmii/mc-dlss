@@ -26,7 +26,8 @@
 		"VulkanDeviceContextMixin",
 		"VulkanInstanceExtensionMixin",
 		"VulkanPipelineCompatibilityMixin",
-		"VulkanGpuSurfaceSwapchainMixin"
+		"VulkanGpuSurfaceSwapchainMixin",
+		"VulkanGpuSurfacePresentMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

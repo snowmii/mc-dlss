@@ -67,6 +67,8 @@ class WorldPhase(
 	private var mainTarget: RenderTarget? = null
 	private var prepared = false
 	private var lastResolved: RenderTarget? = null
+	/** The frame's camera as the projection seam sampled it, carried from [prepare] to [end]. */
+	private var camera: DlssCameraSample? = null
 
 	/** True between [begin] and [end]. */
 	var isOpen: Boolean = false
@@ -90,6 +92,9 @@ class WorldPhase(
 	 * presentation pipelines run outside this window and cannot change the session's
 	 * world-motion route.
 	 */
+	fun presentStart(): Boolean = runtime.frameEvaluation?.presentStart() == true
+	fun presentEnd(): Boolean = runtime.frameEvaluation?.presentEnd() == true
+
 	fun observePipeline(pipeline: MotionVectorPipeline) {
 		if (isOpen) {
 			runtime.observeWorldPipeline(pipeline)
@@ -219,6 +224,7 @@ class WorldPhase(
 		discard()
 
 		this.mainTarget = mainTarget
+		this.camera = camera
 		scene = if (mainTarget.width > 0 && mainTarget.height > 0) {
 			runtime.beginWorldPhase(
 				normalInWorldFrame,
@@ -260,6 +266,11 @@ class WorldPhase(
 				renderDimensions = runtime.renderDimensions,
 			),
 			frameTimings = { runtime.frameEvaluation?.sampleTimings() },
+			fgState = {
+				// The monitor reads the plugin only while FG is active: with FG off the plugin's
+				// presented count and fence are stale, and the line would report noise as news.
+				if (runtime.frameGeneration.active) runtime.frameEvaluation?.sampleFgState() else null
+			},
 		)
 		if (resolved !== lastResolved) {
 			// SkyRenderer caches the target it was built against and reuses it every frame.
@@ -284,6 +295,7 @@ class WorldPhase(
 		// jitter and motion the world was actually rendered with.
 		val jitter = runtime.activeJitter
 		val motion = runtime.activeMotion
+		val camera = this.camera
 		// The route and the velocity view behind it are captured while the phase is still open:
 		// [terrainVelocityView] is non-null only inside an open velocity-MRT phase, which is
 		// exactly the handoff the evaluation's motion-source gate needs.
@@ -293,6 +305,7 @@ class WorldPhase(
 		prepared = false
 		scene = null
 		mainTarget = null
+		this.camera = null
 
 		// Evaluation decides whether this frame may become the predecessor for object motion.
 		// Keep the runtime's published phase values alive through evaluation, then disposition
@@ -376,6 +389,7 @@ class WorldPhase(
 		prepared = false
 		scene = null
 		mainTarget = null
+		camera = null
 		runtime.endWorldPhase()
 		// This frame decided a route and moved the motion predecessor forward, but no image was
 		// ever accumulated from it, so the next frame must start its history again.
@@ -385,33 +399,44 @@ class WorldPhase(
 	companion object {
 		/** Production wiring: a real blit, a real sky-renderer reset, and the session readout. */
 		@JvmStatic
-		fun forMinecraft(runtime: RenderRuntime, readout: SessionReadout): WorldPhase = WorldPhase(
-			runtime = runtime,
-			present = ::blitSceneToMainTarget,
-			onWorldTargetChanged = {
-				Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.shouldResetSkyRenderer = true
-			},
-			readout = readout,
-			evaluateFrame = { rendered, destination, jitter, motion, route, velocityView ->
-				val evaluation = runtime.frameEvaluation
-				val resources = sceneResourcesOf(rendered)
-				val destinationImage = (destination.colorTextureView as? VulkanGpuTextureView)
-					?.texture()
-					?.vkImage()
-				if (evaluation == null || resources == null || destinationImage == null) {
-					false
-				} else {
-					evaluation.evaluateFrame(
-						resources,
-						jitter,
-						motion,
-						destinationImage,
-						route,
-						velocityBindingOf(velocityView),
-					)
-				}
-			},
-		)
+		fun forMinecraft(runtime: RenderRuntime, readout: SessionReadout): WorldPhase {
+			// The frame's camera travels through the phase rather than through the lambda's
+			// parameters (whose arity the test doubles construct against): the evaluation
+			// lambda reads the field of the very instance it belongs to. The reference is
+			// late-bound because the lambda is a constructor argument and cannot capture the
+			// instance under construction any other way; it is only invoked at [end], long
+			// after construction finished.
+			lateinit var phase: WorldPhase
+			phase = WorldPhase(
+				runtime = runtime,
+				present = ::blitSceneToMainTarget,
+				onWorldTargetChanged = {
+					Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.shouldResetSkyRenderer = true
+				},
+				readout = readout,
+				evaluateFrame = { rendered, destination, jitter, motion, route, velocityView ->
+					val evaluation = runtime.frameEvaluation
+					val resources = sceneResourcesOf(rendered)
+					val destinationImage = (destination.colorTextureView as? VulkanGpuTextureView)
+						?.texture()
+						?.vkImage()
+					if (evaluation == null || resources == null || destinationImage == null) {
+						false
+					} else {
+						evaluation.evaluateFrame(
+							resources,
+							jitter,
+							motion,
+							destinationImage,
+							route,
+							velocityBindingOf(velocityView),
+							phase.camera,
+						)
+					}
+				},
+			)
+			return phase
+		}
 
 		/**
 		 * Production resolution of one frame's DLSS-G inputs, read by the evaluation at world

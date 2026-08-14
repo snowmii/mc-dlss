@@ -61,6 +61,15 @@ public final class Native implements AutoCloseable, NativeApi {
 		JAVA_FLOAT.withName("y")
 	).withName("McDlssVec2");
 
+	private static final StructLayout CAMERA_LAYOUT = MemoryLayout.structLayout(
+		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("view_to_clip"),
+		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("clip_to_view"),
+		MemoryLayout.sequenceLayout(3, JAVA_FLOAT).withName("pos"),
+		MemoryLayout.sequenceLayout(3, JAVA_FLOAT).withName("right"),
+		MemoryLayout.sequenceLayout(3, JAVA_FLOAT).withName("up"),
+		MemoryLayout.sequenceLayout(3, JAVA_FLOAT).withName("fwd")
+	).withName("McDlssCameraConstants");
+
 	private static final StructLayout EVALUATE_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
 		IMAGE_LAYOUT.withName("color"),
@@ -70,7 +79,8 @@ public final class Native implements AutoCloseable, NativeApi {
 		JAVA_INT.withName("render_width"),
 		JAVA_INT.withName("render_height"),
 		JAVA_FLOAT.withName("frame_time_milliseconds"),
-		JAVA_INT.withName("reset_history")
+		JAVA_INT.withName("reset_history"),
+		CAMERA_LAYOUT.withName("camera")
 	).withName("McDlssEvaluateInfo");
 
 	private static final StructLayout MOTION_LAYOUT = MemoryLayout.structLayout(
@@ -154,6 +164,30 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final VarHandle EVALUATE_FRAME_TIME = field(EVALUATE_LAYOUT, "frame_time_milliseconds");
 	private static final VarHandle EVALUATE_RESET_HISTORY = field(EVALUATE_LAYOUT, "reset_history");
 
+	/**
+	 * The byte offset of the camera struct inside {@link #EVALUATE_LAYOUT}, for the
+	 * offset-addressed float writes of the camera's six fields.
+	 */
+	private static final long EVALUATE_CAMERA_OFFSET = EVALUATE_LAYOUT.byteOffset(
+		MemoryLayout.PathElement.groupElement("camera")
+	);
+
+	/**
+	 * The byte offset of one float inside a camera field, relative to the camera struct start:
+	 * the field name followed by its index in the field's float sequence.
+	 */
+	private static long cameraFloatOffset(final String field, final long index) {
+		return CAMERA_LAYOUT.byteOffset(
+			MemoryLayout.PathElement.groupElement(field),
+			MemoryLayout.PathElement.sequenceElement(index)
+		);
+	}
+
+	/** The byte offset of a camera field's first float inside {@link #EVALUATE_LAYOUT}. */
+	private static long evaluateCameraFieldOffset(final String field) {
+		return EVALUATE_CAMERA_OFFSET + cameraFloatOffset(field, 0);
+	}
+
 	private static final VarHandle MOTION_COMMAND_BUFFER = field(MOTION_LAYOUT, "command_buffer");
 	private static final VarHandle MOTION_DEPTH_VIEW = field(MOTION_LAYOUT, "depth", "view");
 	private static final VarHandle MOTION_DEPTH_IMAGE = field(MOTION_LAYOUT, "depth", "image");
@@ -214,6 +248,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryPresentMarkers;
 	private final MethodHandle waitFgInputsValue;
 	private final MethodHandle queryFgState;
+	private final MethodHandle queryCameraConstants;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
@@ -242,6 +277,8 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle tagSrResources;
 	private final MethodHandle tagFgResources;
 	private final MethodHandle presentHandoff;
+	private final MethodHandle presentStart;
+	private final MethodHandle presentEnd;
 	private final MethodHandle waitFgInputsIdle;
 	private final MethodHandle reset;
 	private final MethodHandle close;
@@ -402,6 +439,8 @@ public final class Native implements AutoCloseable, NativeApi {
 			"mc_dlss_present_handoff",
 			FunctionDescriptor.of(JAVA_INT)
 		);
+		this.presentStart = bindOptional(lookup, "mc_dlss_present_start", FunctionDescriptor.of(JAVA_INT));
+		this.presentEnd = bindOptional(lookup, "mc_dlss_present_end", FunctionDescriptor.of(JAVA_INT));
 		// Optional like presentHandoff: the ABI-probe DLL the layout tests compile stubs the
 		// historical ABI surface and does not export the input-completion wait yet, while
 		// every real build since this symbol exists carries it.
@@ -423,6 +462,13 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_query_fg_state",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
+		);
+		// Optional like queryFgState: the ABI-probe DLL does not export the camera-constants
+		// read either, while every real build since this symbol exists carries it.
+		this.queryCameraConstants = bindOptional(
+			lookup,
+			"mc_dlss_query_camera_constants",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // McDlssCameraConstants*
 		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
 		this.close = bind(lookup, "mc_dlss_close", FunctionDescriptor.of(JAVA_INT));
@@ -863,6 +909,18 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
+	public int presentStart() {
+		if (presentStart == null) throw new NativeException("present-start", new IllegalStateException("Native bridge lacks present start"));
+		try { return (int)presentStart.invokeExact(); } catch (Throwable error) { throw nativeError("present-start", error); }
+	}
+
+	@Override
+	public int presentEnd() {
+		if (presentEnd == null) throw new NativeException("present-end", new IllegalStateException("Native bridge lacks present end"));
+		try { return (int)presentEnd.invokeExact(); } catch (Throwable error) { throw nativeError("present-end", error); }
+	}
+
+	@Override
 	public int presentOutput(final PresentTarget target) {
 		final DlssDimensions output = requireDimensions(target.getOutputDimensions(), "present-output");
 		try {
@@ -893,6 +951,21 @@ public final class Native implements AutoCloseable, NativeApi {
 			EVALUATE_RENDER_HEIGHT.set(info, 0L, render.getHeight());
 			EVALUATE_FRAME_TIME.set(info, 0L, request.getFrameTimeMilliseconds());
 			EVALUATE_RESET_HISTORY.set(info, 0L, request.getResetHistory() ? 1 : 0);
+			// The frame's camera travels in the same struct so the evaluation's single
+			// slSetConstants records it together with the jitter and reset flag under the frame's
+			// retained token. The scratch is reused across calls, so a null camera zeroes the
+			// region rather than leaking the previous frame's camera into this one.
+			final CameraConstants camera = request.getCamera();
+			if (camera == null) {
+				info.asSlice(EVALUATE_CAMERA_OFFSET, CAMERA_LAYOUT.byteSize()).fill((byte)0);
+			} else {
+				writeCameraFloats(info, evaluateCameraFieldOffset("view_to_clip"), camera.getViewToClip());
+				writeCameraFloats(info, evaluateCameraFieldOffset("clip_to_view"), camera.getClipToView());
+				writeCameraFloats(info, evaluateCameraFieldOffset("pos"), camera.getPos());
+				writeCameraFloats(info, evaluateCameraFieldOffset("right"), camera.getRight());
+				writeCameraFloats(info, evaluateCameraFieldOffset("up"), camera.getUp());
+				writeCameraFloats(info, evaluateCameraFieldOffset("fwd"), camera.getFwd());
+			}
 			return (int)this.evaluate.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("evaluate", error);
@@ -993,6 +1066,48 @@ public final class Native implements AutoCloseable, NativeApi {
 		} catch (Throwable error) {
 			throw nativeError("query-fg-state", error);
 		}
+	}
+
+	@Override
+	public CameraConstants queryCameraConstants() {
+		if (queryCameraConstants == null) {
+			throw new NativeException("query-camera-constants", new IllegalStateException("Native bridge lacks the camera-constants query"));
+		}
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment out = callArena.allocate(CAMERA_LAYOUT);
+			final int result = (int)this.queryCameraConstants.invokeExact(out);
+			if (result != SUCCESS) {
+				throw new NativeException("query-camera-constants", result);
+			}
+			return new CameraConstants(
+				readCameraFloats(out, 0, 16),
+				readCameraFloats(out, cameraFloatOffset("clip_to_view", 0), 16),
+				readCameraFloats(out, cameraFloatOffset("pos", 0), 3),
+				readCameraFloats(out, cameraFloatOffset("right", 0), 3),
+				readCameraFloats(out, cameraFloatOffset("up", 0), 3),
+				readCameraFloats(out, cameraFloatOffset("fwd", 0), 3)
+			);
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-camera-constants", error);
+		}
+	}
+
+	/** Copies one camera field's floats into the evaluate struct at [base]. */
+	private static void writeCameraFloats(final MemorySegment segment, final long base, final float[] values) {
+		for (int i = 0; i < values.length; i++) {
+			segment.set(JAVA_FLOAT, base + i * 4L, values[i]);
+		}
+	}
+
+	/** Reads [count] floats starting at [base] out of a camera struct segment. */
+	private static float[] readCameraFloats(final MemorySegment segment, final long base, final int count) {
+		final float[] values = new float[count];
+		for (int i = 0; i < count; i++) {
+			values[i] = segment.get(JAVA_FLOAT, base + i * 4L);
+		}
+		return values;
 	}
 
 	public int reset() {

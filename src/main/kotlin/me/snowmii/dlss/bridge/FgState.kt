@@ -6,8 +6,8 @@ package me.snowmii.dlss.bridge
  *
  * The present-generation proof reads this to observe the interposed `vkQueuePresentKHR` path
  * working: [status] is the raw `DLSSGStatus` word (zero is `eDLSSGStatusOk`, every failure
- * is its own bit), [numFramesPresented] counts frames actually presented since the previous
- * state query (each read resets it), and [lastPresentInputsProcessingFenceValue] is the
+ * is its own bit), [numFramesPresented] is the number of actual presentations per app frame
+ * (`2` means one real plus one generated frame), and [lastPresentInputsProcessingFenceValue] is the
  * value the plugin's input-processing completion timeline semaphore last reached - the value
  * `waitFgInputsIdle` waits on, read from the same query, so the two always travel together.
  * [inputsProcessingCompletionFence] is the semaphore handle itself.
@@ -15,7 +15,7 @@ package me.snowmii.dlss.bridge
 data class FgState(
 	/** The raw `sl::DLSSGStatus` word; `eDLSSGStatusOk` is zero. */
 	val status: Int,
-	/** Frames actually presented since the previous state query; each query resets it. */
+	/** Actual presentations per app frame; `2` is 2x frame generation. */
 	val numFramesPresented: Int,
 	/** The value the input-processing completion fence last reached for presented frames. */
 	val lastPresentInputsProcessingFenceValue: Long,

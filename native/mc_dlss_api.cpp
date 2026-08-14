@@ -669,6 +669,24 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void) {
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_start(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return present_start();
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_end(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return present_end();
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_present_markers(
     uint32_t* start_count,
     uint32_t* end_count,
@@ -679,6 +697,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_present_markers(
         std::lock_guard<std::mutex> lock(g_mutex);
         return query_present_markers(start_count, end_count, event_count, events,
                                      events_capacity);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_camera_constants(McDlssCameraConstants* out) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_camera_constants(out);
     } catch (...) {
         return kFailure;
     }

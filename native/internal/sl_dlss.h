@@ -59,15 +59,18 @@ void invalidate_frame_eligibility() noexcept;
 // options, partial tags, and consumed/stale eligibility return kInvalidParameter before
 // anything is re-recorded, so a refused handoff leaves the tag state and the options exactly
 // as they were. A successful handoff consumes the frame's tag set by clearing both sides'
-// records and the retained token; each side's next successful tag record re-arms only its
-// own half, so the set is eligible again only when both sides re-record under equal indexes.
-// A handoff whose PRESENT_START succeeded but whose PRESENT_END failed also consumes the
-// frame exactly like a successful one: its START already reached the plugin, so a retry
-// would emit a second START for the same frame, and the error returns with the frame
-// ineligible instead. Records no GPU work: the frame's tagged resources stay in the layouts
-// the tags declared (GENERAL depth and motion) until Streamline's present path consumes
-// them.
+// records (so the set is eligible again only when both sides re-record under equal indexes)
+// and arms the present bracket; unlike the pre-bracket design, the retained token survives
+// the handoff, because the bracket's markers are emitted around the actual queue present -
+// present_start emits PRESENT_START, present_end emits PRESENT_END and consumes the token.
+// A bracket whose PRESENT_END failed also consumes the frame exactly like a successful one:
+// its START already reached the plugin, so a retry would emit a second START for the same
+// frame, and the error returns with the frame ineligible instead. Records no GPU work: the
+// frame's tagged resources stay in the layouts the tags declared (GENERAL depth and motion)
+// until Streamline's present path consumes them.
 int32_t record_present_handoff() noexcept;
+int32_t present_start() noexcept;
+int32_t present_end() noexcept;
 
 // The present-marker oracle: reports how many PRESENT_START and PRESENT_END markers this
 // module has actually emitted (per-type cumulative counts), the total event count, and the
@@ -111,6 +114,11 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept;
 int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
                              VkCommandBuffer commandBuffer) noexcept;
 
+// The camera-constants oracle: copies the camera constants the last successful slSetConstants
+// recorded into out. Answers kInvalidParameter on a null out pointer and kNotInitialized
+// until an evaluation recorded constants at least once.
+int32_t query_camera_constants(McDlssCameraConstants* out) noexcept;
+
 // Blocks until Streamline's DLSS-G input processing for the previously presented frame has
 // completed, on the caller's (present/render) thread and through the Vulkan device.
 //
@@ -134,8 +142,8 @@ int32_t wait_fg_inputs_idle() noexcept;
 // no module or Streamline state.
 int32_t wait_fg_inputs_value(uint64_t vkDevice, uint64_t semaphore, uint64_t value) noexcept;
 
-// Reads the live DLSS-G state through slDLSSGGetState: the status word, the count of frames
-// actually presented since the previous state query, the value the input-processing
+// Reads the live DLSS-G state through slDLSSGGetState: the status word, actual presentations
+// per app frame (two means one real plus one generated), the value the input-processing
 // completion timeline semaphore last reached for the presented frames' inputs, and the
 // semaphore handle itself. Requires the ready session (kNotInitialized) and the recorded
 // DLSS-G options (kInvalidParameter), the same gates as the FG tag and the input wait; a

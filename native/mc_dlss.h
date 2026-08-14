@@ -448,6 +448,31 @@ typedef struct McDlssPresentInfo {
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo* info);
 
 /*
+ * One frame's real camera, as Streamline's common constants need it: the jitter-free
+ * view-to-clip and clip-to-view matrices, the camera's world-space position, and its
+ * orthonormal right/up/forward basis.
+ *
+ * `view_to_clip` and `clip_to_view` are 16 floats each in row-major order (the layout
+ * sl::float4x4 stores), matching the projection Minecraft's world actually rendered with
+ * (view bob and portal/nausea skew included) minus the temporal-AA jitter, which travels
+ * separately as `McDlssEvaluateInfo.jitter`. `pos` is the camera position in world space.
+ * `right`, `up`, and `fwd` are the camera's world-space basis vectors: the directions of
+ * view-space +X, +Y, and -Z (the direction the camera looks). Extracted from the view
+ * rotation, they form an orthonormal basis, which the DLSS-G plugin's auto scene-change
+ * detection verifies before it runs.
+ *
+ * All values are plain floats: 44 floats, no padding.
+ */
+typedef struct McDlssCameraConstants {
+    float view_to_clip[16];
+    float clip_to_view[16];
+    float pos[3];
+    float right[3];
+    float up[3];
+    float fwd[3];
+} McDlssCameraConstants;
+
+/*
  * Records the DLSS evaluation on the caller's command buffer, reading the low-resolution
  * world colour and depth, the module's own motion and output images, and writing the
  * upscaled frame into the output image.
@@ -483,9 +508,27 @@ typedef struct McDlssEvaluateInfo {
     uint32_t render_height;
     float frame_time_milliseconds;
     int32_t reset_history;
+    // The frame's real camera, carried through the same call so the evaluation's single
+    // slSetConstants records it together with the jitter, motion scale, and reset flag
+    // under the frame's retained token. A caller that has no camera (an SR-only frame) may
+    // leave it zero-filled: the module records whatever the struct carries.
+    McDlssCameraConstants camera;
 } McDlssEvaluateInfo;
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info);
+
+/*
+ * Reads back the camera constants the last successful evaluation recorded into Streamline's
+ * common constants, as the constants oracle.
+ *
+ * The present-generation proof drives mc_dlss_evaluate with a known camera and reads this
+ * back to prove the exact matrices and basis the caller handed in reached slSetConstants
+ * unchanged - the constants the DLSS-G plugin interpolates the generated frame's camera
+ * from. Answers not-initialized until an evaluation has recorded constants at least once
+ * (reset_state clears the record with the rest of the struct, so a fresh fork refuses), and
+ * invalid-parameter for a null out pointer.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_camera_constants(McDlssCameraConstants* out);
 
 /*
  * Tags one frame's DLSS SR resources on the caller's command buffer, through Streamline's
@@ -575,12 +618,14 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo*
  * consumed eligibility - a tag set that already handed off - answer FAIL_InvalidParameter
  * before anything is re-recorded, so a refused handoff clears no tag state and re-records no
  * options. A successful handoff consumes the frame's tag set by clearing both sides' tag
- * records; each side's next successful tag record re-arms only its own half, so the set is
- * eligible again only when both sides re-record under equal indexes - repeating one side
- * alone stays refused. A handoff whose PRESENT_START marker succeeded but whose PRESENT_END
- * marker failed also consumes the frame exactly like a successful one: its START already
- * reached the Reflex plugin, so a retry would emit a second START for the same frame, and
- * the FAIL result returns with the frame ineligible instead.
+ * records (so the set is eligible again only when both sides re-record under equal indexes -
+ * repeating one side alone stays refused) and arms the present bracket: the retained token
+ * survives the handoff, because the bracket's Reflex markers are emitted around the actual
+ * queue present by mc_dlss_present_start and mc_dlss_present_end, and the END consumes the
+ * token. A bracket whose PRESENT_END marker failed also consumes the frame exactly like a
+ * successful one: its START already reached the Reflex plugin, so a retry would emit a
+ * second START for the same frame, and the FAIL result returns with the frame ineligible
+ * instead.
  *
  * Records no GPU work: the frame's tagged resources stay in the layouts the tags declared
  * (GENERAL depth and motion, eValidUntilPresent lifetime) until Streamline's present path
@@ -589,6 +634,35 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo*
  * mc_dlss_acquire_images.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void);
+
+/*
+ * Emits the PRESENT_START Reflex marker of the armed present bracket under the frame's
+ * retained token, on the caller's (present) thread immediately before the queue present.
+ *
+ * The DLSS-G guide requires the frame index carried by the Reflex present markers to match
+ * the index carried by the common constants, and the plugin correlates the presented frame
+ * with its constants through PRESENT_START - a frame presented without it never generates.
+ * The marker call reaches the plugin directly and is recorded in the present-marker log
+ * immediately; the frame's tag set was already consumed by the handoff, so the bracket's
+ * half is the token armed by mc_dlss_present_handoff and consumed by mc_dlss_present_end.
+ * Answers FAIL_NotInitialized while the Streamline session is not ready and
+ * FAIL_InvalidParameter when no handoff armed the bracket (or the frame token is gone).
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_start(void);
+
+/*
+ * Emits the PRESENT_END Reflex marker of the armed present bracket under the frame's
+ * retained token, on the caller's (present) thread immediately after the queue present
+ * returned, and consumes the bracket.
+ *
+ * The END closes the bracket the START opened around the queue present. Whether the marker
+ * call succeeded or failed, the bracket is the composed frame's terminal act: the frame is
+ * consumed exactly like a successful one, so a retry cannot emit a second START for the same
+ * frame, and the next frame's tags obtain a fresh token under a fresh index. Answers
+ * FAIL_NotInitialized while the Streamline session is not ready and FAIL_InvalidParameter
+ * when no handoff armed the bracket (or the frame token is gone).
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_end(void);
 
 /*
  * The present-marker oracle: how many PRESENT_START and PRESENT_END markers this module has
@@ -661,13 +735,13 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_value(uint64_t vk_device
                                                                uint64_t value);
 
 /*
- * Reads the live DLSS-G state through slDLSSGGetState: the DLSSGStatus word, the count of
- * frames actually presented since the previous state query, the value the input-processing
+ * Reads the live DLSS-G state through slDLSSGGetState: the DLSSGStatus word, actual
+ * presentations per app frame (two means one real plus one generated), the input-processing
  * completion timeline semaphore last reached, and the semaphore handle itself.
  *
  * The present-generation proof reads this through the ABI to observe the interposed
- * vkQueuePresentKHR path working: eDLSSGStatusOk (word zero) after presents, a presented-
- * frame counter that advances across a present window, and a completion-fence value that
+ * vkQueuePresentKHR path working: eDLSSGStatusOk (word zero) after presents, a presentation
+ * factor above one, and a completion-fence value that
  * advances with every presented frame the plugin processed - the same value
  * mc_dlss_wait_fg_inputs_idle waits on, read from the same query, so the two always travel
  * together. Refuses FAIL_NotInitialized while the Streamline session is not ready and

@@ -229,6 +229,31 @@ public interface NativeApi {
 	}
 
 	/**
+	 * Emits the PRESENT_START Reflex marker of the armed present bracket under the frame's
+	 * retained token, immediately before the queue present. The DLSS-G plugin correlates the
+	 * presented frame with its common constants through this marker, so a frame presented
+	 * without it never generates. Answers {@code FAIL_NotInitialized} while the session is
+	 * not ready and {@code FAIL_InvalidParameter} when no handoff armed the bracket.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #presentHandoff()}.
+	 */
+	default int presentStart() {
+		throw new UnsupportedOperationException("presentStart");
+	}
+
+	/**
+	 * Emits the PRESENT_END Reflex marker of the armed present bracket under the frame's
+	 * retained token, immediately after the queue present returned, and consumes the
+	 * bracket: whether the marker succeeded or failed, the frame is consumed exactly like a
+	 * successful one, so the next frame's tags obtain a fresh token under a fresh index.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #presentHandoff()}.
+	 */
+	default int presentEnd() {
+		throw new UnsupportedOperationException("presentEnd");
+	}
+
+	/**
 	 * The present-marker oracle: how many PRESENT_START and PRESENT_END markers this module
 	 * has actually emitted (per-type cumulative counts), the total event count, and the
 	 * recent event log in emission order, as reported by {@code mc_dlss_query_present_markers}.
@@ -300,14 +325,14 @@ public interface NativeApi {
 	/**
 	 * One snapshot of Streamline's live DLSS-G state, read through {@code slDLSSGGetState}
 	 * by {@code mc_dlss_query_fg_state}: the raw {@code DLSSGStatus} word (zero is
-	 * {@code eDLSSGStatusOk}, every failure is its own bit), the count of frames actually
-	 * presented since the previous state query (each read resets it), the value the
-	 * input-processing completion timeline semaphore last reached for the presented frames'
+	 * {@code eDLSSGStatusOk}, every failure is its own bit), actual presentations per app frame
+	 * (two means one real plus one generated), the value the input-processing completion
+	 * timeline semaphore last reached for the presented frames'
 	 * inputs, and the semaphore handle itself.
 	 *
 	 * <p>The present-generation proof reads this to observe the interposed {@code vkQueuePresentKHR}
-	 * path working: the status word after presents, a presented-frame counter that advances
-	 * across a present window, and a completion-fence value that advances with every presented
+	 * path working: the status word after presents, a presentation factor above one, and a
+	 * completion-fence value that advances with every presented
 	 * frame the plugin processed - the same value {@link #waitFgInputsIdle()} waits on, read
 	 * from the same query, so the two always travel together. Answers {@code FAIL_NotInitialized}
 	 * while the Streamline session is not ready and {@code FAIL_InvalidParameter} while the
@@ -319,6 +344,24 @@ public interface NativeApi {
 	 */
 	default FgState queryFgState() {
 		throw new UnsupportedOperationException("queryFgState");
+	}
+
+	/**
+	 * The camera constants the last successful evaluation recorded into Streamline's common
+	 * constants, as reported by {@code mc_dlss_query_camera_constants}: the jitter-free
+	 * row-major view-to-clip and clip-to-view matrices and the camera's world-space position
+	 * and orthonormal right/up/forward basis, exactly as {@link #evaluate(EvaluationRequest)}
+	 * carried them.
+	 *
+	 * <p>The constants oracle proves the caller's camera reached {@code slSetConstants}
+	 * unchanged - the constants the DLSS-G plugin interpolates the generated frame's camera
+	 * from. Answers {@code FAIL_NotInitialized} until an evaluation recorded constants at
+	 * least once.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #queryFgState()}.
+	 */
+	default CameraConstants queryCameraConstants() {
+		throw new UnsupportedOperationException("queryCameraConstants");
 	}
 
 	/**
