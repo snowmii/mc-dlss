@@ -459,10 +459,22 @@ class RenderRuntime(
 			readout: SessionReadout? = null,
 		): RenderRuntime {
 			val adapter = LifecycleAdapter(session, native)
+			// One policy for both seams that read the FG mode: the swapchain reconfigure path
+			// and the frame evaluation's FG composition. The evaluation reads the same `active`
+			// flag the controls toggle, so a mode transition changes the frames that follow
+			// exactly when it changes the swapchain policy.
+			val frameGeneration = FgSurfacePolicy(
+				invalidateSurfaceConfiguration = { Minecraft.getInstance().invalidateSurfaceConfiguration() },
+			)
 			return RenderRuntime(session, SceneTarget.forMinecraft(), frameEvaluation = FrameEvaluation(
 				adapter,
 				{ VulkanContextRegistry.getCurrent() },
 				readout,
+				frameGeneration,
+				// The frame's DLSS-G inputs resolve at recording time from the production
+				// targets: the main target as the HUD-less colour and the UI phase's held
+				// target as the UI colour+alpha, both output-sized (see WorldPhase).
+				fgInputs = { WorldPhase.resolveFgInputs() },
 			), reconfigure = adapter::reconfigure,
 			motionVectors = MotionVectorCompatibility(diagnostics),
 			quiesce = { adapter.waitDeviceIdle() },
@@ -470,9 +482,7 @@ class RenderRuntime(
 			// reconfigure path, so the next frame's renderFrame reconfigures the surface under
 			// the new policy. The flag itself is only a boolean write, safe from the client
 			// thread where the controls toggle it; the reconfigure happens between frames.
-			frameGeneration = FgSurfacePolicy(
-				invalidateSurfaceConfiguration = { Minecraft.getInstance().invalidateSurfaceConfiguration() },
-			), startup = {
+			frameGeneration = frameGeneration, startup = {
 				val context = VulkanContextRegistry.getCurrent()
 				val sdkPath = session.config.sdkPath
 				val dataPath = session.config.dataPath

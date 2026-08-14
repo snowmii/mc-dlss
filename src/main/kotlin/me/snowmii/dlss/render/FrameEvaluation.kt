@@ -2,6 +2,7 @@ package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.DlssEvaluationImages
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.dlss.bridge.FgTagRequest
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.MotionRequest
@@ -10,6 +11,7 @@ import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.Vec2
 import me.snowmii.dlss.bridge.VulkanContext
 import me.snowmii.dlss.bridge.VulkanContextRegistry
+import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.session.LifecycleAdapter
@@ -31,6 +33,20 @@ data class SceneResources(
 )
 
 /**
+ * One frame's DLSS-G inputs, in the flat ABI units [SceneResources] already uses.
+ *
+ * [hudless] is the output-sized HUD-less colour and [ui] the output-sized UI colour+alpha
+ * target the frame's FG tags name; the render-sized depth and the motion source come from the
+ * scene and the bridge's own images, so only these two cross. Resolved per frame by the
+ * runtime's supplier, which names the production main target and UI target - and only when
+ * FG is active and both exist at the output size; a null resolution records an SR-only frame.
+ */
+data class FgFrameInputs(
+	val hudless: ImageBinding,
+	val ui: ImageBinding,
+)
+
+/**
  * Records one frame's DLSS work onto Minecraft's own graphics submission.
  *
  * Everything beneath this class existed and nothing called it: the native bridge could allocate
@@ -39,10 +55,13 @@ data class SceneResources(
  * This is that path, and it is deliberately the only place in the mod that touches a command
  * buffer.
  *
- * The ordering is the contract. All three calls go on **one** buffer, motion first, then the
- * frame's resource tags, then the evaluation: the evaluation reads the image the motion pass
+ * The ordering is the contract. All calls go on **one** buffer, motion first, then the frame's
+ * resource tags, then the evaluation: the evaluation reads the image the motion pass
  * writes (the pass ends with the barrier that makes those writes visible) and consumes the
- * Streamline frame token the tag call obtained. The buffer comes from Minecraft's shared
+ * Streamline frame token the tag call obtained. An FG-active frame composes its DLSS-G
+ * record around that chain on the same buffer and token - FG options and FG tag before the
+ * SR tag, the SR evaluation, the FG re-tag, and one present handoff - while an inactive
+ * frame records SR only and makes no FG calls. The buffer comes from Minecraft's shared
  * command encoder and goes straight back to it, so the work lands behind the world render it
  * consumes and in front of whatever the frame does next. Nothing here submits a queue, signals
  * a fence, or idles the device: the encoder's existing timeline is what orders all of it.
@@ -59,6 +78,21 @@ class FrameEvaluation(
 	 * no reporting seam - tests and target-only runtimes.
 	 */
 	private val readout: SessionReadout? = null,
+	/**
+	 * The FG-mode policy this runtime's swapchain seams read and the controls toggle: an
+	 * active policy makes the frame's recording compose DLSS-G around the SR evaluation, and
+	 * an inactive one keeps the recording SR-only with no FG calls at all.
+	 */
+	private val frameGeneration: FgSurfacePolicy = FgSurfacePolicy(),
+	/**
+	 * The frame's DLSS-G inputs, resolved per frame at recording time, or null to record an
+	 * SR-only frame. Production resolves the main target and the UI phase's held target at
+	 * the output size; a frame whose UI target does not exist yet - the first frame, or a
+	 * resize frame whose held target is stale-sized - resolves null and stays SR-only, which
+	 * is safe because a tag naming an image the frame is about to destroy is worse than one
+	 * frame without FG.
+	 */
+	private val fgInputs: () -> FgFrameInputs? = { null },
 ) : AutoCloseable {
 	private var images: DlssEvaluationImages? = null
 	private var reportedFirstEvaluation = false
@@ -190,6 +224,37 @@ class FrameEvaluation(
 			return false
 		}
 
+		// The FG frame composes its DLSS-G record around the SR evaluation, and only when the
+		// policy is active AND the runtime resolved this frame's FG inputs. An inactive frame
+		// or one without both output-sized targets records SR-only below: no FG options, no FG
+		// tags, no handoff.
+		val fg = if (frameGeneration.active) fgInputs() else null
+
+		if (fg != null) {
+			// The frame's DLSS-G options record first, with the back-buffer count the
+			// swapchain policy declares: the FG tag refuses until the stored configuration has
+			// options, and a per-frame record also heals the invalidation a replaced SR
+			// configuration leaves behind. The handoff re-records the same options at the end
+			// of the frame, which is the guide's per-frame slDLSSGSetOptions.
+			if (!adapter.configureFg(FgSurfacePolicy.DEFAULT_DECLARED_BACK_BUFFERS)) {
+				return false
+			}
+			// The FG tag records BEFORE the SR tag, and obtains the Streamline frame token the
+			// SR tag reuses: the common plugin holds one tag per (buffer type, viewport) per
+			// frame, and the SR evaluation must read the depth and motion slots as the SR tag
+			// last wrote them, so the FG tag cannot be the last writer before it.
+			if (!adapter.tagFgResources(
+					FgTagRequest(
+						commandBuffer = handle,
+						depth = scene.depth,
+						hudless = fg.hudless,
+						ui = fg.ui,
+					),
+				)) {
+				return false
+			}
+		}
+
 		// The frame's SR resources tag between the motion stage and the evaluation, on the same
 		// buffer: the tag call obtains the Streamline frame token the evaluation consumes, and
 		// the DLSS plugin reads the tagged resources at evaluate time. The motion source is
@@ -206,7 +271,7 @@ class FrameEvaluation(
 			return false
 		}
 
-		return adapter.evaluate(
+		val evaluated = adapter.evaluate(
 			EvaluationRequest(
 				commandBuffer = handle,
 				color = scene.color,
@@ -218,7 +283,32 @@ class FrameEvaluation(
 				resetHistory = motion.reset,
 			),
 		)
-	}
+		if (!evaluated) {
+			return false
+		}
+
+		if (fg == null) {
+			return true
+		}
+
+		// The evaluation's restore leaves every FG-tagged resource - the shared depth and the
+		// bridge's motion image included - in the engine-resting GENERAL layout, so the frame
+		// re-declares its FG tags after it under the retained token: the present path reads
+		// the slots as they stand at present time, and they must declare the GENERAL layouts
+		// the images actually rest in until Present. The handoff is then the frame's terminal
+		// act, consuming the retained token exactly once so the next frame's tags advance it.
+		if (!adapter.tagFgResources(
+				FgTagRequest(
+					commandBuffer = handle,
+					depth = scene.depth,
+					hudless = fg.hudless,
+					ui = fg.ui,
+				),
+			)) {
+			return false
+		}
+		return adapter.presentHandoff()
+}
 
 	/**
 	 * Feeds the first evaluation to the session readout exactly once.

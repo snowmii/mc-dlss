@@ -79,6 +79,19 @@ class UiPhase(
 		get() = if (isOpen) target.current else null
 
 	/**
+	 * The held UI target, or null before the frame's first window allocated it.
+	 *
+	 * Read by the frame's DLSS-G composition at world-phase close, before the hand window
+	 * runs: the target persists across frames once a window allocated it, so a steady-state
+	 * frame's composition names the image the frame's own UI will be drawn into. A frame
+	 * whose target does not exist yet - the first frame, or a resize frame whose held target
+	 * is stale-sized - stays SR-only instead. Read-only and allocation-free, like every
+	 * accessor here.
+	 */
+	val uiTarget: RenderTarget?
+		get() = target.current
+
+	/**
 	 * Opens the hand window against the frame's main target: acquires the UI target at its size,
 	 * always clears it for the frame, and makes the override visible.
 	 *

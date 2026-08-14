@@ -1,5 +1,6 @@
 package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.readout.SessionFacts
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.bridge.DlssDimensions
@@ -413,7 +414,35 @@ class WorldPhase(
 		)
 
 		/**
-		 * Reads the `VkImage` / `VkImageView` handles and formats out of a scene target.
+		 * Production resolution of one frame's DLSS-G inputs, read by the evaluation at world
+		 * phase close: the main target as the output-sized HUD-less colour and the UI phase's
+		 * held target as the output-sized UI colour+alpha, with the UI target's size checked
+		 * against the main target's.
+		 *
+		 * The main target is the image the frame's SR output copy and the frame's UI composite
+		 * both write into, so it is the frame's HUD-less colour until Present consumes it; the
+		 * UI target is the frame's transparent overlay with its alpha. The world phase is
+		 * closed by the time this runs, so the getters answer the vanilla main target and no
+		 * override; the UI phase exists by then because the world phase's own initialization
+		 * built it. A frame whose UI target does not exist yet - the first frame, or a resize
+		 * frame whose held target is stale-sized against the recreated main target - resolves
+		 * null and records SR-only, because a DLSS-G tag naming an image the frame is about to
+		 * destroy is worse than one frame without FG. Returns null when either target is
+		 * missing, mismatched in size, or not a Vulkan view.
+		 */
+		internal fun resolveFgInputs(): FgFrameInputs? {
+			val main = Minecraft.getInstance().gameRenderer.mainRenderTarget() ?: return null
+			val ui = ClientRuntime.active().activeUiPhase()?.uiTarget ?: return null
+			if (ui.width != main.width || ui.height != main.height) {
+				return null
+			}
+			val hudless = colorBindingOf(main) ?: return null
+			val uiBinding = colorBindingOf(ui) ?: return null
+			return FgFrameInputs(hudless, uiBinding)
+		}
+
+		/**
+		 * Reads the `VkImage` / `VkImageView` handles and format out of a scene target.
 		 *
 		 * Every target the mod allocates is a [com.mojang.blaze3d.pipeline.TextureTarget] with
 		 * colour and depth, so both views are present and both are Vulkan views - but the backend
@@ -421,19 +450,29 @@ class WorldPhase(
 		 * A null result skips the frame's evaluation rather than crashing the render thread.
 		 */
 		private fun sceneResourcesOf(target: RenderTarget): SceneResources? {
-			val color = target.colorTextureView as? VulkanGpuTextureView ?: return null
+			val color = colorBindingOf(target) ?: return null
 			val depth = target.depthTextureView as? VulkanGpuTextureView ?: return null
 			return SceneResources(
-				color = ImageBinding(
-					view = color.vkImageView(),
-					image = color.texture().vkImage(),
-					format = VulkanConst.toVk(color.texture().getFormat()),
-				),
+				color = color,
 				depth = ImageBinding(
 					view = depth.vkImageView(),
 					image = depth.texture().vkImage(),
 					format = VulkanConst.toVk(depth.texture().getFormat()),
 				),
+			)
+		}
+
+		/**
+		 * Reads the colour `VkImage` / `VkImageView` handles and format out of a target's colour
+		 * view, the way [sceneResourcesOf] reads the scene target's colour. Null for a
+		 * non-Vulkan view (an OpenGL backend, or a test target).
+		 */
+		internal fun colorBindingOf(target: RenderTarget): ImageBinding? {
+			val color = target.colorTextureView as? VulkanGpuTextureView ?: return null
+			return ImageBinding(
+				view = color.vkImageView(),
+				image = color.texture().vkImage(),
+				format = VulkanConst.toVk(color.texture().getFormat()),
 			)
 		}
 
