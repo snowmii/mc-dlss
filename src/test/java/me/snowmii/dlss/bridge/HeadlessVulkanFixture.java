@@ -69,7 +69,6 @@ import org.lwjgl.vulkan.VkPresentInfoKHR;
 import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkQueueFamilyProperties;
 import org.lwjgl.vulkan.VkSemaphoreCreateInfo;
-import org.lwjgl.vulkan.VkSemaphoreWaitInfo;
 import org.lwjgl.vulkan.VkSubmitInfo;
 import org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR;
 import org.lwjgl.vulkan.VkSurfaceFormatKHR;
@@ -620,8 +619,10 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 	/**
 	 * One acquired swapchain image: its index and the binary semaphore the DLSS-G plugin
 	 * signals when its workload for the previous frame is submitted (the acquire semaphore
-	 * of the DLSS-G Vulkan contract). The host must wait on the semaphore before recording
-	 * anything against the image, which {@link #acquireNextImage(long)} does.
+	 * of the DLSS-G Vulkan contract). The signal is consumed by the frame's own submission:
+	 * {@link #submitAndSignal(VkCommandBuffer, long, long)} waits on it in the submit, so
+	 * the plugin's previous-frame workloads complete before the new frame's commands
+	 * execute. No host wait is involved.
 	 */
 	public record AcquiredImage(int index, long semaphore) {
 	}
@@ -632,9 +633,12 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 	 *
 	 * This is the DLSS-G Vulkan contract's acquire side: the plugin signals the binary
 	 * semaphore handed to vkAcquireNextImageKHR when its workloads are submitted, and the
-	 * host waits on it before starting the new frame. A fence alone would leave the plugin
-	 * nothing to signal, so the acquire carries a semaphore and the wait happens on the
-	 * host before the caller records anything against the image.
+	 * frame that uses the image must wait on that signal before its commands execute. The
+	 * wait belongs in the frame's queue submission (a VkSubmitInfo wait semaphore, which is
+	 * what {@link #submitAndSignal(VkCommandBuffer, long, long)} does), not on the host:
+	 * the acquire is a binary signal, and the GPU wait is what gives it meaning. The
+	 * semaphore is fixture-owned and destroyed at {@link #close()}, after the queue's last
+	 * submit has been fence-waited.
 	 */
 	public AcquiredImage acquireNextImage(final long swapchain) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -652,23 +656,16 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				swapchain,
 				FENCE_TIMEOUT_NANOSECONDS,
 				semaphore,
-				0L, // no fence: the plugin signals the semaphore, which the wait below observes
+				0L, // no fence: the plugin signals the semaphore, which the frame's submit waits on
 				MemorySegment.ofAddress(MemoryUtil.memAddress(indexPtr))
 			);
 			if (result != VK10.VK_SUCCESS) {
 				throw new IllegalStateException("vkAcquireNextImageKHR failed with VkResult " + result);
 			}
-			// The image must be writable before the frame's recording touches it: the acquire
-			// semaphore signals when the previous owner's use - and the DLSS-G plugin's
-			// submission for it - is done.
-			VkSemaphoreWaitInfo waitInfo = VkSemaphoreWaitInfo.calloc(stack)
-				.sType$Default()
-				.pSemaphores(stack.longs(semaphore))
-				.pValues(stack.longs(0L));
-			checkVk(
-				VK12.vkWaitSemaphores(device, waitInfo, FENCE_TIMEOUT_NANOSECONDS),
-				"vkWaitSemaphores(acquire)"
-			);
+			// No host wait here: the semaphore is binary and the signal's only consumer is the
+			// queue submission that waits on it (submitAndSignal's pWaitSemaphores). Recording
+			// commands against the image needs no readiness - only execution does, and the
+			// submit orders that.
 			return new AcquiredImage(indexPtr.get(0), semaphore);
 		}
 	}
@@ -690,12 +687,21 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 	}
 
 	/**
-	 * Ends the recording, submits it on the graphics queue signaling {@code signalSemaphore}
-	 * and waiting on a fence, and waits on the fence - the present semaphore of the DLSS-G
-	 * Vulkan contract, which the plugin's present processing waits on before adding its
-	 * workloads.
+	 * Ends the recording and submits it on the graphics queue, waiting on a fence.
+	 *
+	 * The submit waits on {@code waitSemaphore} - the acquire semaphore of the DLSS-G
+	 * Vulkan contract, signaled when the acquired image is ready for the frame - before the
+	 * frame's commands execute, and signals {@code signalSemaphore} - the present semaphore
+	 * of the contract, which the plugin's present processing waits on before adding its
+	 * workloads. The acquire semaphore is binary, so the queue consumes its signal in this
+	 * submit; the fixture keeps ownership of both semaphores and destroys them at
+	 * {@link #close()}, after the fence wait has made every queued use complete.
 	 */
-	public void submitAndSignal(final VkCommandBuffer commandBuffer, final long signalSemaphore) {
+	public void submitAndSignal(
+		final VkCommandBuffer commandBuffer,
+		final long waitSemaphore,
+		final long signalSemaphore
+	) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			checkVk(VK10.vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
 			LongBuffer fencePtr = stack.callocLong(1);
@@ -706,6 +712,10 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 			long fence = fencePtr.get(0);
 			VkSubmitInfo submitInfo = VkSubmitInfo.calloc(stack)
 				.sType$Default()
+				// The frame cannot touch the acquired image until the acquire signal arrives;
+				// the stage mask places that wait before the frame's colour writes.
+				.pWaitSemaphores(stack.longs(waitSemaphore))
+				.pWaitDstStageMask(stack.ints(VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT))
 				.pCommandBuffers(stack.pointers(commandBuffer))
 				.pSignalSemaphores(stack.longs(signalSemaphore));
 			checkVk(VK10.vkQueueSubmit(queue, submitInfo, fence), "vkQueueSubmit");

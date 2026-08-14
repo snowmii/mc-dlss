@@ -180,6 +180,20 @@ class FgPresentGenerationTest {
 					VK10.VK_IMAGE_ASPECT_COLOR_BIT,
 				)
 
+				// The DLSS-G plugin reads the presented frame's tagged inputs - depth, motion,
+				// colour, HUD-less, UI - at present time, so the standing-in engine targets carry
+				// real content before the first present: mid-depth, a static motion field (the
+				// module's motion pass writes camera motion in production; zero is the standing-in
+				// camera at rest), and the composited scene colour. Uninitialized memory would
+				// hand the plugin garbage inputs to interpolate from.
+				val fill = fixture.allocateAndBeginCommandBuffer()
+				fixture.recordColorClear(fill, color.image(), 0.5f, 0.5f, 0.5f, 1f)
+				fixture.recordDepthClear(fill, depth, 0.5f)
+				fixture.recordColorClear(fill, images.motion.image, 0f, 0f, 0f, 0f)
+				fixture.recordColorClear(fill, hudless.image(), 0.5f, 0.5f, 0.5f, 1f)
+				fixture.recordColorClear(fill, ui.image(), 0.5f, 0.5f, 0.5f, 1f)
+				fixture.endSubmitAndWait(fill)
+
 				// The hidden Win32 window the surface binds to is sized to the output, so the
 				// swapchain's extent is the output size the DLSS-G options declared for the
 				// backbuffer, and its image count is the declared back-buffer count - the
@@ -214,9 +228,12 @@ class FgPresentGenerationTest {
 				assertEquals(0, baseline.lastPresentInputsProcessingFenceValue, "no present has been processed yet")
 
 				// Two complete composed frames, each acquired, tagged, submitted, and presented
-				// through the interposed path. The DLSS-G plugin's input processing runs on its
-				// own queues after each present returns, so the fence value is polled rather
-				// than asserted on the spot.
+				// through the interposed path. Only the very first frame resets SR/FG history
+				// (there is nothing to interpolate from yet); every later frame keeps it, so the
+				// plugin has temporal continuity between consecutive presents - the continuity
+				// 2x generation interpolates across. The DLSS-G plugin's input processing runs
+				// on its own queues after each present returns, so the fence value is polled
+				// rather than asserted on the spot.
 				presentComposedFrame(
 					bridge,
 					fixture,
@@ -228,6 +245,7 @@ class FgPresentGenerationTest {
 					depth,
 					hudless,
 					ui,
+					resetHistory = true,
 				)
 				presentComposedFrame(
 					bridge,
@@ -240,6 +258,7 @@ class FgPresentGenerationTest {
 					depth,
 					hudless,
 					ui,
+					resetHistory = false,
 				)
 				val fenceAfterTwo = awaitFenceValueAbove(bridge, baseline.lastPresentInputsProcessingFenceValue)
 
@@ -256,8 +275,16 @@ class FgPresentGenerationTest {
 					"the input-processing completion fence must have advanced past zero",
 				)
 
-				// Two more presents in a clean query window: the counter is read once, after
-				// both presents, so it counts exactly this window's frames.
+				// Two more app presents in a fresh query window. The read above reset the
+				// presented-frame counter; the read that ends this window counts every frame
+				// the plugin actually presented for those two app presents - the two real
+				// frames plus the interpolated frame 2x generation inserts between them. A 1:1
+				// passthrough would return exactly 2; a count past 2 in one window is the
+				// generated-frame proof, with steady-state 2x (two plugin presents per app
+				// present) as the expected shape. The plugin emits its presents on its own
+				// queues after the app presents return, so the counter is polled rather than
+				// asserted on the spot.
+				val appPresents = 2
 				presentComposedFrame(
 					bridge,
 					fixture,
@@ -269,6 +296,7 @@ class FgPresentGenerationTest {
 					depth,
 					hudless,
 					ui,
+					resetHistory = false,
 				)
 				presentComposedFrame(
 					bridge,
@@ -281,11 +309,13 @@ class FgPresentGenerationTest {
 					depth,
 					hudless,
 					ui,
+					resetHistory = false,
 				)
-				val afterFour = bridge.queryFgState()
+				val afterFour = awaitPresentedFrameCountAbove(bridge, appPresents)
 				assertTrue(
-					afterFour.numFramesPresented >= 2,
-					"two frames must actually be presented per query window, got ${afterFour.numFramesPresented}",
+					afterFour.numFramesPresented > appPresents,
+					"2x generation must present more frames than the $appPresents app presents in " +
+						"one query window, got ${afterFour.numFramesPresented}",
 				)
 				assertEquals(
 					DLSSG_STATUS_OK,
@@ -310,6 +340,11 @@ class FgPresentGenerationTest {
 	 * frame on one command buffer (FG tag, SR tag, SR evaluation, FG re-declaration, present
 	 * handoff), transition the acquired image to the present layout, submit and wait, and
 	 * present through the interposed vkQueuePresentKHR.
+	 *
+	 * The DLSS-G Vulkan contract pairs every present with two binary semaphores: the acquire
+	 * semaphore the plugin signals when its workloads are submitted (the frame's own submit
+	 * waits on it before the frame's commands execute), and the present semaphore the plugin
+	 * waits on before adding its workloads, signaled by the frame's submit.
 	 */
 	private fun presentComposedFrame(
 		bridge: NativeApi,
@@ -322,11 +357,33 @@ class FgPresentGenerationTest {
 		depth: HeadlessVulkanFixture.EngineImage,
 		hudless: HeadlessVulkanFixture.EngineImage,
 		ui: HeadlessVulkanFixture.EngineImage,
+		resetHistory: Boolean,
 	) {
+		// Under eBlockNoClientQueues the plugin reads the tagged inputs of the previously
+		// presented frame on its own queues; the contract requires the app to wait on the
+		// input-processing completion fence before reusing those inputs for the next frame
+		// (the discipline the FG lifetime rung landed in production). The wait is a no-op
+		// before the first present (no fence exists yet), then serializes each frame against
+		// the plugin's read of the previous one - without it, back-to-back presents reuse the
+		// engine images while the plugin is still reading them.
+		assertEquals(
+			NativeApi.SUCCESS_RESULT,
+			bridge.waitFgInputsIdle(),
+			"the frame must wait for the previous present's input processing before reusing the inputs",
+		)
+		// The SL pacer schedules the interpolated frame between two real ones at half the app
+		// present interval, and drops it when the next real frame arrives too soon after the
+		// last (ProgrammingGuideDLSS_G 13.1: "the interpolated frame can be dropped if
+		// presents go out of sync"). Back-to-back presents would therefore present 1:1 no
+		// matter how healthy the plugin is; the test paces its presents like a real app at
+		// the same 60Hz the frame timing declares, giving the pacer room to insert the
+		// generated frame.
+		Thread.sleep(PRESENT_INTERVAL_MILLIS)
 		// The DLSS-G Vulkan contract pairs every present with two binary semaphores: the
-		// acquire semaphore the plugin signals when its workloads are submitted (the fixture
-		// waits it before the frame records), and the present semaphore the plugin waits on
-		// before adding its workloads, signaled by the frame's own submit.
+		// acquire semaphore the plugin signals when its workloads are submitted (the frame's
+		// submit waits on it before the frame's commands execute), and the present semaphore
+		// the plugin waits on before adding its workloads, signaled by the frame's own
+		// submit.
 		val acquired = fixture.acquireNextImage(swapchain.handle())
 		val presentSemaphore = fixture.createBinarySemaphore()
 		val frame = fixture.allocateAndBeginCommandBuffer()
@@ -363,7 +420,7 @@ class FgPresentGenerationTest {
 					jitter = Vec2(0.25f, -0.5f),
 					motionScale = Vec2(1f, 1f),
 					frameTimeMilliseconds = 16.6f,
-					resetHistory = true,
+					resetHistory = resetHistory,
 					renderDimensions = dimensions,
 				),
 			),
@@ -388,12 +445,36 @@ class FgPresentGenerationTest {
 			"the composed frame's complete equal-index tag set must hand off before the present",
 		)
 		fixture.recordPresentLayoutTransition(frame, swapchain.images()[acquired.index()])
-		fixture.submitAndSignal(frame, presentSemaphore)
+		fixture.submitAndSignal(frame, acquired.semaphore(), presentSemaphore)
 		assertEquals(
 			VK10.VK_SUCCESS,
 			fixture.present(swapchain.handle(), acquired.index(), presentSemaphore),
 			"the interposed vkQueuePresentKHR must succeed",
 		)
+	}
+
+	/**
+	 * Polls the DLSS-G state until the presented-frame counter exceeds [count] in one
+	 * query window, returning the last state read. Each read resets the counter, so the
+	 * first read that reports past [count] proves a window in which the plugin actually
+	 * presented more frames than the app presented - the generated-frame proof. The
+	 * plugin's presents are emitted on its own queues after the app presents return, so the
+	 * counter is not synchronous with vkQueuePresentKHR; the poll is bounded so a plugin
+	 * that stopped presenting fails the rung instead of hanging it.
+	 */
+	private fun awaitPresentedFrameCountAbove(bridge: NativeApi, count: Int): FgState {
+		val deadline = System.nanoTime() + FENCE_ADVANCE_TIMEOUT_NANOSECONDS
+		var state = bridge.queryFgState()
+		while (state.numFramesPresented <= count) {
+			assertTrue(
+				System.nanoTime() < deadline,
+				"timed out waiting for the presented-frame counter to exceed $count " +
+					"(status=${state.status}, presented=${state.numFramesPresented})",
+			)
+			Thread.sleep(100)
+			state = bridge.queryFgState()
+		}
+		return state
 	}
 
 	/**
@@ -444,5 +525,12 @@ class FgPresentGenerationTest {
 
 		/** The plugin reads presented inputs asynchronously; give it a generous window. */
 		private const val FENCE_ADVANCE_TIMEOUT_NANOSECONDS = 120_000_000_000L
+
+		/**
+		 * App presents are paced at 60Hz like a real application: the SL pacer drops an
+		 * interpolated frame that lands too close to the previous real one, so a frame
+		 * interval near the display rate is what gives generation room to present.
+		 */
+		private const val PRESENT_INTERVAL_MILLIS = 16L
 	}
 }
