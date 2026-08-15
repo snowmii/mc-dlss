@@ -40,10 +40,14 @@ class RuntimeControls(
 	/**
 	 * Switches FG off or back on. Every real transition recreates the swapchain through
 	 * Minecraft's own reconfigure path, exactly once, so the frames that follow run under
-	 * the non-FIFO and back-buffer policy the mode needs.
+	 * the non-FIFO and back-buffer policy the mode needs; switching off also re-records the
+	 * DLSS-G options in the retained eOff mode exactly once on the transition, while the SR
+	 * session and the UI split stay untouched. A user-off policy re-arms, and a re-arm of a
+	 * status-latched policy stays refused - the readout reports the state actually in effect
+	 * either way.
 	 */
 	fun toggleFrameGeneration() {
-		surfacePolicy.setFrameGenerationActive(!surfacePolicy.active)
+		runtime.setFrameGenerationEnabled(!surfacePolicy.active)
 		announce(readout())
 	}
 

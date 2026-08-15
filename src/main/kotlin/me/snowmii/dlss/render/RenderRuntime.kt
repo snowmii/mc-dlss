@@ -114,11 +114,12 @@ class RenderRuntime(
 	 */
 	private val pollFgState: () -> FgState? = { null },
 	/**
-	 * Re-records the DLSS-G options in the eOff mode (retained resources) after the status
-	 * latch, or does nothing for a runtime without FG wiring. Runs exactly once per latch;
-	 * the SR session stays READY, so this is deliberately not a session-latching call.
+	 * Re-records the DLSS-G options in the eOff mode (retained resources) when FG switches
+	 * off, or does nothing for a runtime without FG wiring: the status latch and the user
+	 * toggle both go through it, each recording exactly once on its own transition. The SR
+	 * session stays READY, so this is deliberately not a session-latching call.
 	 */
-	private val latchFgOff: () -> Unit = {},
+	private val recordFgModeOff: () -> Unit = {},
 	/** Emits diagnostics; the FG status latch reports its one exact line through this. */
 	private val diagnostics: (String) -> Unit = {},
 ) : AutoCloseable {
@@ -358,6 +359,31 @@ class RenderRuntime(
 	}
 
 	/**
+	 * Switches FG on or off for the frames that follow, and reports whether anything changed.
+	 *
+	 * The user-toggle half of the M-13 disable path, one seam above the policy so the toggle
+	 * and its side effect cannot be separated: the mode transition runs through
+	 * [FgSurfacePolicy.setFrameGenerationActive] - invalidating the surface configuration
+	 * exactly once when the mode actually changes and restoring the vsync and image-count
+	 * reads on the way off - and a transition to off re-records the DLSS-G options in the
+	 * eOff mode with retained resources exactly once, through the same non-latching adapter
+	 * path the status latch uses. The SR session stays READY and the UI split stays active
+	 * either way: switching off degrades nothing, and a user-off policy re-arms on the next
+	 * on transition (the first FG frame re-records the eOn options per frame). A re-arm of a
+	 * status-latched policy answers false: the user toggle cannot overturn the plugin's own
+	 * failure verdict, and the latch's one exact diagnostic stays the only one.
+	 */
+	fun setFrameGenerationEnabled(enabled: Boolean): Boolean {
+		if (!frameGeneration.setFrameGenerationActive(enabled)) {
+			return false
+		}
+		if (!enabled) {
+			recordFgModeOff()
+		}
+		return true
+	}
+
+	/**
 	 * Re-renders at [mode] with [preset] from the next frame on, and reports whether it took.
 	 *
 	 * A mode change is a different render size, so everything sized from that size is rebuilt: the
@@ -509,7 +535,7 @@ class RenderRuntime(
 		if (!frameGeneration.latchOff()) {
 			return
 		}
-		latchFgOff()
+		recordFgModeOff()
 		diagnostics(
 			"Frame generation latched off: slDLSSGGetState status=0x" +
 				status.toString(16) +
@@ -568,10 +594,11 @@ class RenderRuntime(
 			waitForFgInputs = { adapter.waitFgInputsIdle() },
 			// The per-frame status poll reads the same live DLSS-G state the input wait's
 			// fence came from; a non-OK status latches FG off through the policy while the SR
-			// session stays READY. The latch's eOff options record goes through the same
-			// adapter, non-latching like the poll itself.
+			// session stays READY. The off-transition eOff options record - the status latch's
+			// and the user toggle's alike - goes through the same adapter, non-latching like
+			// the poll itself.
 			pollFgState = { adapter.queryFgState() },
-			latchFgOff = { adapter.recordFgModeOff() },
+			recordFgModeOff = { adapter.recordFgModeOff() },
 			diagnostics = diagnostics,
 			// Every FG mode transition recreates the swapchain through Minecraft's own
 			// reconfigure path, so the next frame's renderFrame reconfigures the surface under

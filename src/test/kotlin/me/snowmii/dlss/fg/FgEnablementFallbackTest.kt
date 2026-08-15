@@ -17,6 +17,7 @@ import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.PresentTarget
 import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.VulkanContext
+import me.snowmii.dlss.client.RuntimeControls
 import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.render.DlssFrameMotion
@@ -45,13 +46,19 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
- * M-13 rung: status-driven FG-off session latch.
+ * M-13 rung: status-driven FG-off session latch and the user-toggle disable path.
  *
  * While FG is active, any status other than eDLSSGStatusOk (word zero) in the live
  * `slDLSSGGetState` read latches FG off for the session: the surface policy turns the mode
  * off (vsync and image-count reads restored, every re-arm refused), the DLSS-G options are
  * re-recorded in the eOff mode with retained resources, the SR session stays READY - the
  * fallback is SR-only, not vanilla - and one exact diagnostic names the status word.
+ *
+ * The user toggle rides the same seams with the opposite re-arm rule: switching FG off
+ * through the controls restores the policy reads and records the retained eOff options
+ * exactly once on the transition, leaves SR READY and the split active, and stays
+ * re-armable - while a status-latched policy keeps refusing the re-arm without a second
+ * diagnostic.
  *
  * The M-11 and M-12 rungs already proved the native seams live (present handoff, input
  * wait, markers); this rung proves the latch wiring off the render thread through the
@@ -194,6 +201,122 @@ class FgEnablementFallbackTest {
 			harness.session.state,
 			"the SR session must stay READY through the latched frame",
 		)
+	}
+
+	@Test
+	fun `the user toggle records the retained eOff options exactly once and re-arms with the SR session untouched`() {
+		val calls = RecordingNative()
+		val policy = FgSurfacePolicy()
+		val harness = harness(calls, policy)
+		val announced = mutableListOf<String>()
+		val controls = RuntimeControls(harness.runtime, announced::add)
+
+		// Arm through the controls: the reviewer's key press is the public boundary.
+		controls.toggleFrameGeneration()
+		assertTrue(policy.active, "the controls switch FG on")
+		assertFalse(policy.latched, "arming never latches")
+		assertEquals(0, calls.fgModeOffRecords, "arming records no mode")
+		assertTrue(announced.last().contains("fg on"), "the readout names the mode in effect: ${announced.last()}")
+
+		// One FG frame composes with the policy active and an OK status.
+		assertTrue(
+			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
+			"an FG frame must record and present",
+		)
+		assertEquals(1, calls.fgConfigures.size, "the FG frame records its options once")
+
+		// The user toggle off: the policy restores its reads, one retained eOff record runs,
+		// and nothing about the SR session changes.
+		controls.toggleFrameGeneration()
+		assertFalse(policy.active, "the controls switch FG off")
+		assertFalse(policy.latched, "a user toggle is not a latch")
+		assertEquals(1, calls.fgModeOffRecords, "the off transition records the eOff mode exactly once")
+		assertEquals(listOf(0), calls.fgModeValues, "the eOff record passes mode zero to the bridge")
+		assertTrue(policy.effectiveVsyncEnabled(true), "the reconfigure read is the stored vsync again")
+		assertEquals(2, policy.minImageCount(2), "the swapchain count is Minecraft's own again")
+		assertEquals(
+			DlssSessionState.READY,
+			harness.session.state,
+			"the user toggle must not touch the SR session: SR stays READY",
+		)
+		assertTrue(announced.last().contains("fg off"), "the readout names the mode in effect: ${announced.last()}")
+
+		// The SR-only frame after the toggle records no FG calls, still presents, and does
+		// not repeat the eOff record.
+		assertTrue(
+			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
+			"an SR-only frame after the user toggle must record and present",
+		)
+		assertEquals(1, calls.fgConfigures.size, "no FG options may record after the toggle")
+		assertEquals(2, calls.fgTags.size, "no FG tags may record after the toggle")
+		assertEquals(1, calls.handoffs, "no present handoff may record after the toggle")
+		assertEquals(1, calls.fgModeOffRecords, "the eOff record must stay attached to the one transition")
+
+		// Re-arm through the controls: a user-off policy is re-armable, and the first FG
+		// frame re-records the eOn options through the per-frame options record.
+		controls.toggleFrameGeneration()
+		assertTrue(policy.active, "a user-off policy re-arms")
+		assertFalse(policy.latched)
+		assertEquals(1, calls.fgModeOffRecords, "re-arming records no mode")
+		assertTrue(
+			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
+			"the re-armed frame must compose FG again",
+		)
+		assertEquals(2, calls.fgConfigures.size, "the re-armed frame re-records the eOn options")
+
+		// And off again records once more: exactly once per off transition, never per frame.
+		controls.toggleFrameGeneration()
+		assertFalse(policy.active)
+		assertEquals(2, calls.fgModeOffRecords, "each off transition records exactly once")
+		assertEquals(listOf(0, 0), calls.fgModeValues, "each eOff record passes mode zero")
+		assertEquals(
+			DlssSessionState.READY,
+			harness.session.state,
+			"the SR session stays READY through both user cycles",
+		)
+	}
+
+	@Test
+	fun `a status-latched policy refuses the user re-arm without a second diagnostic or record`() {
+		val calls = RecordingNative()
+		val policy = FgSurfacePolicy()
+		val harness = harness(calls, policy)
+		val announced = mutableListOf<String>()
+		val controls = RuntimeControls(harness.runtime, announced::add)
+
+		controls.toggleFrameGeneration()
+		assertTrue(policy.active, "the session starts with FG active")
+		calls.status = FgState(2, 1, 0L, 0L)
+		assertNotNull(
+			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS),
+			"the latched frame must still route to the scene target: SR stays READY",
+		)
+		harness.runtime.endWorldPhase()
+		assertTrue(policy.latched, "the bad status must latch")
+		assertEquals(1, calls.fgModeOffRecords, "the latch records the eOff mode")
+		assertEquals(1, harness.probe.diagnostics.size, "the latch emits its one exact diagnostic")
+
+		// The user re-arm is refused: the plugin's own failure verdict may not be overturned,
+		// and the refusal records nothing and emits no new diagnostic.
+		controls.toggleFrameGeneration()
+		assertFalse(policy.active, "the re-arm after the latch must stay refused")
+		assertTrue(policy.latched)
+		assertEquals(1, calls.fgModeOffRecords, "the refused re-arm records no mode")
+		assertEquals(
+			listOf(
+				"Frame generation latched off: slDLSSGGetState status=0x2 (eDLSSGStatusOk=0); " +
+					"eOff options retained, vsync restored, SR session stays READY, re-arm refused.",
+			),
+			harness.probe.diagnostics,
+			"the latch's one exact diagnostic must remain the only one",
+		)
+		assertTrue(announced.last().contains("fg off"), "the readout reports the state actually in effect: ${announced.last()}")
+
+		// A second attempt changes nothing either.
+		controls.toggleFrameGeneration()
+		assertFalse(policy.active, "the re-arm must stay refused on every attempt")
+		assertEquals(1, harness.probe.diagnostics.size, "no attempt may emit a new diagnostic")
+		assertEquals(1, calls.fgModeOffRecords, "no attempt may record a new mode")
 	}
 
 	@Test
@@ -371,11 +494,11 @@ class FgEnablementFallbackTest {
 			frameEvaluation = evaluation,
 			frameGeneration = policy,
 			waitForFgInputs = { adapter.waitFgInputsIdle() },
-			// Production wiring shape: the poll reads through the adapter, the latch records
-			// the eOff mode through it too, and the one exact diagnostic is emitted through
-			// the diagnostics seam.
+			// Production wiring shape: the poll reads through the adapter, the off-transition
+			// eOff record (status latch and user toggle alike) goes through it too, and the
+			// latch's one exact diagnostic is emitted through the diagnostics seam.
 			pollFgState = { adapter.queryFgState() },
-			latchFgOff = { adapter.recordFgModeOff() },
+			recordFgModeOff = { adapter.recordFgModeOff() },
 			diagnostics = { probe.diagnostics += it },
 		)
 		return Harness(runtime, session, evaluation, probe)
@@ -446,6 +569,7 @@ class FgEnablementFallbackTest {
 		val fgTags = mutableListOf<FgTagRequest>()
 		val fgConfigures = mutableListOf<Int>()
 		var fgModeOffRecords = 0
+		val fgModeValues = mutableListOf<Int>()
 		var handoffs = 0
 
 		override fun initialize(
@@ -487,6 +611,7 @@ class FgEnablementFallbackTest {
 		override fun queryFgState(): FgState = status
 
 		override fun setFgMode(fgEnabled: Int): Int {
+			fgModeValues += fgEnabled
 			fgModeOffRecords++
 			order += "setFgModeOff"
 			return NativeApi.SUCCESS_RESULT
