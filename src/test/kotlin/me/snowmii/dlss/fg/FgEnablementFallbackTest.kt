@@ -20,6 +20,7 @@ import me.snowmii.dlss.bridge.VulkanContext
 import me.snowmii.dlss.client.RuntimeControls
 import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.mrt.MotionVectorRoute
+import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitter
 import me.snowmii.dlss.render.DlssJitterOffset
@@ -66,6 +67,11 @@ import org.lwjgl.vulkan.VkCommandBuffer
  * unsupported frame (pause, loading, menu, panorama, resize, fullscreen transition)
  * suspends exactly once per transition, the frames in between compose SR-only, a supported
  * frame resumes, and a user-off or latched policy stays off through the whole cycle.
+ *
+ * A level-change discontinuity resets the shared history: the first supported composed frame
+ * afterwards records resetHistory through the shared evaluation seam and the next frame
+ * accumulates normally, while FG stays on and suspension, user-off, and session-latch
+ * precedence stay intact.
  *
  * The M-11 and M-12 rungs already proved the native seams live (present handoff, input
  * wait, markers); this rung proves the latch wiring off the render thread through the
@@ -131,6 +137,90 @@ class FgEnablementFallbackTest {
 		assertEquals(2, calls.fgConfigures.size, "the resumed frame re-records the eOn options per frame")
 		assertTrue(announced.last().contains("fg on"), "the readout reports the resumed mode: ${announced.last()}")
 	}
+
+	@Test
+	fun `the frame after a level change discontinuity composes FG with the shared reset flag recorded`() {
+		val calls = RecordingNative()
+		val policy = FgSurfacePolicy()
+		val harness = harness(calls, policy)
+		val announced = mutableListOf<String>()
+		val controls = RuntimeControls(harness.runtime, announced::add)
+
+		// Arm FG through the controls and compose one supported frame, so the history starts
+		// fresh and the next one accumulates against it.
+		controls.toggleFrameGeneration()
+		assertTrue(policy.active, "the session starts with FG active")
+		composeSupportedFrame(harness, stillCamera())
+		assertTrue(calls.evaluations[0].resetHistory, "the first frame of a session restarts history")
+
+		composeSupportedFrame(harness, stillCamera())
+		assertFalse(calls.evaluations[1].resetHistory, "the second frame accumulates against the first")
+
+		// The level-change discontinuity: the scene is replaced, so the history the new world
+		// would accumulate is worthless. Production reaches this seam from the client thread
+		// through WorldPhase.resetHistory, which delegates here.
+		harness.runtime.resetHistory()
+
+		// The first supported composed frame after the change records the reset flag through
+		// the shared evaluation seam, and still composes FG.
+		composeSupportedFrame(harness, stillCamera())
+		assertTrue(
+			calls.evaluations[2].resetHistory,
+			"the first composed frame after the discontinuity must record resetHistory",
+		)
+		assertEquals(3, calls.fgConfigures.size, "the reset frame still composes FG: no frame is classified unsupported")
+
+		// The next frame accumulates normally against the reset frame.
+		composeSupportedFrame(harness, stillCamera())
+		assertFalse(calls.evaluations[3].resetHistory, "the frame after the reset accumulates normally")
+		assertEquals(4, calls.fgConfigures.size, "every frame here composes FG")
+
+		// The discontinuity leaves every other precedence intact: FG stays on, nothing suspends
+		// or latches, nothing re-records the eOff mode, and the SR session stays READY.
+		assertTrue(policy.active, "a discontinuity is not a suspension: FG stays on")
+		assertFalse(policy.latched, "a discontinuity is not a latch")
+		assertEquals(0, calls.fgModeOffRecords, "a discontinuity records no eOff mode")
+		assertEquals(0, harness.probe.diagnostics.size, "a discontinuity emits no diagnostic")
+		assertEquals(DlssSessionState.READY, harness.session.state, "the SR session stays READY")
+		assertTrue(announced.last().contains("fg on"), "the readout still reports FG on: ${announced.last()}")
+	}
+
+	/** Runs one supported world phase and evaluates it against the phase's published values. */
+	private fun composeSupportedFrame(harness: Harness, camera: DlssCameraSample) {
+		assertNotNull(
+			harness.runtime.beginWorldPhase(
+				normalInWorldFrame = true,
+				outputDimensions = OUTPUT_DIMENSIONS,
+				camera = camera,
+			),
+			"the supported frame routes to the scene target",
+		)
+		val jitter = harness.runtime.activeJitter
+		val motion = harness.runtime.activeMotion
+		assertNotNull(jitter, "the supported frame publishes jitter")
+		assertNotNull(motion, "the supported frame publishes camera motion")
+		assertTrue(
+			harness.evaluation.evaluateFrame(
+				scene(),
+				jitter!!,
+				motion!!,
+				DESTINATION,
+				MotionVectorRoute.CAMERA_ONLY,
+				camera = camera,
+			),
+			"the supported frame must compose",
+		)
+		harness.runtime.endWorldPhase(completedDlssFrame = true)
+	}
+
+	/** A camera standing still, so consecutive frames are continuous and no reset is fabricated. */
+	private fun stillCamera() = DlssCameraSample(
+		projection = Matrix4f(),
+		viewRotation = Matrix4f(),
+		cameraX = 0.0,
+		cameraY = 100.0,
+		cameraZ = 0.0,
+	)
 
 	@Test
 	fun `unsupported frames never overturn a user-off policy or the session latch`() {
@@ -767,6 +857,7 @@ class FgEnablementFallbackTest {
 		var fgModeOffRecords = 0
 		val fgModeValues = mutableListOf<Int>()
 		var handoffs = 0
+		val evaluations = mutableListOf<EvaluationRequest>()
 
 		override fun initialize(
 			vkInstance: Long,
@@ -852,6 +943,7 @@ class FgEnablementFallbackTest {
 		}
 
 		override fun evaluate(request: EvaluationRequest): Int {
+			evaluations += request
 			order += "evaluate"
 			return NativeApi.SUCCESS_RESULT
 		}
