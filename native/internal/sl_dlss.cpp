@@ -552,6 +552,46 @@ int32_t query_reflex_markers(uint32_t* typeCounts, uint32_t* eventCount, uint32_
     return kSuccess;
 }
 
+int32_t record_reflex_options() noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The one registration the pinned Reflex guide requires: called once at the READY
+    // transition and never per frame, because the guide says there is no need to repeat the
+    // call while the options do not change. eLowLatency is the mode the contract pins even
+    // without a Reflex UI; frameLimitUs stays zero (no Reflex-side FPS cap - pacing is not
+    // this module's), and the marker/thread fields stay the SDK defaults.
+    sl::ReflexOptions options{};
+    options.mode = sl::ReflexMode::eLowLatency;
+    // The call count advances with the attempt itself, so the oracle proves the call
+    // happened exactly once whether or not the plugin accepted it.
+    g_state.reflexSetOptionsCalls += 1;
+    const sl::Result result = slReflexSetOptions(options);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    g_state.reflexOptionsRecorded = true;
+    g_state.reflexMode = static_cast<uint32_t>(sl::ReflexMode::eLowLatency);
+    return kSuccess;
+}
+
+int32_t query_reflex_options(uint32_t* mode, uint32_t* setOptionsCalls) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // No record means no registration to report, the same gate the FG options oracle uses:
+    // a session whose options never recorded has nothing to answer with.
+    if (!g_state.reflexOptionsRecorded) {
+        return kInvalidParameter;
+    }
+    if (mode == nullptr || setOptionsCalls == nullptr) {
+        return kInvalidParameter;
+    }
+    *mode = g_state.reflexMode;
+    *setOptionsCalls = g_state.reflexSetOptionsCalls;
+    return kSuccess;
+}
+
 // Blocks until the DLSS-G plugin's input-processing timeline semaphore reaches `value`, on
 // the caller's thread and through the Vulkan device. `value` is the value the plugin
 // reported under lastPresentInputsProcessingCompletionFenceValue for the inputs the last

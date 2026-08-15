@@ -107,6 +107,11 @@ class ReflexMarkersTest {
 				bridge.reflexMarkersOrNull(),
 				"the reflex-marker oracle before any marker must have no event to report",
 			)
+			assertEquals(
+				null,
+				bridge.reflexRegistrationOrNull(),
+				"the reflex options oracle before bootstrap must have no registration to report",
+			)
 		}
 
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
@@ -171,6 +176,14 @@ class ReflexMarkersTest {
 					"recording the options must not emit reflex markers",
 				)
 
+				// The Reflex options register only at the READY transition: a ready session
+				// that has not initialized yet has no registration to report.
+				assertEquals(
+					null,
+					bridge.reflexRegistrationOrNull(),
+					"the reflex options oracle must refuse until the READY transition records",
+				)
+
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.initialize(
@@ -181,6 +194,31 @@ class ReflexMarkersTest {
 						dataPath,
 					),
 					"initialize must record the activated Vulkan tuple",
+				)
+				// The READY transition registered the Reflex options exactly once: eLowLatency
+				// recorded, one slReflexSetOptions call.
+				assertEquals(
+					NativeApi.ReflexRegistration(LOW_LATENCY, 1),
+					bridge.queryReflexOptions(),
+					"initialize must register Reflex eLowLatency options exactly once",
+				)
+				// The idempotent repeat of the recorded tuple must not re-register: the
+				// exactly-once discipline lives on the transition, not on the repeat path.
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					bridge.initialize(
+						fixture.instanceAddress(),
+						fixture.physicalDeviceAddress(),
+						fixture.deviceAddress(),
+						dataPath,
+						dataPath,
+					),
+					"re-initializing with the recorded tuple must succeed without re-recording",
+				)
+				assertEquals(
+					NativeApi.ReflexRegistration(LOW_LATENCY, 1),
+					bridge.queryReflexOptions(),
+					"the idempotent re-initialize must not call slReflexSetOptions again",
 				)
 				val images = bridge.acquireImages()
 				assertTrue(images != null, "module images must be acquired before the frame")
@@ -485,6 +523,11 @@ class ReflexMarkersTest {
 					bridge.reflexMarkers(),
 					"the marker history must survive a per-frame reset and keep answering unchanged",
 				)
+				assertEquals(
+					NativeApi.ReflexRegistration(LOW_LATENCY, 1),
+					bridge.queryReflexOptions(),
+					"two composed frames and a reset must leave the one READY registration untouched",
+				)
 			}
 		}
 	}
@@ -574,6 +617,17 @@ class ReflexMarkersTest {
 		reflexMarkers()
 	} catch (error: NativeException) {
 		if (error.resultCode() == FAIL_NOT_INITIALIZED) {
+			null
+		} else {
+			throw error
+		}
+	}
+
+	/** Answers the registration oracle when a record exists, or null when it refuses. */
+	private fun Native.reflexRegistrationOrNull(): NativeApi.ReflexRegistration? = try {
+		queryReflexOptions()
+	} catch (error: NativeException) {
+		if (error.resultCode() == FAIL_NOT_INITIALIZED || error.resultCode() == FAIL_INVALID_PARAMETER) {
 			null
 		} else {
 			throw error
@@ -704,5 +758,11 @@ class ReflexMarkersTest {
 	private companion object {
 		/** NVSDK_NGX_Result_FAIL_NotInitialized = NVSDK_NGX_Result_Fail | 7 (0xBAD00000 | 7). */
 		private val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
+
+		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
+		private val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
+
+		/** sl::ReflexMode::eLowLatency, the mode the READY registration records. */
+		private val LOW_LATENCY = 1
 	}
 }

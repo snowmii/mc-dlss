@@ -219,6 +219,13 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(
  * `sdk_path` and `data_path` are compatibility inputs. The retired direct-NGX implementation
  * used them to locate its feature DLL and data; nothing in the Streamline stack consumes
  * them, so they are validated as well-formed paths and otherwise ignored.
+ *
+ * The first successful transition also records the Reflex options registration the pinned
+ * Reflex guide requires: one slReflexSetOptions call with sl::ReflexMode::eLowLatency. A
+ * failed registration does not fail the transition - the marker surface never latches the
+ * session, and Reflex registration must not gate the SR/FG session either - the oracle
+ * mc_dlss_query_reflex_options reports whether it succeeded. Repeating the recorded tuple
+ * re-records neither the tuple nor the Reflex options.
  */
 
 /*
@@ -761,6 +768,22 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_markers(
     uint32_t* event_count,
     uint32_t* events,
     uint32_t events_capacity);
+
+/*
+ * The reflex-options oracle: the sl::ReflexMode value the READY transition's
+ * slReflexSetOptions registration recorded (1 = eLowLatency) and how many
+ * slReflexSetOptions calls this session made.
+ *
+ * The pinned Reflex guide requires the app to call slReflexSetOptions at least once even
+ * with Reflex Low Latency off and no Reflex UI, and says not to repeat the call per frame
+ * while the options do not change; mc_dlss_initialize makes that one call, and this oracle
+ * proves it: `mode` is eLowLatency once the record succeeded, and `set_options_calls` is 1
+ * after one READY transition and stays 1 across idempotent re-initializes, composed frames,
+ * and resets. Answers FAIL_NotInitialized while the Streamline session is not ready and
+ * FAIL_InvalidParameter while no record exists or either out-pointer is null.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_options(uint32_t* mode,
+                                                               uint32_t* set_options_calls);
 
 /*
  * Emits the PRESENT_END Reflex marker of the armed present bracket under the frame's

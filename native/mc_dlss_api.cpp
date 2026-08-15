@@ -359,6 +359,14 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(const uint64_t vk_instance,
         g_state.physicalDevice = from_uint64<VkPhysicalDevice>(vk_physical_device);
         g_state.device = from_uint64<VkDevice>(vk_device);
         g_state.sessionReady = true;
+        // The READY transition's Reflex registration: one slReflexSetOptions with
+        // eLowLatency, the call the pinned Reflex guide requires even without a Reflex UI.
+        // The record's result is deliberately not latched into the transition's answer -
+        // Reflex registration must not gate the SR/FG session, exactly like the marker
+        // surface never latches it - the mc_dlss_query_reflex_options oracle reports
+        // whether it succeeded, and the human live witness reads the DLSS-G status for the
+        // runtime effect.
+        record_reflex_options();
         return kSuccess;
     } catch (...) {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -802,6 +810,16 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_markers(
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         return query_reflex_markers(type_counts, event_count, events, events_capacity);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_options(uint32_t* mode,
+                                                               uint32_t* set_options_calls) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_reflex_options(mode, set_options_calls);
     } catch (...) {
         return kFailure;
     }

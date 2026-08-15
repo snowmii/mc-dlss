@@ -252,6 +252,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle reflexRenderSubmitStart;
 	private final MethodHandle reflexRenderSubmitEnd;
 	private final MethodHandle queryReflexMarkers;
+	private final MethodHandle queryReflexOptions;
 	private final MethodHandle waitFgInputsValue;
 	private final MethodHandle queryFgState;
 	private final MethodHandle queryCameraConstants;
@@ -380,6 +381,13 @@ public final class Native implements AutoCloseable, NativeApi {
 				ValueLayout.ADDRESS, // events
 				JAVA_INT // events_capacity
 			)
+		);
+		// Optional like queryReflexMarkers: the ABI-probe DLL does not export the reflex
+		// options oracle either, while every real build since this symbol exists carries it.
+		this.queryReflexOptions = bindOptional(
+			lookup,
+			"mc_dlss_query_reflex_options",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
 		this.initialize = bind(
 			lookup,
@@ -817,6 +825,24 @@ public final class Native implements AutoCloseable, NativeApi {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-reflex-markers", error);
+		}
+	}
+
+	@Override
+	public NativeApi.ReflexRegistration queryReflexOptions() {
+		if (queryReflexOptions == null) throw new NativeException("query-reflex-options", new IllegalStateException("Native bridge lacks the reflex options oracle"));
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment mode = callArena.allocate(JAVA_INT);
+			final MemorySegment calls = callArena.allocate(JAVA_INT);
+			final int result = (int)this.queryReflexOptions.invokeExact(mode, calls);
+			if (result != SUCCESS) {
+				throw new NativeException("query-reflex-options", result);
+			}
+			return new NativeApi.ReflexRegistration(mode.get(JAVA_INT, 0), calls.get(JAVA_INT, 0));
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-reflex-options", error);
 		}
 	}
 

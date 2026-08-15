@@ -122,6 +122,25 @@ int32_t reflex_render_submit_end() noexcept;
 int32_t query_reflex_markers(uint32_t* typeCounts, uint32_t* eventCount, uint32_t* events,
                              uint32_t eventsCapacity) noexcept;
 
+// Records the Reflex options registration the READY transition makes: one slReflexSetOptions
+// call carrying sl::ReflexMode::eLowLatency and the SDK-default frame-limit and marker
+// fields - the single call the pinned Reflex guide requires even when Reflex Low Latency
+// would be off and there is no Reflex UI, and which the guide says not to repeat per frame
+// while the options do not change. Requires sl_session_ready (kNotInitialized). On success
+// the mode and the recorded flag are retained in state so the oracle answers; a failed call
+// records nothing but still counts as the one call this transition made, so the oracle
+// reports the attempt truthfully either way. The ABI layer (mc_dlss_initialize) decides how
+// a failure surfaces; this record never latches anything.
+int32_t record_reflex_options() noexcept;
+
+// The reflex-options oracle: the sl::ReflexMode value the recorded options carry (1 =
+// eLowLatency) and how many slReflexSetOptions calls this session made, so the test can
+// prove the registration succeeded at READY and that neither the idempotent re-initialize
+// nor the per-frame path called the plugin again. Answers kNotInitialized while the
+// Streamline session is not ready and kInvalidParameter while no record exists or either
+// out-pointer is null.
+int32_t query_reflex_options(uint32_t* mode, uint32_t* setOptionsCalls) noexcept;
+
 // The present-marker oracle: reports how many PRESENT_START and PRESENT_END markers this
 // module has actually emitted (per-type cumulative counts), the total event count, and the
 // recent event log in emission order. Each log entry is a (type, frame index) pair: the

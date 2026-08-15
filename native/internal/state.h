@@ -154,6 +154,18 @@ struct DlssState {
     // plugin holds and this stored value can never drift apart. reset_state clears it back to
     // the 2x default with the rest of the struct.
     uint32_t fgNumFramesToGenerate = 1;
+    // The Reflex options registration the READY transition records: one slReflexSetOptions
+    // call carrying sl::ReflexMode::eLowLatency, which the pinned Reflex guide requires
+    // even when Reflex Low Latency is off and there is no Reflex UI ("call at least once";
+    // the call need not repeat per frame while the options do not change).
+    // reflexOptionsRecorded is whether that call answered eOk, reflexMode is the mode value
+    // it recorded (1 = eLowLatency), and reflexSetOptionsCalls counts every slReflexSetOptions
+    // call this session made, so the exactly-once-at-READY discipline is provable: the
+    // idempotent re-initialize and the per-frame path must not add calls. reset_state clears
+    // all three with the rest of the struct.
+    bool reflexOptionsRecorded = false;
+    uint32_t reflexMode = 0;
+    uint32_t reflexSetOptionsCalls = 0;
     DlssOwnedImage motionImage;
     DlssOwnedImage outputImage;
     DlssMotionPass motionPass;

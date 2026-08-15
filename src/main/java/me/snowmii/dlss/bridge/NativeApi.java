@@ -30,6 +30,13 @@ public interface NativeApi {
 	 * <p>{@code sdkPath} and {@code dataPath} are compatibility inputs. The retired direct-NGX
 	 * implementation used them to locate its feature DLL and data; nothing in the Streamline
 	 * stack consumes them, so they are validated as well-formed paths and otherwise ignored.
+	 *
+	 * <p>The first successful transition also records the Reflex options registration the
+	 * pinned Reflex guide requires: one {@code slReflexSetOptions} call with
+	 * {@code sl::ReflexMode::eLowLatency}, retained in native state and reported by
+	 * {@link #queryReflexOptions()}. A failed registration does not fail the transition -
+	 * Reflex registration must not gate the SR/FG session - the oracle reports whether it
+	 * succeeded.
 	 */
 	int initialize(
 		long vkInstance,
@@ -433,6 +440,26 @@ public interface NativeApi {
 	}
 
 	/**
+	 * The Reflex registration the READY transition recorded, as reported by
+	 * {@code mc_dlss_query_reflex_options}: the {@code sl::ReflexMode} value the
+	 * {@code slReflexSetOptions} call carried and how many such calls this session made.
+	 *
+	 * <p>{@link #initialize(long, long, long, Path, Path)} makes the one call the pinned
+	 * Reflex guide requires - even with Reflex Low Latency off and no Reflex UI - and the
+	 * guide says not to repeat it per frame while the options do not change, so the oracle
+	 * answers {@code eLowLatency} and a call count of one after the READY transition, and
+	 * the count stays one across idempotent re-initializes, composed frames, and resets:
+	 * the exactly-once-at-READY proof.
+	 *
+	 * <p>Answers {@code FAIL_NotInitialized} while the Streamline session is not ready and
+	 * {@code FAIL_InvalidParameter} while no record exists. Default-implemented for the
+	 * same reason as {@link #reflexMarkers()}.
+	 */
+	default ReflexRegistration queryReflexOptions() {
+		throw new UnsupportedOperationException("queryReflexOptions");
+	}
+
+	/**
 	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
 	 * completed, on the caller's (present/render) thread and through the Vulkan device.
 	 *
@@ -706,6 +733,48 @@ public interface NativeApi {
 		public String toString() {
 			return "ReflexMarkerEvents{" + java.util.Arrays.toString(typeCounts)
 				+ " total=" + eventCount + " " + events + "}";
+		}
+	}
+
+	/**
+	 * The Reflex options registration the READY transition recorded: the {@code sl::ReflexMode}
+	 * value (1 is {@code eLowLatency}) and how many {@code slReflexSetOptions} calls this
+	 * session made.
+	 */
+	final class ReflexRegistration {
+		private final int mode;
+		private final int setOptionsCalls;
+
+		public ReflexRegistration(final int mode, final int setOptionsCalls) {
+			this.mode = mode;
+			this.setOptionsCalls = setOptionsCalls;
+		}
+
+		/** The recorded {@code sl::ReflexMode} value: 1 is {@code eLowLatency}. */
+		public int getMode() {
+			return mode;
+		}
+
+		/** How many {@code slReflexSetOptions} calls this session made. */
+		public int getSetOptionsCalls() {
+			return setOptionsCalls;
+		}
+
+		@Override
+		public boolean equals(final Object other) {
+			return other instanceof ReflexRegistration registration
+				&& registration.mode == mode
+				&& registration.setOptionsCalls == setOptionsCalls;
+		}
+
+		@Override
+		public int hashCode() {
+			return 31 * mode + setOptionsCalls;
+		}
+
+		@Override
+		public String toString() {
+			return "ReflexRegistration{mode=" + mode + " calls=" + setOptionsCalls + "}";
 		}
 	}
 }
