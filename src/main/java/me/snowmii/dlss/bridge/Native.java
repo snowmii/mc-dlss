@@ -260,6 +260,8 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle configure;
 	private final MethodHandle configureFg;
 	private final MethodHandle setFgMode;
+	private final MethodHandle setFgMultiplier;
+	private final MethodHandle queryFgMultiplier;
 	private final MethodHandle acquireImages;
 	private final MethodHandle releaseImages;
 	private final MethodHandle waitDeviceIdle;
@@ -409,6 +411,20 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_set_fg_mode",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // fg_enabled
+		);
+		// Optional like setFgMode: the ABI-probe DLL does not export the multiplier record
+		// either, while every real build since this symbol exists carries it.
+		this.setFgMultiplier = bindOptional(
+			lookup,
+			"mc_dlss_set_fg_multiplier",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // num_frames_to_generate
+		);
+		// Optional like setFgMultiplier: the ABI-probe DLL does not export the multiplier
+		// oracle either, while every real build since this symbol exists carries it.
+		this.queryFgMultiplier = bindOptional(
+			lookup,
+			"mc_dlss_query_fg_multiplier",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
 		this.acquireImages = bind(
 			lookup,
@@ -888,6 +904,37 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.setFgMode.invokeExact(fgEnabled);
 		} catch (Throwable error) {
 			throw nativeError("set-fg-mode", error);
+		}
+	}
+
+	@Override
+	public int setFgMultiplier(final int numFramesToGenerate) {
+		if (setFgMultiplier == null) throw new NativeException("set-fg-multiplier", new IllegalStateException("Native bridge lacks the FG multiplier record"));
+		try {
+			return (int)this.setFgMultiplier.invokeExact(numFramesToGenerate);
+		} catch (Throwable error) {
+			throw nativeError("set-fg-multiplier", error);
+		}
+	}
+
+	@Override
+	public FgMultiplier queryFgMultiplier() {
+		if (queryFgMultiplier == null) throw new NativeException("query-fg-multiplier", new IllegalStateException("Native bridge lacks the FG multiplier query"));
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment current = callArena.allocate(JAVA_INT);
+			final MemorySegment max = callArena.allocate(JAVA_INT);
+			final int result = (int)this.queryFgMultiplier.invokeExact(current, max);
+			if (result != SUCCESS) {
+				throw new NativeException("query-fg-multiplier", result);
+			}
+			return new FgMultiplier(
+				current.get(JAVA_INT, 0),
+				max.get(JAVA_INT, 0)
+			);
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-fg-multiplier", error);
 		}
 	}
 

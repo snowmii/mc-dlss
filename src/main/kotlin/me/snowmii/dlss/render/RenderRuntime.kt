@@ -3,6 +3,8 @@ import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.FgState
+import me.snowmii.dlss.bridge.FgMultiplier
+import me.snowmii.dlss.readout.AcceptanceRecord
 import me.snowmii.dlss.bridge.VulkanContextRegistry
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.bridge.DlssDimensions
@@ -123,6 +125,23 @@ class RenderRuntime(
 	 */
 	private val recordFgModeOff: () -> Unit = {},
 	/**
+	 * Reads the stored FG multiplier and the device's numFramesToGenerateMax through the
+	 * bridge, or null for a runtime without FG wiring or a session that cannot answer: the
+	 * F12 cycle computes its next value from this, so a null answer means no cycle.
+	 */
+	private val queryFgMultiplier: () -> FgMultiplier? = { null },
+	/**
+	 * Records a new FG multiplier with the bridge, or refuses for a runtime without FG
+	 * wiring: the native side validates the value against the device ceiling, and a
+	 * refusal leaves the multiplier in effect unchanged.
+	 */
+	private val recordFgMultiplier: (Int) -> Boolean = { false },
+	/**
+	 * Invalidates Minecraft's surface configuration once per real multiplier change, so the
+	 * next frame recreates the swapchain under the options the new multiplier records.
+	 */
+	private val invalidateSurfaceConfiguration: () -> Unit = {},
+	/**
 	 * Classifies whether the current frame may compose FG: a real (non-panorama) world frame
 	 * at the configured output size, plus whatever client state the production wiring adds
 	 * (pause, loading overlay, open screen, fullscreen flip). A false answer suspends the
@@ -158,6 +177,14 @@ class RenderRuntime(
 	 * whether the reviewer currently wants it, which is the switch AC-2 and AC-5 are witnessed by.
 	 */
 	var runtimeEnabled: Boolean = true
+		private set
+
+	/**
+	 * The FG multiplier in effect, in `numFramesToGenerate` units: 1 = 2x, 2 = 3x, and so on.
+	 * Starts at the 2x default and moves only when [setFgMultiplier]'s native record succeeds,
+	 * so it always names the multiplier the recorded options carry.
+	 */
+	var fgMultiplier: Int = 1
 		private set
 
 	/**
@@ -409,6 +436,44 @@ class RenderRuntime(
 	}
 
 	/**
+	 * Records a new FG multiplier and reports whether it took.
+	 *
+	 * A real change is the one seam where the surface reconfigure and the native record
+	 * cannot separate: the record runs first, and only a successful record moves
+	 * [fgMultiplier], updates the acceptance record's active multiplier, and invalidates the
+	 * surface configuration exactly once. A refused record (the device ceiling says no, or
+	 * the session cannot answer) changes nothing - the multiplier, the record holder, and
+	 * the surface all stay exactly as they were.
+	 */
+	fun setFgMultiplier(numFramesToGenerate: Int): Boolean {
+		if (numFramesToGenerate == fgMultiplier || numFramesToGenerate < 1) {
+			return false
+		}
+		if (!recordFgMultiplier(numFramesToGenerate)) {
+			return false
+		}
+		fgMultiplier = numFramesToGenerate
+		AcceptanceRecord.activeFgMultiplier = numFramesToGenerate
+		invalidateSurfaceConfiguration()
+		return true
+	}
+
+	/**
+	 * Cycles the FG multiplier from 2x up through the device ceiling and back to 2x.
+	 *
+	 * The next value is computed from the bridge's own read (the stored multiplier and the
+	 * device's numFramesToGenerateMax): 2x, 3x, ... ceiling, wrap to 2x. A device whose
+	 * ceiling is 2x (max = 1) is a no-op cycle, and a current value at or above the ceiling
+	 * wraps back down - an unsupported multiplier is never offered, and a refusal by the
+	 * native record leaves the runtime on the multiplier it was already running.
+	 */
+	fun cycleFgMultiplier(): Boolean {
+		val state = queryFgMultiplier() ?: return false
+		val next = if (state.max <= 1 || state.current >= state.max) 1 else state.current + 1
+		return setFgMultiplier(next)
+	}
+
+	/**
 	 * Re-renders at [mode] with [preset] from the next frame on, and reports whether it took.
 	 *
 	 * A mode change is a different render size, so everything sized from that size is rebuilt: the
@@ -642,6 +707,13 @@ class RenderRuntime(
 			// the poll itself.
 			pollFgState = { adapter.queryFgState() },
 			recordFgModeOff = { adapter.recordFgModeOff() },
+			// The F12 multiplier cycle reads the stored multiplier and the device ceiling
+			// through the same adapter as the status poll, records through it non-latching
+			// like the eOff record, and invalidates the surface configuration once per real
+			// change through Minecraft's own reconfigure path.
+			queryFgMultiplier = { adapter.queryFgMultiplier() },
+			recordFgMultiplier = { adapter.setFgMultiplier(it) },
+			invalidateSurfaceConfiguration = { Minecraft.getInstance().invalidateSurfaceConfiguration() },
 			diagnostics = diagnostics,
 			// The frame-support classifier's client half: the world-phase entry's own signals
 			// plus the client state that names the unsupported frames. The fullscreen check

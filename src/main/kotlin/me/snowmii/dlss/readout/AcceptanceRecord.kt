@@ -35,8 +35,17 @@ object AcceptanceRecord {
 	/** The pinned plugin set the contract's validation baseline requires next to the runtime. */
 	const val PINNED_PLUGIN_SET = "sl.dlss,sl.dlss_g,sl.reflex,sl.interposer"
 
-	/** The contract's single multiplier: one generated frame per rendered frame. */
+	/** The contract's default multiplier: one generated frame per rendered frame. */
 	const val FG_MULTIPLIER = "2x"
+
+	/**
+	 * The FG multiplier currently in effect, in `numFramesToGenerate` units (1 = 2x, 2 = 3x,
+	 * and so on), updated by the runtime when a multiplier cycle lands. The record reads this
+	 * by default, so the `fg-multiplier` field names the active multiplier rather than a
+	 * fixed 2x.
+	 */
+	@Volatile
+	var activeFgMultiplier: Int = 1
 
 	const val HEADING = "DLSS acceptance record (docs/sprint-acceptance.md#Required-PR-record)"
 
@@ -55,6 +64,11 @@ object AcceptanceRecord {
 		renderPreset: SRModelPreset,
 		outputDimensions: DlssDimensions,
 		renderDimensions: DlssDimensions?,
+		/**
+		 * The FG multiplier in `numFramesToGenerate` units (1 = 2x), defaulting to
+		 * [activeFgMultiplier] so the record reports the multiplier actually in effect.
+		 */
+		fgMultiplier: Int = activeFgMultiplier,
 	): String = buildString {
 		append(HEADING)
 		appendField("reviewer", REVIEWER_SUPPLIED)
@@ -71,7 +85,7 @@ object AcceptanceRecord {
 		appendField("render-preset", renderPreset.propertyValue)
 		appendField("output-resolution", outputDimensions.toString())
 		appendField("internal-resolution", renderDimensions?.toString() ?: UNAVAILABLE)
-		appendField("fg-multiplier", FG_MULTIPLIER)
+		appendField("fg-multiplier", "${fgMultiplier + 1}x")
 		appendField("checklist-result", REVIEWER_SUPPLIED)
 		appendField("overall-result", REVIEWER_SUPPLIED)
 	}

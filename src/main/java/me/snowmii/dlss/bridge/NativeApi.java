@@ -67,8 +67,9 @@ public interface NativeApi {
 	);
 
 	/**
-	 * Records the DLSS-G per-frame 2x options with Streamline's {@code slDLSSGSetOptions}:
-	 * mode on, one generated frame per real one, retained resources while off, UI
+	 * Records the DLSS-G per-frame options with Streamline's {@code slDLSSGSetOptions}:
+	 * mode on, the stored multiplier (one generated frame per real one, 2x, by default),
+	 * retained resources while off, UI
 	 * recomposition, the queue mode, the declared back-buffer count, the render/output
 	 * extents from the stored configuration, and the five required formats.
 	 *
@@ -107,6 +108,42 @@ public interface NativeApi {
 	 */
 	default int setFgMode(int fgEnabled) {
 		throw new UnsupportedOperationException("setFgMode");
+	}
+
+	/**
+	 * Records the DLSS-G frame multiplier through {@code slDLSSGSetOptions}:
+	 * {@code numFramesToGenerate} generated frames per rendered one (1 = 2x, 2 = 3x, and so
+	 * on). The native side validates the value against the device's
+	 * {@code DLSSGState::numFramesToGenerateMax} read fresh from {@code slDLSSGGetState}, so
+	 * an unsupported multiplier is refused rather than recorded; a refusal changes nothing.
+	 *
+	 * <p>The record keeps the validated eOn record's shape - mode, retained resources,
+	 * back-buffer count, extents, formats - and changes only {@code numFramesToGenerate}.
+	 * Answers {@code FAIL_NotInitialized} without a ready Streamline session and
+	 * {@code FAIL_InvalidParameter} while no DLSS-G options record is stored or the value is
+	 * outside 1..max.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int setFgMultiplier(int numFramesToGenerate) {
+		throw new UnsupportedOperationException("setFgMultiplier");
+	}
+
+	/**
+	 * The multiplier oracle: the {@code numFramesToGenerate} the recorded DLSS-G options
+	 * carry and the device's {@code numFramesToGenerateMax}, read fresh from
+	 * {@code slDLSSGGetState} by {@code mc_dlss_query_fg_multiplier}. The cycle the F12 key
+	 * drives wraps against the max so an unsupported multiplier is never offered.
+	 *
+	 * <p>Answers {@code FAIL_NotInitialized} while the Streamline session is not ready and
+	 * {@code FAIL_InvalidParameter} while the DLSS-G options have not recorded, the same
+	 * gates as {@link #queryFgState()}. The read performs no GPU work and never blocks.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #queryFgState()}.
+	 */
+	default FgMultiplier queryFgMultiplier() {
+		throw new UnsupportedOperationException("queryFgMultiplier");
 	}
 
 	/**

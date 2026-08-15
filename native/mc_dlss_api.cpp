@@ -439,6 +439,25 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_fg_mode(const uint32_t fg_enabled) 
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_fg_multiplier(const uint32_t num_frames_to_generate) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return record_fg_multiplier(num_frames_to_generate);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_multiplier(uint32_t* current,
+                                                              uint32_t* max) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_fg_multiplier(current, max);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_acquire_images(McDlssImage* motion,
                                                          McDlssImage* output) {
     try {

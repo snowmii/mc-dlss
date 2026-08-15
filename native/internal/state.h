@@ -147,6 +147,13 @@ struct DlssState {
     // re-record what a successful configure stored, and re-recording a caller-supplied value
     // each frame would let the per-frame record drift from the validated configuration.
     uint32_t fgNumBackBuffers = 0;
+    // The DLSS-G frame multiplier the recorded options carry, in numFramesToGenerate units:
+    // 1 = 2x, 2 = 3x, and so on. The default 2x record stores 1, and the last successful
+    // mc_dlss_set_fg_multiplier stores the cycled value; every FG options record - configure,
+    // mode switch, present handoff - re-records it through make_fg_options, so the options the
+    // plugin holds and this stored value can never drift apart. reset_state clears it back to
+    // the 2x default with the rest of the struct.
+    uint32_t fgNumFramesToGenerate = 1;
     DlssOwnedImage motionImage;
     DlssOwnedImage outputImage;
     DlssMotionPass motionPass;
@@ -237,6 +244,18 @@ void reset_state() noexcept;
 // configuration it was recorded for was replaced, the frame's resources are gone, or the
 // frame's tag call failed.
 void invalidate_frame_eligibility() noexcept;
+
+// Records the DLSS-G frame multiplier (implemented in sl_dlss.cpp, where the sl:: vocabulary
+// lives): re-records the stored options in the eOn mode with numFramesToGenerate set to
+// `numFramesToGenerate`, validated against the device's numFramesToGenerateMax read fresh
+// from slDLSSGGetState. Same ready/options gates as the mode record; a value outside
+// 1..max answers kInvalidParameter and changes nothing.
+int32_t record_fg_multiplier(uint32_t numFramesToGenerate) noexcept;
+
+// The multiplier oracle (implemented in sl_dlss.cpp): the numFramesToGenerate the recorded
+// options carry, and the device's numFramesToGenerateMax read fresh from slDLSSGGetState.
+// Same gates as the DLSS-G state read; both out-pointers are required.
+int32_t query_fg_multiplier(uint32_t* current, uint32_t* max) noexcept;
 
 // The module's own images have to exist, at the size the configuration stores, before anything
 // can be recorded into or out of them - and before they can be tagged for a frame.

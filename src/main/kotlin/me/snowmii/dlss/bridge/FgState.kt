@@ -22,3 +22,18 @@ data class FgState(
 	/** The Vulkan timeline semaphore the plugin signals input processing with. */
 	val inputsProcessingCompletionFence: Long,
 )
+
+/**
+ * The stored FG multiplier and the device ceiling, read through `mc_dlss_query_fg_multiplier`.
+ *
+ * [current] is the `numFramesToGenerate` the recorded DLSS-G options carry (`1` is 2x, `2` is
+ * 3x, and so on); [max] is the device's `DLSSGState::numFramesToGenerateMax` read fresh from
+ * `slDLSSGGetState` - the upper bound a multiplier cycle wraps against, so an unsupported
+ * multiplier is never offered.
+ */
+data class FgMultiplier(
+	/** The `numFramesToGenerate` the recorded DLSS-G options carry. */
+	val current: Int,
+	/** The device's `numFramesToGenerateMax`: the cycle's ceiling and wrap point. */
+	val max: Int,
+)

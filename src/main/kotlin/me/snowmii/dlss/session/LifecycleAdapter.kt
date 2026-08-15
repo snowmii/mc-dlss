@@ -5,6 +5,7 @@ import me.snowmii.dlss.bridge.DlssEvaluationImages
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.FgState
+import me.snowmii.dlss.bridge.FgMultiplier
 import me.snowmii.dlss.bridge.FgTagRequest
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.MotionRequest
@@ -115,13 +116,14 @@ class LifecycleAdapter(
 	}
 
 	/**
-	 * Records the DLSS-G per-frame 2x options with the bridge, declaring the swapchain's
+	 * Records the DLSS-G per-frame options with the bridge, declaring the swapchain's
 	 * back-buffer count.
 	 *
-	 * The record is fixed at the contract's single multiplier (mode on, one generated frame)
-	 * and reads everything else from the configuration the last successful configure stored,
-	 * so the bridge checks the ready session and the stored dimensions itself; a failure here
-	 * latches the session exactly like any other native stage.
+	 * The record carries the stored multiplier (one generated frame, 2x, by default; the
+	 * F12 cycle records another through [setFgMultiplier]) and reads everything else from the
+	 * configuration the last successful configure stored, so the bridge checks the ready
+	 * session and the stored dimensions itself; a failure here latches the session exactly
+	 * like any other native stage.
 	 */
 	fun configureFg(numBackBuffers: Int): Boolean {
 		if (session.state != DlssSessionState.READY) {
@@ -405,6 +407,46 @@ class LifecycleAdapter(
 			native.queryFgState()
 		} catch (_: Throwable) {
 			null
+		}
+	}
+
+	/**
+	 * Reads the stored FG multiplier and the device's numFramesToGenerateMax through the
+	 * bridge: the cycle's current value and its ceiling/wrap point.
+	 *
+	 * Same non-latching read-only posture as [queryFgState]: a session that cannot answer
+	 * (not READY, no options recorded, or a failed query) answers null and the cycle simply
+	 * does not run.
+	 */
+	fun queryFgMultiplier(): FgMultiplier? {
+		if (session.state != DlssSessionState.READY) {
+			return null
+		}
+		return try {
+			native.queryFgMultiplier()
+		} catch (_: Throwable) {
+			null
+		}
+	}
+
+	/**
+	 * Records a new FG multiplier with the bridge, validated natively against the device
+	 * ceiling.
+	 *
+	 * Deliberately non-latching like [recordFgModeOff]: a refused record (the device does
+	 * not support the value, or the session cannot answer) keeps the current multiplier in
+	 * effect and must not send the SR session to FALLBACK_LATCHED - the caller's readout
+	 * then reports the multiplier actually in effect, which is the contract's "a refusal
+	 * changes nothing" half.
+	 */
+	fun setFgMultiplier(numFramesToGenerate: Int): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			native.setFgMultiplier(numFramesToGenerate) == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
 		}
 	}
 

@@ -51,6 +51,20 @@ class RuntimeControls(
 		announce(readout())
 	}
 
+	/**
+	 * Cycles the FG multiplier 2x, 3x, ... up through the device ceiling and back to 2x,
+	 * then reports the multiplier actually in effect.
+	 *
+	 * The runtime computes the next value from the bridge's own read of the stored
+	 * multiplier and the device's numFramesToGenerateMax, so an unsupported multiplier is
+	 * never offered; a refused record leaves the session on the multiplier it was already
+	 * running and the readout says so.
+	 */
+	fun cycleFgMultiplier() {
+		runtime.cycleFgMultiplier()
+		announce(readout())
+	}
+
 	/** Switches DLSS off or back on, then reports what the frames after this one will be. */
 	fun toggleEnabled() {
 		runtime.setEnabled(!runtime.runtimeEnabled)
@@ -94,7 +108,7 @@ class RuntimeControls(
 		}
 		val internal = runtime.renderDimensions?.toString() ?: "not chosen yet"
 		return "DLSS $state" +
-			" | fg ${if (surfacePolicy.active) "on" else "off"}" +
+			" | fg ${if (surfacePolicy.active) "on" else "off"} at ${runtime.fgMultiplier + 1}x" +
 			" | mode ${runtime.qualityMode.propertyValue}" +
 			" | preset ${runtime.renderPreset.propertyValue}" +
 			" | internal $internal" +

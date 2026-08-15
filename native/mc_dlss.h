@@ -267,7 +267,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(
     uint32_t render_preset);
 
 /*
- * Records the DLSS-G per-frame 2x options with Streamline's slDLSSGSetOptions.
+ * Records the DLSS-G per-frame options with Streamline's slDLSSGSetOptions.
  *
  * Must be called after mc_dlss_bootstrap_streamline and mc_dlss_activate_vulkan_proxies and
  * after a successful mc_dlss_configure: the record answers FAIL_NotInitialized without a
@@ -275,8 +275,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(
  * holds zero dimensions. The call owns no command buffer, tags nothing, and creates no
  * feature - it only records what the next present applies.
  *
- * The record is fixed at the contract's single multiplier: mode eOn with
- * numFramesToGenerate = 1 (2x). The retained-resources flag, the UI-recomposition switch,
+ * The record's multiplier is the stored one: numFramesToGenerate = 1 (2x) from the
+ * default record, up to the device ceiling after mc_dlss_set_fg_multiplier. The
+ * retained-resources flag, the UI-recomposition switch,
  * and the queue-parallelism mode are recorded explicitly rather than inherited from the SDK
  * defaults, and the render/output extents and the five formats come from the stored
  * configuration: the backbuffer, HUD-less, and UI buffers at output size in RGBA8_UNORM, the
@@ -303,6 +304,35 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure_fg(uint32_t num_back_buffers)
  * the Kotlin policy's, not this record's.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_fg_mode(uint32_t fg_enabled);
+
+/*
+ * Records the DLSS-G frame multiplier through slDLSSGSetOptions:
+ * `num_frames_to_generate` generated frames per rendered one (1 = 2x, 2 = 3x, and so on).
+ * The value must lie between 1 and the device's DLSSGState::numFramesToGenerateMax, read
+ * fresh from slDLSSGGetState, so an unsupported multiplier is refused rather than recorded
+ * into options the plugin would silently misread.
+ *
+ * The record keeps the validated eOn record's shape - mode, retained resources, back-buffer
+ * count, render/output extents, formats - and changes only numFramesToGenerate. Answers
+ * FAIL_NotInitialized without a ready Streamline session and FAIL_InvalidParameter while no
+ * DLSS-G options record is stored (the same gates as the mode record) or the value is
+ * outside 1..max. A refused record changes nothing: the stored multiplier and the plugin's
+ * options stay exactly as they were.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_fg_multiplier(uint32_t num_frames_to_generate);
+
+/*
+ * The multiplier oracle: the numFramesToGenerate the recorded DLSS-G options carry and the
+ * device's DLSSGState::numFramesToGenerateMax, read fresh from slDLSSGGetState. The cycle
+ * the F12 key drives wraps against the max so an unsupported multiplier is never offered.
+ *
+ * Answers FAIL_NotInitialized while the Streamline session is not ready and
+ * FAIL_InvalidParameter while the DLSS-G options have not recorded (the same gates as
+ * mc_dlss_query_fg_state) or either output pointer is null. The read performs no GPU work
+ * and never blocks.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_multiplier(uint32_t* current,
+                                                              uint32_t* max);
 
 /*
  * Native-owned evaluation images.

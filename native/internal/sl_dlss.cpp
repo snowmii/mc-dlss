@@ -127,9 +127,11 @@ int32_t record_sr_options() noexcept {
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
 
-// The DLSS-G 2x option record, shared by mc_dlss_configure_fg (which stores it with the
-// caller's back-buffer count) and the per-frame present handoff (which re-records it with
-// the stored count). The record is fixed at the contract's single multiplier: 2x. Every
+// The DLSS-G option record, shared by mc_dlss_configure_fg (which stores it with the
+// caller's back-buffer count), the per-frame present handoff (which re-records it with
+// the stored count), the mode record, and the multiplier record. The multiplier field
+// carries the stored numFramesToGenerate (1 = 2x by default, cycled through
+// record_fg_multiplier up to the device ceiling). Every
 // field is stated explicitly rather than inherited from the SDK defaults, because each one
 // is a decision the guide calls out - retained resources for seamless pause/menu
 // suspension, UI recomposition for the split's separate HUD-less/UI inputs, and the
@@ -144,7 +146,11 @@ sl::DLSSGOptions make_fg_options(const uint32_t numBackBuffers,
                                   const sl::DLSSGMode mode) noexcept {
     sl::DLSSGOptions options{};
     options.mode = mode;
-    options.numFramesToGenerate = 1;
+    // The stored multiplier: 1 (2x) from the default record, up to the device ceiling
+    // numFramesToGenerateMax after a multiplier cycle. The per-frame handoff and the mode
+    // switch re-record the same stored value, so the options can never drift from the
+    // configuration the session cycles.
+    options.numFramesToGenerate = g_state.fgNumFramesToGenerate;
     options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
     options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockNoClientQueues;
     options.enableUserInterfaceRecomposition = sl::Boolean::eTrue;
@@ -218,6 +224,68 @@ int32_t record_fg_mode(const uint32_t fgEnabled) noexcept {
     const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0},
                                                 make_fg_options(g_state.fgNumBackBuffers, mode));
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
+}
+
+int32_t record_fg_multiplier(const uint32_t numFramesToGenerate) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The multiplier record is a field change on an existing options record, so the same
+    // gates as the mode record: nothing is recorded for a configuration that never
+    // validated its dimensions or whose options never recorded.
+    if (!g_state.fgOptionsRecorded || !valid_dimensions(g_state.outputWidth, g_state.outputHeight,
+                                                        g_state.renderWidth, g_state.renderHeight)) {
+        return kInvalidParameter;
+    }
+    // The device ceiling is read fresh from the plugin: numFramesToGenerateMax names the
+    // largest multiplier the current system can generate, and a value below the 2x floor
+    // or above the ceiling is refused here rather than recorded into options the plugin
+    // would silently misread. The same GetState call shape the state read uses; the
+    // options argument stays null like it does there.
+    sl::DLSSGState state{};
+    const sl::Result stateResult = slDLSSGGetState(sl::ViewportHandle{0}, state, nullptr);
+    if (stateResult != sl::Result::eOk) {
+        return static_cast<int32_t>(stateResult);
+    }
+    if (numFramesToGenerate < 1 || numFramesToGenerate > state.numFramesToGenerateMax) {
+        return kInvalidParameter;
+    }
+    // The record itself: the same shape as the validated eOn record - mode, retained
+    // resources, back-buffer count, extents, formats - with only numFramesToGenerate
+    // changed. The stored value is written before the record so make_fg_options reads it,
+    // and restored on failure, so a refused record leaves the stored configuration and the
+    // plugin's options exactly as they were.
+    const uint32_t previous = g_state.fgNumFramesToGenerate;
+    g_state.fgNumFramesToGenerate = numFramesToGenerate;
+    const sl::Result result = slDLSSGSetOptions(
+        sl::ViewportHandle{0}, make_fg_options(g_state.fgNumBackBuffers, sl::DLSSGMode::eOn));
+    if (result != sl::Result::eOk) {
+        g_state.fgNumFramesToGenerate = previous;
+        return static_cast<int32_t>(result);
+    }
+    return kSuccess;
+}
+
+int32_t query_fg_multiplier(uint32_t* current, uint32_t* max) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The stored multiplier is the recorded options', so the same gate as the state read:
+    // no options record means no multiplier to report.
+    if (!g_state.fgOptionsRecorded) {
+        return kInvalidParameter;
+    }
+    if (current == nullptr || max == nullptr) {
+        return kInvalidParameter;
+    }
+    sl::DLSSGState state{};
+    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{0}, state, nullptr);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    *current = g_state.fgNumFramesToGenerate;
+    *max = state.numFramesToGenerateMax;
+    return kSuccess;
 }
 
 // Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
