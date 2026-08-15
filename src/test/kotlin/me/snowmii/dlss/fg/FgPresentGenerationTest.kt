@@ -230,13 +230,15 @@ class FgPresentGenerationTest {
 				assertEquals(0, baseline.numFramesPresented, "no frame has presented yet")
 				assertEquals(0, baseline.lastPresentInputsProcessingFenceValue, "no present has been processed yet")
 
-				// Two complete composed frames, each acquired, tagged, submitted, and presented
-				// through the interposed path. Only the very first frame resets SR/FG history
-				// (there is nothing to interpolate from yet); every later frame keeps it, so the
-				// plugin has temporal continuity between consecutive presents - the continuity
+				// Two complete composed frames prime the plugin, each acquired, tagged, submitted, and
+				// presented through the interposed path. Only the very first frame resets SR/FG
+				// history (there is nothing to interpolate from yet); every later frame keeps it, so
+				// the plugin has temporal continuity between consecutive presents - the continuity
 				// 2x generation interpolates across. The DLSS-G plugin's input processing runs
 				// on its own queues after each present returns, so the fence value is polled
-				// rather than asserted on the spot.
+				// rather than asserted on the spot - and the poll keeps presenting composed
+				// frames while it waits, because generation needs a sustained present stream and
+				// a fixture that goes quiet after two frames starves it.
 				presentComposedFrame(
 					bridge,
 					fixture,
@@ -263,18 +265,32 @@ class FgPresentGenerationTest {
 					ui,
 					resetHistory = false,
 				)
-				val fenceAfterTwo = awaitFenceValueAbove(bridge, baseline.lastPresentInputsProcessingFenceValue)
+				val fenceAfterAdvance = awaitFenceValueAbove(bridge, baseline.lastPresentInputsProcessingFenceValue) {
+					presentComposedFrame(
+						bridge,
+						fixture,
+						swapchain,
+						dimensions,
+						outputWidth,
+						outputHeight,
+						color,
+						depth,
+						hudless,
+						ui,
+						resetHistory = false,
+					)
+				}
 
 				// DLSS-G reports OK on a live session that has presented: status is the raw
 				// eDLSSGStatusOk word (zero), and the fence advanced because the plugin read the
 				// two presented frames' tagged inputs on its own queues.
 				assertEquals(
 					DLSSG_STATUS_OK,
-					fenceAfterTwo.status,
+					fenceAfterAdvance.status,
 					"DLSS-G must report eDLSSGStatusOk after the interposed presents",
 				)
 				assertTrue(
-					fenceAfterTwo.lastPresentInputsProcessingFenceValue > 0L,
+					fenceAfterAdvance.lastPresentInputsProcessingFenceValue > 0L,
 					"the input-processing completion fence must have advanced past zero",
 				)
 
@@ -314,9 +330,9 @@ class FgPresentGenerationTest {
 				// the second window is strictly past the value after the first.
 				assertTrue(
 					afterFour.lastPresentInputsProcessingFenceValue >
-						fenceAfterTwo.lastPresentInputsProcessingFenceValue,
+						fenceAfterAdvance.lastPresentInputsProcessingFenceValue,
 					"the completion fence must advance with each presented frame: " +
-						"${fenceAfterTwo.lastPresentInputsProcessingFenceValue} then " +
+						"${fenceAfterAdvance.lastPresentInputsProcessingFenceValue} then " +
 						afterFour.lastPresentInputsProcessingFenceValue,
 				)
 			}
@@ -451,8 +467,18 @@ class FgPresentGenerationTest {
 	 * synchronous with vkQueuePresentKHR; the poll is the same discipline waitFgInputsIdle
 	 * encodes, with a timeout so a plugin that stopped processing fails the rung instead of
 	 * hanging it.
+	 *
+	 * [keepPresenting] runs once per poll and must present a composed frame: generation needs
+	 * a sustained present stream, and a poll that goes quiet starves the plugin into never
+	 * advancing the fence - the exact flake the fixture carried. The composed frame itself
+	 * paces the loop (its internal 60Hz present interval), so the poll presents like a real
+	 * app while it waits.
 	 */
-	private fun awaitFenceValueAbove(bridge: NativeApi, previousValue: Long): FgState {
+	private fun awaitFenceValueAbove(
+		bridge: NativeApi,
+		previousValue: Long,
+		keepPresenting: () -> Unit,
+	): FgState {
 		val deadline = System.nanoTime() + FENCE_ADVANCE_TIMEOUT_NANOSECONDS
 		var state = bridge.queryFgState()
 		while (state.lastPresentInputsProcessingFenceValue <= previousValue) {
@@ -461,7 +487,7 @@ class FgPresentGenerationTest {
 				"timed out waiting for the completion fence to advance past $previousValue " +
 					"(status=${state.status}, last=${state.lastPresentInputsProcessingFenceValue})",
 			)
-			Thread.sleep(100)
+			keepPresenting()
 			state = bridge.queryFgState()
 		}
 		return state

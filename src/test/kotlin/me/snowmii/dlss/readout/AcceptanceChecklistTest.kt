@@ -118,6 +118,52 @@ class AcceptanceChecklistTest {
 	}
 
 	@Test
+	fun `checklist names every emitted acceptance-record field`() {
+		// The record block is emitted as name=value lines, and the reviewer must be able to match
+		// each log line to its field without reading the source: the checklist names every
+		// emitted field and the order it emits them in.
+		assertCovers(
+			"emitted record fields",
+			listOf(
+				"reviewer",
+				"candidate-commit",
+				"gpu-driver",
+				"streamline-version",
+				"streamline-plugins",
+				"minecraft-build",
+				"dlss-enabled",
+				"dlss-state",
+				"quality-mode",
+				"render-preset",
+				"output-resolution",
+				"internal-resolution",
+				"fg-multiplier",
+				"checklist-result",
+				"overall-result",
+			),
+		)
+	}
+
+	@Test
+	fun `checklist names the exact FG latch diagnostic and its hex-decimal distinction`() {
+		// The latch line is the one exact diagnostic a reviewer matches in the log; the status
+		// word is 0x-prefixed hex there but plain decimal on the frame-rate line, and a reviewer
+		// reading the wrong base misreads which status latched.
+		assertCovers(
+			"FG latch diagnostic",
+			listOf(
+				"Frame generation latched off: slDLSSGGetState",
+				"status=0x",
+				"(eDLSSGStatusOk=0)",
+				"eOff options retained",
+				"re-arm refused",
+				"hex",
+				"decimal",
+			),
+		)
+	}
+
+	@Test
 	fun `checklist retains the SR checklist`() {
 		// The FG checklist is additional items in the same pass/fail list: the SR coverage this
 		// document already carried must survive the FG addition.
