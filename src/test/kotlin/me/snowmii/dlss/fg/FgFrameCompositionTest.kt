@@ -231,13 +231,29 @@ class FgFrameCompositionTest {
 			"a yawed camera's fwd must be its world-space view direction, got " +
 				constants.fwd.contentToString(),
 		)
+		// The ABI payload carries the projection expressed in the image-space Y convention the
+		// DLSS-G plugin reads: column 1 negated on viewToClip, row 1 negated on its inverse -
+		// the Streamline row-vector flip - so the pair still round-trips.
+		// [FgImageConventionTest] pins the flip behaviorally.
+		val expectedViewToClip = rowMajorOf(projection).also { payload ->
+			for (row in 0..3) {
+				payload[row * 4 + 1] = -payload[row * 4 + 1]
+			}
+		}
+		val expectedClipToView = rowMajorOf(Matrix4f(projection).invert()).also { payload ->
+			for (i in 4..7) {
+				payload[i] = -payload[i]
+			}
+		}
 		assertTrue(
-			constants.viewToClip.contentEquals(rowMajorOf(projection)),
-			"viewToClip must be the sample's unjittered projection in row-major ABI layout",
+			constants.viewToClip.contentEquals(expectedViewToClip),
+			"viewToClip must be the sample's unjittered projection with its Y column flipped " +
+				"into the DLSS-G image convention",
 		)
 		assertTrue(
-			constants.clipToView.contentEquals(rowMajorOf(Matrix4f(projection).invert())),
-			"clipToView must be the inverse projection in row-major ABI layout",
+			constants.clipToView.contentEquals(expectedClipToView),
+			"clipToView must be the matching inverse with its Y row flipped - the pair stays " +
+				"a true inverse",
 		)
 		assertTrue(
 			constants.pos.contentEquals(floatArrayOf(12f, 64f, -48f)),

@@ -821,9 +821,14 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // told NGX the same thing through NVSDK_NGX_DLSS_Feature_Flags_DepthInverted.
     constants.depthInverted = sl::Boolean::eTrue;
     // The frame's real camera, captured at the world projection seam: the unjittered
-    // view-to-clip projection the world rendered with and its inverse, plus the camera's
-    // world-space position and orthonormal right/up/forward basis. The DLSS-G plugin
-    // interpolates the generated frame's camera from these, and its auto scene-change
+    // view-to-clip projection the world rendered with and its inverse, already expressed in
+    // the single image-space Y convention the DLSS-G plugin reads - the engine projection's
+    // Y column negated and the inverse's Y row negated, the row-vector ABI flip, since a
+    // projected point's clip-space Y travels through the projection's column 1 and the
+    // clip-space Y input travels through the inverse's row 1, so the pair still round-trips -
+    // plus the camera's world-space position and orthonormal right/up/forward basis. The
+    // DLSS-G
+    // plugin interpolates the generated frame's camera from these, and its auto scene-change
     // detection verifies the basis is orthonormal before it runs - all-zero matrices fail
     // that check and leave the plugin without a camera to interpolate across, which is the
     // fence-stuck symptom the human probe traced to zero constants. The matrices are

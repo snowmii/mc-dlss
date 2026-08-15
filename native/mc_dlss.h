@@ -507,9 +507,17 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
  * orthonormal right/up/forward basis.
  *
  * `view_to_clip` and `clip_to_view` are 16 floats each in row-major order (the layout
- * sl::float4x4 stores), matching the projection Minecraft's world actually rendered with
- * (view bob and portal/nausea skew included) minus the temporal-AA jitter, which travels
- * separately as `McDlssEvaluateInfo.jitter`. `pos` is the camera position in world space.
+ * sl::float4x4 stores), already expressed in the image-space Y convention the DLSS-G plugin
+ * reads: the engine's jitter-free view-to-clip projection (view bob and portal/nausea skew
+ * included) with its Y column negated, and the matching inverse with its Y row negated, so
+ * the pair still round-trips - the temporal-AA jitter travels separately as
+ * `McDlssEvaluateInfo.jitter`. Streamline reads the matrices in the row-vector convention
+ * (`v' = v * M`), where a projected point's clip-space Y travels through the projection's
+ * column 1 (flat indices 1, 5, 9, 13) and the clip-space Y input travels through the
+ * inverse's row 1 (flat indices 4..7); negating exactly those is the flip that keeps the
+ * matrices in the same pixel<->NDC Y convention as the rasterized images and the motion
+ * field. The module copies the floats straight into slSetConstants. `pos` is the camera
+ * position in world space.
  * `right`, `up`, and `fwd` are the camera's world-space basis vectors: the directions of
  * view-space +X, +Y, and -Z (the direction the camera looks). Extracted from the view
  * rotation, they form an orthonormal basis, which the DLSS-G plugin's auto scene-change

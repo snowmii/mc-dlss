@@ -28,9 +28,12 @@ fun rowMajorOf(matrix: Matrix4f): FloatArray = matrix.get(FloatArray(16))
  * One frame's real camera, in the flat ABI units `mc_dlss_evaluate` carries.
  *
  * [viewToClip] and [clipToView] are 16 floats each in row-major order (the layout
- * `sl::float4x4` stores), matching the projection the world actually rendered with - view
- * bob and portal/nausea skew included - minus the temporal-AA jitter, which travels
- * separately as [EvaluationRequest.jitter]. [pos] is the camera position in world space;
+ * `sl::float4x4` stores), already expressed in the image-space Y convention the DLSS-G
+ * plugin reads, not the raw engine projection: [viewToClip] is the jitter-free view-to-clip
+ * projection the world rendered with - view bob and portal/nausea skew included - with its
+ * Y column negated, and [clipToView] is the matching inverse with its Y row negated, so the
+ * pair still round-trips. The temporal-AA jitter travels separately as
+ * [EvaluationRequest.jitter]. [pos] is the camera position in world space;
  * [right], [up], and [fwd] are the camera's orthonormal world-space basis vectors (the
  * directions of view-space +X, +Y, and -Z, i.e. the direction the camera looks), extracted
  * from the view rotation. The DLSS-G plugin interpolates the generated frame's camera from
