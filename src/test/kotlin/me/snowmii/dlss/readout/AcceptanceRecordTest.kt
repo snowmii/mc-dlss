@@ -30,6 +30,8 @@ class AcceptanceRecordTest {
 			  reviewer=<reviewer>
 			  candidate-commit=<reviewer>
 			  gpu-driver=<reviewer>
+			  streamline-version=2.12.0
+			  streamline-plugins=sl.dlss,sl.dlss_g,sl.reflex,sl.interposer
 			  minecraft-build=26.2
 			  dlss-enabled=true
 			  dlss-state=READY
@@ -37,6 +39,9 @@ class AcceptanceRecordTest {
 			  render-preset=k
 			  output-resolution=2560x1440
 			  internal-resolution=1706x960
+			  fg-multiplier=2x
+			  checklist-result=<reviewer>
+			  overall-result=<reviewer>
 			""".trimIndent(),
 			record,
 		)
@@ -58,6 +63,34 @@ class AcceptanceRecordTest {
 		// to tell that from a resolution that simply went unread.
 		assertTrue(record.contains("internal-resolution=${AcceptanceRecord.UNAVAILABLE}"), record)
 		assertTrue(record.contains("dlss-state=FALLBACK_LATCHED"), record)
+	}
+
+	@Test
+	fun `record names every AC-7 field including Streamline version, plugin set, and FG multiplier`() {
+		val record = AcceptanceRecord.render(
+			minecraftBuild = "26.2",
+			enabled = true,
+			state = DlssSessionState.READY,
+			qualityMode = SRMode.QUALITY,
+			renderPreset = SRMode.QUALITY.defaultPreset,
+			outputDimensions = DlssDimensions(2560, 1440),
+			renderDimensions = DlssDimensions(1706, 960),
+		)
+
+		// AC-7 names reviewer, candidate commit, Minecraft build, GPU/driver, Streamline version
+		// and plugin set, internal/output resolutions, FG multiplier, every checklist result, and
+		// overall result: every field named, none left for the reviewer to guess at.
+		assertTrue(record.contains("reviewer=<reviewer>"), record)
+		assertTrue(record.contains("candidate-commit=<reviewer>"), record)
+		assertTrue(record.contains("gpu-driver=<reviewer>"), record)
+		assertTrue(record.contains("minecraft-build=26.2"), record)
+		assertTrue(record.contains("streamline-version=${AcceptanceRecord.STREAMLINE_VERSION}"), record)
+		assertTrue(record.contains("streamline-plugins=${AcceptanceRecord.PINNED_PLUGIN_SET}"), record)
+		assertTrue(record.contains("output-resolution=2560x1440"), record)
+		assertTrue(record.contains("internal-resolution=1706x960"), record)
+		assertTrue(record.contains("fg-multiplier=${AcceptanceRecord.FG_MULTIPLIER}"), record)
+		assertTrue(record.contains("checklist-result=<reviewer>"), record)
+		assertTrue(record.contains("overall-result=<reviewer>"), record)
 	}
 
 	@Test
