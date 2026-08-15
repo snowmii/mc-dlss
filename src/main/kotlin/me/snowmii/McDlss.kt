@@ -1,7 +1,6 @@
 package me.snowmii
 
 import net.fabricmc.api.ModInitializer
-import me.snowmii.dlss.bridge.StreamlineVulkanProvider
 import me.snowmii.dlss.config.ModConfig
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
@@ -24,16 +23,24 @@ object McDlss : ModInitializer {
 			startupConfig.outputDimensions,
 			startupConfig.nativeLibraryPath ?: "external",
 		)
-		// Redirect LWJGL's Vulkan loading to the staged sl.interposer.dll before any Vulkan
-		// class is touched (the first touch is VulkanInstance.<init>, well after this). The
-		// redirect is unconditional, mirroring the unconditional slInit at the instance seam;
-		// a missing staged runtime degrades to a warning here rather than failing the loader.
-		try {
-			val interposer = StreamlineVulkanProvider.redirectToInterposer()
-			LOGGER.info("Streamline Vulkan interposer staged at {}", interposer)
-		} catch (error: Throwable) {
-			LOGGER.warn("Streamline Vulkan interposer redirect failed; SL Vulkan proxies inactive", error)
-		}
+		// LWJGL's Vulkan loading is deliberately NOT redirected to sl.interposer.dll.
+		//
+		// Pointing org.lwjgl.vulkan.libname at the interposer is the automatic-hooking style of
+		// integration, and it contradicts the eUseManualHooking flag this mod initializes SL
+		// with. Measured on the live FG rung: with the redirect, DLSS-G's
+		// slHookVkCreateSwapchainKHR never fires and slSetVulkanInfo fails outright; without
+		// it, the hook fires and presentCommon reaches "interpolation enabled". The redirect is
+		// also the one process-level difference between the passing rung and the in-game
+		// session that reported presented=0 status=0 fence=0, where sl.log carried
+		// "Streamline presentCommon() was not observed".
+		//
+		// SL still reaches Vulkan without the redirect: ExtensionBootstrap loads sl.common.dll
+		// and sl.interposer.dll into the process before any Vulkan class is touched, and
+		// mc_dlss_activate_vulkan_proxies hands SL the live instance/device/queue layout
+		// through slSetVulkanInfo.
+		//
+		// Toggle it back with -Pmc.dlss.vulkan-libname=<path> on the test task if this needs
+		// re-measuring; StreamlineVulkanProvider is retained for that experiment.
 	}
 
 	fun id(path: String): Identifier

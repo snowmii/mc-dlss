@@ -36,6 +36,52 @@ class SessionReadout(
 	private var sampleStartedAt = 0L
 	private var sampledFrames = 0
 
+	// The temporal-accumulation half of the sample window. A DLSS image that stays aliased while
+	// the camera holds still means the accumulation never converged, and only two inputs can
+	// cause that from this side: a jitter sequence that stopped varying (every frame samples the
+	// same sub-pixel point, so there is no new information to accumulate) or a history reset
+	// arriving every frame (each frame is upscaled alone). Both are invisible in the frame rate
+	// and neither is observable from the image alone, so the sample window counts them.
+	private val sampledJitterIndices = HashSet<Int>()
+	private var sampledJitterFrames = 0
+	private var sampledResets = 0
+	private var lastJitterPixelX = 0f
+	private var lastJitterPixelY = 0f
+
+	/**
+	 * Records one evaluated frame's jitter phase and history-reset flag into the current sample
+	 * window. Called per DLSS evaluation; frames that never evaluate contribute nothing.
+	 */
+	fun recordFrameJitter(index: Int, pixelX: Float, pixelY: Float, reset: Boolean) {
+		sampledJitterIndices.add(index)
+		sampledJitterFrames++
+		if (reset) {
+			sampledResets++
+		}
+		lastJitterPixelX = pixelX
+		lastJitterPixelY = pixelY
+	}
+
+	/**
+	 * The accumulation suffix for the sampled line, or empty when no frame evaluated in the
+	 * window. `phases` is how many distinct jitter offsets the window used: a healthy window
+	 * walks the whole sequence, and `phases=1` is a frozen sequence. `resets` should be zero for
+	 * a window with no teleport, dimension change, or vanilla frame in it.
+	 */
+	private fun accumulationSuffix(): String {
+		if (sampledJitterFrames == 0) {
+			return ""
+		}
+		return ", accum=phases=%d/%d resets=%d/%d jitter=%.3f,%.3f".format(
+			sampledJitterIndices.size,
+			sampledJitterFrames,
+			sampledResets,
+			sampledJitterFrames,
+			lastJitterPixelX,
+			lastJitterPixelY,
+		)
+	}
+
 	/**
 	 * One world phase finished rendering: the first-phase line on the first call, the frame-rate
 	 * line on the sampling boundary after that.
@@ -147,17 +193,21 @@ class SessionReadout(
 		// a frame rate that did not change while the chain costs a millisecond is a client whose
 		// frames are bounded by something other than the GPU.
 		emit(
-			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s".format(
+			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s%s".format(
 				fps,
 				sampledFrames,
 				frame?.route ?: DlssFrameRoute.VANILLA,
 				scene?.let { "${it.width}x${it.height}" } ?: "main-target",
 				frameTimings() ?: "unmeasured",
 				fgMonitorSuffix(fgState(), fps),
+				accumulationSuffix(),
 			),
 		)
 		sampleStartedAt = now
 		sampledFrames = 0
+		sampledJitterIndices.clear()
+		sampledJitterFrames = 0
+		sampledResets = 0
 	}
 
 	/**

@@ -3,24 +3,26 @@ package me.snowmii.dlss.bridge
 import org.joml.Matrix4f
 
 /**
- * Converts one JOML matrix into the flat row-major 16-float ABI layout `sl::float4x4` stores.
+ * Converts one JOML matrix into the flat 16-float ABI layout `sl::float4x4` stores.
  *
- * JOML keeps matrices column-major and `Matrix4f.get(float[])` writes the array column-major,
- * while the ABI (and Streamline's `sl::Constants`) is row-major, so the payload is transposed
- * here - the one place the layout conversion happens, keeping the native side's verbatim copy
- * honest. `rowMajor[r * 4 + c]` is the element at matrix row `r`, column `c`.
+ * DO NOT transpose here. The two sides differ in *both* storage order and vector convention,
+ * and the two differences cancel exactly:
+ *
+ * - JOML is column-vector (`v' = M * v`) stored column-major: `Matrix4f.get(float[])` writes
+ *   `array[c * 4 + r]` for the element at row `r`, column `c`, so a translation sits at
+ *   indices 12/13/14 and a perspective matrix's `w = -z` term at index 11.
+ * - Streamline is row-vector (`v' = v * M`) stored row-major. `sl_matrix_helpers.h` proves the
+ *   convention: `recalculateCameraMatrices` builds `cameraViewToWorld` with the basis in
+ *   `row[0..2]` and `cameraPos` in `row[3]` - indices 12/13/14 - and `matrixMul` chains
+ *   left-to-right (`clipToCameraView * viewToPrevView * viewToClipPrev`).
+ *
+ * Both conventions therefore put the same element at the same flat index, and JOML's array is
+ * already the payload Streamline expects. Transposing it hands the plugin the transpose of the
+ * intended matrix: harmless for the identity (which is its own transpose) and fatal for a real
+ * perspective projection, whose `w` term lands at index 14 and whose derived near/far/FOV come
+ * back as garbage.
  */
-fun rowMajorOf(matrix: Matrix4f): FloatArray {
-	val columnMajor = FloatArray(16)
-	matrix.get(columnMajor)
-	val rowMajor = FloatArray(16)
-	for (column in 0 until 4) {
-		for (row in 0 until 4) {
-			rowMajor[row * 4 + column] = columnMajor[column * 4 + row]
-		}
-	}
-	return rowMajor
-}
+fun rowMajorOf(matrix: Matrix4f): FloatArray = matrix.get(FloatArray(16))
 
 /**
  * One frame's real camera, in the flat ABI units `mc_dlss_evaluate` carries.

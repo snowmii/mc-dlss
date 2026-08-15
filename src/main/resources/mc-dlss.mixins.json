@@ -27,6 +27,7 @@
 		"VulkanInstanceExtensionMixin",
 		"VulkanPipelineCompatibilityMixin",
 		"VulkanGpuSurfaceSwapchainMixin",
+		"VulkanGpuSurfaceProxyMixin",
 		"VulkanGpuSurfacePresentMixin"
 	],
 	"injectors": {

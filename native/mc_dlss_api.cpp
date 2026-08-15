@@ -9,6 +9,8 @@
  */
 #include "mc_dlss.h"
 
+#include <cstdlib>
+
 #include "internal/common.h"
 #include "internal/images.h"
 #include "internal/motion.h"
@@ -45,6 +47,23 @@ sl::Preferences make_streamline_preferences(const std::wstring& plugin_path, con
     sl::Preferences preferences{};
     preferences.pathsToPlugins = paths;
     preferences.numPathsToPlugins = 1;
+    // Streamline writes sl.log next to the staged plugins when logging is on. The DLSS-G plugin
+    // reports every reason it declines to generate a frame there and nowhere else: the mod's own
+    // readout can only observe the outcome (status, presented count, fence), never the cause. It
+    // is the only instrument that explains a stuck fence - "Streamline presentCommon() was not
+    // observed" is what identified the unrouted present chain - so it stays reachable rather
+    // than being deleted after the investigation that needed it.
+    //
+    // Off by default: verbose logging writes a file every frame and belongs to debugging, not to
+    // a shipped session. Set MC_DLSS_SL_LOG to any value to turn it on.
+    if (std::getenv("MC_DLSS_SL_LOG") != nullptr) {
+        preferences.logLevel = sl::LogLevel::eVerbose;
+        preferences.pathToLogsAndData = plugin_path.c_str();
+    } else {
+        // A null path is how Streamline is told not to write a log file at all.
+        preferences.logLevel = sl::LogLevel::eOff;
+        preferences.pathToLogsAndData = nullptr;
+    }
     preferences.flags = sl::PreferenceFlags::eDisableCLStateTracking |
                         sl::PreferenceFlags::eUseManualHooking |
                         sl::PreferenceFlags::eUseFrameBasedResourceTagging;

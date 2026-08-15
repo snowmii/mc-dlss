@@ -13,10 +13,12 @@ import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.Vec2
+import me.snowmii.dlss.bridge.rowMajorOf
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.joml.Matrix4f
 import org.lwjgl.vulkan.KHRSurface
 import org.lwjgl.vulkan.KHRSwapchain
 import org.lwjgl.vulkan.KHRWin32Surface
@@ -489,28 +491,25 @@ class FgPresentGenerationTest {
 		private const val DLSSG_STATUS_OK = 0
 
 		/**
-		 * The 4x4 identity matrix in row-major ABI layout; symmetric, so one array serves both
-		 * viewToClip and clipToView.
+		 * A real perspective projection at Minecraft's default 70-degree field of view, in the
+		 * same 16:9 shape and near/far range the world renders with.
+		 *
+		 * This fixture MUST NOT use the identity. The identity is its own transpose, so it
+		 * passes whether or not the ABI payload is transposed correctly - which is exactly how
+		 * a transposing `rowMajorOf` shipped while this rung reported green, leaving the live
+		 * input-processing fence at zero for every real Minecraft frame. Only a non-symmetric
+		 * projection makes the convention observable here.
 		 */
-		private val IDENTITY_MATRIX = floatArrayOf(
-			1f, 0f, 0f, 0f,
-			0f, 1f, 0f, 0f,
-			0f, 0f, 1f, 0f,
-			0f, 0f, 0f, 1f,
-		)
+		private val TEST_PROJECTION = Matrix4f().perspective(1.2217305f, 16f / 9f, 0.05f, 1000f)
 
 		/**
-		 * The standing-in camera every composed frame carries: the identity constants the live
-		 * probe proved the DLSS-G plugin accepts - identity view/clip matrices, an orthonormal
-		 * basis, and a finite position. The perspective projection this fixture previously
-		 * carried violates the plugin's accepted FG camera contract (or this fixture's
-		 * projection convention) and leaves the input-processing fence at zero, so the fixture
-		 * uses the proven identity camera; [FgCameraConstantsTest] still proves the real
-		 * non-identity row-major payload and oracle reach the plugin unchanged.
+		 * The standing-in camera every composed frame carries: the real projection above, its
+		 * inverse, an orthonormal basis, and a finite position - the same shape production
+		 * hands the plugin through [rowMajorOf].
 		 */
 		private val TEST_CAMERA: CameraConstants = CameraConstants(
-			viewToClip = IDENTITY_MATRIX,
-			clipToView = IDENTITY_MATRIX,
+			viewToClip = rowMajorOf(TEST_PROJECTION),
+			clipToView = rowMajorOf(Matrix4f(TEST_PROJECTION).invert()),
 			pos = floatArrayOf(12f, 64f, -48f),
 			right = floatArrayOf(1f, 0f, 0f),
 			up = floatArrayOf(0f, 1f, 0f),

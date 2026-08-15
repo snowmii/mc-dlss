@@ -1422,6 +1422,12 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 	 * functions the DLSS-G plugin needs to see, then forward to the driver. The fixture
 	 * resolves the wrappers lazily so a test that never presents does not depend on the
 	 * staged runtime.
+	 *
+	 * ponytail: these five duplicate StreamlineVulkanProxies, which production now routes
+	 * through. That duplication is what let the fixture prove a present chain production never
+	 * took - every FG rung passed while the game reported presented=0. Collapse onto the shared
+	 * class (keeping the two surface wrappers below, which it does not cover) once the in-game
+	 * present chain is verified, so a future divergence cannot hide the same way.
 	 */
 	private static final MethodHandle INTERPOSER_CREATE_SWAPCHAIN = bindInterposer(
 		"vkCreateSwapchainKHR",

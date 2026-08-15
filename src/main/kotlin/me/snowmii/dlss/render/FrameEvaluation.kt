@@ -292,6 +292,9 @@ class FrameEvaluation(
 			return false
 		}
 
+		// The two inputs that decide whether DLSS accumulates at all, recorded per evaluated frame
+		// so a session that stays aliased while standing still says which one failed.
+		readout?.recordFrameJitter(jitter.index, jitter.pixelX, jitter.pixelY, motion.reset)
 		val evaluated = adapter.evaluate(
 			EvaluationRequest(
 				commandBuffer = handle,

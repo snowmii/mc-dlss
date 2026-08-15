@@ -89,6 +89,13 @@ tasks.test {
 	// in its own worker: the Streamline activation tests each get a pristine runtime, and no
 	// earlier class's device leaks into a later one.
 	forkEvery = 1
+	// Reproduces the mod's StreamlineVulkanProvider redirect inside a test worker. Production
+	// points LWJGL at the staged sl.interposer.dll; the live FG rungs never did, which is the
+	// one process-level difference between a session where DLSS-G's swapchain hook fires and a
+	// game session where it does not. Off by default so the rungs keep their known-good shape:
+	// -Pmc.dlss.vulkan-libname=<abs path to sl.interposer.dll> turns it on.
+	providers.gradleProperty("mc.dlss.vulkan-libname").orNull
+		?.let { systemProperty("org.lwjgl.vulkan.libname", it) }
 }
 
 val buildNativeDlss by tasks.registering(Exec::class) {

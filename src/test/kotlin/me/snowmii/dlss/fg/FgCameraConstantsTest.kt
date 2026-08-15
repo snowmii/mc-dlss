@@ -49,7 +49,7 @@ import org.lwjgl.vulkan.VK10
 class FgCameraConstantsTest {
 
 	@Test
-	fun `rowMajorOf transposes JOML's column-major payload into the row-major ABI layout`() {
+	fun `rowMajorOf carries JOML's payload to the ABI without transposing it`() {
 		val m = Matrix4f()
 		m.set(
 			1f, 2f, 3f, 4f,
@@ -57,20 +57,36 @@ class FgCameraConstantsTest {
 			9f, 10f, 11f, 12f,
 			13f, 14f, 15f, 16f,
 		)
-		// JOML names its elements m<column><row> and get(float[]) writes them column-major,
-		// so the ABI's row-major payload is the transposed array: index r*4+c holds the
-		// matrix's row-r, column-c element. With the 1..16 fill above, element (row r,
-		// column c) is 4c+r+1, which is exactly this expected array.
+		// JOML and Streamline differ in both storage order and vector convention, and the two
+		// differences cancel: the same element lands at the same flat index on both sides, so
+		// the ABI payload is JOML's get() array verbatim. Transposing it is what left the
+		// DLSS-G input fence at zero for every non-symmetric matrix.
 		val expected = floatArrayOf(
-			1f, 5f, 9f, 13f,
-			2f, 6f, 10f, 14f,
-			3f, 7f, 11f, 15f,
-			4f, 8f, 12f, 16f,
+			1f, 2f, 3f, 4f,
+			5f, 6f, 7f, 8f,
+			9f, 10f, 11f, 12f,
+			13f, 14f, 15f, 16f,
 		)
 		assertTrue(
 			rowMajorOf(m).contentEquals(expected),
-			"rowMajorOf must transpose the column-major get() payload",
+			"rowMajorOf must pass the get() payload through unchanged",
 		)
+	}
+
+	@Test
+	fun `a perspective projection keeps its w term at the index Streamline reads it from`() {
+		// The regression this whole slice exists for: under Streamline's row-vector convention
+		// the perspective w = -z term lives at flat index 11, exactly where JOML's
+		// column-vector column-major array already puts it. The old transpose moved it to
+		// index 14 - the translation slot - which is why the identity fixture generated frames
+		// and Minecraft's real projection did not.
+		// 70 degrees in radians: Minecraft's default field of view.
+		val projection = Matrix4f().perspective(1.2217305f, 16f / 9f, 0.05f, 1000f)
+		val payload = rowMajorOf(projection)
+		assertEquals(-1f, payload[11], "the perspective w term must sit at flat index 11")
+		// Index 14 carries the depth translation term. The old transpose swapped 11 and 14, so
+		// finding the w term here is the exact shape of the bug this rung fixes.
+		assertTrue(payload[14] != -1f, "index 14 must carry depth translation, not the w term")
 	}
 
 	@Test
