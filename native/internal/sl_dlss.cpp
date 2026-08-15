@@ -821,20 +821,29 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // told NGX the same thing through NVSDK_NGX_DLSS_Feature_Flags_DepthInverted.
     constants.depthInverted = sl::Boolean::eTrue;
     // The frame's real camera, captured at the world projection seam: the unjittered
-    // view-to-clip projection the world rendered with and its inverse, already expressed in
-    // the single image-space Y convention the DLSS-G plugin reads - the engine projection's
-    // Y column negated and the inverse's Y row negated, the row-vector ABI flip, since a
-    // projected point's clip-space Y travels through the projection's column 1 and the
-    // clip-space Y input travels through the inverse's row 1, so the pair still round-trips -
-    // plus the camera's world-space position and orthonormal right/up/forward basis. The
-    // DLSS-G
-    // plugin interpolates the generated frame's camera from these, and its auto scene-change
-    // detection verifies the basis is orthonormal before it runs - all-zero matrices fail
-    // that check and leave the plugin without a camera to interpolate across, which is the
-    // fence-stuck symptom the human probe traced to zero constants. The matrices are
-    // row-major on both sides of the ABI, so the floats copy straight into sl::float4x4.
+    // view-to-clip projection the world rendered with and its inverse, the jitter-free
+    // clip-to-prev-clip pair, the frustum scalars, and the camera's world-space position and
+    // orthonormal right/up/forward basis. Together with the flags above these are every
+    // non-optional field of sl::Constants - "all parameters must be provided unless they are
+    // marked as optional" - and an unwritten field is not a defaulted one: sl::float4x4 and
+    // the scalars default-construct to INVALID_FLOAT (3.4e38). DLSS SR survives missing
+    // reprojection matrices because cameraMotionIncluded routes it to the motion field; the
+    // DLSS-G plugin reads clipToPrevClip directly, and FLT_MAX there is the upside-down world
+    // ghost that appeared on generated frames only while the rendered frames stayed correct.
+    //
+    // The plugin interpolates the generated frame's camera from these, and its auto
+    // scene-change detection verifies the basis is orthonormal before it runs - all-zero
+    // matrices fail that check and leave the plugin without a camera to interpolate across,
+    // which is the fence-stuck symptom the human probe traced to zero constants. The matrices
+    // are row-major on both sides of the ABI, so the floats copy straight into sl::float4x4.
     write_matrix(constants.cameraViewToClip, info.camera.view_to_clip);
     write_matrix(constants.clipToCameraView, info.camera.clip_to_view);
+    write_matrix(constants.clipToPrevClip, info.camera.clip_to_prev_clip);
+    write_matrix(constants.prevClipToClip, info.camera.prev_clip_to_clip);
+    constants.cameraNear = info.camera.near_plane;
+    constants.cameraFar = info.camera.far_plane;
+    constants.cameraFOV = info.camera.fov_radians;
+    constants.cameraAspectRatio = info.camera.aspect_ratio;
     constants.cameraPos = sl::float3(info.camera.pos[0], info.camera.pos[1], info.camera.pos[2]);
     constants.cameraUp = sl::float3(info.camera.up[0], info.camera.up[1], info.camera.up[2]);
     constants.cameraRight =

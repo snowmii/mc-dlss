@@ -503,35 +503,48 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
 
 /*
  * One frame's real camera, as Streamline's common constants need it: the jitter-free
- * view-to-clip and clip-to-view matrices, the camera's world-space position, and its
- * orthonormal right/up/forward basis.
+ * view-to-clip and clip-to-view matrices, the jitter-free clip-to-prev-clip pair, the
+ * frustum scalars, the camera's world-space position, and its orthonormal right/up/forward
+ * basis.
  *
- * `view_to_clip` and `clip_to_view` are 16 floats each in row-major order (the layout
- * sl::float4x4 stores), already expressed in the image-space Y convention the DLSS-G plugin
- * reads: the engine's jitter-free view-to-clip projection (view bob and portal/nausea skew
- * included) with its Y column negated, and the matching inverse with its Y row negated, so
- * the pair still round-trips - the temporal-AA jitter travels separately as
- * `McDlssEvaluateInfo.jitter`. Streamline reads the matrices in the row-vector convention
- * (`v' = v * M`), where a projected point's clip-space Y travels through the projection's
- * column 1 (flat indices 1, 5, 9, 13) and the clip-space Y input travels through the
- * inverse's row 1 (flat indices 4..7); negating exactly those is the flip that keeps the
- * matrices in the same pixel<->NDC Y convention as the rasterized images and the motion
- * field. The module copies the floats straight into slSetConstants. `pos` is the camera
- * position in world space.
- * `right`, `up`, and `fwd` are the camera's world-space basis vectors: the directions of
- * view-space +X, +Y, and -Z (the direction the camera looks). Extracted from the view
- * rotation, they form an orthonormal basis, which the DLSS-G plugin's auto scene-change
- * detection verifies before it runs.
+ * These are exactly the non-optional fields of sl::Constants. sl_consts.h opens with "all
+ * parameters must be provided unless they are marked as optional", and every field it
+ * default-constructs holds INVALID_FLOAT (3.4e38) - so a field the module does not write is
+ * FLT_MAX handed to the plugin, not a default. DLSS SR tolerates missing reprojection
+ * matrices because cameraMotionIncluded sends it to the motion field instead; the DLSS-G
+ * plugin does not, which is the upside-down world ghost that appeared on generated frames
+ * only while the rendered frames stayed correct.
  *
- * All values are plain floats: 44 floats, no padding.
+ * All matrices are 16 floats in row-major order (the layout sl::float4x4 stores) and carry
+ * no temporal-AA jitter - that travels separately as `McDlssEvaluateInfo.jitter`.
+ * `view_to_clip` is the engine's jitter-free view-to-clip projection exactly as it
+ * rasterized the frame (view bob and portal/nausea skew included) and `clip_to_view` its
+ * inverse. `clip_to_prev_clip` maps this frame's clip space to the previous frame's - the
+ * same camera step the motion pass reprojects with, minus that pass's jitter conjugation -
+ * and `prev_clip_to_clip` is its inverse.
+ *
+ * `near_plane`, `far_plane`, `fov_radians` (vertical), and `aspect_ratio` (view-space width
+ * over height) describe the same frustum the projection does. `pos` is the camera position
+ * in world space. `right`, `up`, and `fwd` are the camera's world-space basis vectors: the
+ * directions of view-space +X, +Y, and -Z (the direction the camera looks). Extracted from
+ * the view rotation, they form an orthonormal basis, which the DLSS-G plugin's auto
+ * scene-change detection verifies before it runs.
+ *
+ * All values are plain floats: 80 floats, no padding.
  */
 typedef struct McDlssCameraConstants {
     float view_to_clip[16];
     float clip_to_view[16];
+    float clip_to_prev_clip[16];
+    float prev_clip_to_clip[16];
     float pos[3];
     float right[3];
     float up[3];
     float fwd[3];
+    float near_plane;
+    float far_plane;
+    float fov_radians;
+    float aspect_ratio;
 } McDlssCameraConstants;
 
 /*

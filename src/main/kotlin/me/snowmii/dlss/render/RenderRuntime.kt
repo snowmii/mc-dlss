@@ -304,13 +304,6 @@ class RenderRuntime(
 		// Switched off takes effect before startup is ever attempted, so a session that begins
 		// switched off never initializes the bridge at all.
 		val started = if (runtimeEnabled) ensureStarted() else false
-		if (!started) {
-			// No DLSS this session: release any target held from an earlier eligible frame. The
-			// primitive also drops the published phase state and resets the sequences, which have
-			// nothing to continue into a session that never started.
-			releaseFrameState(releaseImages = false)
-			return null
-		}
 
 		// The frame is about to rewrite the DLSS-G-tagged inputs - the world phase renders into
 		// the scene depth, the motion pass overwrites the native motion image, and the split
@@ -330,9 +323,24 @@ class RenderRuntime(
 		// transition then records the retained eOff mode exactly once, the frames in between
 		// compose SR-only, and a supported frame resumes without a record - the next FG
 		// frame's per-frame options record re-records eOn.
-		val frameSupported = fgFrameSupported(normalInWorldFrame, outputDimensions)
+		//
+		// A frame SR is not running is unsupported before the classifier is even asked: DLSS-G
+		// reads the scene depth, the bridge's motion image, and the output-sized HUD-less
+		// colour, and switching SR off releases exactly those. The classifier runs ahead of the
+		// not-started return for that reason - returning first left the mode eOn with tags
+		// naming released images, which the intercepted present turned into
+		// VK_ERROR_DEVICE_LOST.
+		val frameSupported = started && fgFrameSupported(normalInWorldFrame, outputDimensions)
 		if (frameGeneration.setFrameSupported(frameSupported) && !frameSupported) {
 			recordFgModeOff()
+		}
+
+		if (!started) {
+			// No DLSS this session: release any target held from an earlier eligible frame. The
+			// primitive also drops the published phase state and resets the sequences, which have
+			// nothing to continue into a session that never started.
+			releaseFrameState(releaseImages = false)
+			return null
 		}
 
 		val route = routeFrame(normalInWorldFrame, outputDimensions)
@@ -529,6 +537,18 @@ class RenderRuntime(
 	 * continuous with the ones that stopped.
 	 */
 	private fun releaseFrameState(releaseImages: Boolean) {
+		if (releaseImages) {
+			// The images about to be destroyed are the ones the last FG frame's tags name, and
+			// DLSS-G reads its tags at present time, not at record time: releasing them with the
+			// mode still eOn hands the intercepted present dead handles, which is the
+			// VK_ERROR_DEVICE_LOST that disabling SR - or changing quality mode - produced while
+			// FG was on. Suspending through the frame-support seam rather than the user's mode
+			// keeps this reversible: the mode itself is untouched, so the first supported frame
+			// after the images come back resumes FG without the reviewer re-arming anything.
+			if (frameGeneration.setFrameSupported(false)) {
+				recordFgModeOff()
+			}
+		}
 		endWorldPhase()
 		resources.release(releaseImages)
 		phase.reset()

@@ -27,18 +27,29 @@ fun rowMajorOf(matrix: Matrix4f): FloatArray = matrix.get(FloatArray(16))
 /**
  * One frame's real camera, in the flat ABI units `mc_dlss_evaluate` carries.
  *
+ * This is the whole non-optional half of Streamline's `sl::Constants`. `sl_consts.h` opens with
+ * "all parameters must be provided unless they are marked as optional", and every field it
+ * default-constructs holds `INVALID_FLOAT` (`3.4e38`) until something writes it - so a field
+ * left out is not a field defaulted, it is `FLT_MAX` handed to the plugin. DLSS SR survives
+ * that for the reprojection matrices because `cameraMotionIncluded` sends it to the motion
+ * field instead; the DLSS-G plugin does not, which is the upside-down world ghost seen on
+ * generated frames only while the rendered frames stayed correct.
+ *
  * [viewToClip] and [clipToView] are 16 floats each in row-major order (the layout
- * `sl::float4x4` stores), already expressed in the image-space Y convention the DLSS-G
- * plugin reads, not the raw engine projection: [viewToClip] is the jitter-free view-to-clip
- * projection the world rendered with - view bob and portal/nausea skew included - with its
- * Y column negated, and [clipToView] is the matching inverse with its Y row negated, so the
- * pair still round-trips. The temporal-AA jitter travels separately as
- * [EvaluationRequest.jitter]. [pos] is the camera position in world space;
- * [right], [up], and [fwd] are the camera's orthonormal world-space basis vectors (the
- * directions of view-space +X, +Y, and -Z, i.e. the direction the camera looks), extracted
- * from the view rotation. The DLSS-G plugin interpolates the generated frame's camera from
- * these, and its auto scene-change detection verifies the basis is orthonormal before it
- * runs.
+ * `sl::float4x4` stores): the jitter-free view-to-clip projection the world rendered with -
+ * view bob and portal/nausea skew included - and its inverse, both exactly as the engine
+ * produced them. The temporal-AA jitter travels separately as [EvaluationRequest.jitter].
+ *
+ * [clipToPrevClip] maps this frame's clip space to the previous frame's, jitter-free, and
+ * [prevClipToClip] is its inverse - the pair the DLSS-G plugin interpolates the generated
+ * frame's camera through. [near], [far], [fovRadians] (vertical), and [aspectRatio] describe
+ * the same frustum the projection does; the plugin reads them directly rather than
+ * re-deriving them.
+ *
+ * [pos] is the camera position in world space; [right], [up], and [fwd] are the camera's
+ * orthonormal world-space basis vectors (the directions of view-space +X, +Y, and -Z, i.e.
+ * the direction the camera looks), extracted from the view rotation. The plugin's auto
+ * scene-change detection verifies the basis is orthonormal before it runs.
  */
 data class CameraConstants(
 	/** Row-major view-to-clip projection, 16 floats, jitter-free. */
@@ -53,4 +64,29 @@ data class CameraConstants(
 	val up: FloatArray,
 	/** World-space direction of view-space -Z, where the camera looks, 3 floats. */
 	val fwd: FloatArray,
+	/**
+	 * Row-major current-clip to previous-clip, 16 floats, jitter-free. Defaults to the
+	 * identity - a still camera - for the callers that describe only where the camera is,
+	 * never how it moved; the frame evaluation always supplies the real step.
+	 */
+	val clipToPrevClip: FloatArray = IDENTITY_MATRIX,
+	/** Row-major previous-clip to current-clip, 16 floats - the inverse of [clipToPrevClip]. */
+	val prevClipToClip: FloatArray = IDENTITY_MATRIX,
+	/** Near view-plane distance. */
+	val near: Float = 0f,
+	/** Far view-plane distance. */
+	val far: Float = 0f,
+	/** Vertical field of view, in radians. */
+	val fovRadians: Float = 0f,
+	/** View-space width divided by height. */
+	val aspectRatio: Float = 0f,
 )
+
+/** The row-major identity, the default camera step of a caller that reports no motion. */
+private val IDENTITY_MATRIX: FloatArray
+	get() = floatArrayOf(
+		1f, 0f, 0f, 0f,
+		0f, 1f, 0f, 0f,
+		0f, 0f, 1f, 0f,
+		0f, 0f, 0f, 1f,
+	)

@@ -64,10 +64,16 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final StructLayout CAMERA_LAYOUT = MemoryLayout.structLayout(
 		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("view_to_clip"),
 		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("clip_to_view"),
+		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("clip_to_prev_clip"),
+		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("prev_clip_to_clip"),
 		MemoryLayout.sequenceLayout(3, JAVA_FLOAT).withName("pos"),
 		MemoryLayout.sequenceLayout(3, JAVA_FLOAT).withName("right"),
 		MemoryLayout.sequenceLayout(3, JAVA_FLOAT).withName("up"),
-		MemoryLayout.sequenceLayout(3, JAVA_FLOAT).withName("fwd")
+		MemoryLayout.sequenceLayout(3, JAVA_FLOAT).withName("fwd"),
+		JAVA_FLOAT.withName("near_plane"),
+		JAVA_FLOAT.withName("far_plane"),
+		JAVA_FLOAT.withName("fov_radians"),
+		JAVA_FLOAT.withName("aspect_ratio")
 	).withName("McDlssCameraConstants");
 
 	private static final StructLayout EVALUATE_LAYOUT = MemoryLayout.structLayout(
@@ -186,6 +192,13 @@ public final class Native implements AutoCloseable, NativeApi {
 	/** The byte offset of a camera field's first float inside {@link #EVALUATE_LAYOUT}. */
 	private static long evaluateCameraFieldOffset(final String field) {
 		return EVALUATE_CAMERA_OFFSET + cameraFloatOffset(field, 0);
+	}
+
+	/** The byte offset of one scalar camera field inside {@link #EVALUATE_LAYOUT}. */
+	private static long evaluateCameraScalarOffset(final String field) {
+		return EVALUATE_CAMERA_OFFSET + CAMERA_LAYOUT.byteOffset(
+			MemoryLayout.PathElement.groupElement(field)
+		);
 	}
 
 	private static final VarHandle MOTION_COMMAND_BUFFER = field(MOTION_LAYOUT, "command_buffer");
@@ -1130,6 +1143,8 @@ public final class Native implements AutoCloseable, NativeApi {
 		if (camera != null) {
 			requireCameraLength(camera.getViewToClip(), 16, "viewToClip");
 			requireCameraLength(camera.getClipToView(), 16, "clipToView");
+			requireCameraLength(camera.getClipToPrevClip(), 16, "clipToPrevClip");
+			requireCameraLength(camera.getPrevClipToClip(), 16, "prevClipToClip");
 			requireCameraLength(camera.getPos(), 3, "pos");
 			requireCameraLength(camera.getRight(), 3, "right");
 			requireCameraLength(camera.getUp(), 3, "up");
@@ -1157,10 +1172,16 @@ public final class Native implements AutoCloseable, NativeApi {
 			} else {
 				writeCameraFloats(info, evaluateCameraFieldOffset("view_to_clip"), camera.getViewToClip());
 				writeCameraFloats(info, evaluateCameraFieldOffset("clip_to_view"), camera.getClipToView());
+				writeCameraFloats(info, evaluateCameraFieldOffset("clip_to_prev_clip"), camera.getClipToPrevClip());
+				writeCameraFloats(info, evaluateCameraFieldOffset("prev_clip_to_clip"), camera.getPrevClipToClip());
 				writeCameraFloats(info, evaluateCameraFieldOffset("pos"), camera.getPos());
 				writeCameraFloats(info, evaluateCameraFieldOffset("right"), camera.getRight());
 				writeCameraFloats(info, evaluateCameraFieldOffset("up"), camera.getUp());
 				writeCameraFloats(info, evaluateCameraFieldOffset("fwd"), camera.getFwd());
+				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("near_plane"), camera.getNear());
+				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("far_plane"), camera.getFar());
+				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("fov_radians"), camera.getFovRadians());
+				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("aspect_ratio"), camera.getAspectRatio());
 			}
 			return (int)this.evaluate.invokeExact(info);
 		} catch (Throwable error) {
@@ -1292,7 +1313,13 @@ public final class Native implements AutoCloseable, NativeApi {
 				readCameraFloats(out, cameraFloatOffset("pos", 0), 3),
 				readCameraFloats(out, cameraFloatOffset("right", 0), 3),
 				readCameraFloats(out, cameraFloatOffset("up", 0), 3),
-				readCameraFloats(out, cameraFloatOffset("fwd", 0), 3)
+				readCameraFloats(out, cameraFloatOffset("fwd", 0), 3),
+				readCameraFloats(out, cameraFloatOffset("clip_to_prev_clip", 0), 16),
+				readCameraFloats(out, cameraFloatOffset("prev_clip_to_clip", 0), 16),
+				out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("near_plane"))),
+				out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("far_plane"))),
+				out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("fov_radians"))),
+				out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("aspect_ratio")))
 			);
 		} catch (NativeException error) {
 			throw error;

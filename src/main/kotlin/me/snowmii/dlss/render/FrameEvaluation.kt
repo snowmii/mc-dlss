@@ -9,6 +9,7 @@ import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.PresentTarget
+import me.snowmii.dlss.bridge.rowMajorOf
 import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.Vec2
 import me.snowmii.dlss.bridge.VulkanContext
@@ -18,6 +19,8 @@ import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.session.LifecycleAdapter
 import org.joml.Matrix4f
+import org.joml.Vector4f
+import kotlin.math.abs
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
@@ -50,51 +53,35 @@ data class FgFrameInputs(
 )
 
 /**
- * Converts the engine's view-to-clip projection and its inverse into the image-space Y
- * convention the DLSS-G plugin reads, as a pair of row-major ABI payloads.
+ * Extracts the frustum scalars Streamline's `sl::Constants` requires from the engine's
+ * view-to-clip projection: near, far, vertical field of view in radians, and aspect ratio.
  *
- * Minecraft 26.2 rasterizes with a Vulkan viewport whose height is positive, so framebuffer
- * row 0 holds NDC y = -1, and the present blit flips the image back for the display. A JOML
- * perspective projection (view-space +Y up projects to positive NDC y) therefore puts the
- * world's up at the *bottom* of every image the mod hands DLSS-G - scene colour and depth,
- * the motion field, and the output-sized HUD-less/UI targets alike - and the motion writers
- * share that mapping: pixel (x, y) is ndc (2x/w - 1, 2y/h - 1), no flip. The pinned
- * ProgrammingGuideDLSS_G states no image-origin convention of its own; what it pins down is
- * that all SL matrices are row-major with no jitter offsets (§7.0) and that the motion
- * vectors are a dense field covering camera and object motion, scaled into {-1,1} NDC
- * units (§5.1, §7.0) - both of which the payloads below satisfy.
+ * The plane distances come out of the inverse rather than off JOML's `perspectiveNear`/
+ * `perspectiveFar`, which read the matrix as if it were built the conventional way round.
+ * Minecraft 26.2 renders reversed-Z by passing its near and far to `setPerspective` swapped,
+ * and those accessors then answer the far distance twice (0.05 and 0.05 for a 0.05/1000
+ * frustum). Un-projecting the two ends of Vulkan's [0, 1] NDC depth range instead asks the
+ * matrix what it actually does, which is the same question under either convention; the
+ * smaller view-space distance is the near plane.
  *
- * Handed the raw projection, the plugin read the images as vertically flipped relative to
- * the matrices, and its reprojection of the previous frame inverted Y - the upside-down
- * semi-transparent world ghost the human probe saw on every generated frame while rendered
- * frames stayed correct. That symptom is the diagnosis that matrices and images disagreed
- * on Y: the flip below resolves it on the matrix side, view-space +Y now projecting to
- * negative clip y, exactly where the rasterizer and the motion field place it relative to
- * image row 0, so matrices, motion vectors, and rasterized images share one Y convention.
- *
- * The ABI payloads Streamline reads are row-vector (`v' = v * M`) in row-major layout, so the
- * flip negates the projection's column 1 - the column every projected point's clip-space Y
- * output travels through - and the inverse's row 1 - the row the clip-space Y input travels
- * through.
- *
- * With S = diag(1, -1, 1, 1): viewToClip' = viewToClip * S, so column 1 is negated (flat
- * indices 1, 5, 9, 13); clipToView' = S * clipToView, so row 1 is negated (flat indices
- * 4..7). The pair stays a true inverse pair - P * S and S * P^-1 - so a non-symmetric
- * reprojection round trip cannot silently invert Y.
+ * Aspect comes off the matrix rather than the window because the projection is what the frame
+ * was actually rasterized with, bob and skew included: for any perspective matrix
+ * m00 = 1/(aspect * tan(fov/2)) and m11 = 1/tan(fov/2), so aspect is m11/m00.
  */
-internal fun dlssImageClipMatrices(projection: Matrix4f): Pair<FloatArray, FloatArray> {
-	val viewToClip = projection.get(FloatArray(16))
-	// Row-vector ABI (v' = v * M): viewToClip * S negates column 1, the column the clip-space
-	// Y output of every projected point travels through.
-	for (row in 0..3) {
-		viewToClip[row * 4 + 1] = -viewToClip[row * 4 + 1]
-	}
-	val clipToView = Matrix4f(projection).invert().get(FloatArray(16))
-	// S * clipToView negates row 1, the row the clip-space Y input travels through.
-	for (i in 4..7) {
-		clipToView[i] = -clipToView[i]
-	}
-	return viewToClip to clipToView
+internal fun dlssFrustum(projection: Matrix4f): FloatArray {
+	val inverse = Matrix4f(projection).invert()
+	val atDepthZero = inverse.transform(Vector4f(0f, 0f, 0f, 1f))
+	val atDepthOne = inverse.transform(Vector4f(0f, 0f, 1f, 1f))
+	// View space looks down -Z, so the distance to a plane is the negated view-space z.
+	val firstPlane = abs(atDepthZero.z / atDepthZero.w)
+	val secondPlane = abs(atDepthOne.z / atDepthOne.w)
+	val aspect = if (projection.m00() != 0f) projection.m11() / projection.m00() else 0f
+	return floatArrayOf(
+		minOf(firstPlane, secondPlane),
+		maxOf(firstPlane, secondPlane),
+		projection.perspectiveFov(),
+		aspect,
+	)
 }
 
 /**
@@ -364,7 +351,7 @@ class FrameEvaluation(
 				motionScale = Vec2(motion.motionScaleX, motion.motionScaleY),
 				frameTimeMilliseconds = motion.frameTimeMillis,
 				resetHistory = motion.reset,
-				camera = camera?.let(::cameraConstants),
+				camera = camera?.let { cameraConstants(it, motion) },
 			),
 		)
 		if (!evaluated) {
@@ -424,9 +411,11 @@ class FrameEvaluation(
 	 * Converts one camera sample into the flat ABI constants the evaluation carries.
 	 *
 	 * [DlssCameraSample.projection] is already the jitter-free view-to-clip projection the
-	 * world rendered with (the jitter is applied after the seam captures it);
-	 * [dlssImageClipMatrices] expresses it and its inverse in the image-space Y convention
-	 * DLSS-G reads, so the matrices agree with the rasterized images and the motion field.
+	 * world rendered with (the jitter is applied after the seam captures it), so it converts
+	 * into [CameraConstants.viewToClip] through [rowMajorOf] unchanged; the clip-to-view
+	 * inverse follows from it, the frustum scalars from [dlssFrustum], and the clip-to-prev-clip
+	 * pair from [motion] - the same camera step the motion pass reprojects with, minus the
+	 * jitter conjugation SL forbids in its matrices.
 	 * The orthonormal basis comes from the view rotation's rows: JOML names its elements
 	 * m<column><row>, so row c of the matrix is (m0c, m1c, m2c) - the view-space axes
 	 * expressed in world coordinates. Row 0 is the camera's right (view-space +X), row 1 its
@@ -435,12 +424,18 @@ class FrameEvaluation(
 	 * Reading the columns instead would hand the plugin the world axes expressed in view
 	 * space - the transpose - which only coincides with the basis for the identity.
 	 */
-	private fun cameraConstants(camera: DlssCameraSample): CameraConstants {
+	private fun cameraConstants(camera: DlssCameraSample, motion: DlssFrameMotion): CameraConstants {
 		val rotation = camera.viewRotation
-		val (viewToClip, clipToView) = dlssImageClipMatrices(camera.projection)
+		val frustum = dlssFrustum(camera.projection)
 		return CameraConstants(
-			viewToClip = viewToClip,
-			clipToView = clipToView,
+			viewToClip = rowMajorOf(camera.projection),
+			clipToView = rowMajorOf(Matrix4f(camera.projection).invert()),
+			clipToPrevClip = rowMajorOf(motion.clipToPrevClip),
+			prevClipToClip = rowMajorOf(Matrix4f(motion.clipToPrevClip).invert()),
+			near = frustum[0],
+			far = frustum[1],
+			fovRadians = frustum[2],
+			aspectRatio = frustum[3],
 			pos = floatArrayOf(
 				camera.cameraX.toFloat(),
 				camera.cameraY.toFloat(),

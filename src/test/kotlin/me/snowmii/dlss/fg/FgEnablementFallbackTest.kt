@@ -41,6 +41,7 @@ import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -136,6 +137,55 @@ class FgEnablementFallbackTest {
 		)
 		assertEquals(2, calls.fgConfigures.size, "the resumed frame re-records the eOn options per frame")
 		assertTrue(announced.last().contains("fg on"), "the readout reports the resumed mode: ${announced.last()}")
+	}
+
+	@Test
+	fun `switching SR off suspends FG before the images its tags name are released`() {
+		val calls = RecordingNative()
+		val policy = FgSurfacePolicy()
+		val harness = harness(calls, policy)
+		val announced = mutableListOf<String>()
+		val controls = RuntimeControls(harness.runtime, announced::add)
+
+		controls.toggleFrameGeneration()
+		assertTrue(
+			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
+			"the armed frame composes FG and acquires the images its tags name",
+		)
+
+		// Switching SR off destroys the motion image and the scene target - exactly the
+		// resources the last FG frame's tags name - and DLSS-G reads its tags at present time,
+		// so the mode has to be off before the release, not after it. Releasing with the mode
+		// still eOn is the VK_ERROR_DEVICE_LOST this ordering exists to prevent.
+		controls.toggleEnabled()
+		assertFalse(policy.active, "SR off suspends effective FG")
+		assertEquals(1, calls.fgModeOffRecords, "the release records the retained eOff mode exactly once")
+		assertTrue(
+			calls.order.indexOf("setFgModeOff") < calls.order.indexOf("releaseImages"),
+			"the eOff record must precede the image release, got ${calls.order}",
+		)
+
+		// Frames while SR is off stay suspended: the frame classifier never resumes FG onto a
+		// session with no scene target, no motion image, and no HUD-less colour.
+		assertNull(
+			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS),
+			"an SR-off frame routes vanilla",
+		)
+		harness.runtime.endWorldPhase()
+		assertFalse(policy.active, "an SR-off frame must not resume FG")
+		assertEquals(1, calls.fgModeOffRecords, "a suspension already in effect records nothing")
+		assertFalse(policy.latched, "SR off is not the plugin's failure verdict")
+
+		// SR back on: the user's FG mode was never touched, so the first supported frame
+		// resumes it and re-records the eOn options per frame.
+		controls.toggleEnabled()
+		assertNotNull(
+			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS),
+			"SR back on routes to the scene target again",
+		)
+		harness.runtime.endWorldPhase()
+		assertTrue(policy.active, "the first supported frame after SR returns resumes FG")
+		assertEquals(1, calls.fgModeOffRecords, "the resume records no mode")
 	}
 
 	@Test
@@ -884,7 +934,10 @@ class FgEnablementFallbackTest {
 			output = ImageBinding(501L, 502L, 37),
 		)
 
-		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT
+		override fun releaseImages(): Int {
+			order += "releaseImages"
+			return NativeApi.SUCCESS_RESULT
+		}
 
 		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
 

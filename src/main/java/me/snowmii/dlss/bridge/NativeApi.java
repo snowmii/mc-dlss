@@ -531,9 +531,9 @@ public interface NativeApi {
 	/**
 	 * The camera constants the last successful evaluation recorded into Streamline's common
 	 * constants, as reported by {@code mc_dlss_query_camera_constants}: the jitter-free
-	 * row-major view-to-clip and clip-to-view matrices and the camera's world-space position
-	 * and orthonormal right/up/forward basis, exactly as {@link #evaluate(EvaluationRequest)}
-	 * carried them.
+	 * row-major view-to-clip, clip-to-view, and clip-to-prev-clip matrices, the frustum
+	 * scalars, and the camera's world-space position and orthonormal right/up/forward basis,
+	 * exactly as {@link #evaluate(EvaluationRequest)} carried them.
 	 *
 	 * <p>The constants oracle proves the caller's camera reached {@code slSetConstants}
 	 * unchanged - the constants the DLSS-G plugin interpolates the generated frame's camera

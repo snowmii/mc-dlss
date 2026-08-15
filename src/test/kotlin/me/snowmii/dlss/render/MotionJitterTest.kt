@@ -74,6 +74,43 @@ class MotionJitterTest {
 	}
 
 	@Test
+	fun `clipToPrevClip maps unjittered clip to the previous frame's unjittered clip`() {
+		val motion = DlssCameraMotion(render)
+		val previousView = Matrix4f().rotateY(0.10f)
+		val currentView = Matrix4f().rotateY(0.13f)
+
+		motion.advance(sample(x = 0.0, view = previousView), previousOffset, nanos(0))
+		val frame = motion.advance(sample(x = 0.5, view = currentView), currentOffset, nanos(16))
+
+		// Streamline requires clipToPrevClip and forbids temporal-AA jitter in any of its
+		// matrices, so the payload maps *unjittered* clip to unjittered clip: a point's current
+		// clip position must land where the previous frame's own projection put it, camera-relative.
+		// The motion pass's reprojection is this conjugated by the jitter and would fail here.
+		val current = Matrix4f(projection).mul(currentView)
+		val previous = Matrix4f(projection).mul(previousView)
+		for (probe in probes) {
+			val clip = current.transform(Vector4f(probe.x, probe.y, probe.z, 1f))
+			val mapped = frame.clipToPrevClip.transform(Vector4f(clip))
+			// Camera-relative: the camera moved +0.5 along x, so the point sat that much
+			// further along x measured from where the camera used to be.
+			val expected = ndc(previous, Vector3f(probe).add(0.5f, 0f, 0f))
+			assertEquals(expected.x, mapped.x / mapped.w, tolerance, "x at $probe")
+			assertEquals(expected.y, mapped.y / mapped.w, tolerance, "y at $probe")
+			assertEquals(expected.z, mapped.z / mapped.w, tolerance, "z at $probe")
+		}
+	}
+
+	@Test
+	fun `a reset frame reports the identity camera step`() {
+		val motion = DlssCameraMotion(render)
+
+		val frame = motion.advance(sample(), currentOffset, nanos(0))
+
+		assertTrue(frame.reset)
+		assertEquals(Matrix4f(), frame.clipToPrevClip, "no predecessor means no camera step")
+	}
+
+	@Test
 	fun `a camera that slid sideways moves every pixel by the reprojected difference`() {
 		val motion = DlssCameraMotion(render)
 

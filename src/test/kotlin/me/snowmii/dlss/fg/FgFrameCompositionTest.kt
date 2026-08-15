@@ -231,34 +231,91 @@ class FgFrameCompositionTest {
 			"a yawed camera's fwd must be its world-space view direction, got " +
 				constants.fwd.contentToString(),
 		)
-		// The ABI payload carries the projection expressed in the image-space Y convention the
-		// DLSS-G plugin reads: column 1 negated on viewToClip, row 1 negated on its inverse -
-		// the Streamline row-vector flip - so the pair still round-trips.
-		// [FgImageConventionTest] pins the flip behaviorally.
-		val expectedViewToClip = rowMajorOf(projection).also { payload ->
-			for (row in 0..3) {
-				payload[row * 4 + 1] = -payload[row * 4 + 1]
-			}
-		}
-		val expectedClipToView = rowMajorOf(Matrix4f(projection).invert()).also { payload ->
-			for (i in 4..7) {
-				payload[i] = -payload[i]
-			}
-		}
+		// The ABI payload carries the engine's own projection, unaltered: no Y flip, no
+		// transpose. FgCameraConstantsCompletenessTest pins the rest of the non-optional
+		// sl::Constants surface - the clip-to-prev-clip pair and the frustum scalars - which is
+		// what was actually missing when generated frames ghosted upside down.
 		assertTrue(
-			constants.viewToClip.contentEquals(expectedViewToClip),
-			"viewToClip must be the sample's unjittered projection with its Y column flipped " +
-				"into the DLSS-G image convention",
+			constants.viewToClip.contentEquals(rowMajorOf(projection)),
+			"viewToClip must be the sample's unjittered projection in row-major ABI layout",
 		)
 		assertTrue(
-			constants.clipToView.contentEquals(expectedClipToView),
-			"clipToView must be the matching inverse with its Y row flipped - the pair stays " +
-				"a true inverse",
+			constants.clipToView.contentEquals(rowMajorOf(Matrix4f(projection).invert())),
+			"clipToView must be the inverse projection in row-major ABI layout",
 		)
 		assertTrue(
 			constants.pos.contentEquals(floatArrayOf(12f, 64f, -48f)),
 			"cameraPos must be the sample's world position",
 		)
+	}
+
+	@Test
+	fun `the evaluation records every non-optional Streamline constant`() {
+		val calls = RecordingNative()
+		val harness = harness(calls, FgSurfacePolicy(), null)
+
+		val projection = Matrix4f().setPerspective(
+			Math.toRadians(70.0).toFloat(),
+			16f / 9f,
+			1000f,
+			0.05f,
+			true,
+		)
+		val sample = DlssCameraSample(
+			projection = projection,
+			viewRotation = Matrix4f().rotationY(0.4f),
+			cameraX = 1.0,
+			cameraY = 2.0,
+			cameraZ = 3.0,
+		)
+		// A real camera step, not the identity: the fields under test are exactly the ones a
+		// still camera would let pass unnoticed.
+		val step = Matrix4f().translation(0.03f, -0.02f, 0.01f).rotateY(0.05f)
+		val motion = DlssFrameMotion(
+			Matrix4f(),
+			RENDER_DIMENSIONS.width / 2f,
+			RENDER_DIMENSIONS.height / 2f,
+			16.6f,
+			false,
+			clipToPrevClip = step,
+		)
+
+		assertTrue(
+			harness.evaluation.evaluateFrame(
+				scene(),
+				jitter(),
+				motion,
+				DESTINATION,
+				MotionVectorRoute.CAMERA_ONLY,
+				camera = sample,
+			),
+		)
+
+		val constants = calls.evaluateRequests.single().camera
+		requireNotNull(constants)
+		// sl_consts.h default-constructs every unwritten field to INVALID_FLOAT (3.4e38), so a
+		// field the mod never sets reaches the plugin as FLT_MAX rather than as a default. The
+		// DLSS-G plugin reads clipToPrevClip and the frustum scalars directly; FLT_MAX there is
+		// what turned the generated frames into an upside-down world ghost while the rendered
+		// frames stayed correct.
+		assertTrue(
+			constants.clipToPrevClip.contentEquals(rowMajorOf(step)),
+			"clipToPrevClip must be the frame's jitter-free camera step",
+		)
+		assertTrue(
+			constants.prevClipToClip.contentEquals(rowMajorOf(Matrix4f(step).invert())),
+			"prevClipToClip must be its inverse - sl_consts.h defines it as exactly that",
+		)
+		// The frustum scalars describe the projection the frame rasterized with. Minecraft
+		// renders reversed-Z, so near is the smaller distance whichever way the matrix orders
+		// the planes.
+		assertEquals(0.05f, constants.near, 1e-4f, "cameraNear")
+		assertEquals(1000f, constants.far, 0.5f, "cameraFar")
+		assertEquals(Math.toRadians(70.0).toFloat(), constants.fovRadians, 1e-3f, "cameraFOV")
+		assertEquals(16f / 9f, constants.aspectRatio, 1e-3f, "cameraAspectRatio")
+		for (value in listOf(constants.near, constants.far, constants.fovRadians, constants.aspectRatio)) {
+			assertTrue(value < INVALID_FLOAT, "no scalar may reach the plugin as INVALID_FLOAT")
+		}
 	}
 
 	/**
@@ -344,6 +401,9 @@ class FgFrameCompositionTest {
 	)
 
 	private fun jitter(): DlssJitterOffset = DlssJitter(RENDER_DIMENSIONS, OUTPUT_DIMENSIONS).advance()
+
+	/** sl_consts.h: `constexpr float INVALID_FLOAT = 3.402823466e38f`. */
+	private val INVALID_FLOAT = 3.402823466e38f
 
 	private fun motion() =
 		DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, false)

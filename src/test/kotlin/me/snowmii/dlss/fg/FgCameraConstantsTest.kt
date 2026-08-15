@@ -332,6 +332,22 @@ class FgCameraConstantsTest {
 			expected.fwd.contentEquals(actual.fwd),
 			"cameraFwd must reach slSetConstants unchanged",
 		)
+		assertTrue(
+			expected.clipToPrevClip.contentEquals(actual.clipToPrevClip),
+			"clipToPrevClip must reach slSetConstants unchanged",
+		)
+		assertTrue(
+			expected.prevClipToClip.contentEquals(actual.prevClipToClip),
+			"prevClipToClip must reach slSetConstants unchanged",
+		)
+		assertEquals(expected.near, actual.near, "cameraNear must reach slSetConstants unchanged")
+		assertEquals(expected.far, actual.far, "cameraFar must reach slSetConstants unchanged")
+		assertEquals(expected.fovRadians, actual.fovRadians, "cameraFOV must reach slSetConstants unchanged")
+		assertEquals(
+			expected.aspectRatio,
+			actual.aspectRatio,
+			"cameraAspectRatio must reach slSetConstants unchanged",
+		)
 	}
 
 	/**
@@ -429,6 +445,10 @@ class FgCameraConstantsTest {
 				1000f,
 				true, // Vulkan zero-to-one depth, like Minecraft 26.2's backend
 			)
+			// A real camera step, so the clip-to-prev-clip pair is not the identity: those two
+			// matrices and the four frustum scalars are the non-optional sl::Constants fields
+			// that reached the plugin as INVALID_FLOAT until the mod wrote them.
+			val step = Matrix4f().translation(0.03f, -0.02f, 0.01f).rotateY(0.05f)
 			CameraConstants(
 				viewToClip = rowMajorOf(projection),
 				clipToView = rowMajorOf(Matrix4f(projection).invert()),
@@ -436,6 +456,12 @@ class FgCameraConstantsTest {
 				right = right,
 				up = up,
 				fwd = fwd,
+				clipToPrevClip = rowMajorOf(step),
+				prevClipToClip = rowMajorOf(Matrix4f(step).invert()),
+				near = 0.05f,
+				far = 1000f,
+				fovRadians = Math.toRadians(70.0).toFloat(),
+				aspectRatio = 16f / 9f,
 			)
 		}
 
