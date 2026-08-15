@@ -44,6 +44,18 @@ int32_t record_sr_options() noexcept;
 // zero (no successful mc_dlss_configure yet).
 int32_t record_fg_options(uint32_t numBackBuffers) noexcept;
 
+// Switches the recorded DLSS-G options' mode through slDLSSGSetOptions: eOn when
+// `fgEnabled` is non-zero, eOff when it is zero, both retaining resources and reusing the
+// back-buffer count and extents the last successful record stored. Requires sl_session_ready
+// (kNotInitialized) and a stored DLSS-G options record with valid dimensions
+// (kInvalidParameter) - the mode record switches an existing record, it never creates one,
+// so a session whose options never recorded cannot be switched off. This is the native half
+// of the status-latch fallback: after a non-OK slDLSSGGetState status the session re-records
+// the options in the eOff mode so the plugin stops interpolating while its allocations stay
+// alive; the re-arm refusal that keeps eOn from coming back is the Kotlin policy's, not
+// this record's.
+int32_t record_fg_mode(uint32_t fgEnabled) noexcept;
+
 // Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
 // frame token and the SR/FG tag records and indexes. Called wherever the frame those records
 // name can no longer reach a present - configuration replacement, reset, and image release -

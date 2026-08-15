@@ -430,6 +430,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure_fg(const uint32_t num_back_bu
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_fg_mode(const uint32_t fg_enabled) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return record_fg_mode(fg_enabled);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_acquire_images(McDlssImage* motion,
                                                          McDlssImage* output) {
     try {

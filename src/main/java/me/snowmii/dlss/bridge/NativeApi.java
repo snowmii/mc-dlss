@@ -89,6 +89,27 @@ public interface NativeApi {
 	}
 
 	/**
+	 * Switches the recorded DLSS-G options' mode through {@code slDLSSGSetOptions}: {@code eOn}
+	 * when {@code fgEnabled} is non-zero, {@code eOff} when it is zero.
+	 *
+	 * <p>The mode record is the status-latch fallback's native half: after the per-frame
+	 * {@link #queryFgState()} poll reports a status other than {@code eDLSSGStatusOk} while FG
+	 * is active, the session re-records the options in the {@code eOff} mode so the plugin
+	 * stops interpolating, with the retained-resources flag keeping its allocations alive and
+	 * the same back-buffer count and extents the validated {@code eOn} record stored. Answers
+	 * {@code FAIL_NotInitialized} without a ready Streamline session and
+	 * {@code FAIL_InvalidParameter} while no DLSS-G options record is stored - the mode
+	 * record switches an existing record, it never creates one. The re-arm refusal that keeps
+	 * {@code eOn} from coming back for the session is the Kotlin policy's, not this record's.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
+	 * have to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int setFgMode(int fgEnabled) {
+		throw new UnsupportedOperationException("setFgMode");
+	}
+
+	/**
 	 * Returns the native-owned motion and output images for the configured dimensions,
 	 * creating them on first use and reusing them while that configuration holds.
 	 *

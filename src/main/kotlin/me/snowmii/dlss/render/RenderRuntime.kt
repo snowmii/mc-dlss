@@ -2,6 +2,7 @@ package me.snowmii.dlss.render
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.dlss.bridge.FgState
 import me.snowmii.dlss.bridge.VulkanContextRegistry
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.bridge.DlssDimensions
@@ -102,6 +103,24 @@ class RenderRuntime(
 	 * the latched state and degrades the frame to vanilla.
 	 */
 	private val waitForFgInputs: () -> Unit = {},
+	/**
+	 * Reads the live DLSS-G state for the per-frame status poll, or null for a runtime
+	 * without FG wiring or a session that cannot answer.
+	 *
+	 * Polled on the render thread at the start of every FG-active frame, after the input
+	 * wait: while FG is active, a reported status other than eDLSSGStatusOk (word zero)
+	 * latches FG off for the session. A null read is no information, not a verdict - a
+	 * refused query must not latch the plugin's own status onto its behalf.
+	 */
+	private val pollFgState: () -> FgState? = { null },
+	/**
+	 * Re-records the DLSS-G options in the eOff mode (retained resources) after the status
+	 * latch, or does nothing for a runtime without FG wiring. Runs exactly once per latch;
+	 * the SR session stays READY, so this is deliberately not a session-latching call.
+	 */
+	private val latchFgOff: () -> Unit = {},
+	/** Emits diagnostics; the FG status latch reports its one exact line through this. */
+	private val diagnostics: (String) -> Unit = {},
 ) : AutoCloseable {
 	private val resources = FrameResources(sceneTarget, frameEvaluation, quiesce)
 	private val phase = WorldPhaseState()
@@ -260,6 +279,7 @@ class RenderRuntime(
 		// the adapter, and the routing decision below then degrades this frame to vanilla.
 		if (frameGeneration.active) {
 			waitForFgInputs()
+			pollFrameGenerationStatus()
 		}
 
 		val route = routeFrame(normalInWorldFrame, outputDimensions)
@@ -465,7 +485,46 @@ class RenderRuntime(
 		)
 	}
 
+	/**
+	 * The per-frame DLSS-G status poll: while FG is active, any status other than
+	 * eDLSSGStatusOk latches FG off for the session.
+	 *
+	 * The latch is the plugin's own verdict, so it is deliberately narrow: the policy turns
+	 * FG off (restoring vsync and image-count reads and refusing every re-arm), the adapter
+	 * re-records the DLSS-G options in the eOff mode with retained resources, the SR session
+	 * stays READY, and one exact diagnostic names the status word. A null read latches
+	 * nothing. The latch runs once - the policy answers false on the repeat, so the eOff
+	 * record and the diagnostic stay attached to the first latch - and the frames that
+	 * follow record SR-only through the inactive policy.
+	 */
+	private fun pollFrameGenerationStatus() {
+		val state = pollFgState() ?: return
+		if (state.status == FG_STATUS_OK) {
+			return
+		}
+		latchFrameGeneration(state.status)
+	}
+
+	private fun latchFrameGeneration(status: Int) {
+		if (!frameGeneration.latchOff()) {
+			return
+		}
+		latchFgOff()
+		diagnostics(
+			"Frame generation latched off: slDLSSGGetState status=0x" +
+				status.toString(16) +
+				" (eDLSSGStatusOk=0); eOff options retained, vsync restored, SR session stays READY, re-arm refused.",
+		)
+	}
+
 	companion object {
+		/**
+		 * The DLSS-G status word for a healthy plugin: sl::DLSSGStatus::eOk is zero and every
+		 * failure is its own bit, so any non-zero word while FG is active is the status latch's
+		 * trigger.
+		 */
+		private const val FG_STATUS_OK = 0
+
 		/**
 		 * Production wiring: Streamline-backed startup against the captured Minecraft Vulkan
 		 * context and a Minecraft-allocated scene target. Returns null when no Vulkan context has
@@ -507,6 +566,13 @@ class RenderRuntime(
 			// runtime asks before the world phase rewrites the tagged inputs, and a refused or
 			// failed wait degrades through the session state exactly like any other native stage.
 			waitForFgInputs = { adapter.waitFgInputsIdle() },
+			// The per-frame status poll reads the same live DLSS-G state the input wait's
+			// fence came from; a non-OK status latches FG off through the policy while the SR
+			// session stays READY. The latch's eOff options record goes through the same
+			// adapter, non-latching like the poll itself.
+			pollFgState = { adapter.queryFgState() },
+			latchFgOff = { adapter.recordFgModeOff() },
+			diagnostics = diagnostics,
 			// Every FG mode transition recreates the swapchain through Minecraft's own
 			// reconfigure path, so the next frame's renderFrame reconfigures the surface under
 			// the new policy. The flag itself is only a boolean write, safe from the client

@@ -140,9 +140,10 @@ int32_t record_sr_options() noexcept {
 // present slice implements. The guide's set-options call validates little of this and the
 // wrong form of any field records silently, so the record is a dense contract, not a
 // convenience.
-sl::DLSSGOptions make_fg_options(const uint32_t numBackBuffers) noexcept {
+sl::DLSSGOptions make_fg_options(const uint32_t numBackBuffers,
+                                  const sl::DLSSGMode mode) noexcept {
     sl::DLSSGOptions options{};
-    options.mode = sl::DLSSGMode::eOn;
+    options.mode = mode;
     options.numFramesToGenerate = 1;
     options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
     options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockNoClientQueues;
@@ -180,7 +181,7 @@ int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
     // The viewport is the same one the SR options, tags, and evaluation record against: the
     // frame's resources tag on viewport 0 and the options must name the viewport they apply
     // to.
-    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0}, make_fg_options(numBackBuffers));
+    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0}, make_fg_options(numBackBuffers, sl::DLSSGMode::eOn));
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
@@ -192,6 +193,31 @@ int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
     g_state.fgOptionsRecorded = true;
     g_state.fgNumBackBuffers = numBackBuffers;
     return kSuccess;
+}
+
+int32_t record_fg_mode(const uint32_t fgEnabled) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The mode record is a mode switch on an existing DLSS-G options record: nothing is
+    // recorded for a configuration that never validated its dimensions, and an eOff record
+    // for a session whose options never recorded has no record to switch - the stored
+    // back-buffer count is what the switched record reuses, and only a successful
+    // mc_dlss_configure_fg stored it.
+    if (!g_state.fgOptionsRecorded || !valid_dimensions(g_state.outputWidth, g_state.outputHeight,
+                                                        g_state.renderWidth, g_state.renderHeight)) {
+        return kInvalidParameter;
+    }
+
+    // The eOff record is the status-latch fallback's native half: mode eOff with the
+    // retained-resources flag keeps the plugin's allocations alive for the session while it
+    // stops interpolating, and the same back-buffer count the validated eOn record used
+    // keeps the record's shape identical apart from the mode. eOn is the same call for the
+    // ABI's symmetry; the per-frame handoff re-records eOn with the stored count anyway.
+    const sl::DLSSGMode mode = fgEnabled != 0 ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
+    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0},
+                                                make_fg_options(g_state.fgNumBackBuffers, mode));
+    return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
 
 // Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
@@ -238,7 +264,7 @@ int32_t record_present_handoff() noexcept {
         g_state.lastSrTagFrameIndex != g_state.lastFgTagFrameIndex) return kInvalidParameter;
     if (g_state.frameToken == nullptr) return kNotInitialized;
     const sl::Result result = slDLSSGSetOptions(
-        sl::ViewportHandle{0}, make_fg_options(g_state.fgNumBackBuffers));
+        sl::ViewportHandle{0}, make_fg_options(g_state.fgNumBackBuffers, sl::DLSSGMode::eOn));
     if (result != sl::Result::eOk) return static_cast<int32_t>(result);
     // The handoff consumes the tag set's handoff eligibility exactly as the present-time
     // design always did: both sides' records clear, so a second handoff for the same set

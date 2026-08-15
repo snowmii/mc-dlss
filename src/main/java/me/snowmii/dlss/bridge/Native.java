@@ -259,6 +259,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
 	private final MethodHandle configureFg;
+	private final MethodHandle setFgMode;
 	private final MethodHandle acquireImages;
 	private final MethodHandle releaseImages;
 	private final MethodHandle waitDeviceIdle;
@@ -400,6 +401,14 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_configure_fg",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // num_back_buffers
+		);
+		// Optional like configureFg: the ABI-probe DLL the layout tests compile stubs
+		// the historical ABI surface and does not export the FG mode record yet, while
+		// every real build since this symbol exists carries it.
+		this.setFgMode = bindOptional(
+			lookup,
+			"mc_dlss_set_fg_mode",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // fg_enabled
 		);
 		this.acquireImages = bind(
 			lookup,
@@ -869,6 +878,16 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.configureFg.invokeExact(numBackBuffers);
 		} catch (Throwable error) {
 			throw nativeError("configure-fg", error);
+		}
+	}
+
+	@Override
+	public int setFgMode(final int fgEnabled) {
+		if (setFgMode == null) throw new NativeException("set-fg-mode", new IllegalStateException("Native bridge lacks the FG mode record"));
+		try {
+			return (int)this.setFgMode.invokeExact(fgEnabled);
+		} catch (Throwable error) {
+			throw nativeError("set-fg-mode", error);
 		}
 	}
 

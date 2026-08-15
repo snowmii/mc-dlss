@@ -134,6 +134,29 @@ class LifecycleAdapter(
 	}
 
 	/**
+	 * Re-records the DLSS-G options in the eOff mode with the retained-resources flag, after
+	 * the status latch decided the plugin's own state is not usable.
+	 *
+	 * Deliberately non-latching: the status latch must leave the SR session READY - the whole
+	 * fallback is SR-only, not vanilla - so a refused or failed eOff record must not send the
+	 * session to FALLBACK_LATCHED. The failure is instead invisible to the session: the policy
+	 * has already stopped composing FG frames, and the diagnostic the runtime emits is the
+	 * latch's one exact line. The bridge answers FAIL_NotInitialized without a ready session
+	 * and FAIL_InvalidParameter while no DLSS-G options record is stored, the same gates as
+	 * the FG tag.
+	 */
+	fun recordFgModeOff(): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			native.setFgMode(0) == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
+		}
+	}
+
+	/**
 	 * Returns the native-owned motion and output images, or null when acquisition failed.
 	 *
 	 * A failure here latches the session exactly like any other native stage, because a session

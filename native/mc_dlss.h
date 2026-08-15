@@ -288,6 +288,23 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure_fg(uint32_t num_back_buffers);
 
 /*
+ * Switches the recorded DLSS-G options' mode through slDLSSGSetOptions: eOn when
+ * `fg_enabled` is non-zero, eOff when it is zero.
+ *
+ * The mode record is the status-latch fallback's native half: after the per-frame
+ * mc_dlss_query_fg_state poll reports a status other than eDLSSGStatusOk while FG is
+ * active, the session re-records the options in the eOff mode so the plugin stops
+ * interpolating, with the retained-resources flag keeping its allocations alive and the
+ * same back-buffer count and render/output extents the validated eOn record stored - the
+ * record's shape is identical apart from the mode. Answers FAIL_NotInitialized without a
+ * ready Streamline session and FAIL_InvalidParameter while no DLSS-G options record is
+ * stored (the same gates as the FG tag): the mode record switches an existing record, it
+ * never creates one. The re-arm refusal that keeps eOn from coming back for the session is
+ * the Kotlin policy's, not this record's.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_fg_mode(uint32_t fg_enabled);
+
+/*
  * Native-owned evaluation images.
  *
  * DLSS writes its upscaled result into an image the engine does not own, and

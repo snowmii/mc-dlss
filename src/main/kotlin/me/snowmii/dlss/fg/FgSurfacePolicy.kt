@@ -27,24 +27,60 @@ class FgSurfacePolicy(
 	private val invalidateSurfaceConfiguration: () -> Unit = {},
 ) {
 	private var frameGenerationActive = false
+	private var latchedOff = false
 
 	/** Whether FG is switched on right now. */
 	val active: Boolean
 		get() = frameGenerationActive
 
 	/**
+	 * Whether a non-OK DLSS-G status latched FG off for the session.
+	 *
+	 * A latched policy is off for good: every later re-arm is refused, the vsync and
+	 * image-count reads answer the stored/vanilla values, and only a fresh session's new
+	 * policy instance can run FG again.
+	 */
+	val latched: Boolean
+		get() = latchedOff
+
+	/**
 	 * Switches FG on or off and reports whether the mode changed.
 	 *
 	 * A real transition invalidates Minecraft's surface configuration exactly once, so the next
 	 * frame recreates the swapchain under the new policy; a call that leaves the mode where it
-	 * was is a no-op that invalidates nothing.
+	 * was is a no-op that invalidates nothing. A re-arm of a latched policy is refused before
+	 * anything else: the latch is the plugin's own failure verdict for the session, and no
+	 * toggle may overturn it.
 	 */
 	fun setFrameGenerationActive(active: Boolean): Boolean {
+		if (latchedOff && active) {
+			return false
+		}
 		if (active == frameGenerationActive) {
 			return false
 		}
 		frameGenerationActive = active
 		invalidateSurfaceConfiguration()
+		return true
+	}
+
+	/**
+	 * Latches FG off for the session: records the latch, switches the mode off - invalidating
+	 * the surface configuration exactly once when the mode actually changes, so the next
+	 * frame recreates the swapchain with vsync and image count restored - and refuses every
+	 * later re-arm. Returns whether this call was the one that latched; a repeat call answers
+	 * false so its caller can keep a one-shot side effect (the eOff options record, the exact
+	 * diagnostic) attached to the first latch.
+	 */
+	fun latchOff(): Boolean {
+		if (latchedOff) {
+			return false
+		}
+		latchedOff = true
+		if (frameGenerationActive) {
+			frameGenerationActive = false
+			invalidateSurfaceConfiguration()
+		}
 		return true
 	}
 
