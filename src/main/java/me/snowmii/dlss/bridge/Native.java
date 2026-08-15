@@ -73,7 +73,8 @@ public final class Native implements AutoCloseable, NativeApi {
 		JAVA_FLOAT.withName("near_plane"),
 		JAVA_FLOAT.withName("far_plane"),
 		JAVA_FLOAT.withName("fov_radians"),
-		JAVA_FLOAT.withName("aspect_ratio")
+		JAVA_FLOAT.withName("aspect_ratio"),
+		VEC2_LAYOUT.withName("jitter")
 	).withName("McDlssCameraConstants");
 
 	private static final StructLayout EVALUATE_LAYOUT = MemoryLayout.structLayout(
@@ -270,6 +271,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryFgState;
 	private final MethodHandle queryCameraConstants;
 	private final MethodHandle queryFgCameraConstants;
+	private final MethodHandle queryFgImages;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
@@ -549,6 +551,19 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_query_fg_camera_constants",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // McDlssCameraConstants*
+		);
+		// Optional like queryFgCameraConstants: the ABI-probe DLL does not export the FG
+		// images read either, while every real build since this symbol exists carries it.
+		this.queryFgImages = bindOptional(
+			lookup,
+			"mc_dlss_query_fg_images",
+			FunctionDescriptor.of(
+				JAVA_INT,
+				ValueLayout.ADDRESS, // McDlssImage* depth
+				ValueLayout.ADDRESS, // McDlssImage* hudless
+				ValueLayout.ADDRESS, // McDlssImage* ui
+				ValueLayout.ADDRESS // McDlssImage* motion
+			)
 		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
 		this.close = bind(lookup, "mc_dlss_close", FunctionDescriptor.of(JAVA_INT));
@@ -1343,6 +1358,30 @@ public final class Native implements AutoCloseable, NativeApi {
 		}
 	}
 
+	@Override
+	public FgOrientationImages queryFgImages() {
+		if (queryFgImages == null) {
+			throw new NativeException("query-fg-images", new IllegalStateException("Native bridge lacks the FG images query"));
+		}
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment depth = callArena.allocate(IMAGE_LAYOUT);
+			final MemorySegment hudless = callArena.allocate(IMAGE_LAYOUT);
+			final MemorySegment ui = callArena.allocate(IMAGE_LAYOUT);
+			final MemorySegment motion = callArena.allocate(IMAGE_LAYOUT);
+			final int result = (int)this.queryFgImages.invokeExact(depth, hudless, ui, motion);
+			if (result != SUCCESS) {
+				throw new NativeException("query-fg-images", result);
+			}
+			return new FgOrientationImages(
+				readImage(depth), readImage(hudless), readImage(ui), readImage(motion)
+			);
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-fg-images", error);
+		}
+	}
+
 	/** Reads one McDlssCameraConstants segment back into the bridge type. */
 	private static CameraConstants readCameraConstants(final MemorySegment out) {
 		return new CameraConstants(
@@ -1357,7 +1396,15 @@ public final class Native implements AutoCloseable, NativeApi {
 			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("near_plane"))),
 			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("far_plane"))),
 			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("fov_radians"))),
-			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("aspect_ratio")))
+			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("aspect_ratio"))),
+			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(
+				MemoryLayout.PathElement.groupElement("jitter"),
+				MemoryLayout.PathElement.groupElement("x")
+			)),
+			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(
+				MemoryLayout.PathElement.groupElement("jitter"),
+				MemoryLayout.PathElement.groupElement("y")
+			))
 		);
 	}
 

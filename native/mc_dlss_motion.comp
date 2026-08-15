@@ -20,6 +20,10 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform sampler2D depthTexture;
 layout(set = 0, binding = 1, rg16f) uniform writeonly image2D motionImage;
+// The DLSS-G viewport consumes the backbuffer's orientation, which is the engine's mirrored
+// about the horizontal axis: the FG motion copy receives every vector at the mirrored pixel
+// with its y component negated, so the plugin's motion reads agree with its mirrored inputs.
+layout(set = 0, binding = 2, rg16f) uniform writeonly image2D flippedMotionImage;
 
 layout(push_constant) uniform MotionPushConstants {
 	mat4 reprojection;
@@ -43,4 +47,6 @@ void main() {
 	// DLSS with this frame's own colour rather than a division by zero.
 	vec2 motion = previous.w == 0.0 ? vec2(0.0) : previous.xy / previous.w - ndc;
 	imageStore(motionImage, pixel, vec4(motion, 0.0, 0.0));
+	imageStore(flippedMotionImage, ivec2(pixel.x, constants.renderSize.y - 1 - pixel.y),
+		vec4(motion.x, -motion.y, 0.0, 0.0));
 }

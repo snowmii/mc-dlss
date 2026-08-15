@@ -49,10 +49,13 @@ fun rowMajorOf(matrix: Matrix4f): FloatArray = matrix.get(FloatArray(16))
  * A composed frame's evaluation records the same camera twice: once on the SR viewport for
  * the DLSS SR evaluation, and once on the FG-only viewport under the same frame token, for
  * the DLSS-G plugin, which reads per-frame constants from the viewport its options, state,
- * and tags were recorded on. `NativeApi.queryFgCameraConstants` is the FG record's oracle;
- * `NativeApi.queryCameraConstants` is the SR record's. No value here is flipped between the
- * two records: the orientation split lives in which viewport each record names, and any
- * y-flip a later slice applies reaches only the FG side.
+ * and tags were recorded on. The FG record carries the FG viewport's orientation: the four
+ * clip-space matrices conjugate with F = diag(1, -1, 1, 1) and the jitter's y negates,
+ * matching the y-flipped images the FG tag names, while the SR record stays raw.
+ * `NativeApi.queryFgCameraConstants` is the FG record's oracle;
+ * `NativeApi.queryCameraConstants` is the SR record's - the two oracles report exactly what
+ * each viewport received, flipped jitter included, which is how the orientation split stays
+ * provable.
  *
  * [pos] is the camera position in world space; [right], [up], and [fwd] are the camera's
  * orthonormal world-space basis vectors (the directions of view-space +X, +Y, and -Z, i.e.
@@ -88,6 +91,14 @@ data class CameraConstants(
 	val fovRadians: Float = 0f,
 	/** View-space width divided by height. */
 	val aspectRatio: Float = 0f,
+	/**
+	 * The pixel-space temporal-AA jitter offset the constants record carried, in render
+	 * pixels. The SR oracle reports it raw; the FG oracle reports it with y negated,
+	 * matching the FG viewport's y-flipped tags. Input cameras never carry it - the
+	 * evaluation's jitter travels separately as [EvaluationRequest.jitter].
+	 */
+	val jitterX: Float = 0f,
+	val jitterY: Float = 0f,
 )
 
 /** The row-major identity, the default camera step of a caller that reports no motion. */

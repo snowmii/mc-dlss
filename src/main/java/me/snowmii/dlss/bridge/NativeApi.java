@@ -557,7 +557,10 @@ public interface NativeApi {
 	 * reaches it. This oracle reports exactly the FG-viewport record, independently of
 	 * {@link #queryCameraConstants()}: an SR-only evaluation establishes the SR record and
 	 * never this one, and only a frame whose FG tag recorded before the evaluation
-	 * establishes it. Answers {@code FAIL_NotInitialized} until a composed frame's FG-side
+	 * establishes it. The FG record carries the FG viewport's orientation - the four
+	 * clip-space matrices conjugate with F = diag(1,-1,1,1) and the jitter's y negates,
+	 * matching the y-flipped copies the FG tag names - while the SR oracle reports the raw
+	 * record. Answers {@code FAIL_NotInitialized} until a composed frame's FG-side
 	 * record succeeded at least once.
 	 *
 	 * <p>Default-implemented for the same reason as {@link #queryCameraConstants()}.
@@ -565,6 +568,34 @@ public interface NativeApi {
 	default CameraConstants queryFgCameraConstants() {
 		throw new UnsupportedOperationException("queryFgCameraConstants");
 	}
+
+	/**
+	 * The module-owned FG orientation copies the {@link #tagFgResources(FgTagRequest)} tag
+	 * names: the backbuffer-oriented flipped depth (render-sized D32_SFLOAT), HUD-less and UI
+	 * colours (output-sized RGBA8_UNORM), and the flipped motion image (render-sized
+	 * R16G16_SFLOAT) whose y component the motion dispatches negate.
+	 *
+	 * <p>Created and released with the SR motion and output images, from the same configured
+	 * dimensions; reported by {@code mc_dlss_query_fg_images} so the orientation rung can read
+	 * their content back. Answers {@code FAIL_NotInitialized} before the images were acquired
+	 * for the stored configuration.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #queryCameraConstants()}.
+	 */
+	default FgOrientationImages queryFgImages() {
+		throw new UnsupportedOperationException("queryFgImages");
+	}
+
+	/**
+	 * The four FG orientation copies {@link #queryFgImages()} reports: the flipped depth,
+	 * HUD-less, and UI copies and the flipped motion image, in tag order.
+	 */
+	record FgOrientationImages(
+		ImageBinding depth,
+		ImageBinding hudless,
+		ImageBinding ui,
+		ImageBinding motion
+	) {}
 
 	/**
 	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features (DLSS, DLSS-G,

@@ -38,7 +38,10 @@ void destroy_motion_pass() noexcept;
 
 // Records the dispatch that fills the motion image from `info.depth`, plus the transitions
 // around it and the barrier that makes its writes visible to the evaluation. The depth image
-// is handed back in the layout it arrived in; the motion image is left in GENERAL.
+// is handed back in the layout it arrived in; the motion image is left in GENERAL. The same
+// dispatch also fills the flipped motion copy the FG tag names - every vector mirrored
+// vertically with its y component negated - so DLSS-G's backbuffer-oriented inputs and SR's
+// engine-oriented ones stay one dispatch apart.
 //
 // Records and never submits: the work is ordered by Minecraft's own graphics submission.
 int32_t record_motion(const McDlssMotionInfo& info) noexcept;
@@ -47,7 +50,9 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept;
 // image, plus the transitions and the two barriers that order the read of the scene's
 // velocity writes and the visibility of the merge's writes to the tag and evaluation. The
 // depth image is handed back in the layout it arrived in; the velocity companion stays in
-// GENERAL; the motion image is left in GENERAL.
+// GENERAL; the motion image is left in GENERAL. The same dispatch fills the flipped motion
+// copy the FG tag names with the mirrored, y-negated field, exactly like the camera-only
+// pass.
 //
 // Records and never submits: the work is ordered by Minecraft's own graphics submission.
 int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept;

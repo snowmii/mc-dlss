@@ -348,7 +348,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_multiplier(uint32_t* current,
  * reads camera motion from one the engine has to fill. Both are allocated here,
  * from the dimensions the last mc_dlss_configure stored: the motion image at
  * render size and the output image at output size, each storage-capable, backed
- * by device-local memory, and carrying a full colour image view.
+ * by device-local memory, and carrying a full colour image view. The same call
+ * also allocates the four FG orientation copies the DLSS-G tag names - the flipped
+ * depth (render-sized D32_SFLOAT), HUD-less and UI colours (output-sized RGBA8),
+ * and flipped motion (render-sized R16G16_SFLOAT) - reported by
+ * mc_dlss_query_fg_images.
  *
  * Acquiring twice against unchanged configuration returns the same handles.
  * A configuration change destroys and recreates them. Partial failure leaves
@@ -406,7 +410,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_frame_timings(
  * column-major order - the same layout GLSL and JOML use - and must be the jitter-free
  * reprojection, because the plugin is told this frame's jitter separately.
  *
- * The destination is the module's own motion image and never appears here.
+ * The destination is the module's own motion image and never appears here; the same
+ * dispatch also fills the module's flipped motion copy - every vector mirrored vertically
+ * with its y component negated - which is the motion source the FG tag names.
  *
  * `render_width` and `render_height` must be the configured render dimensions. They are a
  * check that the caller and the configuration still agree, not a size to record at: a
@@ -444,7 +450,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(const McDlssMotionInfo* in
  * `reset` marks a frame with no valid predecessor, whose reprojection is the identity. Such
  * a frame must not read the identity as a still camera, and the destination still holds the
  * previous frame's merged field, so the dispatch writes the invalid sentinel everywhere
- * instead of reconstructing anything.
+ * instead of reconstructing anything. The flipped motion copy receives the same field,
+ * mirrored vertically with its y component negated - the sentinel's y included - so the FG
+ * tag's motion source agrees with the engine-space field on every route.
  *
  * `reprojection` is 16 floats in column-major order, the same layout as McDlssMotionInfo.
  * `render_width` and `render_height` must be the configured render dimensions, a check that
@@ -530,7 +538,14 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
  * the view rotation, they form an orthonormal basis, which the DLSS-G plugin's auto
  * scene-change detection verifies before it runs.
  *
- * All values are plain floats: 80 floats, no padding.
+ * `jitter` is the temporal-AA pixel-space jitter offset the constants record carried. It is
+ * the one orientation-sensitive scalar field: the FG viewport's record negates its y to
+ * match the y-flipped images that viewport's tags name, while the SR record carries it raw.
+ * The field is an output of the two constants oracles - mc_dlss_evaluate's input camera is
+ * the caller's raw camera, and the evaluate call's separate `McDlssEvaluateInfo.jitter` is
+ * what the records are built from.
+ *
+ * All values are plain floats: 82 floats, no padding.
  */
 typedef struct McDlssCameraConstants {
     float view_to_clip[16];
@@ -545,6 +560,7 @@ typedef struct McDlssCameraConstants {
     float far_plane;
     float fov_radians;
     float aspect_ratio;
+    McDlssVec2 jitter;
 } McDlssCameraConstants;
 
 /*
@@ -599,9 +615,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
  * The present-generation proof drives mc_dlss_evaluate with a known camera and reads this
  * back to prove the exact matrices and basis the caller handed in reached slSetConstants
  * unchanged - the constants the DLSS-G plugin interpolates the generated frame's camera
- * from. Answers not-initialized until an evaluation has recorded constants at least once
- * (reset_state clears the record with the rest of the struct, so a fresh fork refuses), and
- * invalid-parameter for a null out pointer.
+ * from. The record is the SR viewport's, raw: the jitter carries the caller's value
+ * unnegated, and none of the matrices is flipped. Answers not-initialized until an
+ * evaluation has recorded constants at least once (reset_state clears the record with the
+ * rest of the struct, so a fresh fork refuses), and invalid-parameter for a null out
+ * pointer.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_camera_constants(McDlssCameraConstants* out);
 
@@ -612,10 +630,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_camera_constants(McDlssCameraCons
  * The composed frame's evaluation records the same camera twice, once on the SR viewport
  * and once on the FG viewport, both under the same retained frame token: the DLSS-G plugin
  * reads per-frame constants from the viewport its options, state, and tags were recorded
- * on, and after the viewport split the SR viewport's record no longer reaches it. This
- * oracle reports exactly the FG-viewport record, independently of mc_dlss_query_camera_
- * constants: an SR-only evaluation establishes the SR record and never this one, and only
- * a frame whose FG tag recorded before the evaluation establishes it.
+ * on, and after the viewport split the SR viewport's record no longer reaches it. The FG
+ * record carries the FG viewport's orientation - the four clip-space matrices conjugate
+ * with F=diag(1,-1,1,1) and the jitter's y negates, matching the y-flipped copies the FG
+ * tag names - so this oracle reports exactly those flipped values, while
+ * mc_dlss_query_camera_constants reports the SR record's raw ones. The camera's
+ * world-space position and basis and the frustum scalars are orientation-free and equal in
+ * both records. This oracle answers independently of mc_dlss_query_camera_constants: an
+ * SR-only evaluation establishes the SR record and never this one, and only a frame whose
+ * FG tag recorded before the evaluation establishes it.
  *
  * Answers not-initialized until a composed frame's FG-side record succeeded at least once
  * (reset_state clears the record with the rest of the struct, so a fresh fork refuses), and
@@ -656,14 +679,20 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
  * Tags one frame's DLSS-G resources on the caller's command buffer, through Streamline's
  * frame-based tagging (slGetNewFrameToken + slSetTagForFrame).
  *
- * `depth` is the engine's render-sized depth image, tagged as the DLSS-G depth input.
- * `hudless` is the engine's output-sized HUD-less colour, tagged as the DLSS-G HUD-less
- * input; `ui` is the engine's output-sized UI colour+alpha target, tagged as the DLSS-G UI
- * input. The motion source is always the module's own motion image - filled by
- * mc_dlss_write_motion on the camera-only route and by mc_dlss_fill_velocity on the
- * velocity-MRT route - so no engine velocity companion is carried or tagged. The backbuffer/
- * output chain is present interception rather than a tag, so no output image is carried or
- * tagged here.
+ * The four tagged resources are the module's own backbuffer-oriented copies, never the
+ * engine's images: DLSS-G interpolates the swapchain image, which Minecraft's present blit
+ * mirrors vertically relative to every engine texture, so the tag names module-owned
+ * y-flipped copies instead. `depth`, `hudless`, and `ui` are still the engine's render-sized
+ * depth, output-sized HUD-less colour, and output-sized UI colour+alpha target - on the
+ * frame's first call of the two the module records y-inverting blits from them into its own
+ * flipped copies (depth at render size, the two colours at output size) and tags the copies;
+ * the engine images are read as transfer sources, never written or relabeled, and handed
+ * back in the layout they arrived in. The motion source is always the module's own flipped
+ * motion copy - filled by mc_dlss_write_motion on the camera-only route and by
+ * mc_dlss_fill_velocity on the velocity-MRT route, both of which mirror the field and negate
+ * its y component into that copy - so no engine velocity companion is carried or tagged.
+ * The backbuffer/output chain is present interception rather than a tag, so no output image
+ * is carried or tagged here.
  *
  * The tagged formats are fixed to the ones mc_dlss_configure_fg records: the depth must be
  * VK_FORMAT_D32_SFLOAT and both colour buffers VK_FORMAT_R8G8B8A8_UNORM; anything else
@@ -674,11 +703,14 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
  * module's images at the configured dimensions: the frame's four tags - depth, motion,
  * HUD-less, and UI - always record together, never as a partial set.
  *
- * The declared layouts name where the images rest when the frame is tagged: Minecraft rests
- * every texture in GENERAL and the motion fill leaves the module's image in GENERAL, and
- * nothing in this call transitions them. The later evaluation and present slices own the
- * transitions that move the inputs before DLSS-G reads them and must update the declared
- * layouts with them.
+ * The declared layouts name where the tagged copies rest: the blits and the motion
+ * dispatches leave them in the engine-resting GENERAL layout, and nothing in this call or
+ * the evaluation moves them afterwards, so the declaration stays accurate through present.
+ * The composed frame calls this function twice - once before the SR tag, once after the
+ * evaluation - and the second call re-declares the same copies under the same retained
+ * token without re-recording the blits: the copies still hold the frame's content, and the
+ * blits would only double the per-frame cost. mc_dlss_query_fg_images reports the copies
+ * for observability.
  *
  * The frame token this call obtains and retains is shared with mc_dlss_tag_sr_resources for
  * the same frame: a repeated tag reuses the token rather than advancing the frame, and the
@@ -695,6 +727,24 @@ typedef struct McDlssFgTagInfo {
 } McDlssFgTagInfo;
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_fg_resources(const McDlssFgTagInfo* info);
+
+/*
+ * The module-owned FG orientation copies, as the FG tag names them: the backbuffer-oriented
+ * flipped depth (render-sized D32_SFLOAT), HUD-less and UI colours (output-sized
+ * RGBA8_UNORM), and the flipped motion image (render-sized R16G16_SFLOAT) whose y component
+ * the motion dispatches negate. The four are created and released with the SR motion and
+ * output images, sized from the same configured dimensions, and this is how their handles
+ * are observed - the orientation test reads their content back through these handles.
+ *
+ * Answers FAIL_NotInitialized before mc_dlss_initialize recorded the Vulkan tuple or while
+ * mc_dlss_acquire_images has not created the images for the stored configuration, and
+ * FAIL_InvalidParameter for any null out pointer. The query performs no GPU work.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_images(
+    McDlssImage* depth,
+    McDlssImage* hudless,
+    McDlssImage* ui,
+    McDlssImage* motion);
 
 /*
  * Records the frame's present-handoff eligibility: re-records the stored DLSS-G 2x options

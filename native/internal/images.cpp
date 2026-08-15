@@ -36,7 +36,8 @@ void destroy_owned_image(DlssOwnedImage& owned) noexcept {
 }
 
 int32_t create_owned_image(const uint32_t width, const uint32_t height, const VkFormat format,
-                           const VkImageUsageFlags usage, DlssOwnedImage& owned) noexcept {
+                           const VkImageUsageFlags usage, const VkImageAspectFlags aspect,
+                           DlssOwnedImage& owned) noexcept {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -87,7 +88,7 @@ int32_t create_owned_image(const uint32_t width, const uint32_t height, const Vk
     viewInfo.image = image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = format;
-    viewInfo.subresourceRange = VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    viewInfo.subresourceRange = VkImageSubresourceRange{aspect, 0, 1, 0, 1};
     VkImageView view = VK_NULL_HANDLE;
     if (vkCreateImageView(g_state.device, &viewInfo, nullptr, &view) != VK_SUCCESS) {
         destroy_owned_image(owned);
@@ -117,12 +118,17 @@ int32_t acquire_images() noexcept {
 
     release_images();
     // Motion is written by the engine and read by DLSS; output is written by
-    // DLSS and copied into Minecraft's target.
+    // DLSS and copied into Minecraft's target. The FG copies are written by
+    // the y-inverting blits (depth, HUD-less, UI) and the motion dispatches'
+    // flipped write, and read only by the DLSS-G tag/plugin: transfer in plus
+    // sample out, with storage on the motion copy for the compute flip and
+    // transfer-out everywhere so the orientation test can stage the content back.
     int32_t result = create_owned_image(
         g_state.renderWidth, g_state.renderHeight, kMotionFormat,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        VK_IMAGE_ASPECT_COLOR_BIT,
         g_state.motionImage);
     if (result != kSuccess) {
         release_images();
@@ -132,7 +138,48 @@ int32_t acquire_images() noexcept {
         g_state.outputWidth, g_state.outputHeight, kOutputFormat,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        VK_IMAGE_ASPECT_COLOR_BIT,
         g_state.outputImage);
+    if (result != kSuccess) {
+        release_images();
+        return result;
+    }
+    result = create_owned_image(
+        g_state.renderWidth, g_state.renderHeight, VK_FORMAT_D32_SFLOAT,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        VK_IMAGE_ASPECT_DEPTH_BIT,
+        g_state.fgDepthImage);
+    if (result != kSuccess) {
+        release_images();
+        return result;
+    }
+    result = create_owned_image(
+        g_state.outputWidth, g_state.outputHeight, kOutputFormat,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        VK_IMAGE_ASPECT_COLOR_BIT,
+        g_state.fgHudlessImage);
+    if (result != kSuccess) {
+        release_images();
+        return result;
+    }
+    result = create_owned_image(
+        g_state.outputWidth, g_state.outputHeight, kOutputFormat,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        VK_IMAGE_ASPECT_COLOR_BIT,
+        g_state.fgUiImage);
+    if (result != kSuccess) {
+        release_images();
+        return result;
+    }
+    result = create_owned_image(
+        g_state.renderWidth, g_state.renderHeight, kMotionFormat,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        VK_IMAGE_ASPECT_COLOR_BIT,
+        g_state.fgMotionImage);
     if (result != kSuccess) {
         release_images();
         return result;
@@ -146,17 +193,26 @@ int32_t acquire_images() noexcept {
 
 void release_images() noexcept {
     if (g_state.motionImage.image != VK_NULL_HANDLE ||
-        g_state.outputImage.image != VK_NULL_HANDLE) {
+        g_state.outputImage.image != VK_NULL_HANDLE ||
+        g_state.fgDepthImage.image != VK_NULL_HANDLE ||
+        g_state.fgHudlessImage.image != VK_NULL_HANDLE ||
+        g_state.fgUiImage.image != VK_NULL_HANDLE ||
+        g_state.fgMotionImage.image != VK_NULL_HANDLE) {
         wait_device_idle();
     }
     destroy_owned_image(g_state.motionImage);
     destroy_owned_image(g_state.outputImage);
+    destroy_owned_image(g_state.fgDepthImage);
+    destroy_owned_image(g_state.fgHudlessImage);
+    destroy_owned_image(g_state.fgUiImage);
+    destroy_owned_image(g_state.fgMotionImage);
     // A destroyed view's handle value can be handed back out by the next creation, so the
     // motion pass must forget what its descriptors describe rather than compare handles
     // against a view that no longer exists.
     g_state.motionPass.boundSet = -1;
     g_state.motionPass.boundDepthView = 0;
     g_state.motionPass.boundMotionView = 0;
+    g_state.motionPass.boundFlippedView = 0;
     g_state.imagesRenderWidth = 0;
     g_state.imagesRenderHeight = 0;
     g_state.imagesOutputWidth = 0;

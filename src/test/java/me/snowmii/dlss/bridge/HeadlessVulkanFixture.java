@@ -795,7 +795,11 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				.arrayLayers(1)
 				.samples(VK10.VK_SAMPLE_COUNT_1_BIT)
 				.tiling(VK10.VK_IMAGE_TILING_OPTIMAL)
-				.usage(usage)
+				// Minecraft's MainTarget/TextureTarget create colour and depth with usage 15
+				// (COPY_SRC included), and the FG orientation blits read the engine images as
+				// transfer sources, so the standing-ins carry TRANSFER_SRC too - without it the
+				// validation layer reports the blit's source-usage violation.
+				.usage(usage | VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
 				.sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE)
 				.initialLayout(VK10.VK_IMAGE_LAYOUT_UNDEFINED);
 			imageInfo.extent().set(width, height, 1);

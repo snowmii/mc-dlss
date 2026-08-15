@@ -107,6 +107,9 @@ struct DlssMotionPass {
     int32_t boundSet = -1;
     uint64_t boundDepthView = 0;
     uint64_t boundMotionView = 0;
+    // Which flipped-motion view the current ring slot's last storage binding describes, so
+    // the flipped write target participates in the same reuse comparison as the other two.
+    uint64_t boundFlippedView = 0;
 };
 
 struct DlssState {
@@ -176,6 +179,19 @@ struct DlssState {
     uint32_t reflexSetOptionsCalls = 0;
     DlssOwnedImage motionImage;
     DlssOwnedImage outputImage;
+    // The FG orientation copies: the DLSS-G viewport consumes the frame in the backbuffer's
+    // orientation, which is the engine's mirrored about the horizontal axis (Minecraft's
+    // present blit inverts y between the main target and the swapchain image), so the FG tag
+    // names module-owned copies the engine images never touch: the depth at render size and
+    // the HUD-less and UI buffers at output size, each filled by a y-inverting blit, and the
+    // motion image flipped with its y component negated by the motion dispatches. The SR
+    // viewport keeps the engine-oriented originals above; the two features genuinely hold two
+    // views of one frame. Created and released with motionImage/outputImage, from the same
+    // configured dimensions and for the same configuration lifetime.
+    DlssOwnedImage fgDepthImage;
+    DlssOwnedImage fgHudlessImage;
+    DlssOwnedImage fgUiImage;
+    DlssOwnedImage fgMotionImage;
     DlssMotionPass motionPass;
     uint32_t imagesRenderWidth = 0;
     uint32_t imagesRenderHeight = 0;
@@ -214,6 +230,18 @@ struct DlssState {
     uint32_t lastSrTagFrameIndex = 0;
     bool fgTagFrameIndexRecorded = false;
     uint32_t lastFgTagFrameIndex = 0;
+    // Whether the FG orientation blits (engine depth/HUD-less/UI into the owned flipped
+    // copies) were recorded for the retained frame token whose index fgCopiedFrameIndex
+    // carries. The FG tag records them on the frame's first FG tag call and skips them on
+    // the second, whose re-declaration must not rewrite copies the frame's first tag already
+    // declared valid-until-present: the same content would land, but the blits would double
+    // the per-frame cost for nothing. The index comparison is what tells the two calls of
+    // one frame apart from the first calls of two frames - the retained token advances per
+    // frame, so an index mismatch means a fresh frame whose copies must be rebuilt.
+    // invalidate_frame_eligibility clears the pair with the token the copies were recorded
+    // under, and reset_state clears them with the rest of the struct.
+    bool fgCopiesRecorded = false;
+    uint32_t fgCopiedFrameIndex = 0;
     // The present-marker event log: one entry per PRESENT_START or PRESENT_END marker this
     // module actually emitted to Streamline, in emission order, each under the frame index
     // (the retained token) the marker was emitted with. The START is recorded the moment its
@@ -252,12 +280,16 @@ struct DlssState {
     McDlssCameraConstants lastCameraConstants{};
     // The camera constants the last successful FG-side slSetConstants recorded, on the
     // FG-only viewport and under the same retained frame token the SR constants used:
-    // exposed by mc_dlss_query_fg_camera_constants as the FG constants oracle. Recorded
-    // only after the FG-viewport slSetConstants answered eOk and only for composed frames
-    // (a frame whose FG tag recorded), so the oracle means "the constants the FG viewport
-    // actually received" and an SR-only frame never establishes the record - the
-    // independence the viewport split exists to prove. reset_state clears it with the rest
-    // of the struct, so a fresh fork answers the same refusal as a pre-evaluation one.
+    // exposed by mc_dlss_query_fg_camera_constants as the FG constants oracle. The record
+    // carries the FG viewport's orientation: the four clip-space matrices conjugate with
+    // F=diag(1,-1,1,1) and the jitter's y negates, matching the y-flipped images the FG
+    // tag names, while the SR record above stays raw - the two oracles report exactly what
+    // each viewport received. Recorded only after the FG-viewport slSetConstants answered
+    // eOk and only for composed frames (a frame whose FG tag recorded), so the oracle means
+    // "the constants the FG viewport actually received" and an SR-only frame never
+    // establishes the record - the independence the viewport split exists to prove.
+    // reset_state clears it with the rest of the struct, so a fresh fork answers the same
+    // refusal as a pre-evaluation one.
     bool fgCameraConstantsRecorded = false;
     McDlssCameraConstants lastFgCameraConstants{};
 };

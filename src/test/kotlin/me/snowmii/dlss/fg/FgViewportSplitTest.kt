@@ -297,9 +297,53 @@ class FgViewportSplitTest {
 				)
 
 				// Both oracles answer the composed frame's camera, each from its own record:
-				// the SR record on viewport 0, the FG record on the FG-only viewport.
-				assertCameraEquals(STEPPED_CAMERA, bridge.queryCameraConstants())
-				assertCameraEquals(STEPPED_CAMERA, bridge.queryFgCameraConstants())
+				// the SR record on viewport 0, raw; the FG record on the FG-only viewport,
+				// carrying the FG viewport's orientation - one flip per matrix role, because
+				// the ABI's matrices are row-vector (v' = v · M): the viewToClip's flip lands
+				// on the output side (M · F), the clipToView's on the input side (F · M⁻¹),
+				// and the reprojection pair conjugates (F · M · F); the jitter's y negates -
+				// because the FG tag names y-flipped copies while SR stays in engine space.
+				// The SR record must answer exactly the camera the caller handed in,
+				// flip-free: the orientation split must never reach what SR reads.
+				val srRecorded = bridge.queryCameraConstants()
+				assertCameraEquals(STEPPED_CAMERA, srRecorded)
+				assertEquals(0.25f, srRecorded.jitterX, "the SR record must carry the raw jitter x")
+				assertEquals(-0.5f, srRecorded.jitterY, "the SR record must carry the raw jitter y")
+				val fgRecorded = bridge.queryFgCameraConstants()
+				assertCameraEquals(flippedForBackbuffer(STEPPED_CAMERA), fgRecorded)
+				assertEquals(0.25f, fgRecorded.jitterX, "the FG record must keep the jitter x")
+				assertEquals(0.5f, fgRecorded.jitterY, "the FG record must negate the jitter y")
+
+				// The FG record's matrices must behave like their roles, not like a generic
+				// conjugation: the viewToClip maps a camera-space row vector to the raw
+				// projection's clip with the y negated, the clipToView is its exact
+				// row-vector inverse, and the reprojection pair conjugates - a flipped
+				// prev-clip vector lands on the flipped clip the raw pair produces.
+				val probe = floatArrayOf(3f, 2f, -7f, 1f)
+				val fgClip = matMulVec4(probe, fgRecorded.viewToClip)
+				assertFlippedVec4(
+					matMulVec4(probe, srRecorded.viewToClip),
+					fgClip,
+					"the FG viewToClip must negate the raw projection's clip y",
+				)
+				for (c in 0 until 4) {
+					assertEquals(
+						probe[c],
+						matMulVec4(fgClip, fgRecorded.clipToView)[c],
+						1e-3f,
+						"the FG clipToView must invert the FG viewToClip (component $c)",
+					)
+				}
+				assertTrue(
+					matMul(fgRecorded.clipToPrevClip, fgRecorded.prevClipToClip).isIdentity(),
+					"the FG prevClipToClip must be the exact row-vector inverse of the FG clipToPrevClip",
+				)
+				val prevProbe = floatArrayOf(0.2f, -0.4f, 0.5f, 1f)
+				assertFlippedVec4(
+					matMulVec4(prevProbe, srRecorded.clipToPrevClip),
+					matMulVec4(flipVec4Y(prevProbe), fgRecorded.clipToPrevClip),
+					"the FG clipToPrevClip must map a flipped prev clip to the flipped clip",
+				)
 
 				// The FG constants record used the shared retained token rather than
 				// obtaining (or consuming) one of its own: the two tags stay on one frame
@@ -417,7 +461,114 @@ class FgViewportSplitTest {
 	private fun probeGraphicsQueueFamily(): Int =
 		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 
+	/**
+	 * The FG viewport's record of a camera, under the FG viewport's backbuffer orientation.
+	 * The ABI's matrices are row-vector (v' = v · M), so where a matrix maps from and to
+	 * decides the flip: the viewToClip maps a camera-space row vector into the flipped clip
+	 * space, so the flip lands on the output side - M' = M · F, column 1 negated, flat
+	 * indices 1, 5, 9, 13; the clipToView maps a flipped clip-space row vector back into
+	 * camera space, so the flip lands on the input side - M' = F · M⁻¹, row 1 negated,
+	 * flat indices 4, 5, 6, 7; the reprojection pair maps flipped clip to flipped clip and
+	 * conjugates - F · M · F, indices 1, 4, 6, 7, 9, 13 (index 5 twice, unchanged). The
+	 * asymmetry is what keeps the pair exact row-vector inverses: (M · F) · (F · M⁻¹) = I.
+	 * The jitter's y negates, and everything else - the world-space position and basis and
+	 * the frustum scalars - is orientation-free and carries unchanged.
+	 */
+	private fun flippedForBackbuffer(camera: CameraConstants): CameraConstants = camera.copy(
+		viewToClip = columnYFlipped(camera.viewToClip),
+		clipToView = rowYFlipped(camera.clipToView),
+		clipToPrevClip = conjugatedY(camera.clipToPrevClip),
+		prevClipToClip = conjugatedY(camera.prevClipToClip),
+		jitterX = camera.jitterX,
+		jitterY = -camera.jitterY,
+	)
+
+	/** Output-side y flip M' = M · F: column 1 negated - flat indices 1, 5, 9, 13. */
+	private fun columnYFlipped(matrix: FloatArray): FloatArray =
+		matrix.copyOf().also { flipped ->
+			for (index in COLUMN_Y_INDICES) {
+				flipped[index] = -flipped[index]
+			}
+		}
+
+	/** Input-side y flip M' = F · M: row 1 negated - flat indices 4, 5, 6, 7. */
+	private fun rowYFlipped(matrix: FloatArray): FloatArray =
+		matrix.copyOf().also { flipped ->
+			for (index in ROW_Y_INDICES) {
+				flipped[index] = -flipped[index]
+			}
+		}
+
+	/** Conjugation M' = F · M · F: row 1 and column 1 negated, [1][1] twice - unchanged. */
+	private fun conjugatedY(matrix: FloatArray): FloatArray =
+		matrix.copyOf().also { flipped ->
+			for (index in FLIPPED_Y_INDICES) {
+				flipped[index] = -flipped[index]
+			}
+		}
+
+	/** Row-vector · matrix product c = v · M. */
+	private fun matMulVec4(v: FloatArray, m: FloatArray): FloatArray {
+		val out = FloatArray(4)
+		for (c in 0 until 4) {
+			var sum = 0f
+			for (k in 0 until 4) {
+				sum += v[k] * m[k * 4 + c]
+			}
+			out[c] = sum
+		}
+		return out
+	}
+
+	/** Row-vector 4x4 product c = a · b, both row-major. */
+	private fun matMul(a: FloatArray, b: FloatArray): FloatArray {
+		val out = FloatArray(16)
+		for (r in 0 until 4) {
+			for (c in 0 until 4) {
+				var sum = 0f
+				for (k in 0 until 4) {
+					sum += a[r * 4 + k] * b[k * 4 + c]
+				}
+				out[r * 4 + c] = sum
+			}
+		}
+		return out
+	}
+
+	/** True when the 4x4 equals the identity within the float product tolerance. */
+	private fun FloatArray.isIdentity(): Boolean {
+		for (r in 0 until 4) {
+			for (c in 0 until 4) {
+				val expected = if (r == c) 1f else 0f
+				if (Math.abs(this[r * 4 + c] - expected) > 1e-3f) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+
+	/** Asserts [actual] equals [expected] with the y component (1) negated. */
+	private fun assertFlippedVec4(expected: FloatArray, actual: FloatArray, message: String) {
+		for (c in 0 until 4) {
+			val sign = if (c == 1) -1f else 1f
+			assertEquals(expected[c] * sign, actual[c], 1e-3f, "$message (component $c)")
+		}
+	}
+
+	/** Negates the y component (1) of a 4-vector. */
+	private fun flipVec4Y(v: FloatArray): FloatArray = floatArrayOf(v[0], -v[1], v[2], v[3])
+
 	private companion object {
+		/** The flat indices M · F negates: column 1 of a row-major 4x4. */
+		private val COLUMN_Y_INDICES = intArrayOf(1, 5, 9, 13)
+
+		/** The flat indices F · M negates: row 1 of a row-major 4x4. */
+		private val ROW_Y_INDICES = intArrayOf(4, 5, 6, 7)
+
+		/** The flat indices F · M · F negates: row 1 and column 1, the [1][1] element twice. */
+		private val FLIPPED_Y_INDICES = intArrayOf(1, 4, 6, 7, 9, 13)
+
 		/**
 		 * The frame's standing-in camera, built like a real Minecraft camera: a perspective
 		 * view-to-clip projection and the orthonormal right/up/forward basis of a yaw 37° /

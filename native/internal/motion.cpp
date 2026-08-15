@@ -19,8 +19,9 @@ constexpr uint32_t kVelocityFillSpirV[] =
     ;
 
 // The largest descriptor-set binding layout either dispatch pass declares. The camera-only
-// pass binds two descriptors, the velocity fill binds three.
-constexpr uint32_t kMaxDispatchBindings = 3;
+// pass binds three descriptors (depth, motion, flipped motion), the velocity fill four
+// (depth, velocity, motion, flipped motion).
+constexpr uint32_t kMaxDispatchBindings = 4;
 
 // Push-constant block, matching mc_dlss_motion.comp exactly: a column-major mat4 followed by
 // the render size.
@@ -41,12 +42,14 @@ struct DlssVelocityFillPushConstants {
 
 // The two passes this module records declare different descriptor layouts: the camera-only
 // pass samples depth into a storage destination, and the fill samples depth and the engine's
-// velocity companion into the same storage destination.
+// velocity companion into the same storage destination. Both also write the flipped motion
+// copy the FG tag names, as a second storage image.
 constexpr VkDescriptorType kMotionBindingTypes[] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                                    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                                     VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
 constexpr VkDescriptorType kVelocityFillBindingTypes[] = {
     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
+    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
 
 // The velocity-fill pass lives here rather than in g_state because it is the velocity-MRT
 // route's merge dispatch: it has the same shape as the motion pass - one shader, one
@@ -60,14 +63,15 @@ struct VelocityFillPass {
 
 VelocityFillPass g_velocityFill;
 
-// Points one ring slot at this frame's depth view and the owned motion view, reusing the
-// slot already describing them whenever nothing changed - which, after the first frame, is
-// every frame.
+// Points one ring slot at this frame's depth view, the owned motion view, and the owned
+// flipped motion view, reusing the slot already describing them whenever nothing changed -
+// which, after the first frame, is every frame.
 VkDescriptorSet bind_motion_descriptors(const uint64_t depthView) noexcept {
     DlssMotionPass& pass = g_state.motionPass;
     const uint64_t motionView = to_uint64(g_state.motionImage.view);
+    const uint64_t flippedView = to_uint64(g_state.fgMotionImage.view);
     if (pass.boundSet >= 0 && pass.boundDepthView == depthView &&
-        pass.boundMotionView == motionView) {
+        pass.boundMotionView == motionView && pass.boundFlippedView == flippedView) {
         return pass.sets[pass.boundSet];
     }
 
@@ -82,8 +86,11 @@ VkDescriptorSet bind_motion_descriptors(const uint64_t depthView) noexcept {
     VkDescriptorImageInfo motionInfo{};
     motionInfo.imageView = g_state.motionImage.view;
     motionInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkDescriptorImageInfo flippedInfo{};
+    flippedInfo.imageView = g_state.fgMotionImage.view;
+    flippedInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet writes[2]{};
+    VkWriteDescriptorSet writes[3]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = set;
     writes[0].dstBinding = 0;
@@ -96,26 +103,35 @@ VkDescriptorSet bind_motion_descriptors(const uint64_t depthView) noexcept {
     writes[1].descriptorCount = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     writes[1].pImageInfo = &motionInfo;
-    vkUpdateDescriptorSets(g_state.device, 2, writes, 0, nullptr);
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = set;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[2].pImageInfo = &flippedInfo;
+    vkUpdateDescriptorSets(g_state.device, 3, writes, 0, nullptr);
 
     pass.boundSet = static_cast<int32_t>(slot);
     pass.boundDepthView = depthView;
     pass.boundMotionView = motionView;
+    pass.boundFlippedView = flippedView;
     pass.nextSet = (slot + 1) % kMotionDescriptorRing;
     return set;
 }
 
-// Points one ring slot at this frame's depth view, the scene's velocity companion view, and
-// the owned motion view, reusing the slot already describing them whenever nothing changed.
-// The companion is a sampled input only and is never bound as a storage image: Minecraft
-// creates its velocity target without storage usage, and the fill reads it exactly as the
-// scene renderers wrote it.
+// Points one ring slot at this frame's depth view, the scene's velocity companion view, the
+// owned motion view, and the owned flipped motion view, reusing the slot already describing
+// them whenever nothing changed. The companion is a sampled input only and is never bound as
+// a storage image: Minecraft creates its velocity target without storage usage, and the fill
+// reads it exactly as the scene renderers wrote it.
 VkDescriptorSet bind_velocity_fill_descriptors(const uint64_t depthView,
                                                const uint64_t velocityView) noexcept {
     DlssMotionPass& pass = g_velocityFill.pass;
     const uint64_t motionView = to_uint64(g_state.motionImage.view);
+    const uint64_t flippedView = to_uint64(g_state.fgMotionImage.view);
     if (pass.boundSet >= 0 && pass.boundDepthView == depthView &&
-        pass.boundMotionView == motionView && g_velocityFill.boundVelocityView == velocityView) {
+        pass.boundMotionView == motionView && g_velocityFill.boundVelocityView == velocityView &&
+        pass.boundFlippedView == flippedView) {
         return pass.sets[pass.boundSet];
     }
 
@@ -136,8 +152,11 @@ VkDescriptorSet bind_velocity_fill_descriptors(const uint64_t depthView,
     VkDescriptorImageInfo motionInfo{};
     motionInfo.imageView = g_state.motionImage.view;
     motionInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkDescriptorImageInfo flippedInfo{};
+    flippedInfo.imageView = g_state.fgMotionImage.view;
+    flippedInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet writes[3]{};
+    VkWriteDescriptorSet writes[4]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = set;
     writes[0].dstBinding = 0;
@@ -156,11 +175,18 @@ VkDescriptorSet bind_velocity_fill_descriptors(const uint64_t depthView,
     writes[2].descriptorCount = 1;
     writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     writes[2].pImageInfo = &motionInfo;
-    vkUpdateDescriptorSets(g_state.device, 3, writes, 0, nullptr);
+    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet = set;
+    writes[3].dstBinding = 3;
+    writes[3].descriptorCount = 1;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[3].pImageInfo = &flippedInfo;
+    vkUpdateDescriptorSets(g_state.device, 4, writes, 0, nullptr);
 
     pass.boundSet = static_cast<int32_t>(slot);
     pass.boundDepthView = depthView;
     pass.boundMotionView = motionView;
+    pass.boundFlippedView = flippedView;
     g_velocityFill.boundVelocityView = velocityView;
     pass.nextSet = (slot + 1) % kMotionDescriptorRing;
     return set;
@@ -386,6 +412,11 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept {
     record_layout_transition(recordingBuffer, g_state.motionImage.image, motionRange,
                              g_state.motionImage.layout, VK_IMAGE_LAYOUT_GENERAL);
     g_state.motionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
+    // The flipped copy the FG tag names gets the same transition discipline: UNDEFINED into
+    // GENERAL on the first frame, a no-op afterwards.
+    record_layout_transition(recordingBuffer, g_state.fgMotionImage.image, motionRange,
+                             g_state.fgMotionImage.layout, VK_IMAGE_LAYOUT_GENERAL);
+    g_state.fgMotionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
 
     DlssMotionPushConstants constants{};
     std::memcpy(constants.reprojection, info.reprojection, sizeof(constants.reprojection));
@@ -403,24 +434,31 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept {
                   (info.render_height + kMotionWorkgroupSize - 1) / kMotionWorkgroupSize, 1);
 
     // The dispatch's writes are not visible to anything downstream without a barrier of
-    // this pass's own. The evaluation's transition of the motion image happens to provide
-    // one today, but only because GENERAL and the layout DLSS reads it in differ - make
-    // the layouts ever agree and record_layout_transition emits nothing, leaving the
-    // evaluation reading whatever was in the image before the dispatch. The pass owns the
+    // this pass's own - and that includes both images it wrote: the motion image the
+    // evaluation reads, and the flipped copy the FG tag declares. The evaluation's
+    // transition of the motion image happens to provide one today, but only because GENERAL
+    // and the layout DLSS reads it in differ - make the layouts ever agree and
+    // record_layout_transition emits nothing, leaving the evaluation reading whatever was
+    // in the image before the dispatch. The flipped copy rests in GENERAL with no later
+    // transition of its own ever, so its barrier is the only one it gets. The pass owns the
     // visibility of its own writes rather than inheriting it from a caller.
-    VkImageMemoryBarrier motionWriteBarrier{};
-    motionWriteBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    motionWriteBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    motionWriteBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-    motionWriteBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    motionWriteBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    motionWriteBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    motionWriteBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    motionWriteBarrier.image = g_state.motionImage.image;
-    motionWriteBarrier.subresourceRange = motionRange;
+    VkImageMemoryBarrier writeBarriers[2]{};
+    for (uint32_t i = 0; i < 2; ++i) {
+        VkImageMemoryBarrier& barrier = writeBarriers[i];
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.subresourceRange = motionRange;
+    }
+    writeBarriers[0].image = g_state.motionImage.image;
+    writeBarriers[1].image = g_state.fgMotionImage.image;
     vkCmdPipelineBarrier(recordingBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                         &motionWriteBarrier);
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 2,
+                         writeBarriers);
 
     // Depth goes back where Minecraft expects it, in the same recording. The motion image
     // stays in GENERAL, which is both where the next evaluation's transition starts from
@@ -451,6 +489,11 @@ int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept {
     record_layout_transition(recordingBuffer, g_state.motionImage.image, motionRange,
                              g_state.motionImage.layout, VK_IMAGE_LAYOUT_GENERAL);
     g_state.motionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
+    // The flipped copy the FG tag names gets the same transition discipline as the camera
+    // pass gives it: UNDEFINED into GENERAL on the first frame, a no-op afterwards.
+    record_layout_transition(recordingBuffer, g_state.fgMotionImage.image, motionRange,
+                             g_state.fgMotionImage.layout, VK_IMAGE_LAYOUT_GENERAL);
+    g_state.fgMotionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
 
     // The velocity companion rests in GENERAL - Minecraft renders its colour attachments in
     // it - and GENERAL is also where the dispatch samples it, so no layout transition can
@@ -492,23 +535,28 @@ int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept {
                   (info.render_width + kMotionWorkgroupSize - 1) / kMotionWorkgroupSize,
                   (info.render_height + kMotionWorkgroupSize - 1) / kMotionWorkgroupSize, 1);
 
-    // The dispatch's writes to the motion image are not visible to the tag and the
-    // evaluation without a barrier of this pass's own: the motion image stays in GENERAL, so
-    // no later transition of it can provide one. The fill owns the visibility of its writes,
-    // exactly like the motion pass's explicit barrier.
-    VkImageMemoryBarrier motionWriteBarrier{};
-    motionWriteBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    motionWriteBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    motionWriteBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-    motionWriteBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    motionWriteBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    motionWriteBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    motionWriteBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    motionWriteBarrier.image = g_state.motionImage.image;
-    motionWriteBarrier.subresourceRange = motionRange;
+    // The dispatch's writes to the motion image and its flipped copy are not visible to the
+    // tag and the evaluation without a barrier of this pass's own: both images stay in
+    // GENERAL, so no later transition of either can provide one. The fill owns the
+    // visibility of its writes, exactly like the motion pass's explicit barrier, and the
+    // flipped copy - which nothing transitions ever - gets its only barrier here.
+    VkImageMemoryBarrier writeBarriers[2]{};
+    for (uint32_t i = 0; i < 2; ++i) {
+        VkImageMemoryBarrier& barrier = writeBarriers[i];
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.subresourceRange = motionRange;
+    }
+    writeBarriers[0].image = g_state.motionImage.image;
+    writeBarriers[1].image = g_state.fgMotionImage.image;
     vkCmdPipelineBarrier(recordingBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                         &motionWriteBarrier);
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 2,
+                         writeBarriers);
 
     // Depth goes back where Minecraft expects it, in the same recording. The velocity
     // companion stays in GENERAL - the layout the engine rests it in and where the next

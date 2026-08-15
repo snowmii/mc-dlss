@@ -307,6 +307,11 @@ void invalidate_frame_eligibility() noexcept {
     g_state.lastSrTagFrameIndex = 0;
     g_state.fgTagFrameIndexRecorded = false;
     g_state.lastFgTagFrameIndex = 0;
+    // The FG orientation copies were recorded under the dropped frame's token, so the gate
+    // drops with them: the next frame's first FG tag must rebuild the copies under its own
+    // token rather than skip them as the stale frame's second call.
+    g_state.fgCopiesRecorded = false;
+    g_state.fgCopiedFrameIndex = 0;
 }
 
 // Appends one marker this module actually emitted to the present-marker event log: the
@@ -743,6 +748,44 @@ sl::Resource make_tagged_resource(void* native, void* memory, void* view, uint32
     return resource;
 }
 
+// Records one y-inverting blit: source rows 0..h land at destination rows h..0, exactly
+// Minecraft's own present blit, so the owned destination holds the backbuffer's orientation
+// of the engine's image while the engine's image itself stays put. `isDepth` names the
+// aspect, which also names the filter: NEAREST is mandatory for depth aspects, LINEAR
+// matches Minecraft's present blit for the colours. Both images are handed back in the
+// layouts they arrived in - the engine's GENERAL resting layout, and the owned copy's
+// GENERAL, which is what the FG tag declares it in.
+static void record_flip_blit(const VkCommandBuffer commandBuffer, const uint64_t sourceImage,
+                             DlssOwnedImage& destination, const uint32_t width,
+                             const uint32_t height, const bool isDepth) noexcept {
+    const VkImageSubresourceRange range = image_range_of(isDepth);
+    record_layout_transition(commandBuffer, from_uint64<VkImage>(sourceImage), range,
+                             kEngineRestingLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    record_layout_transition(commandBuffer, destination.image, range, destination.layout,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    destination.layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+    VkImageBlit region{};
+    region.srcSubresource = VkImageSubresourceLayers{range.aspectMask, 0, 0, 1};
+    region.srcOffsets[0] = VkOffset3D{0, 0, 0};
+    region.srcOffsets[1] =
+        VkOffset3D{static_cast<int32_t>(width), static_cast<int32_t>(height), 1};
+    region.dstSubresource = VkImageSubresourceLayers{range.aspectMask, 0, 0, 1};
+    // The destination's y corners are inverted: source row 0 lands at destination row h.
+    region.dstOffsets[0] = VkOffset3D{0, static_cast<int32_t>(height), 0};
+    region.dstOffsets[1] = VkOffset3D{static_cast<int32_t>(width), 0, 1};
+    vkCmdBlitImage(commandBuffer, from_uint64<VkImage>(sourceImage),
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination.image,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region,
+                   isDepth ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
+
+    record_layout_transition(commandBuffer, from_uint64<VkImage>(sourceImage), range,
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, kEngineRestingLayout);
+    record_layout_transition(commandBuffer, destination.image, range,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kEngineRestingLayout);
+    destination.layout = kEngineRestingLayout;
+}
+
 // Records the frame's DLSS SR evaluation on the caller's command buffer, consuming the frame
 // token mc_dlss_tag_sr_resources obtained and retained for this frame. The plugin needs the
 // per-frame constants or its begin event fails (sl.dlss returns eErrorMissingConstants), and
@@ -750,14 +793,10 @@ sl::Resource make_tagged_resource(void* native, void* memory, void* view, uint32
 // frame's resources were tagged with, so both record against the retained token.
 // The module's motion image is the one evaluation input the caller's restore does not cover:
 // mc_dlss_evaluate returns the engine's colour and depth to where Minecraft expects them but
-// leaves the motion image in the read state, and the SR-only path never read it again until
-// the next frame's transitions. The composed present-driven frame reads it differently: the
-// FG tag declared the motion image in the engine-resting layout (kEngineRestingLayout) for
-// its whole valid-until-present lifetime, so the evaluation has to end with the image
-// actually resting in GENERAL - the composed frame must leave every FG-tagged resource in
-// the layout its tag declared, and the module's own image keeps the same between-frame
-// discipline the motion pass documents. The restore runs whether or not the evaluation
-// succeeded, matching the caller's own restore discipline for the engine's images.
+// leaves the motion image in the read state. The restore returns it to the engine-resting
+// layout the motion pass and the SR path expect it in between frames, and runs whether or
+// not the evaluation succeeded, matching the caller's own restore discipline for the
+// engine's images.
 static void restore_motion_to_engine_resting_layout(const VkCommandBuffer commandBuffer) noexcept {
     const uint64_t motionImage = to_uint64(g_state.motionImage.image);
     record_layout_transition(commandBuffer, g_state.motionImage.image, image_range_of(false),
@@ -774,6 +813,54 @@ static void write_matrix(sl::float4x4& dest, const float* rowMajor) noexcept {
         row.y = rowMajor[r * 4 + 1];
         row.z = rowMajor[r * 4 + 2];
         row.w = rowMajor[r * 4 + 3];
+    }
+}
+
+// The y flip the FG viewport's constants carry, per matrix role. The ABI's matrices are
+// row-vector (v' = v * M), so where a matrix maps from and to decides the flip: F =
+// diag(1, -1, 1, 1) applied to the output side is M' = M * F (column 1 negated - flat
+// indices 1, 5, 9, 13), to the input side M' = F * M (row 1 negated - flat indices 4, 5,
+// 6, 7), and to both sides the conjugation M' = F * M * F (row 1 and column 1 negated, the
+// [1][1] element twice - unchanged). The FG viewport's tags name y-flipped backbuffer
+// copies, so its viewToClip maps a camera-space row vector into the flipped clip space
+// (output-side flip), its clipToView maps a flipped clip-space row vector back into camera
+// space (input-side flip), and the reprojection pair maps flipped clip to flipped clip
+// (conjugation). The asymmetry is what keeps the FG record's clipToView the exact
+// row-vector inverse of its viewToClip: (M * F) * (F * M^-1) = M * M^-1 = I. The camera's
+// world-space position and basis and the frustum scalars are orientation-free and carry
+// unchanged.
+static void flip_matrix_y_in_place(float* rowMajor, const bool negateRow1,
+                                   const bool negateCol1) noexcept {
+    for (uint32_t r = 0; r < 4; ++r) {
+        for (uint32_t c = 0; c < 4; ++c) {
+            // Negate where exactly one side of the flip applies. The [1][1] element
+            // satisfies both conditions when the conjugation is applied, so the XOR leaves
+            // it unchanged - the double flip the conjugation's two sides give it.
+            if ((negateRow1 && r == 1) != (negateCol1 && c == 1)) {
+                rowMajor[r * 4 + c] = -rowMajor[r * 4 + c];
+            }
+        }
+    }
+}
+
+// Writes a row-major matrix into an sl::float4x4 with the y flip applied, for the FG
+// viewport's constants record. negateRow1/negateCol1 name the flip's sides exactly as
+// flip_matrix_y_in_place does: the viewToClip records the output-side flip (column 1), the
+// clipToView the input-side flip (row 1), and the clip-to-clip pair the conjugation.
+static void write_matrix_flipped_y(sl::float4x4& dest, const float* rowMajor,
+                                   const bool negateRow1, const bool negateCol1) noexcept {
+    write_matrix(dest, rowMajor);
+    if (negateRow1) {
+        dest[1].x = -dest[1].x;
+        dest[1].y = -dest[1].y;
+        dest[1].z = -dest[1].z;
+        dest[1].w = -dest[1].w;
+    }
+    if (negateCol1) {
+        dest[0].y = -dest[0].y;
+        dest[1].y = -dest[1].y;
+        dest[2].y = -dest[2].y;
+        dest[3].y = -dest[3].y;
     }
 }
 
@@ -878,35 +965,71 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
             g_state.frameToken = nullptr;
         }
         // The evaluation never recorded, but the caller's transitions above still moved the
-        // motion image into the read state before this call; the frame's tags survive a
-        // failed evaluation, so the image goes back to the layout its FG tag declared rather
-        // than being left for the present path to find in the wrong state.
+        // motion image into the read state before this call; the image goes back to the
+        // engine-resting layout the motion pass and the SR path expect it in, rather than
+        // being left for the next frame to find in the wrong state.
         restore_motion_to_engine_resting_layout(commandBuffer);
         return static_cast<int32_t>(result);
     }
     // The constants reached the plugin: the oracle records exactly what this call carried,
-    // so a later query proves the caller's camera arrived unchanged. Recorded only after
-    // slSetConstants answered eOk - a failed call claims no constants.
+    // so a later query proves the caller's camera arrived unchanged - the jitter the SR
+    // viewport received included, raw. Recorded only after slSetConstants answered eOk - a
+    // failed call claims no constants.
     g_state.cameraConstantsRecorded = true;
     g_state.lastCameraConstants = info.camera;
+    g_state.lastCameraConstants.jitter = info.jitter;
 
     // The composed frame's FG side needs its own constants record on the FG viewport: the
     // DLSS-G plugin reads per-frame constants from the viewport its options, state, and
     // tags were recorded on, and after the viewport split the SR viewport's record no
-    // longer reaches it. The record carries the same constants struct and the same
-    // retained frame token - the token is shared, never replaced or consumed here - so
-    // both viewports' records stay on the one frame index the tags obtained. Recorded only
-    // for a frame whose FG tag recorded: an SR-only frame has no FG side to give constants
-    // to. A failed FG record aborts the evaluation before it runs, exactly like a failed
-    // SR record, and the FG oracle stays unrecorded - the plugin received no FG constants.
+    // longer reaches it. The record carries the same retained frame token - the token is
+    // shared, never replaced or consumed here - so both viewports' records stay on the one
+    // frame index the tags obtained.
+    //
+    // The FG record also carries the FG viewport's orientation: its tags name the
+    // backbuffer-oriented copies - the engine's images mirrored about the horizontal axis,
+    // the motion field flipped with its y component negated - so the constants describing
+    // those images carry the matching flip, one per matrix role. The matrices are
+    // row-vector (v' = v * M), so the viewToClip carries the output-side flip M * F, the
+    // clipToView the input-side flip F * M^-1 (which keeps the pair exact inverses), and
+    // the reprojection pair the conjugation F * M * F; the pixel-space jitter's y negates
+    // and the camera's world-space position and basis and the frustum scalars are
+    // orientation-free and carry unchanged.
+    // The SR record above stays raw: a flip on one viewport without the matching images -
+    // or the reverse - is the half-fix that desynchronizes the constants from the tags, and
+    // the viewport split is exactly what lets each side carry its own.
+    //
+    // Recorded only for a frame whose FG tag recorded: an SR-only frame has no FG side to
+    // give constants to. A failed FG record aborts the evaluation before it runs, exactly
+    // like a failed SR record, and the FG oracle stays unrecorded - the plugin received no
+    // FG constants.
     if (g_state.fgTagFrameIndexRecorded) {
-        result = slSetConstants(constants, *frameToken, sl::ViewportHandle{kFgViewportId});
+        sl::Constants fgConstants = constants;
+        fgConstants.jitterOffset = sl::float2(info.jitter.x, -info.jitter.y);
+        write_matrix_flipped_y(fgConstants.cameraViewToClip, info.camera.view_to_clip,
+                               false, true);
+        write_matrix_flipped_y(fgConstants.clipToCameraView, info.camera.clip_to_view,
+                               true, false);
+        write_matrix_flipped_y(fgConstants.clipToPrevClip, info.camera.clip_to_prev_clip,
+                               true, true);
+        write_matrix_flipped_y(fgConstants.prevClipToClip, info.camera.prev_clip_to_clip,
+                               true, true);
+        result = slSetConstants(fgConstants, *frameToken, sl::ViewportHandle{kFgViewportId});
         if (result != sl::Result::eOk) {
             restore_motion_to_engine_resting_layout(commandBuffer);
             return static_cast<int32_t>(result);
         }
         g_state.fgCameraConstantsRecorded = true;
+        // The FG oracle reports exactly what the FG viewport received: the per-role
+        // flipped matrices and the negated jitter, so a query proves the flip reached the
+        // record and never the SR one.
         g_state.lastFgCameraConstants = info.camera;
+        flip_matrix_y_in_place(g_state.lastFgCameraConstants.view_to_clip, false, true);
+        flip_matrix_y_in_place(g_state.lastFgCameraConstants.clip_to_view, true, false);
+        flip_matrix_y_in_place(g_state.lastFgCameraConstants.clip_to_prev_clip, true, true);
+        flip_matrix_y_in_place(g_state.lastFgCameraConstants.prev_clip_to_clip, true, true);
+        g_state.lastFgCameraConstants.jitter.x = info.jitter.x;
+        g_state.lastFgCameraConstants.jitter.y = -info.jitter.y;
     }
 
     // The viewport handle is chained into the evaluate inputs: the common plugin reads the
@@ -928,9 +1051,8 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     if (!g_state.fgTagFrameIndexRecorded) {
         g_state.frameToken = nullptr;
     }
-    // The composed frame's FG tag declared the motion image GENERAL for its whole lifetime,
-    // so the evaluation must leave it there - on the success path exactly as on the
-    // constants-failure path above.
+    // The motion image returns to the engine-resting layout it lives in between frames, on
+    // the success path exactly as on the constants-failure path above.
     restore_motion_to_engine_resting_layout(commandBuffer);
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
@@ -1139,30 +1261,58 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     const uint32_t outputWidth = g_state.outputWidth;
     const uint32_t outputHeight = g_state.outputHeight;
 
-    // The declared state is the layout the images rest in when the frame is tagged: Minecraft
-    // rests every texture in GENERAL and the motion fill leaves the module's image in GENERAL,
-    // and nothing in this call transitions them. SL reads the tagged resources at present
-    // time, and the guide requires the declared state to be the layout they are in then; the
-    // evaluation and present slices own the transitions that move the inputs before DLSS-G
-    // reads them and must update these declared states with them. The composed frame does
-    // exactly that with its second call to this function: the SR evaluation records between
-    // the two calls, so the first call's shared depth and motion declarations are what the
-    // evaluation overwrites with its own SHADER_READ_ONLY records and the second call
-    // re-declares the slots in the engine-resting layout the images actually rest in after
-    // the evaluation's restore - the declaration the present path reads.
+    // The frame's first FG tag call records the orientation copies: three y-inverting blits
+    // from the engine's depth, HUD-less, and UI images into the module's flipped copies -
+    // the motion copy is filled by the motion dispatches on the same command buffer before
+    // this call. The copies are what the tag below declares, in the backbuffer's orientation
+    // rather than the engine's. The engine images are read as transfer sources and handed
+    // back in their engine-resting layout; nothing here writes them.
+    //
+    // A frame's second FG tag call - the post-evaluation re-declaration - skips the blits:
+    // the copies still hold the frame's content and the first call already declared them
+    // valid-until-present, so re-blitting would rewrite the frame's own tagged inputs for
+    // no change at double the per-frame cost. The retained frame token's index tells the
+    // two calls apart: it advances between frames and never within one.
+    const uint32_t frameIndex = static_cast<uint32_t>(*frameToken);
+    if (!g_state.fgCopiesRecorded || g_state.fgCopiedFrameIndex != frameIndex) {
+        record_flip_blit(commandBuffer, info.depth.image, g_state.fgDepthImage,
+                         renderWidth, renderHeight, true);
+        record_flip_blit(commandBuffer, info.hudless.image, g_state.fgHudlessImage,
+                         outputWidth, outputHeight, false);
+        record_flip_blit(commandBuffer, info.ui.image, g_state.fgUiImage,
+                         outputWidth, outputHeight, false);
+        g_state.fgCopiesRecorded = true;
+        g_state.fgCopiedFrameIndex = frameIndex;
+    }
+
+    // The declared state is the layout the copies rest in when the frame is tagged: the
+    // blits above leave the depth, HUD-less, and UI copies in the engine-resting GENERAL
+    // layout, the motion dispatches leave the flipped motion copy there too, and nothing
+    // in this call moves any of them again. SL reads the tagged resources at present time,
+    // and the guide requires the declared state to be the layout they are in then. The
+    // copies are module-owned and no evaluation transition ever reaches them, so the first
+    // call's declarations stay accurate through present - the second call's re-declaration
+    // is the same record under the same retained token, keeping the composed frame's
+    // post-evaluation tag discipline without touching the engine's images.
     sl::Resource depthResource = make_tagged_resource(
-        from_uint64<void*>(info.depth.image), nullptr, from_uint64<void*>(info.depth.view),
+        reinterpret_cast<void*>(g_state.fgDepthImage.image),
+        reinterpret_cast<void*>(g_state.fgDepthImage.memory),
+        reinterpret_cast<void*>(g_state.fgDepthImage.view),
         kEngineRestingLayout, renderWidth, renderHeight, info.depth.format);
     sl::Resource hudlessResource = make_tagged_resource(
-        from_uint64<void*>(info.hudless.image), nullptr, from_uint64<void*>(info.hudless.view),
+        reinterpret_cast<void*>(g_state.fgHudlessImage.image),
+        reinterpret_cast<void*>(g_state.fgHudlessImage.memory),
+        reinterpret_cast<void*>(g_state.fgHudlessImage.view),
         kEngineRestingLayout, outputWidth, outputHeight, info.hudless.format);
     sl::Resource uiResource = make_tagged_resource(
-        from_uint64<void*>(info.ui.image), nullptr, from_uint64<void*>(info.ui.view),
+        reinterpret_cast<void*>(g_state.fgUiImage.image),
+        reinterpret_cast<void*>(g_state.fgUiImage.memory),
+        reinterpret_cast<void*>(g_state.fgUiImage.view),
         kEngineRestingLayout, outputWidth, outputHeight, info.ui.format);
     sl::Resource motionResource = make_tagged_resource(
-        reinterpret_cast<void*>(g_state.motionImage.image),
-        reinterpret_cast<void*>(g_state.motionImage.memory),
-        reinterpret_cast<void*>(g_state.motionImage.view),
+        reinterpret_cast<void*>(g_state.fgMotionImage.image),
+        reinterpret_cast<void*>(g_state.fgMotionImage.memory),
+        reinterpret_cast<void*>(g_state.fgMotionImage.view),
         kEngineRestingLayout, renderWidth, renderHeight,
         static_cast<uint32_t>(kMotionFormat));
 
@@ -1212,10 +1362,10 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
                               sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
     tags[2] = sl::ResourceTag(&uiResource, sl::kBufferTypeUIColorAndAlpha,
                               sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
-    // The motion source is the module's own motion image on every route, filled with the
-    // same NDC motion payload the DLSS-G evaluation expects; the pre-checks above already
-    // refused the call until that image exists at the configured size, so all four tags
-    // always record together.
+    // The motion source is the module's own flipped motion copy on every route, filled with
+    // the backbuffer-oriented mirror of the NDC motion payload the DLSS-G evaluation expects;
+    // the pre-checks above already refused the call until that image exists at the
+    // configured size, so all four tags always record together.
     tags[3] = sl::ResourceTag(&motionResource, sl::kBufferTypeMotionVectors,
                               sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
 

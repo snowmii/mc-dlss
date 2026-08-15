@@ -508,6 +508,42 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_release_images(void) {
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_images(McDlssImage* depth,
+                                                          McDlssImage* hudless,
+                                                          McDlssImage* ui,
+                                                          McDlssImage* motion) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_state.sessionReady) {
+            return kNotInitialized;
+        }
+        if (depth == nullptr || hudless == nullptr || ui == nullptr || motion == nullptr) {
+            return kInvalidParameter;
+        }
+        // The copies exist exactly when the module's images exist at the configured size -
+        // acquire_images creates all six together - so the same gate as the recording calls
+        // and the FG tag names what the query reports.
+        if (!images_match_configuration()) {
+            return kNotInitialized;
+        }
+        depth->view = to_uint64(g_state.fgDepthImage.view);
+        depth->image = to_uint64(g_state.fgDepthImage.image);
+        depth->format = static_cast<uint32_t>(VK_FORMAT_D32_SFLOAT);
+        hudless->view = to_uint64(g_state.fgHudlessImage.view);
+        hudless->image = to_uint64(g_state.fgHudlessImage.image);
+        hudless->format = static_cast<uint32_t>(kOutputFormat);
+        ui->view = to_uint64(g_state.fgUiImage.view);
+        ui->image = to_uint64(g_state.fgUiImage.image);
+        ui->format = static_cast<uint32_t>(kOutputFormat);
+        motion->view = to_uint64(g_state.fgMotionImage.view);
+        motion->image = to_uint64(g_state.fgMotionImage.image);
+        motion->format = static_cast<uint32_t>(kMotionFormat);
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_frame_timings(float* motion_ms, float* evaluate_ms,
                                                              float* present_ms, float* total_ms) {
     try {
