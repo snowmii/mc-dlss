@@ -22,6 +22,7 @@ import java.util.IdentityHashMap
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.fg.FgSurfacePolicy
 import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.screens.LoadingOverlay
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.textures.GpuTextureView
 
@@ -115,11 +116,24 @@ class RenderRuntime(
 	private val pollFgState: () -> FgState? = { null },
 	/**
 	 * Re-records the DLSS-G options in the eOff mode (retained resources) when FG switches
-	 * off, or does nothing for a runtime without FG wiring: the status latch and the user
-	 * toggle both go through it, each recording exactly once on its own transition. The SR
-	 * session stays READY, so this is deliberately not a session-latching call.
+	 * off, or does nothing for a runtime without FG wiring: the status latch, the user
+	 * toggle, and the frame-support suspension all go through it, each recording exactly
+	 * once on its own transition. The SR session stays READY, so this is deliberately not
+	 * a session-latching call.
 	 */
 	private val recordFgModeOff: () -> Unit = {},
+	/**
+	 * Classifies whether the current frame may compose FG: a real (non-panorama) world frame
+	 * at the configured output size, plus whatever client state the production wiring adds
+	 * (pause, loading overlay, open screen, fullscreen flip). A false answer suspends the
+	 * effective FG mode through the policy exactly once per transition; a true answer
+	 * resumes it. Defaults to the two signals [beginWorldPhase] itself carries, so runtimes
+	 * without client wiring - tests, target-only sessions - classify by frame and size.
+	 */
+	private val fgFrameSupported: (Boolean, DlssDimensions) -> Boolean =
+		{ normalInWorldFrame, outputDimensions ->
+			normalInWorldFrame && outputDimensions == session.config.outputDimensions
+		},
 	/** Emits diagnostics; the FG status latch reports its one exact line through this. */
 	private val diagnostics: (String) -> Unit = {},
 ) : AutoCloseable {
@@ -281,6 +295,17 @@ class RenderRuntime(
 		if (frameGeneration.active) {
 			waitForFgInputs()
 			pollFrameGenerationStatus()
+		}
+
+		// FG composes only on supported in-world frames. The classifier runs after the
+		// FG-active wait and poll, so the frame that suspends has still waited out the
+		// previous FG frame's input processing and read its status; a supported->unsupported
+		// transition then records the retained eOff mode exactly once, the frames in between
+		// compose SR-only, and a supported frame resumes without a record - the next FG
+		// frame's per-frame options record re-records eOn.
+		val frameSupported = fgFrameSupported(normalInWorldFrame, outputDimensions)
+		if (frameGeneration.setFrameSupported(frameSupported) && !frameSupported) {
+			recordFgModeOff()
 		}
 
 		val route = routeFrame(normalInWorldFrame, outputDimensions)
@@ -552,6 +577,20 @@ class RenderRuntime(
 		private const val FG_STATUS_OK = 0
 
 		/**
+		 * The FG frame-support classification: a frame may compose FG only when it is a real
+		 * in-world frame at the configured output size and the client is not paused, loading,
+		 * showing a screen, or inside the one frame that observes a fullscreen/windowed flip.
+		 */
+		fun isFgFrameSupported(
+			normalInWorldFrame: Boolean,
+			outputMatches: Boolean,
+			paused: Boolean,
+			loading: Boolean,
+			screenOpen: Boolean,
+			fullscreenTransition: Boolean,
+		): Boolean = normalInWorldFrame && outputMatches && !paused && !loading && !screenOpen && !fullscreenTransition
+
+		/**
 		 * Production wiring: Streamline-backed startup against the captured Minecraft Vulkan
 		 * context and a Minecraft-allocated scene target. Returns null when no Vulkan context has
 		 * been captured yet or the configuration supplies no SDK/data path, because
@@ -568,6 +607,10 @@ class RenderRuntime(
 			readout: SessionReadout? = null,
 		): RenderRuntime {
 			val adapter = LifecycleAdapter(session, native)
+			// The requested window mode as of the previous world frame, so the classifier can
+			// name the one frame a fullscreen/windowed flip lands on; null before the first
+			// frame, which never reads as a transition.
+			var lastFullscreen: Boolean? = null
 			// One policy for both seams that read the FG mode: the swapchain reconfigure path
 			// and the frame evaluation's FG composition. The evaluation reads the same `active`
 			// flag the controls toggle, so a mode transition changes the frames that follow
@@ -600,6 +643,25 @@ class RenderRuntime(
 			pollFgState = { adapter.queryFgState() },
 			recordFgModeOff = { adapter.recordFgModeOff() },
 			diagnostics = diagnostics,
+			// The frame-support classifier's client half: the world-phase entry's own signals
+			// plus the client state that names the unsupported frames. The fullscreen check
+			// compares the requested mode against the previous world frame's, which catches
+			// the one frame a fullscreen/windowed flip lands on even when the surface size
+			// does not change.
+			fgFrameSupported = { normalInWorldFrame, outputDimensions ->
+				val client = Minecraft.getInstance()
+				val fullscreen = client.window.isFullscreen
+				val transition = lastFullscreen != null && lastFullscreen != fullscreen
+				lastFullscreen = fullscreen
+				isFgFrameSupported(
+					normalInWorldFrame = normalInWorldFrame,
+					outputMatches = outputDimensions == session.config.outputDimensions,
+					paused = client.isPaused,
+					loading = client.gui.overlay() is LoadingOverlay,
+					screenOpen = client.gui.screen() != null,
+					fullscreenTransition = transition,
+				)
+			},
 			// Every FG mode transition recreates the swapchain through Minecraft's own
 			// reconfigure path, so the next frame's renderFrame reconfigures the surface under
 			// the new policy. The flag itself is only a boolean write, safe from the client
