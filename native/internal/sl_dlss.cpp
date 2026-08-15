@@ -336,6 +336,128 @@ int32_t query_present_markers(uint32_t* startCount, uint32_t* endCount, uint32_t
     return kSuccess;
 }
 
+// Appends one Reflex/PCL marker this module actually emitted to the reflex-marker event
+// log: the per-type count, the total count, and the ring slot. Same discipline as the
+// present-marker log: the ring keeps only the most recent events, the counts are cumulative,
+// and the entry is recorded only after the marker call succeeded, so the oracle reports
+// exactly what reached the plugin.
+static void record_reflex_marker_event(const ReflexMarkerType type,
+                                       const sl::FrameToken* frameToken) noexcept {
+    const uint32_t frameIndex = static_cast<uint32_t>(*frameToken);
+    g_state.reflexMarkerLog[g_state.reflexMarkerEventCount % kReflexMarkerLogSize] =
+        ReflexMarkerEvent{type, frameIndex};
+    g_state.reflexMarkerEventCount += 1;
+    g_state.reflexMarkerTypeCounts[static_cast<uint32_t>(type)] += 1;
+}
+
+// Emits one PCL marker under the retained frame token and records it in the reflex-marker
+// log. Shared by the simulation and render-submit entries: all four require the ready
+// session and a retained token, because a marker emitted under no frame index would break
+// the same-token correlation the whole surface exists for.
+static int32_t emit_reflex_marker(const ReflexMarkerType type, const sl::PCLMarker marker) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // A frame that never ran its input sample has no token: the input seam is what obtains
+    // the frame's token, and a marker emitted without one cannot correlate with the frame.
+    if (g_state.frameToken == nullptr) {
+        return kNotInitialized;
+    }
+    const sl::FrameToken* token = g_state.frameToken;
+    const sl::Result result = slPCLSetMarker(marker, *token);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    record_reflex_marker_event(type, token);
+    return kSuccess;
+}
+
+int32_t reflex_input_sample() noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The frame-start seam obtains the frame's token unconditionally: a retained token at
+    // input-sample time belongs to a previous frame that never reached its present end (an
+    // exception between the seams), and reusing it would emit this frame's markers under a
+    // stale index. Replacing it advances the frame exactly like the guide's obtain-at-frame-
+    // start pattern, and the tag calls below reuse the retained token rather than advancing
+    // it again, so one frame still records everything under one index.
+    sl::Result result = slGetNewFrameToken(g_state.frameToken);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    // Reflex sleep is mandatory every frame even with low-latency mode off, and frame start
+    // is where the app should sleep: the tag calls used to run the sleep when they obtained
+    // the token, and with the input seam obtaining it first, this is the call that keeps the
+    // sleep in the production path. The tag calls keep their own obtain-and-sleep for
+    // callers that never run an input sample, and never sleep twice on one frame because
+    // they only sleep when they themselves obtain the token.
+    result = slReflexSleep(*g_state.frameToken);
+    if (result != sl::Result::eOk) {
+        invalidate_frame_eligibility();
+        return static_cast<int32_t>(result);
+    }
+    // The pinned 2.12 vocabulary removed eInputSample from PCLMarker, so the input seam
+    // emits ePCLatencyPing instead: the PCL guide defines the ping as the marker whose
+    // frame index identifies which frame picks up the simulated input, which is the
+    // input-sample seam semantics this marker surface exists for.
+    result = slPCLSetMarker(sl::PCLMarker::ePCLatencyPing, *g_state.frameToken);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    record_reflex_marker_event(kReflexMarkerInputSample, g_state.frameToken);
+    return kSuccess;
+}
+
+int32_t reflex_simulate_start() noexcept {
+    return emit_reflex_marker(kReflexMarkerSimulationStart, sl::PCLMarker::eSimulationStart);
+}
+
+int32_t reflex_simulate_end() noexcept {
+    return emit_reflex_marker(kReflexMarkerSimulationEnd, sl::PCLMarker::eSimulationEnd);
+}
+
+int32_t reflex_render_submit_start() noexcept {
+    return emit_reflex_marker(kReflexMarkerRenderSubmitStart, sl::PCLMarker::eRenderSubmitStart);
+}
+
+int32_t reflex_render_submit_end() noexcept {
+    return emit_reflex_marker(kReflexMarkerRenderSubmitEnd, sl::PCLMarker::eRenderSubmitEnd);
+}
+
+int32_t query_reflex_markers(uint32_t* typeCounts, uint32_t* eventCount, uint32_t* events,
+                             const uint32_t eventsCapacity) noexcept {
+    if (typeCounts == nullptr || eventCount == nullptr || events == nullptr) {
+        return kInvalidParameter;
+    }
+    // The oracle answers only once this session actually emitted a marker: before that
+    // there is no event any marker was emitted under, and the refusal is exactly what makes
+    // "refused sessions emit none" observable to the test.
+    if (g_state.reflexMarkerEventCount == 0) {
+        return kNotInitialized;
+    }
+    for (uint32_t i = 0; i < kReflexMarkerTypeCount; ++i) {
+        typeCounts[i] = g_state.reflexMarkerTypeCounts[i];
+    }
+    *eventCount = g_state.reflexMarkerEventCount;
+    // The ring holds the most recent min(eventCount, kReflexMarkerLogSize) events, oldest
+    // first, exactly like the present-marker log: the slot at eventCount %
+    // kReflexMarkerLogSize holds the oldest kept event (it is the next to be overwritten),
+    // and the kept events follow it around the ring.
+    const uint32_t kept = g_state.reflexMarkerEventCount < kReflexMarkerLogSize
+                              ? g_state.reflexMarkerEventCount
+                              : kReflexMarkerLogSize;
+    const uint32_t copied = eventsCapacity < kept ? eventsCapacity : kept;
+    const uint32_t oldest = (g_state.reflexMarkerEventCount - kept) % kReflexMarkerLogSize;
+    for (uint32_t i = 0; i < copied; ++i) {
+        const ReflexMarkerEvent& event =
+            g_state.reflexMarkerLog[(oldest + i) % kReflexMarkerLogSize];
+        events[i * 2] = static_cast<uint32_t>(event.type);
+        events[i * 2 + 1] = event.frameIndex;
+    }
+    return kSuccess;
+}
+
 // Blocks until the DLSS-G plugin's input-processing timeline semaphore reaches `value`, on
 // the caller's thread and through the Vulkan device. `value` is the value the plugin
 // reported under lastPresentInputsProcessingCompletionFenceValue for the inputs the last

@@ -655,6 +655,67 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_start(void);
 
 /*
+ * Emits the frame's Reflex/PCL markers at the M-12 input, simulation, and render-submit
+ * seams: mc_dlss_reflex_input_sample at Minecraft's GLFW input poll, the simulation pair
+ * around Minecraft's runTick simulation, and the render-submit pair around renderFrame's
+ * command-encoder submit. All five emit through slPCLSetMarker under the retained
+ * Streamline frame token, so the whole marker surface shares the token identity the
+ * frame's SR/FG tags and common constants record under.
+ *
+ * The input-sample entry is the frame-start seam: it obtains the frame's token
+ * (slGetNewFrameToken is called again even when a token is retained, replacing one a
+ * previous frame never consumed), runs the unconditional slReflexSleep against it, and
+ * emits the input marker. The pinned Streamline 2.12 vocabulary removed eInputSample from
+ * PCLMarker, so the input seam emits ePCLatencyPing: the PCL guide defines the ping as
+ * the marker whose frame index identifies which frame picks up the simulated input, which
+ * is exactly the input-sample seam semantics the contract retains. The simulation and
+ * render-submit entries emit eSimulationStart/eSimulationEnd and
+ * eRenderSubmitStart/eRenderSubmitEnd.
+ *
+ * Every entry answers FAIL_NotInitialized while the Streamline session is not ready, and
+ * the simulation and render-submit entries also answer FAIL_NotInitialized when no frame
+ * token is retained (a frame that never ran its input sample emits no markers). A refused
+ * or failed marker call emits nothing and never latches the session: the markers are the
+ * PCL/Reflex diagnostic surface, not a frame-route stage, and a missing ping must not
+ * degrade the frames that rendered anyway.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_input_sample(void);
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_simulate_start(void);
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_simulate_end(void);
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_render_submit_start(void);
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_render_submit_end(void);
+
+/*
+ * The reflex-marker oracle: how many of each of the five Reflex/PCL markers this module has
+ * actually emitted (per-type cumulative counts), how many marker events in total, and the
+ * recent event log in emission order. Each log entry is a (type, frame index) pair: the
+ * type is 0 for INPUT_SAMPLE, 1 for SIMULATION_START, 2 for SIMULATION_END, 3 for
+ * RENDER_SUBMIT_START, and 4 for RENDER_SUBMIT_END, and the frame index is the Streamline
+ * frame token the marker was emitted under.
+ *
+ * The frame index must equal the frame indexes the frame's SR/FG tags (and its common
+ * constants and present markers) recorded under: the input sample obtains the retained
+ * token the rest of the frame reuses, so the log's equality with
+ * mc_dlss_query_tagged_frame_indexes is what proves the marker surface shares the retained
+ * token identity. The per-type counts advance by exactly one per emitted marker and stay
+ * unchanged across refused or pre-ready calls, which is what proves the "refused sessions
+ * emit none" half of the contract.
+ *
+ * `type_counts` receives the five per-type counts in order (at least five entries),
+ * `events` the most recent events in emission order, at most `events_capacity` pairs (and
+ * never more than the module's log holds); the counts answer the whole session. All three
+ * out-pointers are written on success. Answers FAIL_NotInitialized until at least one
+ * marker was actually emitted; the oracle is module history rather than per-frame
+ * eligibility, so it keeps answering across later refusals and resets of the frame's
+ * eligibility, and only reset_state clears it.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_markers(
+    uint32_t* type_counts,
+    uint32_t* event_count,
+    uint32_t* events,
+    uint32_t events_capacity);
+
+/*
  * Emits the PRESENT_END Reflex marker of the armed present bracket under the frame's
  * retained token, on the caller's (present) thread immediately after the queue present
  * returned, and consumes the bracket.

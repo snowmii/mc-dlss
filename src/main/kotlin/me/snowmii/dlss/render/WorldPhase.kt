@@ -99,6 +99,20 @@ class WorldPhase(
 	fun presentStart(): Boolean = runtime.frameEvaluation?.presentStart() == true
 	fun presentEnd(): Boolean = runtime.frameEvaluation?.presentEnd() == true
 
+	// The five Reflex/PCL frame markers of the M-12 surface, reached the same way the
+	// present bracket is: the Minecraft run/runTick/renderFrame mixins call the active
+	// world phase (the render loop's handle to the runtime, null before the DLSS path was
+	// built), and this object passes the call through to the evaluation and its adapter.
+	// The input and simulation seams fire outside the world phase's own window - before
+	// LevelRenderer.render opens it - which is fine: the phase object exists for the whole
+	// session once the render loop built the path, and the markers themselves are gated on
+	// the READY session inside the adapter, not on the phase being open.
+	fun reflexInputSample(): Boolean = runtime.frameEvaluation?.reflexInputSample() == true
+	fun reflexSimulateStart(): Boolean = runtime.frameEvaluation?.reflexSimulateStart() == true
+	fun reflexSimulateEnd(): Boolean = runtime.frameEvaluation?.reflexSimulateEnd() == true
+	fun reflexRenderSubmitStart(): Boolean = runtime.frameEvaluation?.reflexRenderSubmitStart() == true
+	fun reflexRenderSubmitEnd(): Boolean = runtime.frameEvaluation?.reflexRenderSubmitEnd() == true
+
 	fun observePipeline(pipeline: MotionVectorPipeline) {
 		if (isOpen) {
 			runtime.observeWorldPipeline(pipeline)

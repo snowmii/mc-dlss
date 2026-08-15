@@ -296,6 +296,37 @@ class LifecycleAdapter(
 	fun presentEnd(): Boolean = session.state == DlssSessionState.READY &&
 		invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentEnd() }
 
+	// The five Reflex/PCL frame markers of the M-12 marker surface: the input sample at
+	// Minecraft's GLFW input poll, the simulation pair around runTick's simulation, and the
+	// render-submit pair around renderFrame's command-encoder submit. All five are gated on
+	// the READY session like the present bracket, and unlike the present bracket they never
+	// latch: a marker call failure is the PCL/Reflex diagnostic surface losing a sample,
+	// not a frame-route stage failure, and a session that rendered the frame anyway must
+	// not degrade because its ping did not reach the plugin. The native side emits each
+	// marker under the retained frame token and records it in the reflex-marker oracle only
+	// after slPCLSetMarker succeeded, so a refused or failed call is observable through the
+	// oracle rather than through the session state.
+	fun reflexInputSample(): Boolean = reflexMarker { native.reflexInputSample() }
+
+	fun reflexSimulateStart(): Boolean = reflexMarker { native.reflexSimulateStart() }
+
+	fun reflexSimulateEnd(): Boolean = reflexMarker { native.reflexSimulateEnd() }
+
+	fun reflexRenderSubmitStart(): Boolean = reflexMarker { native.reflexRenderSubmitStart() }
+
+	fun reflexRenderSubmitEnd(): Boolean = reflexMarker { native.reflexRenderSubmitEnd() }
+
+	private fun reflexMarker(operation: () -> Int): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			operation() == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
+		}
+	}
+
 	/**
 	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
 	 * completed, on the caller's (present/render) thread and through the Vulkan device.

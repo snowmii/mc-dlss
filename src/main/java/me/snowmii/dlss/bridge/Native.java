@@ -246,6 +246,12 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryQueueRequirements;
 	private final MethodHandle queryTaggedFrameIndexes;
 	private final MethodHandle queryPresentMarkers;
+	private final MethodHandle reflexInputSample;
+	private final MethodHandle reflexSimulateStart;
+	private final MethodHandle reflexSimulateEnd;
+	private final MethodHandle reflexRenderSubmitStart;
+	private final MethodHandle reflexRenderSubmitEnd;
+	private final MethodHandle queryReflexMarkers;
 	private final MethodHandle waitFgInputsValue;
 	private final MethodHandle queryFgState;
 	private final MethodHandle queryCameraConstants;
@@ -348,6 +354,25 @@ public final class Native implements AutoCloseable, NativeApi {
 				JAVA_INT,
 				ValueLayout.ADDRESS, // start_count
 				ValueLayout.ADDRESS, // end_count
+				ValueLayout.ADDRESS, // event_count
+				ValueLayout.ADDRESS, // events
+				JAVA_INT // events_capacity
+			)
+		);
+		// Optional like queryPresentMarkers: the ABI-probe DLL does not export the M-12
+		// reflex-marker entries either, while every real build since these symbols exist
+		// carries them.
+		this.reflexInputSample = bindOptional(lookup, "mc_dlss_reflex_input_sample", FunctionDescriptor.of(JAVA_INT));
+		this.reflexSimulateStart = bindOptional(lookup, "mc_dlss_reflex_simulate_start", FunctionDescriptor.of(JAVA_INT));
+		this.reflexSimulateEnd = bindOptional(lookup, "mc_dlss_reflex_simulate_end", FunctionDescriptor.of(JAVA_INT));
+		this.reflexRenderSubmitStart = bindOptional(lookup, "mc_dlss_reflex_render_submit_start", FunctionDescriptor.of(JAVA_INT));
+		this.reflexRenderSubmitEnd = bindOptional(lookup, "mc_dlss_reflex_render_submit_end", FunctionDescriptor.of(JAVA_INT));
+		this.queryReflexMarkers = bindOptional(
+			lookup,
+			"mc_dlss_query_reflex_markers",
+			FunctionDescriptor.of(
+				JAVA_INT,
+				ValueLayout.ADDRESS, // type_counts
 				ValueLayout.ADDRESS, // event_count
 				ValueLayout.ADDRESS, // events
 				JAVA_INT // events_capacity
@@ -701,6 +726,72 @@ public final class Native implements AutoCloseable, NativeApi {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-present-markers", error);
+		}
+	}
+
+	@Override
+	public int reflexInputSample() {
+		if (reflexInputSample == null) throw new NativeException("reflex-input-sample", new IllegalStateException("Native bridge lacks the reflex input-sample marker"));
+		try { return (int)reflexInputSample.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-input-sample", error); }
+	}
+
+	@Override
+	public int reflexSimulateStart() {
+		if (reflexSimulateStart == null) throw new NativeException("reflex-simulate-start", new IllegalStateException("Native bridge lacks the reflex simulation-start marker"));
+		try { return (int)reflexSimulateStart.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-simulate-start", error); }
+	}
+
+	@Override
+	public int reflexSimulateEnd() {
+		if (reflexSimulateEnd == null) throw new NativeException("reflex-simulate-end", new IllegalStateException("Native bridge lacks the reflex simulation-end marker"));
+		try { return (int)reflexSimulateEnd.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-simulate-end", error); }
+	}
+
+	@Override
+	public int reflexRenderSubmitStart() {
+		if (reflexRenderSubmitStart == null) throw new NativeException("reflex-render-submit-start", new IllegalStateException("Native bridge lacks the reflex render-submit-start marker"));
+		try { return (int)reflexRenderSubmitStart.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-render-submit-start", error); }
+	}
+
+	@Override
+	public int reflexRenderSubmitEnd() {
+		if (reflexRenderSubmitEnd == null) throw new NativeException("reflex-render-submit-end", new IllegalStateException("Native bridge lacks the reflex render-submit-end marker"));
+		try { return (int)reflexRenderSubmitEnd.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-render-submit-end", error); }
+	}
+
+	@Override
+	public NativeApi.ReflexMarkerEvents reflexMarkers() {
+		if (queryReflexMarkers == null) throw new NativeException("query-reflex-markers", new IllegalStateException("Native bridge lacks the reflex-marker oracle"));
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment typeCounts = callArena.allocate(JAVA_INT, NativeApi.ReflexMarkerEvents.TYPE_COUNT);
+			final MemorySegment eventCount = callArena.allocate(JAVA_INT);
+			final MemorySegment events = callArena.allocate((long) NativeApi.ReflexMarkerEvents.LOG_CAPACITY * 2 * JAVA_INT.byteSize());
+			final int result = (int)this.queryReflexMarkers.invokeExact(
+				typeCounts,
+				eventCount,
+				events,
+				NativeApi.ReflexMarkerEvents.LOG_CAPACITY
+			);
+			if (result != SUCCESS) {
+				throw new NativeException("query-reflex-markers", result);
+			}
+			final int total = eventCount.get(JAVA_INT, 0);
+			final int readable = Math.min(total, NativeApi.ReflexMarkerEvents.LOG_CAPACITY);
+			final List<NativeApi.ReflexMarkerEvent> log = new ArrayList<>(readable);
+			for (int i = 0; i < readable; i++) {
+				final int type = events.get(JAVA_INT, (long) i * 2 * JAVA_INT.byteSize());
+				final int frameIndex = events.get(JAVA_INT, ((long) i * 2 + 1) * JAVA_INT.byteSize());
+				log.add(new NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.fromNative(type), frameIndex));
+			}
+			final int[] counts = new int[NativeApi.ReflexMarkerEvents.TYPE_COUNT];
+			for (int i = 0; i < counts.length; i++) {
+				counts[i] = typeCounts.get(JAVA_INT, (long) i * JAVA_INT.byteSize());
+			}
+			return new NativeApi.ReflexMarkerEvents(counts, total, List.copyOf(log));
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-reflex-markers", error);
 		}
 	}
 

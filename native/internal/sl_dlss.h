@@ -72,6 +72,44 @@ int32_t record_present_handoff() noexcept;
 int32_t present_start() noexcept;
 int32_t present_end() noexcept;
 
+// Emits the frame's Reflex/PCL markers at the M-12 input, simulation, and render-submit
+// seams, all under the retained Streamline frame token. The input-sample seam obtains the
+// token for the frame (slGetNewFrameToken is called again even when a token is retained,
+// because a retained token at frame start belongs to a previous frame that never reached
+// its present end - the same stale-token edge the tag calls already tolerate) and runs the
+// unconditional slReflexSleep against it, so the sleep that used to live at the tag's
+// token-obtain point stays once per frame at frame start; the tag calls keep their own
+// obtain-and-sleep for the callers that never run an input sample (tests, direct tag
+// sequences), and because they only sleep when they themselves obtain the token, a frame
+// that ran its input sample sleeps exactly once. The pinned Streamline 2.12 vocabulary has
+// no eInputSample marker (removed from PCLMarker), so the input seam emits ePCLatencyPing:
+// the PCL guide defines the ping as the marker that identifies which frame picks up the
+// simulated input, which is exactly the input-sample seam semantics the contract retains.
+// The simulation and render-submit entries emit eSimulationStart/eSimulationEnd and
+// eRenderSubmitStart/eRenderSubmitEnd. Every entry requires the ready session
+// (kNotInitialized) and refuses when no token is retained (kNotInitialized) - a frame that
+// never ran its input sample emits no markers - and records the emitted marker in the
+// reflex-marker log only after its slPCLSetMarker call succeeded, so the oracle reports
+// exactly what reached the plugin.
+int32_t reflex_input_sample() noexcept;
+int32_t reflex_simulate_start() noexcept;
+int32_t reflex_simulate_end() noexcept;
+int32_t reflex_render_submit_start() noexcept;
+int32_t reflex_render_submit_end() noexcept;
+
+// The reflex-marker oracle: how many of each of the five Reflex/PCL markers this module has
+// actually emitted (per-type cumulative counts, in ReflexMarkerType order), the total event
+// count, and the recent event log in emission order. Each log entry is a (type, frame index)
+// pair: the type is a ReflexMarkerType value and the frame index is the Streamline frame
+// token the marker was emitted under. The index must equal the frame index the frame's SR/FG
+// tags and its common constants recorded under - the input sample obtains the token the rest
+// of the frame reuses - which is what proves the marker surface shares the retained token
+// identity. Answers kInvalidParameter on null out-pointers and kNotInitialized until at
+// least one marker was actually emitted, the same refusal a fresh fork's module answers,
+// which is what makes "refused sessions emit none" observable.
+int32_t query_reflex_markers(uint32_t* typeCounts, uint32_t* eventCount, uint32_t* events,
+                             uint32_t eventsCapacity) noexcept;
+
 // The present-marker oracle: reports how many PRESENT_START and PRESENT_END markers this
 // module has actually emitted (per-type cumulative counts), the total event count, and the
 // recent event log in emission order. Each log entry is a (type, frame index) pair: the

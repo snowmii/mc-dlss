@@ -721,6 +721,64 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_present_markers(
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_input_sample(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return reflex_input_sample();
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_simulate_start(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return reflex_simulate_start();
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_simulate_end(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return reflex_simulate_end();
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_render_submit_start(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return reflex_render_submit_start();
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_render_submit_end(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return reflex_render_submit_end();
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_markers(
+    uint32_t* type_counts,
+    uint32_t* event_count,
+    uint32_t* events,
+    uint32_t events_capacity) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_reflex_markers(type_counts, event_count, events, events_capacity);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_camera_constants(McDlssCameraConstants* out) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);

@@ -19,6 +19,7 @@
 		"PreparedRenderTypeMotionMixin",
 		"LevelRendererWorldPhaseMixin",
 		"MinecraftLevelChangeMixin",
+		"MinecraftReflexMarkersMixin",
 		"MinecraftSurfaceConfigurationMixin",
 		"CloudRendererMotionMixin",
 		"VulkanBackendExtensionMixin",
@@ -28,7 +29,8 @@
 		"VulkanPipelineCompatibilityMixin",
 		"VulkanGpuSurfaceSwapchainMixin",
 		"VulkanGpuSurfaceProxyMixin",
-		"VulkanGpuSurfacePresentMixin"
+		"VulkanGpuSurfacePresentMixin",
+		"mixinextras.MinecraftReflexMarkersMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

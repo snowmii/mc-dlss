@@ -47,6 +47,32 @@ struct PresentMarkerEvent {
 // events for the ordered read-back; the per-type counts stay cumulative beyond it.
 constexpr uint32_t kPresentMarkerLogSize = 16;
 
+// The five Reflex/PCL frame markers this module emits at the M-12 input, simulation, and
+// render-submit seams, and the type tag the reflex-marker event log records each emitted
+// marker under. The ABI exposes the raw values through mc_dlss_query_reflex_markers.
+// kReflexMarkerTypeCount is the array width the per-type counts use; it must stay the
+// number of enum values.
+enum ReflexMarkerType : uint32_t {
+    kReflexMarkerInputSample = 0,
+    kReflexMarkerSimulationStart = 1,
+    kReflexMarkerSimulationEnd = 2,
+    kReflexMarkerRenderSubmitStart = 3,
+    kReflexMarkerRenderSubmitEnd = 4,
+    kReflexMarkerTypeCount = 5,
+};
+
+// One reflex-marker event as the log records it: the marker type and the Streamline frame
+// index (the retained token) the marker was emitted under.
+struct ReflexMarkerEvent {
+    ReflexMarkerType type;
+    uint32_t frameIndex;
+};
+
+// The number of events the reflex-marker log ring retains, the same ring discipline as the
+// present-marker log: the ring keeps the most recent events for the ordered read-back; the
+// per-type counts stay cumulative beyond it.
+constexpr uint32_t kReflexMarkerLogSize = 16;
+
 struct DlssOwnedImage {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -177,6 +203,17 @@ struct DlssState {
     uint32_t presentMarkerEndCount = 0;
     uint32_t presentMarkerEventCount = 0;
     PresentMarkerEvent presentMarkerLog[kPresentMarkerLogSize] = {};
+    // The reflex-marker event log: one entry per INPUT_SAMPLE, SIMULATION_START/END, or
+    // RENDER_SUBMIT_START/END marker this module actually emitted to Streamline, in emission
+    // order, each under the frame index (the retained token) the marker was emitted with.
+    // The per-type counts are cumulative across the session; the ring keeps only the most
+    // recent kReflexMarkerLogSize events for the ordered read-back. Same history-not-
+    // eligibility semantics as the present-marker log: neither invalidate_frame_eligibility
+    // nor a later handoff clears it, and only reset_state does, which is what makes the
+    // pre-ready refusal of a fresh fork observable.
+    uint32_t reflexMarkerTypeCounts[kReflexMarkerTypeCount] = {};
+    uint32_t reflexMarkerEventCount = 0;
+    ReflexMarkerEvent reflexMarkerLog[kReflexMarkerLogSize] = {};
     // Whether the camera constants of a successful slSetConstants are recorded: the last
     // successful evaluation's camera, exposed by mc_dlss_query_camera_constants as the
     // constants oracle. Recorded only after slSetConstants answered eOk, so the oracle

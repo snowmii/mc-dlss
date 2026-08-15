@@ -293,6 +293,88 @@ public interface NativeApi {
 	}
 
 	/**
+	 * Emits the frame's INPUT_SAMPLE Reflex/PCL marker at Minecraft's GLFW input poll seam.
+	 *
+	 * <p>This is the frame-start seam: the native side obtains the frame's Streamline token
+	 * ({@code slGetNewFrameToken}, replacing a token a previous frame never consumed), runs
+	 * the unconditional {@code slReflexSleep}, and emits the input marker through
+	 * {@code slPCLSetMarker} under that retained token. The pinned Streamline 2.12
+	 * vocabulary removed {@code eInputSample} from {@code PCLMarker}, so the marker emitted
+	 * is {@code ePCLatencyPing}: the PCL guide defines the ping as the marker whose frame
+	 * index identifies which frame picks up the simulated input, which is exactly the
+	 * input-sample seam semantics the M-12 contract retains.
+	 *
+	 * <p>Answers {@code FAIL_NotInitialized} while the session is not ready. A refused or
+	 * failed call emits nothing and never latches the session: the markers are the
+	 * PCL/Reflex diagnostic surface, not a frame-route stage.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #presentHandoff()}.
+	 */
+	default int reflexInputSample() {
+		throw new UnsupportedOperationException("reflexInputSample");
+	}
+
+	/**
+	 * Emits the SIMULATION_START Reflex/PCL marker under the frame's retained token, at the
+	 * head of Minecraft's runTick simulation seam. Answers {@code FAIL_NotInitialized} while
+	 * the session is not ready or no frame token is retained (a frame that never ran its
+	 * input sample emits no markers). Default-implemented for the same reason as
+	 * {@link #reflexInputSample()}.
+	 */
+	default int reflexSimulateStart() {
+		throw new UnsupportedOperationException("reflexSimulateStart");
+	}
+
+	/**
+	 * Emits the SIMULATION_END Reflex/PCL marker under the frame's retained token, at the
+	 * end of Minecraft's runTick simulation (immediately before {@code renderFrame}). Same
+	 * refusals as {@link #reflexSimulateStart()}. Default-implemented for the same reason.
+	 */
+	default int reflexSimulateEnd() {
+		throw new UnsupportedOperationException("reflexSimulateEnd");
+	}
+
+	/**
+	 * Emits the RENDER_SUBMIT_START Reflex/PCL marker under the frame's retained token,
+	 * immediately before renderFrame's {@code CommandEncoder.submit()}. Same refusals as
+	 * {@link #reflexSimulateStart()}. Default-implemented for the same reason.
+	 */
+	default int reflexRenderSubmitStart() {
+		throw new UnsupportedOperationException("reflexRenderSubmitStart");
+	}
+
+	/**
+	 * Emits the RENDER_SUBMIT_END Reflex/PCL marker under the frame's retained token,
+	 * immediately after renderFrame's {@code CommandEncoder.submit()} returned. Same
+	 * refusals as {@link #reflexSimulateStart()}. Default-implemented for the same reason.
+	 */
+	default int reflexRenderSubmitEnd() {
+		throw new UnsupportedOperationException("reflexRenderSubmitEnd");
+	}
+
+	/**
+	 * The reflex-marker oracle: how many of each of the five Reflex/PCL markers this module
+	 * has actually emitted (per-type cumulative counts), the total event count, and the
+	 * recent event log in emission order, as reported by
+	 * {@code mc_dlss_query_reflex_markers}.
+	 *
+	 * <p>Each event names the marker type and the Streamline frame index (the retained
+	 * frame token) it was emitted under. The index must equal the frame indexes the frame's
+	 * SR/FG tags, its common constants, and its present markers recorded under: the input
+	 * sample obtains the retained token the rest of the frame reuses, so the events' index
+	 * equality with {@link #taggedFrameIndexes()} is what proves the marker surface shares
+	 * the retained token identity. The per-type counts advance by exactly one per emitted
+	 * marker and stay unchanged across refused or pre-ready calls, which is what proves the
+	 * "refused sessions emit none" half of the M-12 contract.
+	 *
+	 * <p>Answers {@code FAIL_NotInitialized} until at least one marker was actually emitted.
+	 * Default-implemented for the same reason as {@link #presentMarkers()}.
+	 */
+	default ReflexMarkerEvents reflexMarkers() {
+		throw new UnsupportedOperationException("reflexMarkers");
+	}
+
+	/**
 	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
 	 * completed, on the caller's (present/render) thread and through the Vulkan device.
 	 *
@@ -426,5 +508,146 @@ public interface NativeApi {
 	 */
 	default SlQueueRequirements queryQueueRequirements() {
 		throw new UnsupportedOperationException("queryQueueRequirements");
+	}
+
+	/**
+	 * The five Reflex/PCL frame markers this module emits at the M-12 input, simulation, and
+	 * render-submit seams, as the native event log tags each actually-emitted marker with.
+	 */
+	enum ReflexMarkerType {
+		INPUT_SAMPLE(0),
+		SIMULATION_START(1),
+		SIMULATION_END(2),
+		RENDER_SUBMIT_START(3),
+		RENDER_SUBMIT_END(4);
+
+		private final int nativeValue;
+
+		ReflexMarkerType(final int nativeValue) {
+			this.nativeValue = nativeValue;
+		}
+
+		/** The raw value the native event log stores this marker type under. */
+		public int getNativeValue() {
+			return nativeValue;
+		}
+
+		/** Resolves the native value back to its marker type. */
+		public static ReflexMarkerType fromNative(final int value) {
+			for (ReflexMarkerType type : values()) {
+				if (type.nativeValue == value) {
+					return type;
+				}
+			}
+			throw new IllegalArgumentException("unknown reflex marker type " + value);
+		}
+	}
+
+	/**
+	 * One reflex-marker event as the native log recorded it: the marker type and the
+	 * Streamline frame index (the retained frame token) the marker was emitted under.
+	 */
+	final class ReflexMarkerEvent {
+		private final ReflexMarkerType type;
+		private final int frameIndex;
+
+		public ReflexMarkerEvent(final ReflexMarkerType type, final int frameIndex) {
+			this.type = type;
+			this.frameIndex = frameIndex;
+		}
+
+		public ReflexMarkerType getType() {
+			return type;
+		}
+
+		public int getFrameIndex() {
+			return frameIndex;
+		}
+
+		@Override
+		public boolean equals(final Object other) {
+			return other instanceof ReflexMarkerEvent event
+				&& event.type == type
+				&& event.frameIndex == frameIndex;
+		}
+
+		@Override
+		public int hashCode() {
+			return 31 * type.hashCode() + frameIndex;
+		}
+
+		@Override
+		public String toString() {
+			return "ReflexMarkerEvent{" + type + " frame=" + frameIndex + "}";
+		}
+	}
+
+	/**
+	 * The reflex-marker oracle: how many of each of the five Reflex/PCL markers the module
+	 * has actually emitted (per-type cumulative counts), the total event count, and the
+	 * recent event log in emission order, as reported by {@code mc_dlss_query_reflex_markers}.
+	 *
+	 * <p>Each event's frame index must equal the frame indexes the frame's SR/FG tags, its
+	 * common constants, and its present markers recorded under: the input sample obtains the
+	 * retained token the rest of the frame reuses, so equality of the events' indexes with
+	 * {@link TaggedFrameIndexes} is what proves the marker surface shares the retained token
+	 * identity. The per-type counts must each advance by exactly one per emitted marker and
+	 * stay unchanged across refused or pre-ready calls, which is what proves the "refused
+	 * sessions emit none" half of the M-12 contract.
+	 */
+	final class ReflexMarkerEvents {
+		/** How many marker types the oracle reports counts for; must match the native enum width. */
+		public static final int TYPE_COUNT = 5;
+
+		/** The number of events the native log ring retains; the oracle never returns more. */
+		public static final int LOG_CAPACITY = 16;
+
+		private final int[] typeCounts;
+		private final int eventCount;
+		private final List<ReflexMarkerEvent> events;
+
+		public ReflexMarkerEvents(final int[] typeCounts, final int eventCount, final List<ReflexMarkerEvent> events) {
+			this.typeCounts = typeCounts.clone();
+			this.eventCount = eventCount;
+			this.events = List.copyOf(events);
+		}
+
+		/**
+		 * How many of each marker type the module has actually emitted, in {@link
+		 * ReflexMarkerType} order: INPUT_SAMPLE, SIMULATION_START, SIMULATION_END,
+		 * RENDER_SUBMIT_START, RENDER_SUBMIT_END.
+		 */
+		public int[] getTypeCounts() {
+			return typeCounts.clone();
+		}
+
+		/** How many marker events the module has actually emitted in total. */
+		public int getEventCount() {
+			return eventCount;
+		}
+
+		/** The most recent events in emission order, at most {@link #LOG_CAPACITY} of them. */
+		public List<ReflexMarkerEvent> getEvents() {
+			return events;
+		}
+
+		@Override
+		public boolean equals(final Object other) {
+			return other instanceof ReflexMarkerEvents markers
+				&& markers.eventCount == eventCount
+				&& java.util.Arrays.equals(markers.typeCounts, typeCounts)
+				&& markers.events.equals(events);
+		}
+
+		@Override
+		public int hashCode() {
+			return 31 * (31 * java.util.Arrays.hashCode(typeCounts) + eventCount) + events.hashCode();
+		}
+
+		@Override
+		public String toString() {
+			return "ReflexMarkerEvents{" + java.util.Arrays.toString(typeCounts)
+				+ " total=" + eventCount + " " + events + "}";
+		}
 	}
 }

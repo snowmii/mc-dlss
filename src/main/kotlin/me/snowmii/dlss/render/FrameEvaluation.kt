@@ -104,6 +104,18 @@ class FrameEvaluation(
 	fun presentStart(): Boolean = adapter.presentStart()
 	fun presentEnd(): Boolean = adapter.presentEnd()
 
+	// The five Reflex/PCL frame markers of the M-12 surface, delegated straight to the
+	// adapter like the present bracket: the input sample at the GLFW poll seam, the
+	// simulation pair at runTick's simulation seam, and the render-submit pair at
+	// renderFrame's command-encoder submit. The mixin handlers never touch the adapter
+	// directly - they call the world phase, which reaches this object - so the whole
+	// marker surface is verifiable off the render thread through this class.
+	fun reflexInputSample(): Boolean = adapter.reflexInputSample()
+	fun reflexSimulateStart(): Boolean = adapter.reflexSimulateStart()
+	fun reflexSimulateEnd(): Boolean = adapter.reflexSimulateEnd()
+	fun reflexRenderSubmitStart(): Boolean = adapter.reflexRenderSubmitStart()
+	fun reflexRenderSubmitEnd(): Boolean = adapter.reflexRenderSubmitEnd()
+
 	/** The native-owned images this evaluation writes into, or null before the first frame. */
 	val evaluationImages: DlssEvaluationImages?
 		get() = images
