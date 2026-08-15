@@ -606,6 +606,24 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_camera_constants(McDlssCameraConstants* out);
 
 /*
+ * Reads back the camera constants the last composed frame's FG-side record carried into
+ * Streamline's per-frame constants, as the FG constants oracle.
+ *
+ * The composed frame's evaluation records the same camera twice, once on the SR viewport
+ * and once on the FG viewport, both under the same retained frame token: the DLSS-G plugin
+ * reads per-frame constants from the viewport its options, state, and tags were recorded
+ * on, and after the viewport split the SR viewport's record no longer reaches it. This
+ * oracle reports exactly the FG-viewport record, independently of mc_dlss_query_camera_
+ * constants: an SR-only evaluation establishes the SR record and never this one, and only
+ * a frame whose FG tag recorded before the evaluation establishes it.
+ *
+ * Answers not-initialized until a composed frame's FG-side record succeeded at least once
+ * (reset_state clears the record with the rest of the struct, so a fresh fork refuses), and
+ * invalid-parameter for a null out pointer.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_camera_constants(McDlssCameraConstants* out);
+
+/*
  * Tags one frame's DLSS SR resources on the caller's command buffer, through Streamline's
  * frame-based tagging (slGetNewFrameToken + slSetTagForFrame).
  *

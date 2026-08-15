@@ -123,7 +123,7 @@ int32_t record_sr_options() noexcept {
             break;
     }
 
-    const sl::Result result = slDLSSSetOptions(sl::ViewportHandle{0}, options);
+    const sl::Result result = slDLSSSetOptions(sl::ViewportHandle{kSrViewportId}, options);
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
 
@@ -184,10 +184,11 @@ int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
         return kInvalidParameter;
     }
 
-    // The viewport is the same one the SR options, tags, and evaluation record against: the
-    // frame's resources tag on viewport 0 and the options must name the viewport they apply
-    // to.
-    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0}, make_fg_options(numBackBuffers, sl::DLSSGMode::eOn));
+    // The viewport is the FG-only one, distinct from the SR viewport the DLSS options, SR
+    // tags, and evaluation record against: the frame's FG resources tag on the FG viewport
+    // and the FG options must name the same viewport they apply to, so the orientation
+    // flips a later slice applies to the FG side can never reach what SR reads.
+    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{kFgViewportId}, make_fg_options(numBackBuffers, sl::DLSSGMode::eOn));
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
@@ -221,7 +222,7 @@ int32_t record_fg_mode(const uint32_t fgEnabled) noexcept {
     // keeps the record's shape identical apart from the mode. eOn is the same call for the
     // ABI's symmetry; the per-frame handoff re-records eOn with the stored count anyway.
     const sl::DLSSGMode mode = fgEnabled != 0 ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
-    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{0},
+    const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{kFgViewportId},
                                                 make_fg_options(g_state.fgNumBackBuffers, mode));
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
@@ -243,7 +244,7 @@ int32_t record_fg_multiplier(const uint32_t numFramesToGenerate) noexcept {
     // would silently misread. The same GetState call shape the state read uses; the
     // options argument stays null like it does there.
     sl::DLSSGState state{};
-    const sl::Result stateResult = slDLSSGGetState(sl::ViewportHandle{0}, state, nullptr);
+    const sl::Result stateResult = slDLSSGGetState(sl::ViewportHandle{kFgViewportId}, state, nullptr);
     if (stateResult != sl::Result::eOk) {
         return static_cast<int32_t>(stateResult);
     }
@@ -258,7 +259,7 @@ int32_t record_fg_multiplier(const uint32_t numFramesToGenerate) noexcept {
     const uint32_t previous = g_state.fgNumFramesToGenerate;
     g_state.fgNumFramesToGenerate = numFramesToGenerate;
     const sl::Result result = slDLSSGSetOptions(
-        sl::ViewportHandle{0}, make_fg_options(g_state.fgNumBackBuffers, sl::DLSSGMode::eOn));
+        sl::ViewportHandle{kFgViewportId}, make_fg_options(g_state.fgNumBackBuffers, sl::DLSSGMode::eOn));
     if (result != sl::Result::eOk) {
         g_state.fgNumFramesToGenerate = previous;
         return static_cast<int32_t>(result);
@@ -279,7 +280,7 @@ int32_t query_fg_multiplier(uint32_t* current, uint32_t* max) noexcept {
         return kInvalidParameter;
     }
     sl::DLSSGState state{};
-    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{0}, state, nullptr);
+    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{kFgViewportId}, state, nullptr);
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
@@ -332,7 +333,7 @@ int32_t record_present_handoff() noexcept {
         g_state.lastSrTagFrameIndex != g_state.lastFgTagFrameIndex) return kInvalidParameter;
     if (g_state.frameToken == nullptr) return kNotInitialized;
     const sl::Result result = slDLSSGSetOptions(
-        sl::ViewportHandle{0}, make_fg_options(g_state.fgNumBackBuffers, sl::DLSSGMode::eOn));
+        sl::ViewportHandle{kFgViewportId}, make_fg_options(g_state.fgNumBackBuffers, sl::DLSSGMode::eOn));
     if (result != sl::Result::eOk) return static_cast<int32_t>(result);
     // The handoff consumes the tag set's handoff eligibility exactly as the present-time
     // design always did: both sides' records clear, so a second handoff for the same set
@@ -654,7 +655,7 @@ int32_t wait_fg_inputs_idle() noexcept {
     // semaphore and the value, not a VRAM estimate, and the guide calls the estimate query
     // needlessly expensive per frame.
     sl::DLSSGState state{};
-    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{0}, state, nullptr);
+    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{kFgViewportId}, state, nullptr);
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
@@ -703,7 +704,7 @@ int32_t query_fg_state(uint32_t* status, uint32_t* numFramesPresented,
     // read needs is the status, the presented-frame counter, and the input fence + value,
     // not a VRAM estimate, and the guide calls the estimate query needlessly expensive.
     sl::DLSSGState state{};
-    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{0}, state, nullptr);
+    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{kFgViewportId}, state, nullptr);
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
@@ -791,6 +792,23 @@ int32_t query_camera_constants(McDlssCameraConstants* out) noexcept {
     return kSuccess;
 }
 
+int32_t query_fg_camera_constants(McDlssCameraConstants* out) noexcept {
+    if (out == nullptr) {
+        return kInvalidParameter;
+    }
+    // The FG oracle answers only once a composed frame's FG-side slSetConstants actually
+    // recorded constants: before that there is no FG-side record any caller could compare
+    // against, and the refusal is exactly what makes the FG side's independence observable -
+    // an SR-only evaluation establishes the SR record and never this one, and only a
+    // composed frame's FG-viewport record does. reset_state clears the record with the rest
+    // of the struct, so a fresh fork answers the same refusal.
+    if (!g_state.fgCameraConstantsRecorded) {
+        return kNotInitialized;
+    }
+    *out = g_state.lastFgCameraConstants;
+    return kSuccess;
+}
+
 int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
                              VkCommandBuffer commandBuffer) noexcept {
     sl::FrameToken* frameToken = g_state.frameToken;
@@ -850,7 +868,7 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
         sl::float3(info.camera.right[0], info.camera.right[1], info.camera.right[2]);
     constants.cameraFwd = sl::float3(info.camera.fwd[0], info.camera.fwd[1], info.camera.fwd[2]);
 
-    sl::Result result = slSetConstants(constants, *frameToken, sl::ViewportHandle{0});
+    sl::Result result = slSetConstants(constants, *frameToken, sl::ViewportHandle{kSrViewportId});
     if (result != sl::Result::eOk) {
         // A failed frame has no history the next one could reuse, so the SR-only frame
         // consumes its token here. The composed frame keeps it instead: its FG tag
@@ -872,9 +890,30 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     g_state.cameraConstantsRecorded = true;
     g_state.lastCameraConstants = info.camera;
 
+    // The composed frame's FG side needs its own constants record on the FG viewport: the
+    // DLSS-G plugin reads per-frame constants from the viewport its options, state, and
+    // tags were recorded on, and after the viewport split the SR viewport's record no
+    // longer reaches it. The record carries the same constants struct and the same
+    // retained frame token - the token is shared, never replaced or consumed here - so
+    // both viewports' records stay on the one frame index the tags obtained. Recorded only
+    // for a frame whose FG tag recorded: an SR-only frame has no FG side to give constants
+    // to. A failed FG record aborts the evaluation before it runs, exactly like a failed
+    // SR record, and the FG oracle stays unrecorded - the plugin received no FG constants.
+    if (g_state.fgTagFrameIndexRecorded) {
+        result = slSetConstants(constants, *frameToken, sl::ViewportHandle{kFgViewportId});
+        if (result != sl::Result::eOk) {
+            restore_motion_to_engine_resting_layout(commandBuffer);
+            return static_cast<int32_t>(result);
+        }
+        g_state.fgCameraConstantsRecorded = true;
+        g_state.lastFgCameraConstants = info.camera;
+    }
+
     // The viewport handle is chained into the evaluate inputs: the common plugin reads the
-    // viewport id from there and refuses an evaluate that does not chain it.
-    sl::ViewportHandle viewport{0};
+    // viewport id from there and refuses an evaluate that does not chain it. The SR
+    // evaluation records against the SR viewport; DLSS-G has no per-frame evaluate of its
+    // own - it reads its viewport's tags and constants at present time.
+    sl::ViewportHandle viewport{kSrViewportId};
     const sl::BaseStructure* inputs[] = {&viewport};
     // sl::CommandBuffer is void, so CommandBuffer* is the native Vulkan handle itself as
     // void*. Applying address-of here would pass the address of this local handle variable; SL
@@ -1020,7 +1059,7 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // The command buffer is the caller's shared recording: slSetTagForFrame takes it as an
     // opaque pointer and this module only ever records on it, never submits.
     // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
-    result = slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, numTags, commandBuffer);
+    result = slSetTagForFrame(*frameToken, sl::ViewportHandle{kSrViewportId}, tags, numTags, commandBuffer);
     if (result != sl::Result::eOk) {
         // A failed tag leaves the frame with no valid SR record, and the token the attempt
         // used is not a token any later record may be reused under: the whole in-flight set
@@ -1183,7 +1222,7 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     // The command buffer is the caller's shared recording: slSetTagForFrame takes it as an
     // opaque pointer and this module only ever records on it, never submits.
     // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
-    result = slSetTagForFrame(*frameToken, sl::ViewportHandle{0}, tags, 4, commandBuffer);
+    result = slSetTagForFrame(*frameToken, sl::ViewportHandle{kFgViewportId}, tags, 4, commandBuffer);
     if (result != sl::Result::eOk) {
         // A failed tag leaves the frame with no valid FG record, and the token the attempt
         // used is not a token any later record may be reused under: the whole in-flight set

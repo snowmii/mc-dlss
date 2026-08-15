@@ -834,6 +834,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_camera_constants(McDlssCameraCons
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_camera_constants(McDlssCameraConstants* out) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_fg_camera_constants(out);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_idle(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);

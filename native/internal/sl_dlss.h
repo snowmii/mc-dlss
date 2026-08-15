@@ -188,6 +188,13 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
 // until an evaluation recorded constants at least once.
 int32_t query_camera_constants(McDlssCameraConstants* out) noexcept;
 
+// The FG camera-constants oracle: copies the camera constants the last successful FG-side
+// slSetConstants recorded on the FG-only viewport into out. Answers kInvalidParameter on a
+// null out pointer and kNotInitialized until a composed frame's FG-viewport record
+// established the record at least once - an SR-only evaluation never does, which is the
+// FG side's independence from the SR constants record.
+int32_t query_fg_camera_constants(McDlssCameraConstants* out) noexcept;
+
 // Blocks until Streamline's DLSS-G input processing for the previously presented frame has
 // completed, on the caller's (present/render) thread and through the Vulkan device.
 //

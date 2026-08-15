@@ -46,6 +46,14 @@ fun rowMajorOf(matrix: Matrix4f): FloatArray = matrix.get(FloatArray(16))
  * the same frustum the projection does; the plugin reads them directly rather than
  * re-deriving them.
  *
+ * A composed frame's evaluation records the same camera twice: once on the SR viewport for
+ * the DLSS SR evaluation, and once on the FG-only viewport under the same frame token, for
+ * the DLSS-G plugin, which reads per-frame constants from the viewport its options, state,
+ * and tags were recorded on. `NativeApi.queryFgCameraConstants` is the FG record's oracle;
+ * `NativeApi.queryCameraConstants` is the SR record's. No value here is flipped between the
+ * two records: the orientation split lives in which viewport each record names, and any
+ * y-flip a later slice applies reaches only the FG side.
+ *
  * [pos] is the camera position in world space; [right], [up], and [fwd] are the camera's
  * orthonormal world-space basis vectors (the directions of view-space +X, +Y, and -Z, i.e.
  * the direction the camera looks), extracted from the view rotation. The plugin's auto

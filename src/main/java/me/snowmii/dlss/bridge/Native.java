@@ -269,6 +269,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle waitFgInputsValue;
 	private final MethodHandle queryFgState;
 	private final MethodHandle queryCameraConstants;
+	private final MethodHandle queryFgCameraConstants;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
 	private final MethodHandle configure;
@@ -539,6 +540,14 @@ public final class Native implements AutoCloseable, NativeApi {
 		this.queryCameraConstants = bindOptional(
 			lookup,
 			"mc_dlss_query_camera_constants",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // McDlssCameraConstants*
+		);
+		// Optional like queryCameraConstants: the ABI-probe DLL does not export the FG
+		// camera-constants read either, while every real build since this symbol exists
+		// carries it.
+		this.queryFgCameraConstants = bindOptional(
+			lookup,
+			"mc_dlss_query_fg_camera_constants",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // McDlssCameraConstants*
 		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
@@ -1307,25 +1316,49 @@ public final class Native implements AutoCloseable, NativeApi {
 			if (result != SUCCESS) {
 				throw new NativeException("query-camera-constants", result);
 			}
-			return new CameraConstants(
-				readCameraFloats(out, 0, 16),
-				readCameraFloats(out, cameraFloatOffset("clip_to_view", 0), 16),
-				readCameraFloats(out, cameraFloatOffset("pos", 0), 3),
-				readCameraFloats(out, cameraFloatOffset("right", 0), 3),
-				readCameraFloats(out, cameraFloatOffset("up", 0), 3),
-				readCameraFloats(out, cameraFloatOffset("fwd", 0), 3),
-				readCameraFloats(out, cameraFloatOffset("clip_to_prev_clip", 0), 16),
-				readCameraFloats(out, cameraFloatOffset("prev_clip_to_clip", 0), 16),
-				out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("near_plane"))),
-				out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("far_plane"))),
-				out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("fov_radians"))),
-				out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("aspect_ratio")))
-			);
+			return readCameraConstants(out);
 		} catch (NativeException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-camera-constants", error);
 		}
+	}
+
+	@Override
+	public CameraConstants queryFgCameraConstants() {
+		if (queryFgCameraConstants == null) {
+			throw new NativeException("query-fg-camera-constants", new IllegalStateException("Native bridge lacks the FG camera-constants query"));
+		}
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment out = callArena.allocate(CAMERA_LAYOUT);
+			final int result = (int)this.queryFgCameraConstants.invokeExact(out);
+			if (result != SUCCESS) {
+				throw new NativeException("query-fg-camera-constants", result);
+			}
+			return readCameraConstants(out);
+		} catch (NativeException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-fg-camera-constants", error);
+		}
+	}
+
+	/** Reads one McDlssCameraConstants segment back into the bridge type. */
+	private static CameraConstants readCameraConstants(final MemorySegment out) {
+		return new CameraConstants(
+			readCameraFloats(out, 0, 16),
+			readCameraFloats(out, cameraFloatOffset("clip_to_view", 0), 16),
+			readCameraFloats(out, cameraFloatOffset("pos", 0), 3),
+			readCameraFloats(out, cameraFloatOffset("right", 0), 3),
+			readCameraFloats(out, cameraFloatOffset("up", 0), 3),
+			readCameraFloats(out, cameraFloatOffset("fwd", 0), 3),
+			readCameraFloats(out, cameraFloatOffset("clip_to_prev_clip", 0), 16),
+			readCameraFloats(out, cameraFloatOffset("prev_clip_to_clip", 0), 16),
+			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("near_plane"))),
+			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("far_plane"))),
+			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("fov_radians"))),
+			out.get(JAVA_FLOAT, CAMERA_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement("aspect_ratio")))
+		);
 	}
 
 	/** Copies one camera field's floats into the evaluate struct at [base]. */

@@ -547,6 +547,26 @@ public interface NativeApi {
 	}
 
 	/**
+	 * The camera constants the last composed frame's FG-side record carried into
+	 * Streamline's per-frame constants, as reported by {@code mc_dlss_query_fg_camera_constants}.
+	 *
+	 * <p>The composed frame's evaluation records the same camera twice, once on the SR
+	 * viewport and once on the FG viewport, both under the same retained frame token: the
+	 * DLSS-G plugin reads per-frame constants from the viewport its options, state, and tags
+	 * were recorded on, and after the viewport split the SR viewport's record no longer
+	 * reaches it. This oracle reports exactly the FG-viewport record, independently of
+	 * {@link #queryCameraConstants()}: an SR-only evaluation establishes the SR record and
+	 * never this one, and only a frame whose FG tag recorded before the evaluation
+	 * establishes it. Answers {@code FAIL_NotInitialized} until a composed frame's FG-side
+	 * record succeeded at least once.
+	 *
+	 * <p>Default-implemented for the same reason as {@link #queryCameraConstants()}.
+	 */
+	default CameraConstants queryFgCameraConstants() {
+		throw new UnsupportedOperationException("queryFgCameraConstants");
+	}
+
+	/**
 	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features (DLSS, DLSS-G,
 	 * Reflex) require the device to enable, as {@code slGetFeatureRequirements} reports them
 	 * through {@code mc_dlss_query_device_feature_12}.

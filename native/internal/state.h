@@ -28,6 +28,14 @@ namespace mc_dlss {
 // to track frame completion it has no way to observe.
 constexpr uint32_t kMotionDescriptorRing = 4;
 
+// The two Streamline viewport ids this module's records name. SR records - options, tags,
+// the evaluation, and its constants - stay on the engine-space viewport 0; every DLSS-G
+// options, state, tag, and constants record uses the FG-only viewport 1. The split is what
+// lets a later slice apply y-orientation fixes to the FG side without reaching what SR
+// reads.
+constexpr uint32_t kSrViewportId = 0;
+constexpr uint32_t kFgViewportId = 1;
+
 // The two Reflex present markers this module emits at the present handoff, and the type tag
 // the present-marker event log records each emitted marker under. The ABI exposes the raw
 // values through mc_dlss_query_present_markers.
@@ -242,6 +250,16 @@ struct DlssState {
     // exactly as the evaluation recorded them.
     bool cameraConstantsRecorded = false;
     McDlssCameraConstants lastCameraConstants{};
+    // The camera constants the last successful FG-side slSetConstants recorded, on the
+    // FG-only viewport and under the same retained frame token the SR constants used:
+    // exposed by mc_dlss_query_fg_camera_constants as the FG constants oracle. Recorded
+    // only after the FG-viewport slSetConstants answered eOk and only for composed frames
+    // (a frame whose FG tag recorded), so the oracle means "the constants the FG viewport
+    // actually received" and an SR-only frame never establishes the record - the
+    // independence the viewport split exists to prove. reset_state clears it with the rest
+    // of the struct, so a fresh fork answers the same refusal as a pre-evaluation one.
+    bool fgCameraConstantsRecorded = false;
+    McDlssCameraConstants lastFgCameraConstants{};
 };
 
 extern DlssState g_state;
