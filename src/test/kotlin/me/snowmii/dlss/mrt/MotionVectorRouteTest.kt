@@ -5,7 +5,7 @@ import kotlin.io.path.readText
 import me.snowmii.dlss.nativeSource
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.ImageBinding
@@ -374,7 +374,7 @@ class MotionVectorRouteTest {
 
 		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
 
-		override fun frameTimings(): DlssFrameTimings? = null
+		override fun frameTimings(): FrameTimings? = null
 
 		override fun fillVelocity(request: FillVelocityRequest): Int {
 			fills += request

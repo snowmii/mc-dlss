@@ -1,8 +1,8 @@
 package me.snowmii.dlss.session
 
 import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.FgMultiplier
-import me.snowmii.dlss.bridge.FgState
+import me.snowmii.streamline.FgMultiplier
+import me.snowmii.streamline.FgState
 
 /**
  * Every native call [me.snowmii.dlss.render.RenderRuntime] makes on a running session, and

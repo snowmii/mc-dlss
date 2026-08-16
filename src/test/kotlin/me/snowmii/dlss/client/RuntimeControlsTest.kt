@@ -14,7 +14,7 @@ import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.render.SceneTarget
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.readout.SessionReadout
@@ -357,7 +357,7 @@ class RuntimeControlsTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun frameTimings(): DlssFrameTimings? = null
+		override fun frameTimings(): FrameTimings? = null
 
 		override fun waitDeviceIdle(): Int {
 			waitDeviceIdleCalls++

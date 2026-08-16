@@ -2,10 +2,10 @@ package me.snowmii.dlss.session
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.NativeException
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.FgState
-import me.snowmii.dlss.bridge.FgMultiplier
+import me.snowmii.streamline.FgState
+import me.snowmii.streamline.FgMultiplier
 import me.snowmii.dlss.bridge.FgTagRequest
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.MotionRequest
@@ -201,7 +201,7 @@ class LifecycleAdapter(
 	 * arrived, and a session that stopped rendering DLSS because its profiler had nothing to say
 	 * would be a worse bug than the one this is here to find.
 	 */
-	fun frameTimings(): DlssFrameTimings? = try {
+	fun frameTimings(): FrameTimings? = try {
 		native.frameTimings()
 	} catch (_: Throwable) {
 		null

@@ -9,7 +9,7 @@ import it.unimi.dsi.fastutil.ints.Int2IntArrayMap;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.IntIntPair;
 import me.snowmii.dlss.bridge.ExtensionBootstrap;
-import me.snowmii.dlss.bridge.SlQueueRequirements;
+import me.snowmii.streamline.SlQueueRequirements;
 import me.snowmii.dlss.bridge.SlVulkanFeatures;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkPhysicalDevice;
@@ -85,11 +85,11 @@ public abstract class VulkanBackendExtensionMixin {
 		SlQueueRequirements requirements = ExtensionBootstrap.queryQueueRequirements();
 		IntIntPair graphics = physicalDevice.graphicsQueueFamilyAndIndex();
 		if (graphics != null) {
-			merged.put(graphics.leftInt(), merged.get(graphics.leftInt()) + requirements.getGraphicsQueues());
+			merged.put(graphics.leftInt(), merged.get(graphics.leftInt()) + requirements.graphicsQueues());
 		}
 		IntIntPair compute = physicalDevice.computeQueueFamilyAndIndex();
 		if (compute != null) {
-			merged.put(compute.leftInt(), merged.get(compute.leftInt()) + requirements.getComputeQueues());
+			merged.put(compute.leftInt(), merged.get(compute.leftInt()) + requirements.computeQueues());
 		}
 		return merged;
 	}

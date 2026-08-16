@@ -4,7 +4,7 @@ import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.FgTagRequest
@@ -432,7 +432,7 @@ class FgResourceTaggingTest {
 		override fun acquireImages(): DlssEvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): DlssFrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
 		override fun evaluate(request: EvaluationRequest): Int = error("unexpected evaluate")

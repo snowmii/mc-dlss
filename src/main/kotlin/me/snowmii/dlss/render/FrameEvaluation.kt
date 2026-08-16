@@ -1,10 +1,10 @@
 package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.CameraConstants
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.FgTagRequest
-import me.snowmii.dlss.bridge.FgState
+import me.snowmii.streamline.FgState
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.MotionRequest
@@ -12,7 +12,7 @@ import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.PresentTarget
 import me.snowmii.dlss.bridge.rowMajorOf
 import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.Vec2
+import me.snowmii.streamline.Vec2
 import me.snowmii.dlss.bridge.VulkanContext
 import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.mrt.MotionVectorRoute
@@ -212,7 +212,7 @@ class FrameEvaluation(
 	 * Asked for when something wants to report them rather than every frame, because the answer
 	 * only changes as fast as frames complete and the call crosses the ABI to read it.
 	 */
-	fun sampleTimings(): DlssFrameTimings? = adapter.frameTimings()
+	fun sampleTimings(): FrameTimings? = adapter.frameTimings()
 
 	/**
 	 * The DLSS-G plugin's live state for the frame-rate monitor, or null when no session is

@@ -3,7 +3,7 @@ package me.snowmii.dlss.fg
 import java.nio.file.Path
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.FgTagRequest
 import me.snowmii.dlss.bridge.FillVelocityRequest
@@ -484,7 +484,7 @@ class FgFrameCompositionTest {
 
 		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
 
-		override fun frameTimings(): DlssFrameTimings? = null
+		override fun frameTimings(): FrameTimings? = null
 
 		override fun configureFg(numBackBuffers: Int): Int {
 			fgConfigures += numBackBuffers

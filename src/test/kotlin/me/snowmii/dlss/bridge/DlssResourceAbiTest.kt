@@ -1,5 +1,7 @@
 package me.snowmii.dlss.bridge
 
+import me.snowmii.streamline.Vec2
+
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode

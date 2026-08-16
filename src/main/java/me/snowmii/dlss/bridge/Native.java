@@ -1,5 +1,14 @@
 package me.snowmii.dlss.bridge;
 
+import me.snowmii.streamline.FgMultiplier;
+import me.snowmii.streamline.FgState;
+import me.snowmii.streamline.FrameTimings;
+import me.snowmii.streamline.PresentMarkerEvent;
+import me.snowmii.streamline.PresentMarkerEvents;
+import me.snowmii.streamline.PresentMarkerType;
+import me.snowmii.streamline.SlQueueRequirements;
+import me.snowmii.streamline.TaggedFrameIndexes;
+
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -1055,7 +1064,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
-	public DlssFrameTimings frameTimings() {
+	public FrameTimings frameTimings() {
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment motion = callArena.allocate(JAVA_FLOAT);
 			final MemorySegment evaluate = callArena.allocate(JAVA_FLOAT);
@@ -1067,7 +1076,7 @@ public final class Native implements AutoCloseable, NativeApi {
 				// measurement", which is not a native failure the session should latch.
 				return null;
 			}
-			return new DlssFrameTimings(
+			return new FrameTimings(
 				motion.get(JAVA_FLOAT, 0),
 				evaluate.get(JAVA_FLOAT, 0),
 				present.get(JAVA_FLOAT, 0),
@@ -1175,10 +1184,10 @@ public final class Native implements AutoCloseable, NativeApi {
 			EVALUATE_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
 			writeImage(info, EVALUATE_COLOR_VIEW, EVALUATE_COLOR_IMAGE, EVALUATE_COLOR_FORMAT, request.getColor());
 			writeImage(info, EVALUATE_DEPTH_VIEW, EVALUATE_DEPTH_IMAGE, EVALUATE_DEPTH_FORMAT, request.getDepth());
-			EVALUATE_JITTER_X.set(info, 0L, request.getJitter().getX());
-			EVALUATE_JITTER_Y.set(info, 0L, request.getJitter().getY());
-			EVALUATE_MOTION_SCALE_X.set(info, 0L, request.getMotionScale().getX());
-			EVALUATE_MOTION_SCALE_Y.set(info, 0L, request.getMotionScale().getY());
+			EVALUATE_JITTER_X.set(info, 0L, request.getJitter().x());
+			EVALUATE_JITTER_Y.set(info, 0L, request.getJitter().y());
+			EVALUATE_MOTION_SCALE_X.set(info, 0L, request.getMotionScale().x());
+			EVALUATE_MOTION_SCALE_Y.set(info, 0L, request.getMotionScale().y());
 			EVALUATE_RENDER_WIDTH.set(info, 0L, render.getWidth());
 			EVALUATE_RENDER_HEIGHT.set(info, 0L, render.getHeight());
 			EVALUATE_FRAME_TIME.set(info, 0L, request.getFrameTimeMilliseconds());

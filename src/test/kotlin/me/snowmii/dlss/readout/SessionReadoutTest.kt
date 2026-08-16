@@ -1,6 +1,6 @@
 package me.snowmii.dlss.readout
 
-import me.snowmii.dlss.bridge.FgState
+import me.snowmii.streamline.FgState
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
@@ -17,7 +17,7 @@ class SessionReadoutTest {
 		assertEquals(
 			", fg=presented=120.0 status=0 fence=3",
 			SessionReadout.fgMonitorSuffix(
-				FgState(status = 0, numFramesPresented = 2, lastPresentInputsProcessingFenceValue = 3, inputsProcessingCompletionFence = 0L),
+				FgState(0, 2, 3, 0L),
 				60.0,
 			),
 		)

@@ -1,5 +1,7 @@
 package me.snowmii.dlss.bridge
 
+import me.snowmii.streamline.Vec2
+
 /**
  * One DLSS evaluation, in the units the flat native ABI takes them.
  *

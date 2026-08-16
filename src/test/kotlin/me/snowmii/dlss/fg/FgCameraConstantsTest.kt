@@ -12,7 +12,7 @@ import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.NativeException
 import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.Vec2
+import me.snowmii.streamline.Vec2
 import me.snowmii.dlss.bridge.rowMajorOf
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue

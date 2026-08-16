@@ -9,7 +9,7 @@ import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.Vec2
+import me.snowmii.streamline.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 

@@ -4,7 +4,7 @@ import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.PresentTarget
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.VulkanContext
@@ -395,7 +395,7 @@ class EvaluationSubmissionTest {
 
 		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
 
-		override fun frameTimings(): DlssFrameTimings? = null
+		override fun frameTimings(): FrameTimings? = null
 
 		override fun writeMotion(request: MotionRequest): Int = unreachable()
 

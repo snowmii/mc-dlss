@@ -1,5 +1,12 @@
 package me.snowmii.dlss.bridge;
 
+import me.snowmii.streamline.FgMultiplier;
+import me.snowmii.streamline.FgState;
+import me.snowmii.streamline.FrameTimings;
+import me.snowmii.streamline.PresentMarkerEvents;
+import me.snowmii.streamline.SlQueueRequirements;
+import me.snowmii.streamline.TaggedFrameIndexes;
+
 import java.nio.file.Path;
 import java.util.List;
 
@@ -181,7 +188,7 @@ public interface NativeApi {
 	 *
 	 * <p>Never waits on the GPU: the result describes a frame several frames old.
 	 */
-	DlssFrameTimings frameTimings();
+	FrameTimings frameTimings();
 
 	/**
 	 * Records the camera-only motion pass that fills the native motion image from the engine's

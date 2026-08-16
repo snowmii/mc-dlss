@@ -3,7 +3,7 @@ package me.snowmii.dlss.fg
 import java.nio.file.Path
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.FgTagRequest
@@ -13,11 +13,11 @@ import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.NativeException
-import me.snowmii.dlss.bridge.PresentMarkerEvent
-import me.snowmii.dlss.bridge.PresentMarkerType
+import me.snowmii.streamline.PresentMarkerEvent
+import me.snowmii.streamline.PresentMarkerType
 import me.snowmii.dlss.bridge.PresentTarget
 import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.Vec2
+import me.snowmii.streamline.Vec2
 import me.snowmii.dlss.render.FrameEvaluation
 import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.session.DlssSession
@@ -51,7 +51,7 @@ import me.snowmii.dlss.NativeBridge
  * native oracle `mc_dlss_query_reflex_markers` ([NativeApi.reflexMarkers]): the per-type
  * counts of actually-emitted markers and the recent event log in emission order, each event
  * naming its marker type and the frame index it was emitted under. Equality of the events'
- * frame indexes with [me.snowmii.dlss.bridge.TaggedFrameIndexes] (and with the present
+ * frame indexes with [me.snowmii.streamline.TaggedFrameIndexes] (and with the present
  * markers' indexes) is the one-token proof, the log order is the bracket-order proof, and
  * the counts advancing by exactly one per emitted marker - and never across a refusal - is
  * the emit-none proof. Before any marker was emitted the oracle refuses, which is what makes
@@ -703,7 +703,7 @@ class ReflexMarkersTest {
 
 		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
 
-		override fun frameTimings(): DlssFrameTimings? = null
+		override fun frameTimings(): FrameTimings? = null
 
 		override fun writeMotion(request: MotionRequest): Int = NativeApi.SUCCESS_RESULT
 

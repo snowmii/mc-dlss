@@ -1,8 +1,8 @@
 package me.snowmii.dlss.session
 
 import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.FgMultiplier
-import me.snowmii.dlss.bridge.FgState
+import me.snowmii.streamline.FgMultiplier
+import me.snowmii.streamline.FgState
 
 /**
  * A [SessionBridge] that answers "nothing happened" to everything, for the tests that drive a

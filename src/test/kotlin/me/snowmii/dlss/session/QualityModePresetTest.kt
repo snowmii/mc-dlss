@@ -7,7 +7,7 @@ import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.config.ModConfig
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -257,7 +257,7 @@ class QualityModePresetTest {
 
 		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
 
-		override fun frameTimings(): DlssFrameTimings? = null
+		override fun frameTimings(): FrameTimings? = null
 
 		override fun writeMotion(request: MotionRequest): Int = throw UnsupportedOperationException()
 

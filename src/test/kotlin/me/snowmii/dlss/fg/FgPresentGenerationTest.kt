@@ -6,14 +6,14 @@ import me.snowmii.dlss.bridge.CameraConstants
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgState
+import me.snowmii.streamline.FgState
 import me.snowmii.dlss.bridge.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.Vec2
+import me.snowmii.streamline.Vec2
 import me.snowmii.dlss.bridge.rowMajorOf
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue

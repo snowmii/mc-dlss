@@ -3,10 +3,10 @@ package me.snowmii.dlss.fg
 import java.nio.file.Path
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgState
+import me.snowmii.streamline.FgState
 import me.snowmii.dlss.bridge.FgTagRequest
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
@@ -932,7 +932,7 @@ class FgEnablementFallbackTest {
 
 		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
 
-		override fun frameTimings(): DlssFrameTimings? = null
+		override fun frameTimings(): FrameTimings? = null
 
 		override fun waitFgInputsIdle(): Int {
 			order += "waitFgInputs"
@@ -1026,7 +1026,7 @@ class FgEnablementFallbackTest {
 		override fun acquireImages(): DlssEvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): DlssFrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
 		override fun evaluate(request: EvaluationRequest): Int = error("unexpected evaluate")

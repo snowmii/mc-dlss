@@ -10,11 +10,11 @@ import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.NativeException
-import me.snowmii.dlss.bridge.PresentMarkerEvent
-import me.snowmii.dlss.bridge.PresentMarkerEvents
-import me.snowmii.dlss.bridge.PresentMarkerType
+import me.snowmii.streamline.PresentMarkerEvent
+import me.snowmii.streamline.PresentMarkerEvents
+import me.snowmii.streamline.PresentMarkerType
 import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.Vec2
+import me.snowmii.streamline.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -47,7 +47,7 @@ import org.lwjgl.vulkan.VK10
  * through the native oracle `mc_dlss_query_present_markers` ([NativeApi.presentMarkers]): the
  * per-type counts of actually-emitted START and END markers, and the recent event log in
  * emission order, each event naming its marker type and the frame index it was emitted under.
- * Equality of the events' frame indexes with [me.snowmii.dlss.bridge.TaggedFrameIndexes] is
+ * Equality of the events' frame indexes with [me.snowmii.streamline.TaggedFrameIndexes] is
  * the same-index proof (the handoff's own gates already proved the two tag sides equal, and
  * each marker's index must equal that shared index), the log's START-then-END order is the
  * bracket-order proof, and each count advancing by exactly one per successful handoff - and

@@ -1,7 +1,7 @@
 package me.snowmii.dlss.readout
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.FgState
+import me.snowmii.streamline.FgState
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.dlss.session.SRMode
@@ -97,7 +97,7 @@ class SessionReadout(
 		scene: RenderTarget?,
 		frame: DlssFrameDecision?,
 		facts: SessionFacts,
-		frameTimings: () -> DlssFrameTimings?,
+		frameTimings: () -> FrameTimings?,
 		fgState: () -> FgState? = { null },
 		pacing: () -> String? = { null },
 	) {
@@ -173,7 +173,7 @@ class SessionReadout(
 	private fun sampleWorldFrameRate(
 		scene: RenderTarget?,
 		frame: DlssFrameDecision?,
-		frameTimings: () -> DlssFrameTimings?,
+		frameTimings: () -> FrameTimings?,
 		fgState: () -> FgState?,
 		pacing: () -> String?,
 	) {

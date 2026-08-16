@@ -4,9 +4,9 @@ import me.snowmii.dlss.session.TestSessionBridge
 import java.nio.file.Path
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.DlssFrameTimings
+import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.FgMultiplier
+import me.snowmii.streamline.FgMultiplier
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
@@ -315,7 +315,7 @@ class FgMultiplierToggleTest {
 		override fun acquireImages(): DlssEvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): DlssFrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun fillVelocity(request: FillVelocityRequest): Int = error("unexpected fillVelocity")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
@@ -358,7 +358,7 @@ class FgMultiplierToggleTest {
 		override fun acquireImages(): DlssEvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): DlssFrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun fillVelocity(request: FillVelocityRequest): Int = error("unexpected fillVelocity")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
