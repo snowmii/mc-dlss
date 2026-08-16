@@ -1,4 +1,5 @@
 package me.snowmii.dlss.render
+import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.DlssEvaluationImages
@@ -14,6 +15,7 @@ import me.snowmii.dlss.session.LifecycleAdapter
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.abs
+import me.snowmii.dlss.NativeBridge
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -37,21 +39,33 @@ import org.junit.jupiter.api.io.TempDir
  * produce exactly zero at every depth - and the depth-dependent case is what separates a shader
  * that reads the depth buffer from one that ignores it and happens to look right.
  */
+@NativeBridge
 class DlssMotionVectorTest {
 	private val output = DlssDimensions(2560, 1440)
 
 	@Test
 	fun `motion pass fills the motion image from depth and reprojection`(@TempDir dataPath: Path) {
 		val library = nativeLibrary()
-		val ngxRuntime = ngxRuntimeDirectory()
-		val instanceExtensions = Native.open(library).use { it.queryInstanceExtensions() }
+		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
+		val requirements = Native.open(library).use { bridge ->
+			assertEquals(
+				NativeApi.SUCCESS_RESULT,
+				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
+			)
+			bridge.queryQueueRequirements()
+		}
+		val graphicsFamily = probeGraphicsQueueFamily()
+		val extras = requirements.graphicsQueues + requirements.computeQueues
 
 		HeadlessVulkanFixture(
 			instanceExtensions,
 			{ vkInstance, vkPhysicalDevice ->
-				Native.open(library).use { it.queryDeviceExtensions(vkInstance, vkPhysicalDevice) }
+				val extensions = mutableListOf<String>()
+				ExtensionBootstrap.addDeviceExtensions(extensions, vkInstance, vkPhysicalDevice)
+				extensions
 			},
 			true,
+			mapOf(graphicsFamily to extras),
 		).use { vulkan ->
 			assertTrue(
 				vulkan.validationEnabled(),
@@ -59,12 +73,35 @@ class DlssMotionVectorTest {
 			)
 
 			Native.open(library).use { native ->
+				// Bootstrap is idempotent across bridge instances: the runtime is already up.
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					native.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
+				)
+				// The fixture creates one host queue in the family, so Streamline's own queues
+				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
+				// The optimal-dimension query answers from Streamline, so the device has to be
+				// recorded with it before startup can complete.
+				val hostQueueCount = 1
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					native.activateVulkanProxies(
+						vulkan.instanceAddress(),
+						vulkan.physicalDeviceAddress(),
+						vulkan.deviceAddress(),
+						graphicsFamily,
+						hostQueueCount,
+						graphicsFamily,
+						hostQueueCount,
+					),
+					"SL proxy activation must succeed against the merged queue layout",
+				)
 				val session = DlssSession(
 					DlssStartupConfig(
 						enabled = true,
 						qualityMode = SRMode.QUALITY,
 						outputDimensions = output,
-						sdkPath = ngxRuntime,
+						sdkPath = dataPath,
 						nativeLibraryPath = library,
 						dataPath = dataPath,
 						warnings = emptyList(),
@@ -75,7 +112,7 @@ class DlssMotionVectorTest {
 					vulkan.instanceAddress(),
 					vulkan.physicalDeviceAddress(),
 					vulkan.deviceAddress(),
-					ngxRuntime,
+					dataPath,
 					dataPath,
 				)
 				assertNotNull(render, session.failure?.diagnostic())
@@ -221,13 +258,12 @@ class DlssMotionVectorTest {
 		return library
 	}
 
-	private fun ngxRuntimeDirectory(): Path {
-		val runtime = Path.of(
-			"C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0/lib/Windows_x86_64/rel",
-		)
-		assertTrue(Files.isDirectory(runtime), "Pinned NGX runtime directory must exist")
-		return runtime
-	}
+	/**
+	 * The family the fixture creates its queues in, discovered with a throwaway default fixture
+	 * so the augmented fixture can be built with the extras keyed by the right family.
+	 */
+	private fun probeGraphicsQueueFamily(): Int =
+		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 
 	private companion object {
 		/** Raw `VkFormat`, `VkImageUsageFlagBits`, and `VkImageAspectFlagBits` values. */

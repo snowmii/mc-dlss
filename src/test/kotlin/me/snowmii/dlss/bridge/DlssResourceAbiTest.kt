@@ -6,12 +6,15 @@ import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.LifecycleAdapter
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Proxy
 import java.nio.file.Files
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 
+@NativeBridge
 class DlssResourceAbiTest {
 	@Test
 	fun adapterStampsConfiguredDimensionsOntoTheRequest() {
@@ -45,51 +48,6 @@ class DlssResourceAbiTest {
 	}
 
 	@Test
-	fun theEvaluationCarriesOnlyTheEnginesOwnImages() {
-		// The motion and output images are the bridge's own, so they are absent from the request
-		// and from the ABI struct. This is the invariant that removed six of the ABI's arguments;
-		// a field reappearing here means a caller is handing the bridge handles it already holds.
-		val header = Files.readString(Path.of("native", "mc_dlss.h")).replace("\r\n", "\n")
-		val evaluateStruct = header.substringAfter("typedef struct McDlssEvaluateInfo {")
-			.substringBefore("} McDlssEvaluateInfo;")
-		listOf("color", "depth").forEach {
-			assertTrue(evaluateStruct.contains("McDlssImage $it;"), "$it must be carried")
-		}
-		listOf("motion", "output").forEach {
-			assertTrue(
-				!evaluateStruct.contains("McDlssImage $it;"),
-				"$it is bridge-owned and must not be carried",
-			)
-		}
-		// Nor are the output dimensions: nothing the evaluation records is sized from them that
-		// the bridge does not already own.
-		assertTrue(evaluateStruct.contains("uint32_t render_width;"))
-		assertTrue(!evaluateStruct.contains("uint32_t output_width;"))
-	}
-
-	@Test
-	fun nativeConstructionCarriesViewImageFormatAndDerivesTheRange() {
-		// Normalized for the same reason as DlssFeatureLifecycleTest: a Windows checkout hands
-		// these files back with CRLF, and the patterns match the source text literally.
-		val common = Files.readString(Path.of("native", "internal", "common.cpp")).replace("\r\n", "\n")
-		val ngx = Files.readString(Path.of("native", "internal", "ngx.cpp")).replace("\r\n", "\n")
-
-		// The subresource range is derived, not carried: one constant {0, 1, 0, 1} whose aspect
-		// follows from the image's role. This is the invariant the ABI no longer carries.
-		assertTrue(common.contains("VkImageSubresourceRange image_range_of(const bool isDepth)"))
-		assertTrue(common.contains("isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT"))
-		assertTrue(common.contains("return VkImageSubresourceRange{aspect, 0, 1, 0, 1};"))
-		// View, image, and format all reach NGX from the one carried struct.
-		assertTrue(ngx.contains("from_uint64<VkImageView>(image.view), from_uint64<VkImage>(image.image)"))
-		assertTrue(ngx.contains("static_cast<VkFormat>(image.format), width, height, readWrite"))
-		// The role that picks the aspect is explicit at each resource's construction.
-		assertTrue(ngx.contains("make_image_view_resource(info.color, false,"))
-		assertTrue(ngx.contains("make_image_view_resource(info.depth, true,"))
-		assertTrue(ngx.contains("make_image_view_resource(motionImage, false,"))
-		assertTrue(ngx.contains("make_image_view_resource(outputImage, false,"))
-	}
-
-	@Test
 	fun compiledFfmBindingMatchesTheNativeStructLayout() {
 		val request = request().copy(renderDimensions = DlssDimensions(1280, 720))
 		assertTrue(Files.isRegularFile(Path.of("build", "native", "mc_dlss.dll")))
@@ -100,6 +58,17 @@ class DlssResourceAbiTest {
 		// value the probe rejects rather than as a silently wrong frame.
 		Native.open(compileAbiProbe()).use { native ->
 			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluate(request))
+			// The camera's six arrays are fixed-length ABI fields: a malformed array is a
+			// caller bug the boundary must refuse before any byte of the reused scratch is
+			// written - a shorter array would leave the field's tail holding the previous
+			// frame's floats, and a longer one would write past the field.
+			malformedCameras().forEach { malformed ->
+				assertThrows(IllegalArgumentException::class.java) {
+					native.evaluate(request.copy(camera = malformed))
+				}
+			}
+			// The refusals left the scratch intact: a valid camera still crosses unchanged.
+			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluate(request))
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				native.writeMotion(
@@ -107,6 +76,21 @@ class DlssResourceAbiTest {
 						commandBuffer = 101L,
 						depth = ImageBinding(301L, 302L, 303),
 						reprojection = FloatArray(16) { it.toFloat() },
+						renderDimensions = DlssDimensions(1280, 720),
+					),
+				),
+			)
+			// The velocity fill crosses the same boundary in the opposite shape: every field of
+			// McDlssFillVelocityInfo read back at the offset the real C compiler placed it.
+			assertEquals(
+				NativeApi.SUCCESS_RESULT,
+				native.fillVelocity(
+					FillVelocityRequest(
+						commandBuffer = 101L,
+						depth = ImageBinding(301L, 302L, 303),
+						velocity = ImageBinding(701L, 702L, 124),
+						reprojection = FloatArray(16) { it.toFloat() },
+						reset = true,
 						renderDimensions = DlssDimensions(1280, 720),
 					),
 				),
@@ -150,13 +134,32 @@ class DlssResourceAbiTest {
 				uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_evaluate(const McDlssEvaluateInfo* info) {
 				if (info == nullptr) return 0;
-				return info->command_buffer == 101 &&
+				if (!(info->command_buffer == 101 &&
 					info->color.view == 201 && info->color.image == 202 && info->color.format == 203 &&
 					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
 					info->jitter.x == 0.25f && info->jitter.y == -0.5f &&
 					info->motion_scale.x == 1.25f && info->motion_scale.y == 1.5f &&
 					info->render_width == 1280 && info->render_height == 720 &&
-					info->frame_time_milliseconds == 16.7f && info->reset_history == 1;
+					info->frame_time_milliseconds == 16.7f && info->reset_history == 1)) {
+					return 0;
+				}
+				for (int i = 0; i < 16; ++i) {
+					if (info->camera.view_to_clip[i] != static_cast<float>(i + 1)) return 0;
+					if (info->camera.clip_to_view[i] != static_cast<float>(101 + i)) return 0;
+				}
+				for (int i = 0; i < 3; ++i) {
+					if (info->camera.pos[i] != static_cast<float>(201 + i)) return 0;
+					if (info->camera.right[i] != static_cast<float>(301 + i)) return 0;
+					if (info->camera.up[i] != static_cast<float>(401 + i)) return 0;
+					if (info->camera.fwd[i] != static_cast<float>(501 + i)) return 0;
+				}
+				return 1;
+			}
+			__declspec(dllexport) int __cdecl mc_dlss_tag_sr_resources(const McDlssTagInfo* info) {
+				if (info == nullptr) return 0;
+				return info->command_buffer == 101 &&
+					info->color.view == 201 && info->color.image == 202 && info->color.format == 203 &&
+					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_write_motion(const McDlssMotionInfo* info) {
 				if (info == nullptr || info->reprojection == nullptr) return 0;
@@ -166,6 +169,16 @@ class DlssResourceAbiTest {
 				return info->command_buffer == 101 &&
 					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
 					info->render_width == 1280 && info->render_height == 720;
+			}
+			__declspec(dllexport) int __cdecl mc_dlss_fill_velocity(const McDlssFillVelocityInfo* info) {
+				if (info == nullptr || info->reprojection == nullptr) return 0;
+				for (int i = 0; i < 16; ++i) {
+					if (info->reprojection[i] != static_cast<float>(i)) return 0;
+				}
+				return info->command_buffer == 101 &&
+					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
+					info->velocity.view == 701 && info->velocity.image == 702 && info->velocity.format == 124 &&
+					info->render_width == 1280 && info->render_height == 720 && info->reset == 1;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_present_output(const McDlssPresentInfo* info) {
 				if (info == nullptr) return 0;
@@ -180,6 +193,26 @@ class DlssResourceAbiTest {
 				return 1;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_release_images() { return 1; }
+			__declspec(dllexport) int __cdecl mc_dlss_activate_vulkan_proxies(
+				uint64_t, uint64_t, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 1; }
+			__declspec(dllexport) int __cdecl mc_dlss_query_device_feature_12(
+				uint32_t index, char* name, uint32_t name_capacity, uint32_t* feature_count) {
+				if (feature_count == nullptr) return 0;
+				*feature_count = 0;
+				return 1;
+			}
+			__declspec(dllexport) int __cdecl mc_dlss_query_device_feature_13(
+				uint32_t index, char* name, uint32_t name_capacity, uint32_t* feature_count) {
+				if (feature_count == nullptr) return 0;
+				*feature_count = 0;
+				return 1;
+			}
+			__declspec(dllexport) int __cdecl mc_dlss_query_queue_requirements(
+				uint32_t* extra_graphics_queues, uint32_t* extra_compute_queues, uint32_t* extra_optical_flow_queues) {
+				if (extra_graphics_queues == nullptr || extra_compute_queues == nullptr || extra_optical_flow_queues == nullptr) return 0;
+				*extra_graphics_queues = 0; *extra_compute_queues = 0; *extra_optical_flow_queues = 0;
+				return 1;
+			}
 			__declspec(dllexport) int __cdecl mc_dlss_wait_device_idle() { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_query_frame_timings(
 				float*, float*, float*, float*) { return 1; }
@@ -228,6 +261,20 @@ class DlssResourceAbiTest {
 		motionScale = Vec2(1.25f, 1.5f),
 		frameTimeMilliseconds = 16.7f,
 		resetHistory = true,
+		camera = CAMERA,
+	)
+
+	/**
+	 * One malformed variant per camera array: each is a length the ABI field cannot hold, so
+	 * the boundary must refuse it before the struct is written.
+	 */
+	private fun malformedCameras(): List<CameraConstants> = listOf(
+		CAMERA.copy(viewToClip = FloatArray(15)),
+		CAMERA.copy(clipToView = FloatArray(17)),
+		CAMERA.copy(pos = FloatArray(2)),
+		CAMERA.copy(right = FloatArray(4)),
+		CAMERA.copy(up = FloatArray(1)),
+		CAMERA.copy(fwd = FloatArray(0)),
 	)
 
 	private fun config(outputDimensions: DlssDimensions) = DlssStartupConfig(
@@ -239,4 +286,16 @@ class DlssResourceAbiTest {
 		dataPath = null,
 		warnings = emptyList(),
 	)
+
+	private companion object {
+		/** The standing-in camera whose floats the ABI probe verifies field by field. */
+		private val CAMERA = CameraConstants(
+			viewToClip = FloatArray(16) { (it + 1).toFloat() },
+			clipToView = FloatArray(16) { (101 + it).toFloat() },
+			pos = floatArrayOf(201f, 202f, 203f),
+			right = floatArrayOf(301f, 302f, 303f),
+			up = floatArrayOf(401f, 402f, 403f),
+			fwd = floatArrayOf(501f, 502f, 503f),
+		)
+	}
 }

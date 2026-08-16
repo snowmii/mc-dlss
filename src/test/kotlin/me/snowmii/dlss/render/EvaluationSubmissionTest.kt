@@ -1,5 +1,6 @@
 package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.PresentTarget
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.DlssEvaluationImages
@@ -17,6 +18,7 @@ import me.snowmii.dlss.session.LifecycleAdapter
 
 import java.nio.file.Files
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -51,6 +53,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  *   barriers this test records afterwards claim exactly that, and the Khronos validation layer
  *   contradicts them if the claim is false.
  */
+@NativeBridge
 class EvaluationSubmissionTest {
 	private val output = DlssDimensions(1280, 720)
 
@@ -59,15 +62,33 @@ class EvaluationSubmissionTest {
 		@TempDir dataPath: Path,
 	) {
 		val library = nativeLibrary()
-		val ngxRuntime = ngxRuntimeDirectory()
-		val instanceExtensions = Native.open(library).use { it.queryInstanceExtensions() }
+		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
 
+		// Streamline must bootstrap and record the device before the session starts: the
+		// evaluation now runs through SL and requires the SL session, so the device has to be
+		// created with SL's extensions and merged queues and activated before the first frame.
+		// The queue requirements come from a throwaway bridge closed before the device exists;
+		// the fixture then OUTLIVES the bridge so Native.close's mc_dlss_close runs while the
+		// Vulkan device is still alive.
+		val requirements = Native.open(library).use { native ->
+			assertEquals(
+				NativeApi.SUCCESS_RESULT,
+				native.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
+				"Streamline bootstrap must succeed before the device is created",
+			)
+			native.queryQueueRequirements()
+		}
+		val graphicsFamily = probeGraphicsQueueFamily()
+		val extras = requirements.graphicsQueues + requirements.computeQueues
 		HeadlessVulkanFixture(
 			instanceExtensions,
 			{ vkInstance, vkPhysicalDevice ->
-				Native.open(library).use { it.queryDeviceExtensions(vkInstance, vkPhysicalDevice) }
+				val extensions = mutableListOf<String>()
+				ExtensionBootstrap.addDeviceExtensions(extensions, vkInstance, vkPhysicalDevice)
+				extensions
 			},
 			true,
+			mapOf(graphicsFamily to extras),
 		).use { vulkan ->
 			assertTrue(
 				vulkan.validationEnabled(),
@@ -75,13 +96,36 @@ class EvaluationSubmissionTest {
 			)
 
 			Native.open(library).use { native ->
-				val session = DlssSession(startupConfig(library, ngxRuntime, dataPath))
+				// Bootstrap is idempotent across bridge instances: the runtime is already up.
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					native.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
+					"Streamline bootstrap must succeed before the device is created",
+				)
+				// The fixture creates one host queue in the family, so Streamline's own queues
+				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
+				val hostQueueCount = 1
+				assertEquals(
+					NativeApi.SUCCESS_RESULT,
+					native.activateVulkanProxies(
+						vulkan.instanceAddress(),
+						vulkan.physicalDeviceAddress(),
+						vulkan.deviceAddress(),
+						graphicsFamily,
+						hostQueueCount,
+						graphicsFamily,
+						hostQueueCount,
+					),
+					"SL proxy activation must succeed against the merged queue layout",
+				)
+
+				val session = DlssSession(startupConfig(library, dataPath, dataPath))
 				val adapter = LifecycleAdapter(session, native)
 				val render = adapter.initialize(
 					vulkan.instanceAddress(),
 					vulkan.physicalDeviceAddress(),
 					vulkan.deviceAddress(),
-					ngxRuntime,
+					dataPath,
 					dataPath,
 				)
 				assertNotNull(render, session.failure?.diagnostic())
@@ -284,6 +328,13 @@ class EvaluationSubmissionTest {
 	}
 
 	/**
+	 * The family the fixture creates its queues in, discovered with a throwaway default fixture
+	 * so the augmented fixture can be built with the extras keyed by the right family.
+	 */
+	private fun probeGraphicsQueueFamily(): Int =
+		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
+
+	/**
 	 * Asserts the upscaled output holds the scene's red rather than an untouched allocation.
 	 *
 	 * DLSS is not a filter with a predictable per-pixel result, so this asserts what it cannot
@@ -314,14 +365,6 @@ class EvaluationSubmissionTest {
 		val library = Path.of("").toAbsolutePath().resolve("build/native/mc_dlss.dll")
 		assertTrue(Files.isRegularFile(library), "buildNativeDlss must produce mc_dlss.dll")
 		return library
-	}
-
-	private fun ngxRuntimeDirectory(): Path {
-		val runtime = Path.of(
-			"C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0/lib/Windows_x86_64/rel",
-		)
-		assertTrue(Files.isDirectory(runtime), "Pinned NGX runtime directory must exist")
-		return runtime
 	}
 
 	/** Fails every call: a session that never reached READY must not reach the native side at all. */

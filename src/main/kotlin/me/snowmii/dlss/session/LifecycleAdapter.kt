@@ -4,9 +4,14 @@ import me.snowmii.dlss.bridge.NativeException
 import me.snowmii.dlss.bridge.DlssEvaluationImages
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.dlss.bridge.FgState
+import me.snowmii.dlss.bridge.FgMultiplier
+import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.PresentTarget
+import me.snowmii.dlss.bridge.SrTagRequest
 import java.nio.file.Path
 
 /**
@@ -21,7 +26,7 @@ import java.nio.file.Path
 class LifecycleAdapter(
 	private val session: DlssSession,
 	private val native: NativeApi,
-) {
+) : SessionBridge {
 	private var renderDimensions: DlssDimensions? = null
 
 	fun initialize(
@@ -80,7 +85,7 @@ class LifecycleAdapter(
 	 * exactly like any other native stage - a session whose mode change was refused knows nothing
 	 * about what it is now configured to.
 	 */
-	fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): DlssDimensions? {
+	override fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): DlssDimensions? {
 		if (session.state != DlssSessionState.READY) {
 			return null
 		}
@@ -108,6 +113,49 @@ class LifecycleAdapter(
 
 		renderDimensions = queriedDimensions
 		return queriedDimensions
+	}
+
+	/**
+	 * Records the DLSS-G per-frame options with the bridge, declaring the swapchain's
+	 * back-buffer count.
+	 *
+	 * The record carries the stored multiplier (one generated frame, 2x, by default; the
+	 * F12 cycle records another through [setFgMultiplier]) and reads everything else from the
+	 * configuration the last successful configure stored, so the bridge checks the ready
+	 * session and the stored dimensions itself; a failure here latches the session exactly
+	 * like any other native stage.
+	 */
+	fun configureFg(numBackBuffers: Int): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		return invokeStatus(DlssNativeStage.CONFIGURE) {
+			native.configureFg(numBackBuffers)
+		}
+	}
+
+	/**
+	 * Re-records the DLSS-G options in the eOff mode with the retained-resources flag, after
+	 * the status latch decided the plugin's own state is not usable.
+	 *
+	 * Deliberately non-latching: the status latch must leave the SR session READY - the whole
+	 * fallback is SR-only, not vanilla - so a refused or failed eOff record must not send the
+	 * session to FALLBACK_LATCHED. The failure is instead invisible to the session: the policy
+	 * has already stopped composing FG frames, and the diagnostic the runtime emits is the
+	 * latch's one exact line. The bridge answers FAIL_NotInitialized without a ready session
+	 * and FAIL_InvalidParameter while no DLSS-G options record is stored, the same gates as
+	 * the FG tag.
+	 */
+	override fun recordFgModeOff(): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			native.setFgMode(0) == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
+		}
 	}
 
 	/**
@@ -143,7 +191,7 @@ class LifecycleAdapter(
 	 * device that cannot be waited on has been lost already, so the failure is latched and the
 	 * caller releases anyway - there is nothing left in flight to protect.
 	 */
-	fun waitDeviceIdle(): Boolean = invokeStatus(DlssNativeStage.WAIT_DEVICE_IDLE) { native.waitDeviceIdle() }
+	override fun waitDeviceIdle(): Boolean = invokeStatus(DlssNativeStage.WAIT_DEVICE_IDLE) { native.waitDeviceIdle() }
 
 	/**
 	 * GPU timings of the last frame that completed every recorded stage, or null when there is no
@@ -177,6 +225,70 @@ class LifecycleAdapter(
 		}
 	}
 
+	/**
+	 * Records the post-scene velocity merge on the caller's command buffer: one dispatch samples
+	 * the engine's depth image and its sparse RG16_FLOAT velocity companion, copies every
+	 * non-sentinel object vector unchanged and reconstructs jitter-stripped camera motion for
+	 * every sentinel pixel, and writes the complete merged field into the native motion image.
+	 * On a reset frame the dispatch writes the invalid sentinel everywhere instead.
+	 *
+	 * This has to precede [tagSrResources] on the same buffer: the native motion image is the
+	 * sole Streamline motion source, and the evaluation reads it.
+	 *
+	 * Latched under the same stage name as the compute writer: both are the frame's motion
+	 * stage, and a failure in either means the frame has no motion source.
+	 */
+	fun fillVelocity(request: FillVelocityRequest): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		val dimensions = renderDimensions ?: return false
+		return invokeStatus(DlssNativeStage.WRITE_MOTION) {
+			native.fillVelocity(request.copy(renderDimensions = dimensions))
+		}
+	}
+
+	/**
+	 * Tags this frame's SR resources on the caller's command buffer, through Streamline's
+	 * frame-based tagging (slGetNewFrameToken + slSetTagForFrame), and retains the frame token
+	 * the evaluation consumes.
+	 *
+	 * This has to precede [evaluate] on the same buffer: the evaluation records Streamline's
+	 * constants and feature evaluation against the token this call obtained, and evaluating
+	 * with no retained token fails.
+	 */
+	fun tagSrResources(request: SrTagRequest): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		return invokeStatus(DlssNativeStage.TAG) {
+			native.tagSrResources(request)
+		}
+	}
+
+	/**
+	 * Tags this frame's DLSS-G resources on the caller's command buffer, through Streamline's
+	 * frame-based tagging (slGetNewFrameToken + slSetTagForFrame): the engine's render-sized
+	 * depth and its output-sized HUD-less colour and UI colour+alpha targets, plus the bridge's
+	 * own motion image once it has been acquired. The frame token the tag obtains and retains
+	 * is shared with the SR tag for the same frame, and the frame's evaluation consumes it.
+	 *
+	 * Latched under the same stage name as the SR tag: both are the frame's resource-tag
+	 * stage, and a failure in either means the frame's features have no tags to evaluate
+	 * against. The stage enum's wire name still says SR; splitting it is a later slice.
+	 */
+	fun tagFgResources(request: FgTagRequest): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		return invokeStatus(DlssNativeStage.TAG) {
+			native.tagFgResources(request)
+		}
+	}
+
 	fun evaluate(request: EvaluationRequest): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
@@ -185,6 +297,174 @@ class LifecycleAdapter(
 		val dimensions = renderDimensions ?: return false
 		return invokeStatus(DlssNativeStage.EVALUATE) {
 			native.evaluate(request.copy(renderDimensions = dimensions))
+		}
+	}
+
+	/**
+	 * Records the frame's present-handoff eligibility with the bridge: re-records the stored
+	 * DLSS-G 2x options with the back-buffer count the last successful [configureFg]
+	 * declared, and accepts exactly one complete current-frame SR+FG tag set under equal
+	 * frame indexes.
+	 *
+	 * Missing options, partial tags, and consumed eligibility are refused without side
+	 * effects, and a refusal here latches the session exactly like any other native stage -
+	 * a frame that cannot hand off must not present as if it could. The call records no GPU
+	 * work and owns no command buffer.
+	 */
+	fun presentHandoff(): Boolean {
+		if (session.state != DlssSessionState.READY) return false
+		return invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentHandoff() }
+	}
+
+	fun presentStart(): Boolean = session.state == DlssSessionState.READY &&
+		invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentStart() }
+
+	fun presentEnd(): Boolean = session.state == DlssSessionState.READY &&
+		invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentEnd() }
+
+	// The five Reflex/PCL frame markers of the M-12 marker surface: the input sample at
+	// Minecraft's GLFW input poll, the simulation pair around runTick's simulation, and the
+	// render-submit pair around renderFrame's command-encoder submit. All five are gated on
+	// the READY session like the present bracket, and unlike the present bracket they never
+	// latch: a marker call failure is the PCL/Reflex diagnostic surface losing a sample,
+	// not a frame-route stage failure, and a session that rendered the frame anyway must
+	// not degrade because its ping did not reach the plugin. The native side emits each
+	// marker under the retained frame token and records it in the reflex-marker oracle only
+	// after slPCLSetMarker succeeded, so a refused or failed call is observable through the
+	// oracle rather than through the session state.
+	fun reflexInputSample(): Boolean = emitMarker { native.reflexInputSample() }
+
+	/**
+	 * Emits one of the four simulation/render-submit markers. The marker is a value the whole
+	 * way down to the ABI, so this seam does not grow a method per marker;
+	 * [NativeApi.ReflexMarkerType.INPUT_SAMPLE] is refused natively because that seam is
+	 * [reflexInputSample], which obtains the frame's token and sleeps before it emits.
+	 */
+	fun reflexMarker(type: NativeApi.ReflexMarkerType): Boolean =
+		emitMarker { native.reflexMarker(type) }
+
+	private fun emitMarker(operation: () -> Int): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			operation() == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
+		}
+	}
+
+	/**
+	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
+	 * completed, on the caller's (present/render) thread and through the Vulkan device.
+	 *
+	 * The DLSS-G options record the eBlockNoClientQueues queue-parallelism mode, under which
+	 * the plugin reads the tagged inputs of a presented frame on its own queues after Present;
+	 * the guide requires the host to wait on the completion fence the bridge reads via
+	 * slDLSSGGetState before it modifies or destroys those inputs in a later frame. The runtime
+	 * calls this at the start of an FG-active frame, before the world phase rewrites the tagged
+	 * depth, motion, HUD-less, and UI inputs.
+	 *
+	 * One refusal is expected in production and is benign: while no DLSS-G options have
+	 * recorded yet - the first FG frame, or the first frame after FG switched back on - the
+	 * bridge answers FAIL_InvalidParameter, and there is nothing to wait for because no frame
+	 * has been presented through DLSS-G (a configuration replacement, whose frames also find
+	 * the options invalidated, already stalled the device through [waitDeviceIdle]). Every
+	 * other failure latches the session exactly like any other native stage, and the routing
+	 * decision reads the latched state.
+	 */
+	override fun waitFgInputsIdle(): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+
+		val result = try {
+			native.waitFgInputsIdle()
+		} catch (error: NativeException) {
+			latch(DlssNativeStage.WAIT_FG_INPUTS, error)
+			return false
+		} catch (error: Throwable) {
+			latch(DlssNativeStage.WAIT_FG_INPUTS, error)
+			return false
+		}
+
+		return when (result) {
+			NATIVE_SUCCESS -> true
+			FAIL_INVALID_PARAMETER -> true
+			else -> {
+				session.latchFailure(DlssNativeFailure(DlssNativeStage.WAIT_FG_INPUTS, result))
+				false
+			}
+		}
+	}
+
+	override fun queryFgState(): FgState? {
+		if (session.state != DlssSessionState.READY) {
+			return null
+		}
+
+		// Read-only window onto the plugin, never a session stage: a query that fails must not
+		// latch the session, it just shows the monitor nothing.
+		return try {
+			native.queryFgState()
+		} catch (_: Throwable) {
+			null
+		}
+	}
+
+	/**
+	 * Reads the stored FG multiplier and the device's numFramesToGenerateMax through the
+	 * bridge: the cycle's current value and its ceiling/wrap point.
+	 *
+	 * Same non-latching read-only posture as [queryFgState]: a session that cannot answer
+	 * (not READY, no options recorded, or a failed query) answers null and the cycle simply
+	 * does not run.
+	 */
+	override fun queryFgMultiplier(): FgMultiplier? {
+		if (session.state != DlssSessionState.READY) {
+			return null
+		}
+		return try {
+			native.queryFgMultiplier()
+		} catch (_: Throwable) {
+			null
+		}
+	}
+
+	/**
+	 * Records a new FG multiplier with the bridge, validated natively against the device
+	 * ceiling.
+	 *
+	 * Deliberately non-latching like [recordFgModeOff]: a refused record (the device does
+	 * not support the value, or the session cannot answer) keeps the current multiplier in
+	 * effect and must not send the SR session to FALLBACK_LATCHED - the caller's readout
+	 * then reports the multiplier actually in effect, which is the contract's "a refusal
+	 * changes nothing" half.
+	 */
+	/**
+	 * Records the Reflex frame-rate cap. Never latches: a cap the plugin refuses is a session
+	 * that keeps Minecraft's own limiter, which is what the false answer tells the caller, not a
+	 * frame-route stage failure.
+	 */
+	override fun recordReflexFrameLimit(microsecondsPerFrame: Int): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			native.recordReflexFrameLimit(microsecondsPerFrame) == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
+		}
+	}
+
+	override fun setFgMultiplier(numFramesToGenerate: Int): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			native.setFgMultiplier(numFramesToGenerate) == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
 		}
 	}
 
@@ -252,5 +532,8 @@ class LifecycleAdapter(
 
 	private companion object {
 		const val NATIVE_SUCCESS = NativeApi.SUCCESS_RESULT
+
+		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
+		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
 	}
 }

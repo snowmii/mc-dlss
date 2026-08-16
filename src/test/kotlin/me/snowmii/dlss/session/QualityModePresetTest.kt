@@ -129,7 +129,7 @@ class QualityModePresetTest {
 	fun nativeAcceptsEveryImplementedModeAndRefusesUltraQuality() {
 		val validator = nativeSource
 			.substringAfter("bool valid_quality_mode(")
-			.substringBefore("const char* preset_parameter_for(")
+			.substringBefore("bool valid_render_preset(")
 
 		listOf(
 			"NVSDK_NGX_PerfQuality_Value_MaxPerf",
@@ -147,35 +147,34 @@ class QualityModePresetTest {
 	}
 
 	@Test
-	fun nativeWritesThePresetForTheRunningModeBeforeTheFeatureIsCreated() {
-		listOf(
-			"NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance",
-			"NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced",
-			"NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality",
-			"NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance",
-			"NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA",
-		).forEach { parameter ->
-			assertTrue(nativeSource.contains(parameter), "every mode needs its own preset key: $parameter")
-		}
-
-		// NGX reads the hint at creation only, so writing it afterwards is writing it never.
-		val creation = nativeSource
-			.substringAfter("int32_t ensure_feature(")
-			.substringBefore("int32_t record_evaluation(")
-		val presetWrite = creation.indexOf("NVSDK_NGX_Parameter_SetUI(g_state.capabilityParameters, presetParameter")
-		val featureCreate = creation.indexOf("NGX_VULKAN_CREATE_DLSS_EXT")
-		assertTrue(presetWrite >= 0, "the preset must be written on the creation path")
-		assertTrue(presetWrite < featureCreate, "the preset must be written before the feature is created")
+	fun changingOnlyThePresetIsRecordedOnTheNextConfigure() {
+		// The SL plugin owns the recreation (it recreates when mode, size, or preset
+		// changed), so the module's side of that invariant is that every configure records the
+		// options again - a preset-only change reaches the plugin on the next configure. There
+		// is no direct-NGX branch left to skip the recording.
+		val api = nativeSource("mc_dlss_api.cpp")
+		val configure = api.substringAfter("mc_dlss_configure").substringBefore("mc_dlss_acquire_images")
+		assertTrue(
+			configure.contains("record_sr_options()"),
+			"configure must record the SL options on every configure",
+		)
+		assertTrue(
+			!configure.contains("bootstrapComplete") && !configure.contains("capabilityParameters"),
+			"no direct-NGX branch may remain inside configure",
+		)
 	}
 
 	@Test
-	fun dlaaRendersAtOutputResolutionWithoutAskingNgxForIt() {
-		val query = nativeSource
-			.substringAfter("int32_t query_optimal_dimensions(")
-			.substringBefore("NVSDK_NGX_Parameter_DLSSOptimalSettingsCallback")
+	fun dlaaRendersAtOutputResolutionWithoutAskingTheOptimalSettingsQuery() {
+		// DLAA is 1:1 by definition, so the SL optimal-settings query (slDLSSGetOptimalSettings)
+		// must not be asked for it: the bridge answers the output dimensions directly, exactly
+		// as the retired NGX callback used to be skipped.
+		val query = nativeSource("internal/sl_dlss.cpp")
+			.substringAfter("int32_t query_optimal_dimensions_sl(")
+			.substringBefore("int32_t record_sr_options(")
 		assertTrue(
 			query.contains("NVSDK_NGX_PerfQuality_Value_DLAA"),
-			"DLAA is 1:1 by definition, so it must not depend on the optimal-settings callback",
+			"DLAA is 1:1 by definition, so it must not depend on the optimal-settings query",
 		)
 		assertTrue(
 			query.contains("*renderWidth = outputWidth") && query.contains("*renderHeight = outputHeight"),
@@ -184,15 +183,30 @@ class QualityModePresetTest {
 	}
 
 	@Test
-	fun changingOnlyThePresetRecreatesTheFeature() {
-		assertTrue(
-			nativeSource.contains("g_state.featureRenderPreset == g_state.renderPreset"),
-			"a feature created under another preset does not match the configuration",
-		)
-		assertTrue(
-			nativeSource.contains("g_state.featureRenderPreset = g_state.renderPreset"),
-			"the created feature records the preset it was created under",
-		)
+	fun theRunningModesPresetIsMappedBeforeTheOptionsAreRecorded() {
+		// The SL analogue of the preset-before-creation invariant: the preset lands on the
+		// sl::DLSSOptions field for the running mode and slDLSSSetOptions records the options
+		// after the mapping (StreamlineSrOptionsTest asserts the seam itself). The plugin
+		// recreates the model when the preset changes, so the mapping is what carries a preset
+		// change into the running model.
+		val slOptions = nativeSource("internal/sl_dlss.cpp")
+		val record = slOptions
+			.substringAfter("int32_t record_sr_options(")
+			.substringBefore("int32_t record_sr_evaluation(")
+		listOf(
+			"options.performancePreset = preset",
+			"options.balancedPreset = preset",
+			"options.qualityPreset = preset",
+			"options.ultraPerformancePreset = preset",
+			"options.dlaaPreset = preset",
+		).forEach { field ->
+			assertTrue(record.contains(field), "every mode needs its own preset field: $field")
+		}
+
+		val presetWrite = record.indexOf("options.qualityPreset = preset")
+		val setOptions = record.indexOf("slDLSSSetOptions")
+		assertTrue(presetWrite >= 0 && setOptions >= 0, "the preset mapping and the record call must exist")
+		assertTrue(presetWrite < setOptions, "the preset must be mapped before the options are recorded")
 	}
 
 	private fun configFrom(vararg entries: Pair<String, String>): DlssStartupConfig {

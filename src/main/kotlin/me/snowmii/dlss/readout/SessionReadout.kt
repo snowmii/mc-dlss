@@ -1,6 +1,7 @@
 package me.snowmii.dlss.readout
 import me.snowmii.dlss.bridge.DlssFrameTimings
 import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.dlss.bridge.FgState
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.dlss.session.SRMode
@@ -35,6 +36,52 @@ class SessionReadout(
 	private var sampleStartedAt = 0L
 	private var sampledFrames = 0
 
+	// The temporal-accumulation half of the sample window. A DLSS image that stays aliased while
+	// the camera holds still means the accumulation never converged, and only two inputs can
+	// cause that from this side: a jitter sequence that stopped varying (every frame samples the
+	// same sub-pixel point, so there is no new information to accumulate) or a history reset
+	// arriving every frame (each frame is upscaled alone). Both are invisible in the frame rate
+	// and neither is observable from the image alone, so the sample window counts them.
+	private val sampledJitterIndices = HashSet<Int>()
+	private var sampledJitterFrames = 0
+	private var sampledResets = 0
+	private var lastJitterPixelX = 0f
+	private var lastJitterPixelY = 0f
+
+	/**
+	 * Records one evaluated frame's jitter phase and history-reset flag into the current sample
+	 * window. Called per DLSS evaluation; frames that never evaluate contribute nothing.
+	 */
+	fun recordFrameJitter(index: Int, pixelX: Float, pixelY: Float, reset: Boolean) {
+		sampledJitterIndices.add(index)
+		sampledJitterFrames++
+		if (reset) {
+			sampledResets++
+		}
+		lastJitterPixelX = pixelX
+		lastJitterPixelY = pixelY
+	}
+
+	/**
+	 * The accumulation suffix for the sampled line, or empty when no frame evaluated in the
+	 * window. `phases` is how many distinct jitter offsets the window used: a healthy window
+	 * walks the whole sequence, and `phases=1` is a frozen sequence. `resets` should be zero for
+	 * a window with no teleport, dimension change, or vanilla frame in it.
+	 */
+	private fun accumulationSuffix(): String {
+		if (sampledJitterFrames == 0) {
+			return ""
+		}
+		return ", accum=phases=%d/%d resets=%d/%d jitter=%.3f,%.3f".format(
+			sampledJitterIndices.size,
+			sampledJitterFrames,
+			sampledResets,
+			sampledJitterFrames,
+			lastJitterPixelX,
+			lastJitterPixelY,
+		)
+	}
+
 	/**
 	 * One world phase finished rendering: the first-phase line on the first call, the frame-rate
 	 * line on the sampling boundary after that.
@@ -51,9 +98,11 @@ class SessionReadout(
 		frame: DlssFrameDecision?,
 		facts: SessionFacts,
 		frameTimings: () -> DlssFrameTimings?,
+		fgState: () -> FgState? = { null },
+		pacing: () -> String? = { null },
 	) {
 		reportFirstPhase(mainTarget, scene, frame, facts)
-		sampleWorldFrameRate(scene, frame, frameTimings)
+		sampleWorldFrameRate(scene, frame, frameTimings, fgState, pacing)
 	}
 
 	/**
@@ -125,6 +174,8 @@ class SessionReadout(
 		scene: RenderTarget?,
 		frame: DlssFrameDecision?,
 		frameTimings: () -> DlssFrameTimings?,
+		fgState: () -> FgState?,
+		pacing: () -> String?,
 	) {
 		val now = System.nanoTime()
 		if (sampleStartedAt == 0L) {
@@ -144,16 +195,22 @@ class SessionReadout(
 		// a frame rate that did not change while the chain costs a millisecond is a client whose
 		// frames are bounded by something other than the GPU.
 		emit(
-			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s".format(
+			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s%s%s".format(
 				fps,
 				sampledFrames,
 				frame?.route ?: DlssFrameRoute.VANILLA,
 				scene?.let { "${it.width}x${it.height}" } ?: "main-target",
 				frameTimings() ?: "unmeasured",
+				fgMonitorSuffix(fgState(), fps),
+				pacing() ?: "",
+				accumulationSuffix(),
 			),
 		)
 		sampleStartedAt = now
 		sampledFrames = 0
+		sampledJitterIndices.clear()
+		sampledJitterFrames = 0
+		sampledResets = 0
 	}
 
 	/**
@@ -182,6 +239,23 @@ class SessionReadout(
 
 	companion object {
 		private const val SAMPLE_INTERVAL_NANOS = 5_000_000_000L
+
+		/**
+		 * The DLSS-G monitor suffix for the frame-rate line: actual presented FPS, status word,
+		 * and input-processing completion fence. Streamline reports the number of real plus
+		 * generated presentations per app frame, so its documented calculation is app FPS times
+		 * that value. A factor of two is the 2x-generation proof; an advancing fence proves the
+		 * plugin is reading presented frames' tagged inputs.
+		 */
+		fun fgMonitorSuffix(fg: FgState?, appFps: Double): String = if (fg == null) {
+			""
+		} else {
+			", fg=presented=%.1f status=%d fence=%d".format(
+				appFps * fg.numFramesPresented,
+				fg.status,
+				fg.lastPresentInputsProcessingFenceValue,
+			)
+		}
 
 		/** Formats and drops, for tests that assert on the phase's own behavior. */
 		val NOOP: SessionReadout = SessionReadout({})

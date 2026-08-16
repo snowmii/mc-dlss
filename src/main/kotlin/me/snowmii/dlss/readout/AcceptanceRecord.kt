@@ -7,8 +7,9 @@ import me.snowmii.dlss.session.DlssSessionState
  * The environment half of the Sprint acceptance record.
  *
  * `docs/sprint-acceptance.md#Required-PR-record` requires the reviewer to record the reviewer's
- * own identity, the candidate commit, the Minecraft build, GPU and driver, internal and output
- * resolutions, the DLSS quality mode, every checklist result, and an overall result. Several of
+ * own identity, the candidate commit, the Minecraft build, GPU and driver, the Streamline version
+ * and pinned plugin set, internal and output resolutions, the DLSS quality mode, the FG
+ * multiplier, every checklist result, and an overall result. Several of
  * those are facts the running process already holds, and a reviewer transcribing them by hand is
  * the step most likely to be wrong: the internal resolution in particular is NGX-chosen, never
  * appears in any setting, and cannot be read off the screen.
@@ -28,6 +29,24 @@ object AcceptanceRecord {
 	/** Stands in for a field the process should hold but does not, which is itself a finding. */
 	const val UNAVAILABLE = "none"
 
+	/** The pinned Streamline stack from the contract, recorded rather than queried at runtime. */
+	const val STREAMLINE_VERSION = "2.12.0"
+
+	/** The pinned plugin set the contract's validation baseline requires next to the runtime. */
+	const val PINNED_PLUGIN_SET = "sl.dlss,sl.dlss_g,sl.reflex,sl.interposer"
+
+	/** The contract's default multiplier: one generated frame per rendered frame. */
+	const val FG_MULTIPLIER = "2x"
+
+	/**
+	 * The FG multiplier currently in effect, in `numFramesToGenerate` units (1 = 2x, 2 = 3x,
+	 * and so on), updated by the runtime when a multiplier cycle lands. The record reads this
+	 * by default, so the `fg-multiplier` field names the active multiplier rather than a
+	 * fixed 2x.
+	 */
+	@Volatile
+	var activeFgMultiplier: Int = 1
+
 	const val HEADING = "DLSS acceptance record (docs/sprint-acceptance.md#Required-PR-record)"
 
 	/**
@@ -45,11 +64,18 @@ object AcceptanceRecord {
 		renderPreset: SRModelPreset,
 		outputDimensions: DlssDimensions,
 		renderDimensions: DlssDimensions?,
+		/**
+		 * The FG multiplier in `numFramesToGenerate` units (1 = 2x), defaulting to
+		 * [activeFgMultiplier] so the record reports the multiplier actually in effect.
+		 */
+		fgMultiplier: Int = activeFgMultiplier,
 	): String = buildString {
 		append(HEADING)
 		appendField("reviewer", REVIEWER_SUPPLIED)
 		appendField("candidate-commit", REVIEWER_SUPPLIED)
 		appendField("gpu-driver", REVIEWER_SUPPLIED)
+		appendField("streamline-version", STREAMLINE_VERSION)
+		appendField("streamline-plugins", PINNED_PLUGIN_SET)
 		appendField("minecraft-build", minecraftBuild ?: REVIEWER_SUPPLIED)
 		appendField("dlss-enabled", enabled.toString())
 		appendField("dlss-state", state.name)
@@ -59,6 +85,9 @@ object AcceptanceRecord {
 		appendField("render-preset", renderPreset.propertyValue)
 		appendField("output-resolution", outputDimensions.toString())
 		appendField("internal-resolution", renderDimensions?.toString() ?: UNAVAILABLE)
+		appendField("fg-multiplier", "${fgMultiplier + 1}x")
+		appendField("checklist-result", REVIEWER_SUPPLIED)
+		appendField("overall-result", REVIEWER_SUPPLIED)
 	}
 
 	private fun StringBuilder.appendField(name: String, value: String) {

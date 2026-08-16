@@ -1,0 +1,75 @@
+# Delta over detekt's default config - requires "build upon the default configuration".
+# Every relaxation below records a deliberate repo choice, so the remaining findings
+# are defects rather than disagreements about shape.
+
+complexity:
+  LongParameterList:
+    # Vulkan and Blaze3D signatures carry the handles they carry.
+    functionThreshold: 8
+    constructorThreshold: 10
+    ignoreDefaultParameters: true
+    ignoreDataClasses: true
+    excludes: ['**/test/**']
+  LongMethod:
+    threshold: 80
+    excludes: ['**/test/**']
+  LargeClass:
+    excludes: ['**/test/**']
+  CyclomaticComplexMethod:
+    excludes: ['**/test/**']
+  NestedBlockDepth:
+    excludes: ['**/test/**']
+  ComplexCondition:
+    # A five-way null guard on a frame's inputs is one thought, not five.
+    threshold: 6
+  TooManyFunctions:
+    # Render-phase adapters mirror an engine surface; splitting them hides the seam.
+    thresholdInFiles: 30
+    thresholdInClasses: 25
+    thresholdInObjects: 25
+    ignorePrivate: true
+    ignoreOverridden: true
+    excludes: ['**/test/**']
+
+style:
+  MaxLineLength:
+    maxLineLength: 140
+    excludeCommentStatements: true
+    excludes: ['**/test/**']
+  MagicNumber:
+    # FloatArray(16), draw(3, 1, 0, 0), toString(16), preset ids - domain constants.
+    active: false
+  ReturnCount:
+    # Guard clauses beat the nesting this rule pushes toward, and the render seams open with
+    # a chain of them - every missing input is its own early answer.
+    max: 6
+    excludeGuardClauses: true
+  MatchingDeclarationName:
+    # Dimensions.kt holds DlssDimensions by convention.
+    active: false
+  UnusedPrivateMember:
+    active: true
+  UnusedPrivateProperty:
+    active: true
+  UnusedParameter:
+    active: true
+  ForbiddenComment:
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    # catch (Throwable) at the JNI and render-thread boundaries is the contract:
+    # a native failure degrades the session, it never kills the client.
+    active: false
+  SwallowedException:
+    active: false
+
+naming:
+  VariableNaming:
+    excludes: ['**/test/**']
+  ConstructorParameterNaming:
+    excludes: ['**/test/**']
+
+empty-blocks:
+  EmptyFunctionBlock:
+    ignoreOverridden: true

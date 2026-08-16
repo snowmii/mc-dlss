@@ -11,10 +11,12 @@
  * does move is a ratio against a wall clock the renderer chose. Timestamps are the only thing
  * that separates NGX's own cost from the copy and the barriers around it.
  *
- * Four stamps per frame - one before the motion pass, one after it, one after the evaluation,
- * one after the copy - into a ring of slots, so results are read for a frame the GPU finished
- * several frames ago and no read ever waits. A frame that skips a stage leaves its slot
- * incomplete and is dropped rather than reported as a fast one.
+ * Four stamps per frame - one before the motion stage, one after it, one after the
+ * evaluation, one after the copy - into a ring of slots, so results are read for a frame the
+ * GPU finished several frames ago and no read ever waits. A frame whose stages did not all
+ * run leaves its slot incomplete and is dropped rather than reported as a fast one. The
+ * motion stage is a real measured stage on both routes: the camera-only route opens the
+ * chain in the compute writer, and the velocity route opens it in the sentinel fill.
  */
 namespace mc_dlss {
 

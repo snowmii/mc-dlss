@@ -9,6 +9,59 @@ void reset_state() noexcept {
     g_state = DlssState{};
 }
 
+void MarkerLog::record(const uint32_t type, const sl::FrameToken* frameToken) noexcept {
+    // The type indexes the count array, so a value outside the log's vocabulary would write
+    // past it. Every caller passes one of its own enum values; the guard is here because
+    // nothing else stands between an enum widened without its capacity and a stray write.
+    if (type >= kMarkerTypeCapacity) {
+        return;
+    }
+    events[eventCount % kMarkerLogSize] =
+        MarkerEvent{type, static_cast<uint32_t>(*frameToken)};
+    eventCount += 1;
+    typeCounts[type] += 1;
+}
+
+int32_t MarkerLog::read(uint32_t* outTypeCounts, const uint32_t typeCount,
+                        uint32_t* outEventCount, uint32_t* outEvents,
+                        const uint32_t eventsCapacity) const noexcept {
+    if (outTypeCounts == nullptr || outEventCount == nullptr || outEvents == nullptr) {
+        return kInvalidParameter;
+    }
+    // The oracle answers only once this session actually emitted a marker: before that there
+    // is no event any marker was emitted under, and the refusal is exactly what makes
+    // "refused or pre-ready calls emit no markers" observable to the test - a call that leaked
+    // markers would populate the log before the test expects it to.
+    if (eventCount == 0) {
+        return kNotInitialized;
+    }
+    for (uint32_t i = 0; i < typeCount && i < kMarkerTypeCapacity; ++i) {
+        outTypeCounts[i] = typeCounts[i];
+    }
+    *outEventCount = eventCount;
+    // The ring holds the most recent min(eventCount, kMarkerLogSize) events, oldest first:
+    // the slot at eventCount % kMarkerLogSize holds the oldest kept event (it is the next to
+    // be overwritten), and the kept events follow it around the ring.
+    const uint32_t kept = eventCount < kMarkerLogSize ? eventCount : kMarkerLogSize;
+    const uint32_t copied = eventsCapacity < kept ? eventsCapacity : kept;
+    const uint32_t oldest = (eventCount - kept) % kMarkerLogSize;
+    for (uint32_t i = 0; i < copied; ++i) {
+        const MarkerEvent& event = events[(oldest + i) % kMarkerLogSize];
+        outEvents[i * 2] = event.type;
+        outEvents[i * 2 + 1] = event.frameIndex;
+    }
+    return kSuccess;
+}
+
+bool images_match_configuration() noexcept {
+    return g_state.motionImage.view != VK_NULL_HANDLE &&
+           g_state.outputImage.view != VK_NULL_HANDLE &&
+           g_state.imagesRenderWidth == g_state.renderWidth &&
+           g_state.imagesRenderHeight == g_state.renderHeight &&
+           g_state.imagesOutputWidth == g_state.outputWidth &&
+           g_state.imagesOutputHeight == g_state.outputHeight;
+}
+
 void wait_device_idle() noexcept {
     if (g_state.device != VK_NULL_HANDLE) {
         // Result deliberately ignored: on a device already lost there is nothing left to

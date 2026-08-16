@@ -1,10 +1,13 @@
 package me.snowmii.dlss.pass
 import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.mrt.VelocityContext
+import me.snowmii.dlss.mrt.velocityTwin
 import me.snowmii.dlss.render.DlssCameraSample
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.PrimitiveTopology
 import com.mojang.blaze3d.buffers.GpuBuffer
+import com.mojang.blaze3d.buffers.GpuBufferSlice
 import com.mojang.blaze3d.buffers.Std140Builder
 import com.mojang.blaze3d.buffers.Std140SizeCalculator
 import com.mojang.blaze3d.pipeline.BindGroupLayout
@@ -12,6 +15,8 @@ import com.mojang.blaze3d.pipeline.RenderPipeline
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.pipeline.TextureTarget
 import com.mojang.blaze3d.shaders.UniformType
+import com.mojang.blaze3d.systems.RenderPass
+import com.mojang.blaze3d.systems.RenderPassDescriptor
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.FilterMode
 import net.minecraft.client.renderer.RenderPipelines
@@ -19,7 +24,6 @@ import net.minecraft.resources.Identifier
 import org.joml.Matrix4f
 import org.joml.Vector4f
 import org.lwjgl.system.MemoryStack
-import java.util.Locale
 import java.util.Optional
 import java.util.Properties
 
@@ -101,6 +105,9 @@ class StressPass(
 	private val inverseViewProjection = Matrix4f()
 	private val sunClip = Vector4f()
 
+	/** Identity reprojection for frames with no published motion: the shader then writes the sentinel, never this matrix's zero. */
+	private val identityReprojection = Matrix4f()
+
 	/** Runtime switch, so one session can compare loaded and unloaded frames. */
 	override var enabled: Boolean = config.enabled
 		private set
@@ -126,10 +133,18 @@ class StressPass(
 	 * rendered with a stale camera: a one-frame-old ray basis would swim visibly and would make
 	 * the measurement noisier, not just uglier.
 	 *
+	 * [velocity] is this frame's velocity-MRT write context when the open world phase offers its
+	 * scene-sized RG16_FLOAT velocity view on the velocity route, or null on a vanilla or
+	 * camera-only frame. With a context the pass binds a two-target twin of its own pipeline and
+	 * writes jitter-free NDC camera motion into the view at color index 1, alongside the effect
+	 * in the scratch target; without one it keeps the exact one-target pass. The shader derives
+	 * the vectors from the published reprojection and the reversed-Z depth, so the pass writes
+	 * the same camera-motion payload DLSS expects of the scene it is measuring.
+	 *
 	 * A failure disables the pass for the rest of the session. This is an instrument bolted onto
 	 * the render thread; it must never be the reason a frame does not finish.
 	 */
-	override fun render(target: RenderTarget, camera: DlssCameraSample) {
+	override fun render(target: RenderTarget, camera: DlssCameraSample, velocity: VelocityContext?) {
 		if (!enabled || failed) {
 			return
 		}
@@ -143,16 +158,30 @@ class StressPass(
 		try {
 			val scratchTarget = scratchFor(target.width, target.height)
 			val scratchColor = scratchTarget.colorTextureView ?: return
-			val uniforms = writeUniforms(camera, target.width, target.height)
+			val uniforms = writeUniforms(camera, target.width, target.height, velocity)
 			val samplers = RenderSystem.getSamplerCache()
 			val encoder = RenderSystem.getDevice().createCommandEncoder()
 
-			encoder.createRenderPass({ "DLSS stress" }, scratchColor, Optional.empty()).use { pass ->
-				pass.setPipeline(STRESS_PIPELINE)
-				pass.setUniform("StressConfig", uniforms)
-				pass.bindTexture("InSampler", color, samplers.getClampToEdge(FilterMode.LINEAR))
-				pass.bindTexture("InDepthSampler", depth, samplers.getClampToEdge(FilterMode.NEAREST))
-				pass.draw(3, 1, 0, 0)
+			// The one-target shape on vanilla and camera-only frames; the two-attachment shape -
+			// scratch colour at 0, the scene's RG16_FLOAT velocity view at 1 - on an open
+			// velocity-MRT route. The pipeline bound must carry the same target count and format
+			// as the attachments, or setPipeline throws on the first bind.
+			val pass = if (velocity == null) {
+				encoder.createRenderPass({ "DLSS stress" }, scratchColor, Optional.empty())
+			} else {
+				encoder.createRenderPass(
+					RenderPassDescriptor.create { "DLSS stress velocity" }
+						.withColorAttachment(scratchColor, Optional.empty())
+						.withColorAttachment(velocity.view, Optional.empty())
+						.withRenderArea(RenderPass.RenderArea(0, 0, target.width, target.height)),
+				)
+			}
+			pass.use { renderPass ->
+				renderPass.setPipeline(pipelineFor(velocity))
+				renderPass.setUniform("StressConfig", uniforms)
+				renderPass.bindTexture("InSampler", color, samplers.getClampToEdge(FilterMode.LINEAR))
+				renderPass.bindTexture("InDepthSampler", depth, samplers.getClampToEdge(FilterMode.NEAREST))
+				renderPass.draw(3, 1, 0, 0)
 			}
 
 			encoder.createRenderPass({ "DLSS stress resolve" }, color, Optional.empty()).use { pass ->
@@ -198,7 +227,12 @@ class StressPass(
 	 * measurement load, and a light that moves with the day cycle would make two runs of the same
 	 * benchmark cost visibly different amounts.
 	 */
-	private fun writeUniforms(camera: DlssCameraSample, width: Int, height: Int): com.mojang.blaze3d.buffers.GpuBufferSlice {
+	private fun writeUniforms(
+		camera: DlssCameraSample,
+		width: Int,
+		height: Int,
+		velocity: VelocityContext?,
+	): GpuBufferSlice {
 		val now = System.nanoTime()
 		if (startedAtNanos == 0L) {
 			startedAtNanos = now
@@ -219,6 +253,11 @@ class StressPass(
 			sunV = (sunClip.y / sunClip.w) * config.ndcYSign * 0.5f + 0.5f
 		}
 
+		// This frame's camera motion: the reprojection the shader derives velocity from, and
+		// whether the frame has no valid predecessor (which forces the invalid sentinel).
+		val reprojection = velocity?.reprojection ?: identityReprojection
+		val invalid = velocity?.reset == true
+
 		val buffer = uniformBuffer ?: RenderSystem.getDevice()
 			.createBuffer({ "DLSS Stress Config" }, GpuBuffer.USAGE_UNIFORM or GpuBuffer.USAGE_COPY_DST, UBO_SIZE.toLong())
 			.also { uniformBuffer = it }
@@ -230,6 +269,8 @@ class StressPass(
 				.putVec4(SUN_X, SUN_Y, SUN_Z, config.intensity)
 				.putVec4(config.steps.toFloat(), config.octaves.toFloat(), config.ndcYSign, config.godrayTaps.toFloat())
 				.putVec4(width.toFloat(), height.toFloat(), sunU, sunV)
+				.putMat4f(reprojection)
+				.putVec4(if (invalid) 1f else 0f, 0f, 0f, 0f)
 				.get()
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(buffer.slice(), data)
 		}
@@ -250,6 +291,8 @@ class StressPass(
 			.putVec4()
 			.putVec4()
 			.putVec4()
+			.putVec4()
+			.putMat4f()
 			.putVec4()
 			.get()
 
@@ -274,6 +317,20 @@ class StressPass(
 			.withBindGroupLayout(STRESS_LAYOUT)
 			.withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
 			.build()
+
+		/**
+		 * The pipeline the pass binds for one frame, selected from this frame's velocity context.
+		 *
+		 * A null context - vanilla and camera-only routes - keeps the one-target [STRESS_PIPELINE]
+		 * untouched: that pipeline is the identity of the comparison the stress pass exists to
+		 * make, so it is never mutated or rebuilt. A velocity context selects the cached two-target
+		 * twin, whose second target is the unblended RG16_FLOAT velocity payload the pass's second
+		 * attachment carries. The twin preserves this pass's shaders and bind-group layout, so one
+		 * shader source compiles for both shapes and the extra fragment output is simply discarded
+		 * on the one-target route.
+		 */
+		internal fun pipelineFor(velocity: VelocityContext?): RenderPipeline =
+			if (velocity == null) STRESS_PIPELINE else velocityTwin(STRESS_PIPELINE)
 
 		/** Production wiring: the configuration this session started with. */
 		@JvmStatic

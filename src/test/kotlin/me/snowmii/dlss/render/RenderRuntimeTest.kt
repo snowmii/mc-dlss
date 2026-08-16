@@ -1,4 +1,5 @@
 package me.snowmii.dlss.render
+import me.snowmii.dlss.session.TestSessionBridge
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -127,22 +128,8 @@ class RenderRuntimeTest {
 		assertEquals(render, first!!.renderDimensions)
 	}
 
-	@Test
-	fun `a vanilla frame publishes no jitter and restarts the sequence`() {
-		val session = session(enabled = true)
-		val runtime = runtime(session) { markReady(session); render }
-		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
-		val first = runtime.activeJitter
-		runtime.endWorldPhase()
-
-		runtime.beginWorldPhase(normalInWorldFrame = false, outputDimensions = output)
-		val duringVanilla = runtime.activeJitter
-		runtime.endWorldPhase()
-		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
-
-		assertNull(duringVanilla)
-		assertEquals(first, runtime.activeJitter)
-	}
+	// A vanilla frame publishing no jitter and restarting the sequence is MotionJitterTest's
+	// `a vanilla frame between DLSS frames resets both the jitter sequence and the history`.
 
 	@Test
 	fun `ending a world phase drops the published jitter`() {
@@ -233,7 +220,12 @@ class RenderRuntimeTest {
 			startupCalls++
 			startup()
 		},
-		quiesce = { freeLog += "quiesce" },
+		bridge = object : TestSessionBridge() {
+			override fun waitDeviceIdle(): Boolean {
+				freeLog += "quiesce"
+				return true
+			}
+		},
 	)
 
 	private fun markReady(session: DlssSession) {

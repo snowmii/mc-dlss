@@ -1,5 +1,7 @@
 package me.snowmii.dlss.pass
+import me.snowmii.dlss.mrt.VelocityContext
 import me.snowmii.dlss.render.DlssCameraSample
+import me.snowmii.dlss.render.WorldPhase
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.McDlss
 import org.slf4j.LoggerFactory
@@ -9,7 +11,7 @@ import org.slf4j.LoggerFactory
  *
  * A pass has to run in sessions where DLSS never starts - `mc.dlss.enabled=false`, no NGX, a
  * latched native failure - because those are exactly the sessions a measurement is compared
- * against. [ClientRuntime] returns null in all of them, so the passes cannot hang off the
+ * against. `ClientRuntime` returns null in all of them, so the passes cannot hang off the
  * world phase; they hang off the same render-loop seam instead and ask the renderer which
  * target the world just went into.
  *
@@ -35,10 +37,6 @@ object StressRuntime {
 	 */
 	private var camera: DlssCameraSample? = null
 
-	/** The passes once the render loop has built them, without ever creating them. */
-	@JvmStatic
-	fun activePasses(): List<ScenePass> = passes
-
 	/** Records the camera the world projection seam is about to upload. */
 	@JvmStatic
 	fun recordCamera(sample: DlssCameraSample) {
@@ -52,9 +50,15 @@ object StressRuntime {
 	 * Called on every frame including the ones that render no effect, because this is also where
 	 * the passes are created: a session that starts with a pass off must still be able to switch
 	 * it on, and a session that starts with it on must not build GPU objects from mod init.
+	 *
+	 * [phase] is the world phase as the tail of `LevelRenderer.render` sees it, still open on a
+	 * DLSS frame and null in exactly the sessions - `mc.dlss.enabled=false`, no DLSS, a latched
+	 * failure - whose frames are compared against a loaded one. The passes render either way; the
+	 * phase only supplies the velocity-MRT context, so a null phase keeps every pass on its
+	 * exact one-target shape.
 	 */
 	@JvmStatic
-	fun render(target: RenderTarget?) {
+	fun render(target: RenderTarget?, phase: WorldPhase?) {
 		val sample = camera
 		camera = null
 
@@ -63,7 +67,16 @@ object StressRuntime {
 			return
 		}
 
-		active.forEach { pass -> pass.render(target, sample) }
+		// The velocity write context of the open phase: the scene's RG16_FLOAT velocity view on
+		// an open VELOCITY_MRT route, plus the published camera motion. A null view (vanilla,
+		// camera-only, or closed phase) means no velocity write at all; a frame whose motion is
+		// missing or reset still writes the view, with every pixel at the invalid sentinel.
+		val velocity = phase?.terrainVelocityView?.let { view ->
+			val motion = phase.activeMotion
+			VelocityContext(view, motion?.reprojection, motion?.reset ?: true)
+		}
+
+		active.forEach { pass -> pass.render(target, sample, velocity) }
 	}
 
 	/**

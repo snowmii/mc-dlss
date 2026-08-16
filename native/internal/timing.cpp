@@ -64,6 +64,19 @@ void collect_timing(const uint32_t slot) noexcept {
     g_timing.pending[slot] = false;
 }
 
+// Writes one stamp into the recording slot, advancing the written count and marking the slot
+// pending when its last stamp lands. Every stage close stamps at BOTTOM_OF_PIPE: a stage's
+// duration is measured between the point the slot opened and the point everything recorded
+// before the stage has fully drained through the pipeline.
+void write_timing_stamp(const VkCommandBuffer commandBuffer, const uint32_t index) noexcept {
+    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_timing.pool,
+                        g_timing.recordingSlot * kTimingStampsPerSlot + index);
+    g_timing.writtenStamps = index + 1;
+    if (g_timing.writtenStamps == kTimingStampsPerSlot) {
+        g_timing.pending[g_timing.recordingSlot] = true;
+    }
+}
+
 } // namespace
 
 DlssFrameTiming g_timing;
@@ -90,12 +103,7 @@ void mark_frame_timing(const VkCommandBuffer commandBuffer, const uint32_t index
         return;
     }
 
-    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_timing.pool,
-                        g_timing.recordingSlot * kTimingStampsPerSlot + index);
-    g_timing.writtenStamps = index + 1;
-    if (g_timing.writtenStamps == kTimingStampsPerSlot) {
-        g_timing.pending[g_timing.recordingSlot] = true;
-    }
+    write_timing_stamp(commandBuffer, index);
 }
 
 void destroy_timing() noexcept {

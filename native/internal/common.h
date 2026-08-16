@@ -23,8 +23,6 @@ constexpr int32_t kSuccess = static_cast<int32_t>(NVSDK_NGX_Result_Success);
 constexpr int32_t kFailure = static_cast<int32_t>(NVSDK_NGX_Result_Fail);
 constexpr int32_t kInvalidParameter = static_cast<int32_t>(NVSDK_NGX_Result_FAIL_InvalidParameter);
 constexpr int32_t kNotInitialized = static_cast<int32_t>(NVSDK_NGX_Result_FAIL_NotInitialized);
-constexpr int32_t kFeatureNotSupported =
-    static_cast<int32_t>(NVSDK_NGX_Result_FAIL_FeatureNotSupported);
 
 // R16G16_SFLOAT and R8G8B8A8_UNORM are both mandatory storage-image formats in
 // Vulkan, so neither needs a runtime capability probe. Two half-float channels
@@ -70,7 +68,9 @@ bool valid_dimensions(uint32_t outputWidth, uint32_t outputHeight, uint32_t rend
                       uint32_t renderHeight) noexcept;
 
 // An image the caller carried across the ABI is usable only with all three fields present:
-// a zero handle or an undefined format is a caller that did not fill the struct.
+// a zero handle or an undefined format is a caller that did not fill the struct. The check
+// here is structural only - the DLSS-G tag, whose roles fix the format against the recorded
+// options, enforces those formats at its own call site.
 bool valid_image(const McDlssImage& image) noexcept;
 
 // Engine images are single-level, single-layer 2D images - Minecraft's Vulkan backend creates

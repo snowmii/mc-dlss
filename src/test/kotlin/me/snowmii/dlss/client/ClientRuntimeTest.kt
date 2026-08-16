@@ -28,5 +28,19 @@ class ClientRuntimeTest {
 		ClientRuntime.renderLoop().worldPhase()
 
 		assertTrue(ClientRuntime.isInitialized, "the render loop is the only builder")
+
+		// Shutdown runs from `Minecraft.close()`, ahead of the Vulkan device teardown, and has to
+		// leave the seam latched: a render call still in flight on the way out must not open the
+		// native bridge again against a device that is already going away.
+		ClientRuntime.shutdown()
+
+		assertTrue(ClientRuntime.isInitialized, "shutdown leaves the seam latched")
+		assertNull(ClientRuntime.active().activeWorldPhase())
+		assertNull(ClientRuntime.active().activeUiPhase())
+		assertNull(ClientRuntime.active().activeControls())
+
+		ClientRuntime.renderLoop().worldPhase()
+
+		assertNull(ClientRuntime.active().activeWorldPhase(), "a shut-down runtime never rebuilds")
 	}
 }

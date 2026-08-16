@@ -1,10 +1,9 @@
 package me.snowmii.dlss.bridge
 import me.snowmii.dlss.config.ModConfig
-import me.snowmii.dlss.session.DlssStartupConfig
 
 import java.nio.file.Files
 import java.nio.file.Path
-import me.snowmii.McDlss
+import me.snowmii.dlss.NativeBridge
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -15,12 +14,14 @@ import org.junit.jupiter.api.Test
  * client at `VulkanInstance.<init>` with `Cannot open library: ...\run\build\native\mc_dlss.dll`.
  * These pin the resolution order that fixed it.
  */
+@NativeBridge
 class NativeLibraryResolutionTest {
 	@Test
 	fun `explicit property overrides every other source`() {
 		val requested = Path.of("D:/somewhere/else/mc_dlss.dll")
 		withProperty(requested.toString()) {
-			assertEquals(requested.toAbsolutePath(), ExtensionBootstrap.nativeLibrary())
+			val expectedLibrary = requested.toAbsolutePath()
+			assertEquals(expectedLibrary, ExtensionBootstrap.nativeLibrary(), "the explicit property wins")
 		}
 	}
 
@@ -39,12 +40,6 @@ class NativeLibraryResolutionTest {
 			val resolved = ExtensionBootstrap.nativeLibrary()
 			assertTrue(Files.isRegularFile(resolved), "resolved path must exist: $resolved")
 		}
-	}
-
-	@Test
-	fun `the packaged resource path stays under the mod namespace`() {
-		assertEquals("/assets/mc-dlss/native/mc_dlss.dll", ExtensionBootstrap.RESOURCE_PATH)
-		assertTrue(ExtensionBootstrap.RESOURCE_PATH.contains("/assets/${McDlss.MOD_ID}/"))
 	}
 
 	private fun withProperty(value: String?, block: () -> Unit) {

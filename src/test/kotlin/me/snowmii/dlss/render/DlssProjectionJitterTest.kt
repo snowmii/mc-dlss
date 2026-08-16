@@ -78,6 +78,7 @@ class DlssProjectionJitterTest {
 		// One render pixel spans 2 / dimension in normalized device coordinates.
 		assertEquals(1f / render.width, shifted.x - plain.x, tolerance)
 		assertEquals(-1f / render.height, shifted.y - plain.y, tolerance)
+		assertEquals(-0.5f, offset.pixelY, tolerance, "projection and DLSS keep the same signed Y offset")
 	}
 
 	@Test

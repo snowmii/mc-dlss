@@ -39,12 +39,18 @@ data class DlssStartupConfig(
 enum class SRModelPreset(
 	val ngxValue: Int,
 	val propertyValue: String,
-	val description: String,
 ) {
-	K(11, "k", "transformer, best image quality, default for DLAA/Quality/Balanced"),
-	J(10, "j", "transformer, less ghosting than K and more flicker"),
-	L(12, "l", "transformer, default for Ultra Performance"),
-	M(13, "m", "transformer, default for Performance"),
+	/** Transformer, best image quality, default for DLAA/Quality/Balanced. */
+	K(11, "k"),
+
+	/** Transformer, less ghosting than [K] and more flicker. */
+	J(10, "j"),
+
+	/** Transformer, default for Ultra Performance. */
+	L(12, "l"),
+
+	/** Transformer, default for Performance. */
+	M(13, "m"),
 	;
 
 	companion object {

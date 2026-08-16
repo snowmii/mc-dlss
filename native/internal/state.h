@@ -3,17 +3,21 @@
 
 #include "internal/common.h"
 
+#include "mc_dlss.h"
+#include <sl_core_types.h>
+
 #include <mutex>
-#include <string>
 
 /*
  * The module's one piece of mutable state, and the operations that read or write it without
  * needing anything above it.
  *
- * Everything that owns a GPU object - timing, images, motion, the NGX feature - reads
- * `g_state` and is layered above this unit. Teardown, which has to drive all of them in
- * order, lives above them all in session.h rather than here: putting it here would make the
- * state unit depend on its own dependents.
+ * Everything that owns a GPU object - timing, images, motion - reads `g_state` and is layered
+ * above this unit. Teardown, which has to drive all of them in order, lives above them all in
+ * session.h rather than here: putting it here would make the state unit depend on its own
+ * dependents. The Streamline runtime itself is process-wide and never enters this struct; the
+ * bootstrap flag, the proxy tuple, and the frame token are the only per-module Streamline
+ * state it carries, and close clears all of it so a later bootstrap can reinitialize.
  */
 namespace mc_dlss {
 
@@ -23,6 +27,82 @@ namespace mc_dlss {
 // rewrite lands on a set no in-flight submission is still reading, without the pass having
 // to track frame completion it has no way to observe.
 constexpr uint32_t kMotionDescriptorRing = 4;
+
+// The two Streamline viewport ids this module's records name. SR records - options, tags,
+// the evaluation, and its constants - stay on the engine-space viewport 0; every DLSS-G
+// options, state, tag, and constants record uses the FG-only viewport 1. The split is what
+// lets a later slice apply y-orientation fixes to the FG side without reaching what SR
+// reads.
+constexpr uint32_t kSrViewportId = 0;
+constexpr uint32_t kFgViewportId = 1;
+
+// The two Reflex present markers this module emits at the present handoff, and the type tag
+// the present-marker event log records each emitted marker under. The ABI exposes the raw
+// values through mc_dlss_query_present_markers.
+enum PresentMarkerType : uint32_t {
+    kPresentMarkerStart = 0,
+    kPresentMarkerEnd = 1,
+    kPresentMarkerTypeCount = 2,
+};
+
+// The five Reflex/PCL frame markers this module emits at the M-12 input, simulation, and
+// render-submit seams, and the type tag the reflex-marker event log records each emitted
+// marker under. The ABI exposes the raw values through mc_dlss_query_reflex_markers.
+// kReflexMarkerTypeCount is the array width the per-type counts use; it must stay the
+// number of enum values.
+enum ReflexMarkerType : uint32_t {
+    kReflexMarkerInputSample = 0,
+    kReflexMarkerSimulationStart = 1,
+    kReflexMarkerSimulationEnd = 2,
+    kReflexMarkerRenderSubmitStart = 3,
+    kReflexMarkerRenderSubmitEnd = 4,
+    kReflexMarkerTypeCount = 5,
+};
+
+// One marker event as a log records it: the marker type - a PresentMarkerType or a
+// ReflexMarkerType, depending on which log holds it - and the Streamline frame index (the
+// retained token) the marker was emitted under.
+struct MarkerEvent {
+    uint32_t type;
+    uint32_t frameIndex;
+};
+
+// The number of events a marker log's ring retains, and the widest per-type count array any
+// log needs (the reflex log's five types; the present log uses the first two).
+constexpr uint32_t kMarkerLogSize = 16;
+constexpr uint32_t kMarkerTypeCapacity = kReflexMarkerTypeCount;
+
+// One marker log: the cumulative per-type counts of the markers this module actually emitted,
+// and a ring of the most recent events in emission order.
+//
+// Both marker surfaces - the present bracket's two markers and the five Reflex/PCL frame
+// markers - are the same log under different type vocabularies, so they are one type held
+// twice rather than one ring discipline written twice. The ring math is the part that has to
+// be right (the read-back walks from the oldest kept slot, which is the next one to be
+// overwritten), and it exists once.
+//
+// A log is history, not per-frame eligibility: neither invalidate_frame_eligibility nor a
+// later handoff clears one, so it keeps answering after the frame its events name has been
+// dropped. Only reset_state clears it, which is what makes a fresh fork's pre-emission
+// refusal observable.
+struct MarkerLog {
+    uint32_t typeCounts[kMarkerTypeCapacity] = {};
+    uint32_t eventCount = 0;
+    MarkerEvent events[kMarkerLogSize] = {};
+
+    // Appends one marker this module actually emitted, under the frame index the retained
+    // token carries. Called only after that marker's slPCLSetMarker answered eOk, so a log
+    // reports exactly what reached the plugin.
+    void record(uint32_t type, const sl::FrameToken* frameToken) noexcept;
+
+    // The oracle read: the first `typeCount` per-type counts, the total event count, and the
+    // most recent events in emission order as (type, frame index) pairs, at most
+    // `eventsCapacity` of them. Answers kInvalidParameter on null out-pointers and
+    // kNotInitialized until at least one marker was actually emitted - the refusal that makes
+    // "refused sessions emit none" observable.
+    int32_t read(uint32_t* outTypeCounts, uint32_t typeCount, uint32_t* outEventCount,
+                 uint32_t* outEvents, uint32_t eventsCapacity) const noexcept;
+};
 
 struct DlssOwnedImage {
     VkImage image = VK_NULL_HANDLE;
@@ -50,46 +130,216 @@ struct DlssMotionPass {
     int32_t boundSet = -1;
     uint64_t boundDepthView = 0;
     uint64_t boundMotionView = 0;
+    // Which flipped-motion view the current ring slot's last storage binding describes, so
+    // the flipped write target participates in the same reuse comparison as the other two.
+    uint64_t boundFlippedView = 0;
 };
 
 struct DlssState {
-    bool initialized = false;
-    bool bootstrapComplete = false;
+    // Whether mc_dlss_initialize validated and recorded the live Vulkan tuple. This is what
+    // the module-owned images and motion pass gate on; Streamline readiness is tracked
+    // separately by streamlineInitialized + the proxy tuple, and the extension/feature/option
+    // seams gate on those.
+    bool sessionReady = false;
+    // Whether this module instance's Streamline bootstrap succeeded: slInit answered eOk (or
+    // one of the two errors that mean the runtime is already up in this process). Activation,
+    // which records the Vulkan device, is tracked separately by the proxy tuple below. Close
+    // resets the flag with the rest of the struct after slShutdown, so a later bootstrap runs
+    // slInit again instead of treating the shutdown runtime as already up.
+    bool streamlineInitialized = false;
     uint64_t instanceValue = 0;
     uint64_t physicalDeviceValue = 0;
     uint64_t deviceValue = 0;
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
-    std::wstring sdkPath;
-    std::wstring dataPath;
-    NVSDK_NGX_Parameter* capabilityParameters = nullptr;
-    NVSDK_NGX_Handle* feature = nullptr;
+    // The layout mc_dlss_activate_vulkan_proxies last handed to slSetVulkanInfo. Zero means no
+    // device has been recorded yet; a non-zero device with an identical tuple is the idempotent
+    // repeat that must not re-call slSetVulkanInfo.
+    uint64_t proxyInstance = 0;
+    uint64_t proxyPhysicalDevice = 0;
+    uint64_t proxyDevice = 0;
+    uint32_t proxyGraphicsQueueFamily = 0;
+    uint32_t proxyGraphicsQueueIndex = 0;
+    uint32_t proxyComputeQueueFamily = 0;
+    uint32_t proxyComputeQueueIndex = 0;
     uint32_t outputWidth = 0;
     uint32_t outputHeight = 0;
     uint32_t renderWidth = 0;
     uint32_t renderHeight = 0;
     uint32_t qualityMode = 0;
     uint32_t renderPreset = 0;
-    uint32_t featureOutputWidth = 0;
-    uint32_t featureOutputHeight = 0;
-    uint32_t featureRenderWidth = 0;
-    uint32_t featureRenderHeight = 0;
-    uint32_t featureQualityMode = 0;
-    uint32_t featureRenderPreset = 0;
+    // Whether the DLSS-G options recorded successfully for the currently stored
+    // configuration: the last mc_dlss_configure_fg answered success and no later
+    // mc_dlss_configure or reset has replaced the configuration since. The FG tag gates on
+    // this - tagging resources whose extents/formats no options were recorded for would hand
+    // the plugin a frame it has no configuration to interpret.
+    bool fgOptionsRecorded = false;
+    // The back-buffer count the last successful mc_dlss_configure_fg declared, stored so the
+    // per-frame present handoff re-records the DLSS-G options with the same count the
+    // configuration was validated against. The handoff takes no parameters: it can only
+    // re-record what a successful configure stored, and re-recording a caller-supplied value
+    // each frame would let the per-frame record drift from the validated configuration.
+    uint32_t fgNumBackBuffers = 0;
+    // The DLSS-G frame multiplier the recorded options carry, in numFramesToGenerate units:
+    // 1 = 2x, 2 = 3x, and so on. The default 2x record stores 1, and the last successful
+    // mc_dlss_set_fg_multiplier stores the cycled value; every FG options record - configure,
+    // mode switch, present handoff - re-records it through make_fg_options, so the options the
+    // plugin holds and this stored value can never drift apart. reset_state clears it back to
+    // the 2x default with the rest of the struct.
+    uint32_t fgNumFramesToGenerate = 1;
+    // The Reflex options registration the READY transition records: one slReflexSetOptions
+    // call carrying sl::ReflexMode::eLowLatency, which the pinned Reflex guide requires
+    // even when Reflex Low Latency is off and there is no Reflex UI ("call at least once";
+    // the call need not repeat per frame while the options do not change).
+    // reflexOptionsRecorded is whether that call answered eOk, reflexMode is the mode value
+    // it recorded (1 = eLowLatency), and reflexSetOptionsCalls counts every slReflexSetOptions
+    // call this session made, so the exactly-once-at-READY discipline is provable: the
+    // idempotent re-initialize and the per-frame path must not add calls. reset_state clears
+    // all three with the rest of the struct.
+    bool reflexOptionsRecorded = false;
+    uint32_t reflexMode = 0;
+    uint32_t reflexSetOptionsCalls = 0;
+    // The Reflex frame-rate cap the options carry, in microseconds per frame; zero is no
+    // Reflex-side cap, which is what the READY registration starts at. The host re-records it
+    // whenever the cap it wants changes (an FG multiplier cycle, a refresh or vsync change, a
+    // vanilla framerate-option change), and the stored value is what make_reflex_options reads,
+    // so the mode registration and the cap can never drift apart. Reflex's limiter is the one
+    // DLSS-G tolerates: it sleeps before the frame's simulation, where the driver knows the
+    // pacer's schedule, instead of spinning after Present the way an engine-side limiter does -
+    // and an app frame interval that jitters is cut N ways by multi-frame generation, with every
+    // sub-interval carrying the whole error.
+    uint32_t reflexFrameLimitUs = 0;
     DlssOwnedImage motionImage;
     DlssOwnedImage outputImage;
+    // The FG orientation copies: the DLSS-G viewport consumes the frame in the backbuffer's
+    // orientation, which is the engine's mirrored about the horizontal axis (Minecraft's
+    // present blit inverts y between the main target and the swapchain image), so the FG tag
+    // names module-owned copies the engine images never touch: the depth at render size and
+    // the HUD-less and UI buffers at output size, each filled by a y-inverting blit, and the
+    // motion image flipped with its y component negated by the motion dispatches. The SR
+    // viewport keeps the engine-oriented originals above; the two features genuinely hold two
+    // views of one frame. Created and released with motionImage/outputImage, from the same
+    // configured dimensions and for the same configuration lifetime.
+    DlssOwnedImage fgDepthImage;
+    DlssOwnedImage fgHudlessImage;
+    DlssOwnedImage fgUiImage;
+    DlssOwnedImage fgMotionImage;
     DlssMotionPass motionPass;
     uint32_t imagesRenderWidth = 0;
     uint32_t imagesRenderHeight = 0;
     uint32_t imagesOutputWidth = 0;
     uint32_t imagesOutputHeight = 0;
+    // The Streamline frame token the last mc_dlss_tag_sr_resources call obtained and retained
+    // for the current frame. The evaluation consumes it (slSetConstants + slEvaluateFeature run
+    // against it and it is cleared), so a tag always precedes an evaluate and the next frame's
+    // tag obtains the next token. reset_state clears it with the rest of the struct.
+    sl::FrameToken* frameToken = nullptr;
+    // Present-start arms this retained token; present-end consumes it after queue present.
+    bool presentTokenArmed = false;
+    // Whether the armed bracket's PRESENT_START marker actually reached the plugin.
+    // present_end emits the closing marker only after a successful START, and consumes an
+    // armed bracket whose START never emitted exactly like a successful one - the frame
+    // presented either way, so nothing may be left for a later present to open.
+    bool presentStartEmitted = false;
+    // The Streamline frame indices the last SR and FG tag calls recorded under, exposed by
+    // mc_dlss_query_tagged_frame_indexes as the composed-rung oracle: one frame's SR and FG
+    // tags must land under the same index (the FG tag reuses the SR tag's retained token rather
+    // than advancing the frame), and the test asserts the two records are equal. The booleans
+    // separate "never recorded" from a genuine index of 0; a failed tag records nothing, and
+    // reset_state clears all four with the rest of the struct.
+    //
+    // The booleans are also the per-side present-handoff freshness of the current tag set:
+    // each tag call marks only its own side fresh, the handoff accepts only a set whose two
+    // sides are both fresh under equal indexes, and a successful handoff consumes the set by
+    // clearing both flags. Consumed eligibility is therefore exactly "one of the two flags is
+    // clear": repeating only one tag side after a handoff re-arms only that side, and the set
+    // stays refused until the counterpart records too - a partial re-tag can never revive a
+    // consumed handoff on its own. Configuration replacement, reset, image release, and a
+    // failed slSetTagForFrame all clear the four (with the retained token) through
+    // invalidate_frame_eligibility, so records from a replaced configuration, a released
+    // image lifecycle, or a failed tag call can never satisfy a handoff.
+    bool srTagFrameIndexRecorded = false;
+    uint32_t lastSrTagFrameIndex = 0;
+    bool fgTagFrameIndexRecorded = false;
+    uint32_t lastFgTagFrameIndex = 0;
+    // Whether the FG orientation blits (engine depth/HUD-less/UI into the owned flipped
+    // copies) were recorded for the retained frame token whose index fgCopiedFrameIndex
+    // carries. The FG tag records them on the frame's first FG tag call and skips them on
+    // the second, whose re-declaration must not rewrite copies the frame's first tag already
+    // declared valid-until-present: the same content would land, but the blits would double
+    // the per-frame cost for nothing. The index comparison is what tells the two calls of
+    // one frame apart from the first calls of two frames - the retained token advances per
+    // frame, so an index mismatch means a fresh frame whose copies must be rebuilt.
+    // invalidate_frame_eligibility clears the pair with the token the copies were recorded
+    // under, and reset_state clears them with the rest of the struct.
+    bool fgCopiesRecorded = false;
+    uint32_t fgCopiedFrameIndex = 0;
+    // The present-marker event log: one entry per PRESENT_START or PRESENT_END marker this
+    // module actually emitted to Streamline, in emission order, each under the frame index
+    // (the retained token) the marker was emitted with. The START is recorded the moment its
+    // slPCLSetMarker call succeeds; the END only after its own call succeeds, so a handoff
+    // whose END failed after its START reached the plugin reads truthfully as one START
+    // event and no END event - never as a pair. Counts are indexed by PresentMarkerType.
+    MarkerLog presentMarkers;
+    // The reflex-marker event log: one entry per INPUT_SAMPLE, SIMULATION_START/END, or
+    // RENDER_SUBMIT_START/END marker this module actually emitted to Streamline, in emission
+    // order, each under the frame index (the retained token) the marker was emitted with.
+    // Counts are indexed by ReflexMarkerType.
+    MarkerLog reflexMarkers;
+    // Whether the camera constants of a successful slSetConstants are recorded: the last
+    // successful evaluation's camera, exposed by mc_dlss_query_camera_constants as the
+    // constants oracle. Recorded only after slSetConstants answered eOk, so the oracle
+    // means "the constants the plugin actually received", and reset_state clears it with
+    // the rest of the struct, which is what makes the pre-evaluation refusal of a fresh
+    // fork observable. Zero-filled by default: a caller without a camera records zeros
+    // exactly as the evaluation recorded them.
+    bool cameraConstantsRecorded = false;
+    McDlssCameraConstants lastCameraConstants{};
+    // The camera constants the last successful FG-side slSetConstants recorded, on the
+    // FG-only viewport and under the same retained frame token the SR constants used:
+    // exposed by mc_dlss_query_fg_camera_constants as the FG constants oracle. The record
+    // carries the FG viewport's orientation: the four clip-space matrices conjugate with
+    // F=diag(1,-1,1,1) and the jitter's y negates, matching the y-flipped images the FG
+    // tag names, while the SR record above stays raw - the two oracles report exactly what
+    // each viewport received. Recorded only after the FG-viewport slSetConstants answered
+    // eOk and only for composed frames (a frame whose FG tag recorded), so the oracle means
+    // "the constants the FG viewport actually received" and an SR-only frame never
+    // establishes the record - the independence the viewport split exists to prove.
+    // reset_state clears it with the rest of the struct, so a fresh fork answers the same
+    // refusal as a pre-evaluation one.
+    bool fgCameraConstantsRecorded = false;
+    McDlssCameraConstants lastFgCameraConstants{};
 };
 
 extern DlssState g_state;
 extern std::mutex g_mutex;
 
 void reset_state() noexcept;
+
+// Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
+// frame token and the SR/FG tag records and indexes. Called wherever the frame those records
+// name can no longer reach a present - configuration replacement, reset, image release, and
+// a failed slSetTagForFrame - so a stale record can never satisfy a later handoff once the
+// configuration it was recorded for was replaced, the frame's resources are gone, or the
+// frame's tag call failed.
+void invalidate_frame_eligibility() noexcept;
+
+// Records the DLSS-G frame multiplier (implemented in sl_dlss.cpp, where the sl:: vocabulary
+// lives): re-records the stored options in the eOn mode with numFramesToGenerate set to
+// `numFramesToGenerate`, validated against the device's numFramesToGenerateMax read fresh
+// from slDLSSGGetState. Same ready/options gates as the mode record; a value outside
+// 1..max answers kInvalidParameter and changes nothing.
+int32_t record_fg_multiplier(uint32_t numFramesToGenerate) noexcept;
+
+// The multiplier oracle (implemented in sl_dlss.cpp): the numFramesToGenerate the recorded
+// options carry, and the device's numFramesToGenerateMax read fresh from slDLSSGGetState.
+// Same gates as the DLSS-G state read; both out-pointers are required.
+int32_t query_fg_multiplier(uint32_t* current, uint32_t* max) noexcept;
+
+// The module's own images have to exist, at the size the configuration stores, before anything
+// can be recorded into or out of them - and before they can be tagged for a frame.
+bool images_match_configuration() noexcept;
 
 // Destroying a resource the GPU may still be reading is the one Vulkan error nothing
 // reports where it happens: the queued command buffers that reference it keep running,

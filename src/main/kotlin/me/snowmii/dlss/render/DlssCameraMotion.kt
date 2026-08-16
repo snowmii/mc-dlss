@@ -40,10 +40,18 @@ data class DlssCameraSample(
  * [motionScaleY] convert that vector to render pixels, which is the unit NGX's `InMVScale`
  * expects to arrive at.
  *
+ * [clipToPrevClip] is the same transform without the jitter conjugation: the jitter-free
+ * current-clip to previous-clip matrix Streamline's `sl::Constants` names by that word and
+ * requires of every frame (`sl_consts.h` marks it non-optional, and the DLSS-G plugin
+ * interpolates the generated frame's camera through it). It is [reprojection] stripped of the
+ * `T(j) ... T(-j)` pair, because SL states its matrices must not carry the temporal-AA jitter,
+ * which travels separately as `jitterOffset`.
+ *
  * [frameTimeMillis] is the wall time since the previous DLSS frame. [reset] marks a frame whose
  * accumulated history is worthless - no predecessor, a predecessor that never went through DLSS,
  * or a predecessor the camera cannot have reached this frame from by moving - and its
- * [reprojection] is the identity, because there is no previous frame to point at.
+ * [reprojection] and [clipToPrevClip] are the identity, because there is no previous frame to
+ * point at.
  */
 data class DlssFrameMotion(
 	val reprojection: Matrix4f,
@@ -51,6 +59,12 @@ data class DlssFrameMotion(
 	val motionScaleY: Float,
 	val frameTimeMillis: Float,
 	val reset: Boolean,
+	/**
+	 * Defaults to the identity for the callers that describe a frame's motion field without a
+	 * camera step - the motion-pass fixtures, which read [reprojection] and nothing else.
+	 * [DlssCameraMotion.advance] always supplies it.
+	 */
+	val clipToPrevClip: Matrix4f = Matrix4f(),
 )
 
 /**
@@ -78,9 +92,8 @@ data class DlssFrameMotion(
  * Nothing here touches `clip.z` or `clip.w` beyond the transforms themselves, so reversed-Z depth
  * keeps meaning what it meant.
  *
- * Deliberately left open, and the same open question the jitter carries: whether Minecraft's
- * Vulkan Y orientation needs the Y component negated before NGX reads it. A live DLSS frame is
- * the only thing that decides it, and it is one sign in one place either way.
+ * [DlssJitterOffset] owns the pixel-to-clip conversion. This composition consumes its clip-space
+ * form while evaluation sends the same signed pixel-space offset to DLSS.
  */
 class DlssCameraMotion(renderDimensions: DlssDimensions) {
 	init {
@@ -108,12 +121,14 @@ class DlssCameraMotion(renderDimensions: DlssDimensions) {
 		val current = transforms[currentIndex].set(camera.projection).mul(camera.viewRotation)
 		val previous = transforms[1 - currentIndex]
 		val continuous = hasPrevious && !jumped(camera, nowNanos)
-		val reprojection = if (!continuous) {
+		// The jitter-free half first: this is what Streamline's clipToPrevClip is, and the
+		// motion pass's reprojection is this conjugated by the frame's jitter translation.
+		// Composing them in that order keeps one expression of the camera step rather than two
+		// that could drift apart.
+		val clipToPrevClip = if (!continuous) {
 			Matrix4f()
 		} else {
-			Matrix4f()
-				.translation(jitter.clipOffsetX, jitter.clipOffsetY, 0f)
-				.mul(previous)
+			Matrix4f(previous)
 				// Camera-relative: the point sat one camera-delta further along last frame.
 				.translate(
 					(camera.cameraX - previousCameraX).toFloat(),
@@ -121,6 +136,13 @@ class DlssCameraMotion(renderDimensions: DlssDimensions) {
 					(camera.cameraZ - previousCameraZ).toFloat(),
 				)
 				.mul(current.invert(inverse))
+		}
+		val reprojection = if (!continuous) {
+			Matrix4f()
+		} else {
+			Matrix4f()
+				.translation(jitter.clipOffsetX, jitter.clipOffsetY, 0f)
+				.mul(clipToPrevClip)
 				.translate(-jitter.clipOffsetX, -jitter.clipOffsetY, 0f)
 		}
 		val frameTimeMillis = if (!continuous) {
@@ -141,6 +163,7 @@ class DlssCameraMotion(renderDimensions: DlssDimensions) {
 
 		return DlssFrameMotion(
 			reprojection = reprojection,
+			clipToPrevClip = clipToPrevClip,
 			motionScaleX = motionScaleX,
 			motionScaleY = motionScaleY,
 			frameTimeMillis = frameTimeMillis,
