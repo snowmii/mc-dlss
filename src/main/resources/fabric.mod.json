@@ -3,15 +3,11 @@
 	"id": "mc-dlss",
 	"version": "${version}",
 	"name": "mc-dlss",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "DLSS for Minecraft!",
 	"authors": [
-		"Me!"
+		"snowmii"
 	],
-	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
-	},
-	"license": "CC0-1.0",
+	"license": "MIT",
 	"icon": "assets/mc-dlss/icon.png",
 	"environment": "*",
 	"entrypoints": {
