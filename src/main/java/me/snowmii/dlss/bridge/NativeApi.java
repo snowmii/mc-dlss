@@ -1,10 +1,20 @@
 package me.snowmii.dlss.bridge;
 
+import me.snowmii.streamline.CameraConstants;
+import me.snowmii.streamline.Dimensions;
+import me.snowmii.streamline.EvaluationImages;
+import me.snowmii.streamline.EvaluationRequest;
 import me.snowmii.streamline.FgMultiplier;
 import me.snowmii.streamline.FgState;
+import me.snowmii.streamline.FgTagRequest;
+import me.snowmii.streamline.FillVelocityRequest;
 import me.snowmii.streamline.FrameTimings;
+import me.snowmii.streamline.ImageBinding;
+import me.snowmii.streamline.MotionRequest;
 import me.snowmii.streamline.PresentMarkerEvents;
+import me.snowmii.streamline.PresentTarget;
 import me.snowmii.streamline.SlQueueRequirements;
+import me.snowmii.streamline.SrTagRequest;
 import me.snowmii.streamline.TaggedFrameIndexes;
 
 import java.nio.file.Path;
@@ -53,7 +63,7 @@ public interface NativeApi {
 		Path dataPath
 	);
 
-	DlssDimensions queryOptimalDimensions(
+	Dimensions queryOptimalDimensions(
 		int outputWidth,
 		int outputHeight,
 		int qualityMode
@@ -168,7 +178,7 @@ public interface NativeApi {
 	 * They are never passed back in for an evaluation - the bridge reaches its own images
 	 * directly.
 	 */
-	DlssEvaluationImages acquireImages();
+	EvaluationImages acquireImages();
 
 	int releaseImages();
 

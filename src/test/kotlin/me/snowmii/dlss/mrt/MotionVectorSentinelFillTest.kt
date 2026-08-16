@@ -1,20 +1,22 @@
 package me.snowmii.dlss.mrt
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import java.nio.file.Path
 import kotlin.math.abs
 import kotlin.math.max
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.FillVelocityRequest
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.EvaluationRequest
+import me.snowmii.streamline.FillVelocityRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.VulkanContext
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.SrTagRequest
+import me.snowmii.streamline.VulkanContext
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitter
 import me.snowmii.dlss.render.DlssJitterOffset
@@ -172,8 +174,8 @@ class MotionVectorSentinelFillTest {
 			val renderHeight = 720
 			val outputWidth = 2560
 			val outputHeight = 1440
-			val renderDimensions = DlssDimensions(renderWidth, renderHeight)
-			val outputDimensions = DlssDimensions(outputWidth, outputHeight)
+			val renderDimensions = Dimensions(renderWidth, renderHeight)
+			val outputDimensions = Dimensions(outputWidth, outputHeight)
 
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
@@ -216,12 +218,12 @@ class MotionVectorSentinelFillTest {
 			assertTrue(
 				bridge.fillVelocity(
 					FillVelocityRequest(
-						commandBuffer = beforeImages.address(),
-						depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-						velocity = velocityBinding,
-						reprojection = FloatArray(16),
-						reset = false,
-						renderDimensions = renderDimensions,
+						beforeImages.address(),
+						ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+						velocityBinding,
+						FloatArray(16),
+						false,
+						renderDimensions,
 					),
 				) != NativeApi.SUCCESS_RESULT,
 				"the fill must fail before the module's images exist at the configured size",
@@ -240,12 +242,12 @@ class MotionVectorSentinelFillTest {
 				it[15] = 1.0f
 			}
 			fun fill(commandBuffer: Long, reprojection: FloatArray, reset: Boolean) = FillVelocityRequest(
-				commandBuffer = commandBuffer,
-				depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-				velocity = velocityBinding,
-				reprojection = reprojection,
-				reset = reset,
-				renderDimensions = renderDimensions,
+				commandBuffer,
+				ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+				velocityBinding,
+				reprojection,
+				reset,
+				renderDimensions,
 			)
 
 			// Frame one - the copy branch: the companion carries a real object vector at every
@@ -343,9 +345,9 @@ class MotionVectorSentinelFillTest {
 				NativeApi.SUCCESS_RESULT,
 				bridge.tagSrResources(
 					SrTagRequest(
-						commandBuffer = frame.address(),
-						color = ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-						depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+						frame.address(),
+						ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+						ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
 					),
 				),
 				"the frame's resources must tag on the same buffer, after the merge",
@@ -361,9 +363,9 @@ class MotionVectorSentinelFillTest {
 				NativeApi.SUCCESS_RESULT,
 				bridge.presentOutput(
 					PresentTarget(
-						commandBuffer = frame.address(),
-						image = presentTarget.image(),
-						outputDimensions = outputDimensions,
+						frame.address(),
+						presentTarget.image(),
+						outputDimensions,
 					),
 				),
 				"the frame must present so its timing slot completes",
@@ -414,8 +416,12 @@ class MotionVectorSentinelFillTest {
 			2L,
 			3L,
 			4L,
-			commandBufferSource = { fakeCommandBuffer() },
-			commandBufferSink = {},
+			0,
+			0,
+			0,
+			0,
+			Supplier { fakeCommandBuffer() },
+			Consumer { },
 		)
 		return FrameEvaluation(adapter, { context })
 	}
@@ -445,7 +451,7 @@ class MotionVectorSentinelFillTest {
 
 	/** Records every per-frame native call so the fill gate is assertable off the render thread. */
 	private class RecordingNative(
-		private val renderDimensions: DlssDimensions,
+		private val renderDimensions: Dimensions,
 	) : NativeApi {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
@@ -462,8 +468,8 @@ class MotionVectorSentinelFillTest {
 			dataPath: Path,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
-			DlssDimensions(renderDimensions.width, renderDimensions.height)
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
+			Dimensions(renderDimensions.width, renderDimensions.height)
 
 		override fun configure(
 			outputWidth: Int,
@@ -474,9 +480,9 @@ class MotionVectorSentinelFillTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = DlssEvaluationImages(
-			motion = ImageBinding(401L, 402L, 124),
-			output = ImageBinding(501L, 502L, 37),
+		override fun acquireImages(): EvaluationImages = EvaluationImages(
+			ImageBinding(401L, 402L, 124),
+			ImageBinding(501L, 502L, 37),
 		)
 
 		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT
@@ -516,8 +522,8 @@ class MotionVectorSentinelFillTest {
 	}
 
 	private companion object {
-		val RENDER_DIMENSIONS = DlssDimensions(1280, 720)
-		val OUTPUT_DIMENSIONS = DlssDimensions(2560, 1440)
+		val RENDER_DIMENSIONS = Dimensions(1280, 720)
+		val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 
 		/** The shared invalid sentinel mc_dlss_velocity_fill.comp writes for reset and reads as "no object motion". */
 		const val INVALID_VELOCITY = 10000.0f

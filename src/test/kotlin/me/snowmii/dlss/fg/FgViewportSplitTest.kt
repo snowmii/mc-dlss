@@ -2,18 +2,18 @@ package me.snowmii.dlss.fg
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.CameraConstants
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.CameraConstants
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.NativeException
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.Vec2
-import me.snowmii.dlss.bridge.rowMajorOf
+
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -178,13 +178,13 @@ class FgViewportSplitTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = srOnlyFrame.address(),
-							color = ImageBinding(
+							srOnlyFrame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -196,25 +196,25 @@ class FgViewportSplitTest {
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.evaluate(
-						EvaluationRequest(
-							commandBuffer = srOnlyFrame.address(),
-							color = ImageBinding(
+						EvaluationRequest.builder()
+							.commandBuffer(srOnlyFrame.address())
+							.color(ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
-							),
-							depth = ImageBinding(
+							))
+							.depth(ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
-							),
-							jitter = Vec2(0.25f, -0.5f),
-							motionScale = Vec2(1f, 1f),
-							frameTimeMilliseconds = 16.6f,
-							resetHistory = true,
-							renderDimensions = dimensions,
-							camera = TEST_CAMERA,
-						),
+							))
+							.jitter(Vec2(0.25f, -0.5f))
+							.motionScale(Vec2(1f, 1f))
+							.frameTimeMilliseconds(16.6f)
+							.resetHistory(true)
+							.renderDimensions(dimensions)
+							.camera(TEST_CAMERA)
+							.build(),
 					),
 					"the SR-only evaluation must record the frame's constants",
 				)
@@ -233,18 +233,18 @@ class FgViewportSplitTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = composedFrame.address(),
-							depth = ImageBinding(
+							composedFrame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -257,13 +257,13 @@ class FgViewportSplitTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = composedFrame.address(),
-							color = ImageBinding(
+							composedFrame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -275,25 +275,25 @@ class FgViewportSplitTest {
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.evaluate(
-						EvaluationRequest(
-							commandBuffer = composedFrame.address(),
-							color = ImageBinding(
+						EvaluationRequest.builder()
+							.commandBuffer(composedFrame.address())
+							.color(ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
-							),
-							depth = ImageBinding(
+							))
+							.depth(ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
-							),
-							jitter = Vec2(0.25f, -0.5f),
-							motionScale = Vec2(1f, 1f),
-							frameTimeMilliseconds = 16.6f,
-							resetHistory = false,
-							renderDimensions = dimensions,
-							camera = STEPPED_CAMERA,
-						),
+							))
+							.jitter(Vec2(0.25f, -0.5f))
+							.motionScale(Vec2(1f, 1f))
+							.frameTimeMilliseconds(16.6f)
+							.resetHistory(false)
+							.renderDimensions(dimensions)
+							.camera(STEPPED_CAMERA)
+							.build(),
 					),
 					"the composed evaluation must record the frame's constants on both viewports",
 				)
@@ -476,13 +476,21 @@ class FgViewportSplitTest {
 	 * The jitter's y negates, and everything else - the world-space position and basis and
 	 * the frustum scalars - is orientation-free and carries unchanged.
 	 */
-	private fun flippedForBackbuffer(camera: CameraConstants): CameraConstants = camera.copy(
-		viewToClip = columnYFlipped(camera.viewToClip),
-		clipToView = rowYFlipped(camera.clipToView),
-		clipToPrevClip = conjugatedY(camera.clipToPrevClip),
-		prevClipToClip = conjugatedY(camera.prevClipToClip),
-		jitterX = camera.jitterX,
-		jitterY = -camera.jitterY,
+	private fun flippedForBackbuffer(camera: CameraConstants): CameraConstants = CameraConstants(
+		columnYFlipped(camera.viewToClip),
+		rowYFlipped(camera.clipToView),
+		camera.pos,
+		camera.right,
+		camera.up,
+		camera.fwd,
+		conjugatedY(camera.clipToPrevClip),
+		conjugatedY(camera.prevClipToClip),
+		camera.near,
+		camera.far,
+		camera.fovRadians,
+		camera.aspectRatio,
+		camera.jitterX,
+		-camera.jitterY,
 	)
 
 	/** Output-side y flip M' = M · F: column 1 negated - flat indices 1, 5, 9, 13. */
@@ -602,18 +610,18 @@ class FgViewportSplitTest {
 			)
 			val step = Matrix4f().translation(0.03f, -0.02f, 0.01f).rotateY(0.05f)
 			CameraConstants(
-				viewToClip = rowMajorOf(projection),
-				clipToView = rowMajorOf(Matrix4f(projection).invert()),
-				pos = floatArrayOf(12f, 64f, -48f),
-				right = right,
-				up = up,
-				fwd = fwd,
-				clipToPrevClip = rowMajorOf(step),
-				prevClipToClip = rowMajorOf(Matrix4f(step).invert()),
-				near = 0.05f,
-				far = 1000f,
-				fovRadians = Math.toRadians(70.0).toFloat(),
-				aspectRatio = 16f / 9f,
+				CameraConstants.rowMajorOf(projection),
+				CameraConstants.rowMajorOf(Matrix4f(projection).invert()),
+				floatArrayOf(12f, 64f, -48f),
+				right,
+				up,
+				fwd,
+				CameraConstants.rowMajorOf(step),
+				CameraConstants.rowMajorOf(Matrix4f(step).invert()),
+				0.05f,
+				1000f,
+				Math.toRadians(70.0).toFloat(),
+				16f / 9f,
 			)
 		}
 
@@ -622,7 +630,22 @@ class FgViewportSplitTest {
 		 * plane, so the two records are distinguishable - an oracle answering the previous
 		 * frame's far plane would fail the equality check.
 		 */
-		val STEPPED_CAMERA: CameraConstants = TEST_CAMERA.copy(far = 5000f)
+		val STEPPED_CAMERA: CameraConstants = CameraConstants(
+			TEST_CAMERA.viewToClip,
+			TEST_CAMERA.clipToView,
+			TEST_CAMERA.pos,
+			TEST_CAMERA.right,
+			TEST_CAMERA.up,
+			TEST_CAMERA.fwd,
+			TEST_CAMERA.clipToPrevClip,
+			TEST_CAMERA.prevClipToClip,
+			TEST_CAMERA.near,
+			5000f,
+			TEST_CAMERA.fovRadians,
+			TEST_CAMERA.aspectRatio,
+			TEST_CAMERA.jitterX,
+			TEST_CAMERA.jitterY,
+		)
 
 		/** sl::Result::eErrorNotInitialized, the oracles' pre-record refusal. */
 		private const val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()

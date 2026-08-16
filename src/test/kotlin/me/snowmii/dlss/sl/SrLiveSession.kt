@@ -1,12 +1,12 @@
 package me.snowmii.dlss.sl
 
 import java.nio.file.Path
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.streamline.Vec2
@@ -172,7 +172,7 @@ object SrLiveSession {
 		fixture: HeadlessVulkanFixture,
 		color: HeadlessVulkanFixture.EngineImage,
 		depth: HeadlessVulkanFixture.EngineImage,
-		images: DlssEvaluationImages,
+		images: EvaluationImages,
 	) {
 		assertTrue(
 			fixture.validationEnabled(),
@@ -200,20 +200,20 @@ object SrLiveSession {
 		commandBuffer: Long,
 		color: HeadlessVulkanFixture.EngineImage,
 		depth: HeadlessVulkanFixture.EngineImage,
-		dimensions: DlssDimensions,
+		dimensions: Dimensions,
 		reset: Boolean,
-	): EvaluationRequest = EvaluationRequest(
-		commandBuffer = commandBuffer,
-		color = ImageBinding(color.view(), color.image(), color.format()),
-		depth = ImageBinding(depth.view(), depth.image(), depth.format()),
+	): EvaluationRequest = EvaluationRequest.builder()
+		.commandBuffer(commandBuffer)
+		.color(ImageBinding(color.view(), color.image(), color.format()))
+		.depth(ImageBinding(depth.view(), depth.image(), depth.format()))
 		// The offset is in render pixels, the unit the jitter sequence is in. The motion
 		// buffer is normalized device units, so the scale that normalizes it onto [-1,1] is one.
-		jitter = Vec2(0.25f, -0.5f),
-		motionScale = Vec2(1f, 1f),
-		frameTimeMilliseconds = 16.6f,
-		resetHistory = reset,
-		renderDimensions = dimensions,
-	)
+		.jitter(Vec2(0.25f, -0.5f))
+		.motionScale(Vec2(1f, 1f))
+		.frameTimeMilliseconds(16.6f)
+		.resetHistory(reset)
+		.renderDimensions(dimensions)
+		.build()
 
 	/**
 	 * The family the fixture creates its queues in, discovered with a throwaway default fixture

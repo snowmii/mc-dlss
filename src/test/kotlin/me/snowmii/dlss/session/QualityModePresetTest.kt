@@ -1,12 +1,12 @@
 package me.snowmii.dlss.session
 import me.snowmii.dlss.nativeSource
-import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.MotionRequest
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.EvaluationRequest
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.MotionRequest
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.config.ModConfig
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -25,7 +25,7 @@ import java.util.Properties
  * could.
  */
 class QualityModePresetTest {
-	private val output = DlssDimensions(2560, 1440)
+	private val output = Dimensions(2560, 1440)
 
 	// Newlines are normalized because these assertions match the source text literally, and a
 	// Windows checkout hands the same file back with CRLF.
@@ -233,9 +233,9 @@ class QualityModePresetTest {
 			outputWidth: Int,
 			outputHeight: Int,
 			qualityMode: Int,
-		): DlssDimensions {
+		): Dimensions {
 			queriedQualityMode = qualityMode
-			return DlssDimensions(853, 480)
+			return Dimensions(853, 480)
 		}
 
 		override fun configure(
@@ -251,7 +251,7 @@ class QualityModePresetTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun acquireImages(): DlssEvaluationImages = throw UnsupportedOperationException()
+		override fun acquireImages(): EvaluationImages = throw UnsupportedOperationException()
 
 		override fun releaseImages(): Int = throw UnsupportedOperationException()
 

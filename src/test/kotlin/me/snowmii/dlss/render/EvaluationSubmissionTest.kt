@@ -1,19 +1,21 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.EvaluationRequest
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.MotionRequest
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.MotionRequest
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.VulkanContext
-import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.streamline.VulkanContext
+import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.LifecycleAdapter
 
 import java.nio.file.Files
@@ -55,7 +57,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  */
 @NativeBridge
 class EvaluationSubmissionTest {
-	private val output = DlssDimensions(1280, 720)
+	private val output = Dimensions(1280, 720)
 
 	@Test
 	fun `one frame records motion and evaluation in order on the engine's own submission`(
@@ -172,7 +174,11 @@ class EvaluationSubmissionTest {
 					vulkan.physicalDeviceAddress(),
 					vulkan.deviceAddress(),
 					vulkan.queueAddress(),
-					commandBufferSource = {
+					0,
+					0,
+					0,
+					0,
+					Supplier {
 						vulkan.allocateAndBeginCommandBuffer().also { buffer ->
 							taken += buffer
 							// Recorded at the head of the buffer the frame is about to use, so the
@@ -180,7 +186,7 @@ class EvaluationSubmissionTest {
 							vulkan.recordColorClear(buffer, marker.image(), 1f, 1f, 1f, 1f)
 						}
 					},
-					commandBufferSink = { buffer ->
+					Consumer { buffer ->
 						submitted += buffer
 						if (defer) deferred += buffer else vulkan.endSubmitAndWait(buffer)
 					},
@@ -285,11 +291,15 @@ class EvaluationSubmissionTest {
 			2L,
 			3L,
 			4L,
-			commandBufferSource = {
+			0,
+			0,
+			0,
+			0,
+			Supplier {
 				taken++
 				throw AssertionError("no command buffer may be taken without a ready session")
 			},
-			commandBufferSink = { submitted++ },
+			Consumer { submitted++ },
 		)
 		val evaluation = FrameEvaluation(LifecycleAdapter(session, UnusableNative()), { context })
 
@@ -299,7 +309,7 @@ class EvaluationSubmissionTest {
 					color = ImageBinding(1L, 2L, 37),
 					depth = ImageBinding(3L, 4L, 126),
 				),
-				DlssJitterOffset(0, 0f, 0f, DlssDimensions(640, 360)),
+				DlssJitterOffset(0, 0f, 0f, Dimensions(640, 360)),
 				DlssFrameMotion(Matrix4f(), 320f, 180f, 0f, true),
 			),
 		)
@@ -377,7 +387,7 @@ class EvaluationSubmissionTest {
 			dataPath: Path,
 		): Int = unreachable()
 
-		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			unreachable()
 
 		override fun configure(
@@ -389,7 +399,7 @@ class EvaluationSubmissionTest {
 			renderPreset: Int,
 		): Int = unreachable()
 
-		override fun acquireImages(): DlssEvaluationImages = unreachable()
+		override fun acquireImages(): EvaluationImages = unreachable()
 
 		override fun releaseImages(): Int = unreachable()
 

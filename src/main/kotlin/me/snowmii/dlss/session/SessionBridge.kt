@@ -1,6 +1,6 @@
 package me.snowmii.dlss.session
 
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.FgMultiplier
 import me.snowmii.streamline.FgState
 
@@ -30,7 +30,7 @@ interface SessionBridge {
 	 * Re-queries the native render dimensions for a mode and preset chosen while the session
 	 * runs, or null when the reconfigure was refused. Never re-initializes the session.
 	 */
-	fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): DlssDimensions?
+	fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): Dimensions?
 
 	/**
 	 * Blocks until the device has finished every frame already submitted.

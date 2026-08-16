@@ -10,7 +10,7 @@ import com.mojang.blaze3d.textures.GpuTextureView
 import java.nio.ByteBuffer
 import java.nio.file.Path
 import kotlin.io.path.readText
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneTarget
@@ -45,8 +45,8 @@ internal fun repositorySource(path: String): String = repositoryRoot.resolve(pat
 internal fun velocityShaderSource(name: String): String =
 	repositorySource("src/main/resources/assets/mc-dlss/shaders/core/$name.fsh")
 
-internal val OUTPUT_DIMENSIONS = DlssDimensions(2560, 1440)
-internal val RENDER_DIMENSIONS = DlssDimensions(1707, 960)
+internal val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
+internal val RENDER_DIMENSIONS = Dimensions(1707, 960)
 
 internal fun fakeMainTarget(): FakeTarget = FakeTarget(OUTPUT_DIMENSIONS.width, OUTPUT_DIMENSIONS.height)
 

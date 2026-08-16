@@ -1,6 +1,6 @@
 package me.snowmii.dlss.readout
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.DlssSessionState
 
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -20,8 +20,8 @@ class AcceptanceRecordTest {
 			state = DlssSessionState.READY,
 			qualityMode = SRMode.QUALITY,
 			renderPreset = SRMode.QUALITY.defaultPreset,
-			outputDimensions = DlssDimensions(2560, 1440),
-			renderDimensions = DlssDimensions(1706, 960),
+			outputDimensions = Dimensions(2560, 1440),
+			renderDimensions = Dimensions(1706, 960),
 		)
 
 		assertEquals(
@@ -55,7 +55,7 @@ class AcceptanceRecordTest {
 			state = DlssSessionState.FALLBACK_LATCHED,
 			qualityMode = SRMode.PERFORMANCE,
 			renderPreset = SRMode.PERFORMANCE.defaultPreset,
-			outputDimensions = DlssDimensions(2560, 1440),
+			outputDimensions = Dimensions(2560, 1440),
 			renderDimensions = null,
 		)
 
@@ -73,8 +73,8 @@ class AcceptanceRecordTest {
 			state = DlssSessionState.READY,
 			qualityMode = SRMode.QUALITY,
 			renderPreset = SRMode.QUALITY.defaultPreset,
-			outputDimensions = DlssDimensions(2560, 1440),
-			renderDimensions = DlssDimensions(1706, 960),
+			outputDimensions = Dimensions(2560, 1440),
+			renderDimensions = Dimensions(1706, 960),
 		)
 
 		// AC-7 names reviewer, candidate commit, Minecraft build, GPU/driver, Streamline version
@@ -101,7 +101,7 @@ class AcceptanceRecordTest {
 			state = DlssSessionState.DISABLED,
 			qualityMode = SRMode.BALANCED,
 			renderPreset = SRMode.BALANCED.defaultPreset,
-			outputDimensions = DlssDimensions(1920, 1080),
+			outputDimensions = Dimensions(1920, 1080),
 			renderDimensions = null,
 		)
 

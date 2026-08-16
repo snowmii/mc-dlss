@@ -7,7 +7,7 @@ import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.DlssSessionState
 import me.snowmii.dlss.session.LifecycleAdapter
 
@@ -39,8 +39,8 @@ import org.junit.jupiter.api.io.TempDir
  * handle closes (inner) before the fixture closes (outer).
  */
 @NativeBridge
-class DlssEvaluationImagesTest {
-	private val output = DlssDimensions(2560, 1440)
+class EvaluationImagesTest {
+	private val output = Dimensions(2560, 1440)
 
 	@Test
 	fun `configured dimensions produce reusable native motion and output images`(@TempDir dataPath: Path) {
@@ -125,7 +125,7 @@ class DlssEvaluationImagesTest {
 	 */
 	private fun withReadySession(
 		dataPath: Path,
-		block: (Native, DlssSession, LifecycleAdapter, DlssDimensions) -> Unit,
+		block: (Native, DlssSession, LifecycleAdapter, Dimensions) -> Unit,
 	) {
 		val library = nativeLibrary()
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()

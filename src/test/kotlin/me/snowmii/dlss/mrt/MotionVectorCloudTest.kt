@@ -34,7 +34,7 @@ import java.nio.IntBuffer
 import java.util.Optional
 import java.util.OptionalDouble
 import java.util.function.Supplier
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitterOffset
 import net.minecraft.client.renderer.RenderPipelines
@@ -126,7 +126,7 @@ class MotionVectorCloudTest {
 			// missing displacement) all mean the invalid sentinel.
 			val camera = DlssFrameMotion(Matrix4f(), 1f, 1f, 16f, false)
 			val viewProjection = Matrix4f()
-			val jitter = DlssJitterOffset(0, 0f, 0f, DlssDimensions(1280, 720))
+			val jitter = DlssJitterOffset(0, 0f, 0f, Dimensions(1280, 720))
 			assertEquals(
 				objectReprojection(camera, viewProjection, jitter, displacement),
 				CloudVelocityRender.cloudReprojection(camera, viewProjection, jitter, displacement),
@@ -778,8 +778,8 @@ class MotionVectorCloudTest {
 	}
 
 	private companion object {
-		private val OUTPUT_DIMENSIONS = DlssDimensions(2560, 1440)
-		private val RENDER_DIMENSIONS = DlssDimensions(1707, 960)
+		private val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
+		private val RENDER_DIMENSIONS = Dimensions(1707, 960)
 		private val mainTarget = FakeTarget(OUTPUT_DIMENSIONS.width, OUTPUT_DIMENSIONS.height)
 	}
 }

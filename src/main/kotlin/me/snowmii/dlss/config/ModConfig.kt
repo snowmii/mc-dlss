@@ -1,6 +1,6 @@
 package me.snowmii.dlss.config
 
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
 import me.snowmii.dlss.session.DlssStartupConfig
@@ -29,7 +29,7 @@ class ModConfig(
 	val qualityMode: SRMode,
 	/** Preset this session runs; the mode's own documented default unless one was asked for. */
 	val renderPreset: SRModelPreset,
-	val outputDimensions: DlssDimensions,
+	val outputDimensions: Dimensions,
 	val sdkPath: Path?,
 	val nativeLibraryPath: Path?,
 	val dataPath: Path?,
@@ -108,7 +108,7 @@ class ModConfig(
 				enabled = enabled,
 				qualityMode = qualityMode,
 				renderPreset = renderPreset,
-				outputDimensions = DlssDimensions(width, height),
+				outputDimensions = Dimensions(width, height),
 				sdkPath = readPath(properties, SDK_PATH_PROPERTY, warnings),
 				nativeLibraryPath = readPath(properties, NATIVE_LIBRARY_PROPERTY, warnings),
 				dataPath = readPath(properties, DATA_PATH_PROPERTY, warnings),

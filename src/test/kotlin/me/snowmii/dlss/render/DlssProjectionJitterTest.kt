@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 
 import org.joml.Matrix4f
 import org.joml.Vector4f
@@ -17,8 +17,8 @@ import org.junit.jupiter.api.Test
  * effort's depth reversed in the first place.
  */
 class DlssProjectionJitterTest {
-	private val render = DlssDimensions(1280, 720)
-	private val output = DlssDimensions(2560, 1440)
+	private val render = Dimensions(1280, 720)
+	private val output = Dimensions(2560, 1440)
 	private val tolerance = 1e-6f
 
 	private val reversedZ: Matrix4f = Matrix4f().setPerspective(

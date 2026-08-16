@@ -1,19 +1,21 @@
 package me.snowmii.dlss.mrt
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import java.nio.file.Path
 import kotlin.io.path.readText
 import me.snowmii.dlss.nativeSource
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.FillVelocityRequest
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.EvaluationRequest
+import me.snowmii.streamline.FillVelocityRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.VulkanContext
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.SrTagRequest
+import me.snowmii.streamline.VulkanContext
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitter
@@ -287,8 +289,12 @@ class MotionVectorRouteTest {
 			2L,
 			3L,
 			4L,
-			commandBufferSource = { fakeCommandBuffer() },
-			commandBufferSink = {},
+			0,
+			0,
+			0,
+			0,
+			Supplier { fakeCommandBuffer() },
+			Consumer { },
 		)
 		return FrameEvaluation(adapter, { context })
 	}
@@ -336,7 +342,7 @@ class MotionVectorRouteTest {
 
 	/** Records every per-frame native call so the route gate is assertable off the render thread. */
 	private class RecordingNative(
-		private val renderDimensions: DlssDimensions,
+		private val renderDimensions: Dimensions,
 	) : NativeApi {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
@@ -353,8 +359,8 @@ class MotionVectorRouteTest {
 			dataPath: Path,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
-			DlssDimensions(renderDimensions.width, renderDimensions.height)
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
+			Dimensions(renderDimensions.width, renderDimensions.height)
 
 		override fun configure(
 			outputWidth: Int,
@@ -365,9 +371,9 @@ class MotionVectorRouteTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = DlssEvaluationImages(
-			motion = ImageBinding(401L, 402L, 124),
-			output = ImageBinding(501L, 502L, 37),
+		override fun acquireImages(): EvaluationImages = EvaluationImages(
+			ImageBinding(401L, 402L, 124),
+			ImageBinding(501L, 502L, 37),
 		)
 
 		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT

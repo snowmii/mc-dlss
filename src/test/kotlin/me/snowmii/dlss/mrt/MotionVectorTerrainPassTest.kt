@@ -1,6 +1,6 @@
 package me.snowmii.dlss.mrt
 
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneTarget
 import me.snowmii.dlss.session.DlssSession
@@ -122,7 +122,7 @@ class MotionVectorTerrainPassTest {
 	private fun runtime(
 		session: DlssSession,
 		velocityCompanion: Boolean = true,
-		startup: () -> DlssDimensions?,
+		startup: () -> Dimensions?,
 	) = RenderRuntime(
 		session = session,
 		sceneTarget = SceneTarget(

@@ -1,6 +1,6 @@
 package me.snowmii.dlss.readout
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.FgState
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
@@ -295,6 +295,6 @@ class SessionFacts(
 	val state: DlssSessionState,
 	val qualityMode: SRMode,
 	val renderPreset: SRModelPreset,
-	val outputDimensions: DlssDimensions,
-	val renderDimensions: DlssDimensions?,
+	val outputDimensions: Dimensions,
+	val renderDimensions: Dimensions?,
 )

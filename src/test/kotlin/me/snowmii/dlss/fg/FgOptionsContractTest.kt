@@ -2,16 +2,16 @@ package me.snowmii.dlss.fg
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
+import me.snowmii.streamline.PresentTarget
 import me.snowmii.dlss.session.DlssNativeStage
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssSessionState
@@ -153,7 +153,7 @@ class FgOptionsContractTest {
 	@Test
 	fun `adapter records FG options only when ready and latches failures`() {
 		val native = FakeNative()
-		val outputDimensions = DlssDimensions(2560, 1440)
+		val outputDimensions = Dimensions(2560, 1440)
 		val session = DlssSession(config(outputDimensions))
 		val adapter = LifecycleAdapter(session, native)
 
@@ -197,7 +197,7 @@ class FgOptionsContractTest {
 	private fun probeGraphicsQueueFamily(): Int =
 		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 
-	private fun config(outputDimensions: DlssDimensions) = DlssStartupConfig(
+	private fun config(outputDimensions: Dimensions) = DlssStartupConfig(
 		enabled = true,
 		qualityMode = SRMode.QUALITY,
 		outputDimensions = outputDimensions,
@@ -231,7 +231,7 @@ class FgOptionsContractTest {
 		): Int = NativeApi.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
-			DlssDimensions(1280, 720)
+			Dimensions(1280, 720)
 
 		override fun configure(
 			outputWidth: Int,
@@ -242,7 +242,7 @@ class FgOptionsContractTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = error("unexpected acquireImages")
+		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
 		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")

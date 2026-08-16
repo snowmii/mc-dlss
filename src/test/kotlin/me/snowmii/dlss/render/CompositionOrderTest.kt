@@ -1,15 +1,17 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.PresentTarget
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import me.snowmii.streamline.PresentTarget
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.VulkanContext
-import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.streamline.VulkanContext
+import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.LifecycleAdapter
 
 import java.nio.file.Files
@@ -51,7 +53,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  */
 @NativeBridge
 class CompositionOrderTest {
-	private val output = DlssDimensions(1280, 720)
+	private val output = Dimensions(1280, 720)
 
 	@Test
 	fun `the upscaled frame is copied into the engine target after the evaluation that produced it`(
@@ -158,8 +160,12 @@ class CompositionOrderTest {
 					vulkan.physicalDeviceAddress(),
 					vulkan.deviceAddress(),
 					vulkan.queueAddress(),
-					commandBufferSource = { vulkan.allocateAndBeginCommandBuffer() },
-					commandBufferSink = { buffer: VkCommandBuffer -> vulkan.endSubmitAndWait(buffer) },
+					0,
+					0,
+					0,
+					0,
+					Supplier { vulkan.allocateAndBeginCommandBuffer() },
+					Consumer { buffer: VkCommandBuffer -> vulkan.endSubmitAndWait(buffer) },
 				)
 				val evaluation = FrameEvaluation(adapter, { context })
 				val scene = SceneResources(
@@ -207,9 +213,9 @@ class CompositionOrderTest {
 					NativeApi.SUCCESS_RESULT,
 					native.presentOutput(
 						PresentTarget(
-							commandBuffer = refusal.address(),
-							image = mainTarget.image(),
-							outputDimensions = DlssDimensions(output.width / 2, output.height / 2),
+							refusal.address(),
+							mainTarget.image(),
+							Dimensions(output.width / 2, output.height / 2),
 						),
 					),
 					"a destination size the configuration does not name must be refused",
@@ -219,9 +225,9 @@ class CompositionOrderTest {
 					NativeApi.SUCCESS_RESULT,
 					native.presentOutput(
 						PresentTarget(
-							commandBuffer = refusal.address(),
-							image = evaluation.evaluationImages!!.output.image,
-							outputDimensions = output,
+							refusal.address(),
+							evaluation.evaluationImages!!.output.image,
+							output,
 						),
 					),
 				)
@@ -243,7 +249,7 @@ class CompositionOrderTest {
 		}
 	}
 
-	private fun frameMotion(render: DlssDimensions, reset: Boolean) = DlssFrameMotion(
+	private fun frameMotion(render: Dimensions, reset: Boolean) = DlssFrameMotion(
 		reprojection = Matrix4f(),
 		motionScaleX = render.width / 2f,
 		motionScaleY = render.height / 2f,

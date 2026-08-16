@@ -1,4 +1,5 @@
 package me.snowmii.dlss.mrt
+import java.util.function.Consumer;
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.buffers.GpuBuffer
@@ -28,17 +29,17 @@ import java.nio.ByteBuffer
 import java.nio.file.Path
 import java.util.OptionalDouble
 import java.util.function.Supplier
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.FillVelocityRequest
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.EvaluationRequest
+import me.snowmii.streamline.FillVelocityRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.VulkanContext
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.SrTagRequest
+import me.snowmii.streamline.VulkanContext
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitter
 import me.snowmii.dlss.render.DlssJitterOffset
@@ -547,8 +548,12 @@ class MotionVectorMrtTest {
 			2L,
 			3L,
 			4L,
-			commandBufferSource = { fakeCommandBuffer() },
-			commandBufferSink = {},
+			0,
+			0,
+			0,
+			0,
+			Supplier { fakeCommandBuffer() },
+			Consumer { },
 		)
 		return FrameEvaluation(adapter, { context })
 	}
@@ -573,7 +578,7 @@ class MotionVectorMrtTest {
 
 	/** Records every per-frame native call so the fill boundary is assertable off the render thread. */
 	private class RecordingNative(
-		private val renderDimensions: DlssDimensions,
+		private val renderDimensions: Dimensions,
 	) : NativeApi {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
@@ -590,8 +595,8 @@ class MotionVectorMrtTest {
 			dataPath: Path,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
-			DlssDimensions(renderDimensions.width, renderDimensions.height)
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
+			Dimensions(renderDimensions.width, renderDimensions.height)
 
 		override fun configure(
 			outputWidth: Int,
@@ -602,9 +607,9 @@ class MotionVectorMrtTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = DlssEvaluationImages(
-			motion = ImageBinding(401L, 402L, 124),
-			output = ImageBinding(501L, 502L, 37),
+		override fun acquireImages(): EvaluationImages = EvaluationImages(
+			ImageBinding(401L, 402L, 124),
+			ImageBinding(501L, 502L, 37),
 		)
 
 		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT
@@ -644,7 +649,7 @@ class MotionVectorMrtTest {
 	}
 
 	private companion object {
-		val RENDER_DIMENSIONS = DlssDimensions(1280, 720)
-		val OUTPUT_DIMENSIONS = DlssDimensions(2560, 1440)
+		val RENDER_DIMENSIONS = Dimensions(1280, 720)
+		val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 	}
 }

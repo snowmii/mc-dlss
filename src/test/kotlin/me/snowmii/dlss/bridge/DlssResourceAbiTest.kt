@@ -1,4 +1,12 @@
 package me.snowmii.dlss.bridge
+import me.snowmii.streamline.CameraConstants;
+import me.snowmii.streamline.Dimensions;
+import me.snowmii.streamline.EvaluationImages;
+import me.snowmii.streamline.EvaluationRequest;
+import me.snowmii.streamline.FillVelocityRequest;
+import me.snowmii.streamline.ImageBinding;
+import me.snowmii.streamline.MotionRequest;
+import me.snowmii.streamline.PresentTarget;
 
 import me.snowmii.streamline.Vec2
 
@@ -27,7 +35,7 @@ class DlssResourceAbiTest {
 		) { _, method, arguments ->
 			when (method.name) {
 				"initialize", "configure" -> NativeApi.SUCCESS_RESULT
-				"queryOptimalDimensions" -> DlssDimensions(1280, 720)
+				"queryOptimalDimensions" -> Dimensions(1280, 720)
 				"evaluate" -> {
 					evaluated = arguments[0] as EvaluationRequest
 					NativeApi.SUCCESS_RESULT
@@ -35,23 +43,23 @@ class DlssResourceAbiTest {
 				else -> error("Unexpected native call: ${method.name}")
 			}
 		} as NativeApi
-		val outputDimensions = DlssDimensions(2560, 1440)
+		val outputDimensions = Dimensions(2560, 1440)
 		val adapter = LifecycleAdapter(DlssSession(config(outputDimensions)), native)
-		val request = request()
+		val request = request().build()
 
 		assertEquals(
-			DlssDimensions(1280, 720),
+			Dimensions(1280, 720),
 			adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")),
 		)
 		assertTrue(adapter.evaluate(request))
 		// The engine's two images cross untouched, and the render size the bridge checks its
 		// caller against is added by the adapter rather than by whoever described the frame.
-		assertEquals(request.copy(renderDimensions = DlssDimensions(1280, 720)), evaluated)
+		assertEquals(request().renderDimensions(Dimensions(1280, 720)).build(), evaluated)
 	}
 
 	@Test
 	fun compiledFfmBindingMatchesTheNativeStructLayout() {
-		val request = request().copy(renderDimensions = DlssDimensions(1280, 720))
+		val request = request().renderDimensions(Dimensions(1280, 720)).build()
 		assertTrue(Files.isRegularFile(Path.of("build", "native", "mc_dlss.dll")))
 
 		// The probe is compiled against native/mc_dlss.h itself, so it reads every field at the
@@ -66,7 +74,7 @@ class DlssResourceAbiTest {
 			// frame's floats, and a longer one would write past the field.
 			malformedCameras().forEach { malformed ->
 				assertThrows(IllegalArgumentException::class.java) {
-					native.evaluate(request.copy(camera = malformed))
+					native.evaluate(request().renderDimensions(Dimensions(1280, 720)).camera(malformed).build())
 				}
 			}
 			// The refusals left the scratch intact: a valid camera still crosses unchanged.
@@ -75,10 +83,10 @@ class DlssResourceAbiTest {
 				NativeApi.SUCCESS_RESULT,
 				native.writeMotion(
 					MotionRequest(
-						commandBuffer = 101L,
-						depth = ImageBinding(301L, 302L, 303),
-						reprojection = FloatArray(16) { it.toFloat() },
-						renderDimensions = DlssDimensions(1280, 720),
+						101L,
+						ImageBinding(301L, 302L, 303),
+						FloatArray(16) { it.toFloat() },
+						Dimensions(1280, 720),
 					),
 				),
 			)
@@ -88,12 +96,12 @@ class DlssResourceAbiTest {
 				NativeApi.SUCCESS_RESULT,
 				native.fillVelocity(
 					FillVelocityRequest(
-						commandBuffer = 101L,
-						depth = ImageBinding(301L, 302L, 303),
-						velocity = ImageBinding(701L, 702L, 124),
-						reprojection = FloatArray(16) { it.toFloat() },
-						reset = true,
-						renderDimensions = DlssDimensions(1280, 720),
+						101L,
+						ImageBinding(301L, 302L, 303),
+						ImageBinding(701L, 702L, 124),
+						FloatArray(16) { it.toFloat() },
+						true,
+						Dimensions(1280, 720),
 					),
 				),
 			)
@@ -101,18 +109,18 @@ class DlssResourceAbiTest {
 				NativeApi.SUCCESS_RESULT,
 				native.presentOutput(
 					PresentTarget(
-						commandBuffer = 101L,
-						image = 601L,
-						outputDimensions = DlssDimensions(2560, 1440),
+						101L,
+						601L,
+						Dimensions(2560, 1440),
 					),
 				),
 			)
 			// The out-parameter direction of the same struct: the bridge fills two McDlssImage
 			// values and the binding has to read back exactly what was written.
 			assertEquals(
-				DlssEvaluationImages(
-					motion = ImageBinding(401L, 402L, 403),
-					output = ImageBinding(501L, 502L, 503),
+				EvaluationImages(
+					ImageBinding(401L, 402L, 403),
+					ImageBinding(501L, 502L, 503),
 				),
 				native.acquireImages(),
 			)
@@ -255,31 +263,30 @@ class DlssResourceAbiTest {
 		return library
 	}
 
-	private fun request() = EvaluationRequest(
-		commandBuffer = 101L,
-		color = ImageBinding(201L, 202L, 203),
-		depth = ImageBinding(301L, 302L, 303),
-		jitter = Vec2(0.25f, -0.5f),
-		motionScale = Vec2(1.25f, 1.5f),
-		frameTimeMilliseconds = 16.7f,
-		resetHistory = true,
-		camera = CAMERA,
-	)
+	private fun request() = EvaluationRequest.builder()
+		.commandBuffer(101L)
+		.color(ImageBinding(201L, 202L, 203))
+		.depth(ImageBinding(301L, 302L, 303))
+		.jitter(Vec2(0.25f, -0.5f))
+		.motionScale(Vec2(1.25f, 1.5f))
+		.frameTimeMilliseconds(16.7f)
+		.resetHistory(true)
+		.camera(CAMERA)
 
 	/**
 	 * One malformed variant per camera array: each is a length the ABI field cannot hold, so
 	 * the boundary must refuse it before the struct is written.
 	 */
 	private fun malformedCameras(): List<CameraConstants> = listOf(
-		CAMERA.copy(viewToClip = FloatArray(15)),
-		CAMERA.copy(clipToView = FloatArray(17)),
-		CAMERA.copy(pos = FloatArray(2)),
-		CAMERA.copy(right = FloatArray(4)),
-		CAMERA.copy(up = FloatArray(1)),
-		CAMERA.copy(fwd = FloatArray(0)),
+		CameraConstants(FloatArray(15), CAMERA.clipToView, CAMERA.pos, CAMERA.right, CAMERA.up, CAMERA.fwd),
+		CameraConstants(CAMERA.viewToClip, FloatArray(17), CAMERA.pos, CAMERA.right, CAMERA.up, CAMERA.fwd),
+		CameraConstants(CAMERA.viewToClip, CAMERA.clipToView, FloatArray(2), CAMERA.right, CAMERA.up, CAMERA.fwd),
+		CameraConstants(CAMERA.viewToClip, CAMERA.clipToView, CAMERA.pos, FloatArray(4), CAMERA.up, CAMERA.fwd),
+		CameraConstants(CAMERA.viewToClip, CAMERA.clipToView, CAMERA.pos, CAMERA.right, FloatArray(1), CAMERA.fwd),
+		CameraConstants(CAMERA.viewToClip, CAMERA.clipToView, CAMERA.pos, CAMERA.right, CAMERA.up, FloatArray(0)),
 	)
 
-	private fun config(outputDimensions: DlssDimensions) = DlssStartupConfig(
+	private fun config(outputDimensions: Dimensions) = DlssStartupConfig(
 		enabled = true,
 		qualityMode = SRMode.QUALITY,
 		outputDimensions = outputDimensions,
@@ -292,12 +299,12 @@ class DlssResourceAbiTest {
 	private companion object {
 		/** The standing-in camera whose floats the ABI probe verifies field by field. */
 		private val CAMERA = CameraConstants(
-			viewToClip = FloatArray(16) { (it + 1).toFloat() },
-			clipToView = FloatArray(16) { (101 + it).toFloat() },
-			pos = floatArrayOf(201f, 202f, 203f),
-			right = floatArrayOf(301f, 302f, 303f),
-			up = floatArrayOf(401f, 402f, 403f),
-			fwd = floatArrayOf(501f, 502f, 503f),
+			FloatArray(16) { (it + 1).toFloat() },
+			FloatArray(16) { (101 + it).toFloat() },
+			floatArrayOf(201f, 202f, 203f),
+			floatArrayOf(301f, 302f, 303f),
+			floatArrayOf(401f, 402f, 403f),
+			floatArrayOf(501f, 502f, 503f),
 		)
 	}
 }

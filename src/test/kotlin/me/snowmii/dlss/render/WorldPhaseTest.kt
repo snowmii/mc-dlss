@@ -2,7 +2,7 @@ package me.snowmii.dlss.render
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
@@ -20,8 +20,8 @@ import org.junit.jupiter.api.Test
  * open, what every other seam sees, and what reaches the main target when it closes.
  */
 class WorldPhaseTest {
-	private val output = DlssDimensions(2560, 1440)
-	private val render = DlssDimensions(1707, 960)
+	private val output = Dimensions(2560, 1440)
+	private val render = Dimensions(1707, 960)
 	private val mainTarget = FakeTarget(output.width, output.height)
 
 	private val presented = mutableListOf<Pair<RenderTarget, RenderTarget>>()
@@ -318,7 +318,7 @@ class WorldPhaseTest {
 		}
 	}
 
-	private fun runtime(session: DlssSession, startup: () -> DlssDimensions?) = RenderRuntime(
+	private fun runtime(session: DlssSession, startup: () -> Dimensions?) = RenderRuntime(
 		session = session,
 		sceneTarget = SceneTarget(
 			allocate = { width, height -> FakeTarget(width, height) },

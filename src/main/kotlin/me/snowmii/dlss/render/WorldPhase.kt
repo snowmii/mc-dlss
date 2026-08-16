@@ -1,10 +1,10 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.readout.FramePacingProbe
 import me.snowmii.dlss.readout.SessionFacts
 import me.snowmii.dlss.readout.SessionReadout
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.mrt.MotionVectorPipeline
 import me.snowmii.dlss.mrt.MotionVectorRoute
@@ -306,7 +306,7 @@ class WorldPhase(
 		scene = if (mainTarget.width > 0 && mainTarget.height > 0) {
 			runtime.beginWorldPhase(
 				normalInWorldFrame,
-				DlssDimensions(mainTarget.width, mainTarget.height),
+				Dimensions(mainTarget.width, mainTarget.height),
 				snapshot,
 			)
 		} else {
@@ -556,9 +556,9 @@ class WorldPhase(
 			return SceneResources(
 				color = color,
 				depth = ImageBinding(
-					view = depth.vkImageView(),
-					image = depth.texture().vkImage(),
-					format = VulkanConst.toVk(depth.texture().getFormat()),
+					depth.vkImageView(),
+					depth.texture().vkImage(),
+					VulkanConst.toVk(depth.texture().getFormat()),
 				),
 			)
 		}
@@ -571,9 +571,9 @@ class WorldPhase(
 		internal fun colorBindingOf(target: RenderTarget): ImageBinding? {
 			val color = target.colorTextureView as? VulkanGpuTextureView ?: return null
 			return ImageBinding(
-				view = color.vkImageView(),
-				image = color.texture().vkImage(),
-				format = VulkanConst.toVk(color.texture().getFormat()),
+				color.vkImageView(),
+				color.texture().vkImage(),
+				VulkanConst.toVk(color.texture().getFormat()),
 			)
 		}
 
@@ -588,9 +588,9 @@ class WorldPhase(
 		private fun velocityBindingOf(view: GpuTextureView?): ImageBinding? {
 			val vulkan = view as? VulkanGpuTextureView ?: return null
 			return ImageBinding(
-				view = vulkan.vkImageView(),
-				image = vulkan.texture().vkImage(),
-				format = VulkanConst.toVk(vulkan.texture().getFormat()),
+				vulkan.vkImageView(),
+				vulkan.texture().vkImage(),
+				VulkanConst.toVk(vulkan.texture().getFormat()),
 			)
 		}
 

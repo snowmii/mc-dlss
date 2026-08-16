@@ -1,5 +1,5 @@
 package me.snowmii.dlss.session
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 
 import java.util.Locale
 
@@ -74,7 +74,7 @@ class DlssSession(
 		return true
 	}
 
-	fun beginFrame(normalInWorldFrame: Boolean, outputDimensions: DlssDimensions): DlssFrameDecision {
+	fun beginFrame(normalInWorldFrame: Boolean, outputDimensions: Dimensions): DlssFrameDecision {
 		return when {
 			state == DlssSessionState.DISABLED -> vanilla("disabled-by-configuration")
 			state == DlssSessionState.FALLBACK_LATCHED -> vanilla("latched-fallback")

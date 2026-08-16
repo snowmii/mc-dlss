@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test
  * survive untouched, or the accumulation this effort exists for would restart while simply flying.
  */
 class CameraDiscontinuityTest {
-	private val render = DlssDimensions(1280, 720)
+	private val render = Dimensions(1280, 720)
 	private val tolerance = 1e-4f
 
 	private val projection: Matrix4f = Matrix4f().setPerspective(

@@ -1,4 +1,7 @@
 package me.snowmii.dlss.bridge
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import me.snowmii.streamline.VulkanContext;
 
 import me.snowmii.dlss.NativeBridge
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -23,11 +26,16 @@ class VulkanContextAccessTest {
 	fun capturesNonZeroHandlesAndProducesRecordingCommandBuffer() {
 		HeadlessVulkanFixture().use { fixture ->
 			val context = VulkanContext.fromNativeHandles(
-				instance = fixture.instanceAddress(),
-				vkPhysicalDevice = fixture.physicalDeviceAddress(),
-				vkDevice = fixture.deviceAddress(),
-				vkQueue = fixture.queueAddress(),
-				commandBufferSource = { fixture.allocateAndBeginCommandBuffer() },
+				fixture.instanceAddress(),
+				fixture.physicalDeviceAddress(),
+				fixture.deviceAddress(),
+				fixture.queueAddress(),
+				0,
+				0,
+				0,
+				0,
+				Supplier { fixture.allocateAndBeginCommandBuffer() },
+				Consumer { },
 			)
 
 			// Handles present and are the real headless context's handles.

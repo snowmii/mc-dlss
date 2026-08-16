@@ -1,12 +1,12 @@
 package me.snowmii.dlss.session
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.MotionRequest
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.MotionRequest
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.NativeException
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.EvaluationRequest
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -19,7 +19,7 @@ import org.junit.jupiter.params.provider.MethodSource
 import java.nio.file.Path
 
 class DlssSessionTest {
-	private val output = DlssDimensions(2560, 1440)
+	private val output = Dimensions(2560, 1440)
 
 	@Test
 	fun disabledConfigurationAlwaysUsesVanilla() {
@@ -66,7 +66,7 @@ class DlssSessionTest {
 		assertEquals(DlssFrameRoute.VANILLA, session.beginFrame(false, output).route)
 		assertEquals(
 			DlssFrameRoute.VANILLA,
-			session.beginFrame(true, DlssDimensions(1920, 1080)).route,
+			session.beginFrame(true, Dimensions(1920, 1080)).route,
 		)
 	}
 
@@ -144,16 +144,24 @@ class DlssSessionTest {
 		val session = DlssSession(config())
 		val adapter = LifecycleAdapter(session, native)
 		assertTrue(adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) != null)
-		val request = EvaluationRequest(
-			commandBuffer = 10L,
-			color = ImageBinding(11L, 12L, 13),
-			depth = ImageBinding(21L, 22L, 23),
-		)
+		val request = EvaluationRequest.builder()
+			.commandBuffer(10L)
+			.color(ImageBinding(11L, 12L, 13))
+			.depth(ImageBinding(21L, 22L, 23))
+			.build()
 
 		assertTrue(adapter.evaluate(request))
 		// The adapter stamps the configured render size on the way through; everything the caller
 		// described crosses untouched.
-		assertEquals(request.copy(renderDimensions = DlssDimensions(1280, 720)), native.lastEvaluation)
+		assertEquals(
+			EvaluationRequest.builder()
+				.commandBuffer(10L)
+				.color(ImageBinding(11L, 12L, 13))
+				.depth(ImageBinding(21L, 22L, 23))
+				.renderDimensions(Dimensions(1280, 720))
+				.build(),
+			native.lastEvaluation,
+		)
 	}
 
 	class FakeNative(
@@ -188,10 +196,10 @@ class DlssSessionTest {
 			outputWidth: Int,
 			outputHeight: Int,
 			qualityMode: Int,
-		): DlssDimensions {
+		): Dimensions {
 			queryCalls++
 			queryResult?.let { throw NativeException("query-dimensions", it) }
-			return DlssDimensions(1280, 720)
+			return Dimensions(1280, 720)
 		}
 
 		override fun configure(
@@ -206,12 +214,12 @@ class DlssSessionTest {
 			return configureResult
 		}
 
-		override fun acquireImages(): DlssEvaluationImages {
+		override fun acquireImages(): EvaluationImages {
 			acquireImageCalls++
 			acquireImagesResult?.let { throw NativeException("acquire-images", it) }
-			return DlssEvaluationImages(
-			motion = ImageBinding(0x1002, 0x1001, 83),
-			output = ImageBinding(0x2002, 0x2001, 37),
+			return EvaluationImages(
+				ImageBinding(0x1002, 0x1001, 83),
+				ImageBinding(0x2002, 0x2001, 37),
 			)
 		}
 

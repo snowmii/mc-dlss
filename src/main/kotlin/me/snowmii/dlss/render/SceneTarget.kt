@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.DlssFrameRoute
 
 import com.mojang.blaze3d.GpuFormat
@@ -34,7 +34,7 @@ class SceneTarget(
 ) : AutoCloseable {
 	private var target: RenderTarget? = null
 	private var velocity: RenderTarget? = null
-	private var dimensions: DlssDimensions? = null
+	private var dimensions: Dimensions? = null
 
 	/** The currently held scene target, or null when the last route was vanilla. */
 	val current: RenderTarget?
@@ -50,7 +50,7 @@ class SceneTarget(
 		get() = velocity
 
 	/** Dimensions the held target was allocated at, or null when nothing is held. */
-	val currentDimensions: DlssDimensions?
+	val currentDimensions: Dimensions?
 		get() = dimensions
 
 	/**

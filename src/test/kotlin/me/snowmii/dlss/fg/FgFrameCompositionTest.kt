@@ -1,19 +1,22 @@
 package me.snowmii.dlss.fg
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import java.nio.file.Path
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.CameraConstants
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.FgTagRequest
-import me.snowmii.dlss.bridge.FillVelocityRequest
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.EvaluationRequest
+import me.snowmii.streamline.FgTagRequest
+import me.snowmii.streamline.FillVelocityRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.VulkanContext
-import me.snowmii.dlss.bridge.rowMajorOf
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.SrTagRequest
+import me.snowmii.streamline.VulkanContext
+
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
@@ -97,10 +100,10 @@ class FgFrameCompositionTest {
 		)
 		assertEquals(
 			FgTagRequest(
-				commandBuffer = calls.fgTags.first().commandBuffer,
-				depth = scene().depth,
-				hudless = fgInputs().hudless,
-				ui = fgInputs().ui,
+				calls.fgTags.first().commandBuffer,
+				scene().depth,
+				fgInputs().hudless,
+				fgInputs().ui,
 			),
 			calls.fgTags.first(),
 			"the pre-SR FG tag must name the frame's depth and the resolved HUD-less and UI targets",
@@ -255,11 +258,11 @@ class FgFrameCompositionTest {
 		// sl::Constants surface - the clip-to-prev-clip pair and the frustum scalars - which is
 		// what was actually missing when generated frames ghosted upside down.
 		assertTrue(
-			constants.viewToClip.contentEquals(rowMajorOf(projection)),
+			constants.viewToClip.contentEquals(CameraConstants.rowMajorOf(projection)),
 			"viewToClip must be the sample's unjittered projection in row-major ABI layout",
 		)
 		assertTrue(
-			constants.clipToView.contentEquals(rowMajorOf(Matrix4f(projection).invert())),
+			constants.clipToView.contentEquals(CameraConstants.rowMajorOf(Matrix4f(projection).invert())),
 			"clipToView must be the inverse projection in row-major ABI layout",
 		)
 		assertTrue(
@@ -318,11 +321,11 @@ class FgFrameCompositionTest {
 		// what turned the generated frames into an upside-down world ghost while the rendered
 		// frames stayed correct.
 		assertTrue(
-			constants.clipToPrevClip.contentEquals(rowMajorOf(step)),
+			constants.clipToPrevClip.contentEquals(CameraConstants.rowMajorOf(step)),
 			"clipToPrevClip must be the frame's jitter-free camera step",
 		)
 		assertTrue(
-			constants.prevClipToClip.contentEquals(rowMajorOf(Matrix4f(step).invert())),
+			constants.prevClipToClip.contentEquals(CameraConstants.rowMajorOf(Matrix4f(step).invert())),
 			"prevClipToClip must be its inverse - sl_consts.h defines it as exactly that",
 		)
 		// The frustum scalars describe the projection the frame rasterized with. Minecraft
@@ -383,11 +386,15 @@ class FgFrameCompositionTest {
 			2L,
 			3L,
 			4L,
-			commandBufferSource = {
+			0,
+			0,
+			0,
+			0,
+			Supplier {
 				counters.buffers++
 				fakeCommandBuffer()
 			},
-			commandBufferSink = { counters.submits++ },
+			Consumer { counters.submits++ },
 		)
 		return Harness(
 			evaluation = FrameEvaluation(
@@ -463,7 +470,7 @@ class FgFrameCompositionTest {
 			dataPath: Path,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			RENDER_DIMENSIONS
 
 		override fun configure(
@@ -475,9 +482,9 @@ class FgFrameCompositionTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = DlssEvaluationImages(
-			motion = ImageBinding(401L, 402L, 124),
-			output = ImageBinding(501L, 502L, 37),
+		override fun acquireImages(): EvaluationImages = EvaluationImages(
+			ImageBinding(401L, 402L, 124),
+			ImageBinding(501L, 502L, 37),
 		)
 
 		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT
@@ -532,8 +539,8 @@ class FgFrameCompositionTest {
 	}
 
 	private companion object {
-		val RENDER_DIMENSIONS = DlssDimensions(1280, 720)
-		val OUTPUT_DIMENSIONS = DlssDimensions(2560, 1440)
+		val RENDER_DIMENSIONS = Dimensions(1280, 720)
+		val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 
 		/** The engine's output-sized main target image the frame's SR output copy records into. */
 		const val DESTINATION = 900L

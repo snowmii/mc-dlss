@@ -4,7 +4,7 @@ import com.mojang.blaze3d.IndexType
 import com.mojang.blaze3d.PrimitiveTopology
 import com.mojang.blaze3d.systems.ScissorState
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitterOffset
 import me.snowmii.dlss.render.RenderRuntime
@@ -361,7 +361,7 @@ class MotionVectorMovingBlockTest {
 	fun `moving block reprojection composes the offset delta and invalidates without a predecessor`() {
 		val camera = DlssFrameMotion(Matrix4f(), 1f, 1f, 16f, false)
 		val viewProjection = Matrix4f()
-		val jitter = DlssJitterOffset(0, 0f, 0f, DlssDimensions(1280, 720))
+		val jitter = DlssJitterOffset(0, 0f, 0f, Dimensions(1280, 720))
 
 		val delta = Vector3f(0.25f, 0f, -0.5f)
 		assertEquals(

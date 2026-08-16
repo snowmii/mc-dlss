@@ -3,19 +3,19 @@ package me.snowmii.dlss.fg
 import java.nio.file.Files
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.dlss.session.DlssNativeStage
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssSessionState
@@ -231,13 +231,13 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -258,18 +258,18 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -313,18 +313,18 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -346,13 +346,13 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -372,13 +372,13 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -397,18 +397,18 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -434,13 +434,13 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -453,18 +453,18 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -485,13 +485,13 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -504,18 +504,18 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -559,13 +559,13 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -584,18 +584,18 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -688,13 +688,13 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -707,18 +707,18 @@ class FgEvaluationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -784,7 +784,7 @@ class FgEvaluationTest {
 	@Test
 	fun `adapter gates present handoff on READY and latches failures`() {
 		val native = FakeNative()
-		val outputDimensions = DlssDimensions(2560, 1440)
+		val outputDimensions = Dimensions(2560, 1440)
 		val session = DlssSession(config(outputDimensions))
 		val adapter = LifecycleAdapter(session, native)
 
@@ -826,7 +826,7 @@ class FgEvaluationTest {
 		depth: HeadlessVulkanFixture.EngineImage,
 		hudless: HeadlessVulkanFixture.EngineImage,
 		ui: HeadlessVulkanFixture.EngineImage,
-		images: DlssEvaluationImages,
+		images: EvaluationImages,
 	) {
 		assertTrue(
 			fixture.validationEnabled(),
@@ -866,7 +866,7 @@ class FgEvaluationTest {
 	private fun probeGraphicsQueueFamily(): Int =
 		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 
-	private fun config(outputDimensions: DlssDimensions) = DlssStartupConfig(
+	private fun config(outputDimensions: Dimensions) = DlssStartupConfig(
 		enabled = true,
 		qualityMode = SRMode.QUALITY,
 		outputDimensions = outputDimensions,
@@ -898,7 +898,7 @@ class FgEvaluationTest {
 		): Int = NativeApi.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
-			DlssDimensions(1280, 720)
+			Dimensions(1280, 720)
 
 		override fun configure(
 			outputWidth: Int,
@@ -909,7 +909,7 @@ class FgEvaluationTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = error("unexpected acquireImages")
+		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
 		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")

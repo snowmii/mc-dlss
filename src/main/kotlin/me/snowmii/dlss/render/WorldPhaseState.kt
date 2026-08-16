@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render
 
 import com.mojang.blaze3d.pipeline.RenderTarget
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.mrt.ObjectMotionState
 
 /**
@@ -57,7 +57,7 @@ class WorldPhaseState {
 	 * Rebuilds both sequences for a new render size: the jitter sequence whose length is the
 	 * pixel ratio, and the motion reprojection whose scale is the render dimensions.
 	 */
-	fun rebuild(renderDimensions: DlssDimensions, outputDimensions: DlssDimensions) {
+	fun rebuild(renderDimensions: Dimensions, outputDimensions: Dimensions) {
 		jitter = DlssJitter(renderDimensions, outputDimensions)
 		motion = DlssCameraMotion(renderDimensions)
 	}

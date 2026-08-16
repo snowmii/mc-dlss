@@ -6,7 +6,7 @@ import com.mojang.blaze3d.vulkan.VulkanInstance;
 import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
 import com.mojang.blaze3d.vulkan.checkpoints.CheckpointExtension;
 import me.snowmii.dlss.bridge.ExtensionBootstrap;
-import me.snowmii.dlss.bridge.VulkanContext;
+import me.snowmii.streamline.VulkanContext;
 import me.snowmii.dlss.bridge.VulkanContextRegistry;
 import org.lwjgl.vulkan.VkDevice;
 import org.spongepowered.asm.mixin.Mixin;

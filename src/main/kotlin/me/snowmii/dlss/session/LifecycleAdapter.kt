@@ -1,17 +1,17 @@
 package me.snowmii.dlss.session
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.bridge.NativeException
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgState
 import me.snowmii.streamline.FgMultiplier
-import me.snowmii.dlss.bridge.FgTagRequest
-import me.snowmii.dlss.bridge.FillVelocityRequest
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.FgTagRequest
+import me.snowmii.streamline.FillVelocityRequest
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.SrTagRequest
 import java.nio.file.Path
 
 /**
@@ -27,7 +27,7 @@ class LifecycleAdapter(
 	private val session: DlssSession,
 	private val native: NativeApi,
 ) : SessionBridge {
-	private var renderDimensions: DlssDimensions? = null
+	private var renderDimensions: Dimensions? = null
 
 	fun initialize(
 		vkInstance: Long,
@@ -35,7 +35,7 @@ class LifecycleAdapter(
 		vkDevice: Long,
 		sdkPath: Path,
 		dataPath: Path,
-	): DlssDimensions? {
+	): Dimensions? {
 		if (session.state != DlssSessionState.WAITING_FOR_VULKAN) {
 			return null
 		}
@@ -85,7 +85,7 @@ class LifecycleAdapter(
 	 * exactly like any other native stage - a session whose mode change was refused knows nothing
 	 * about what it is now configured to.
 	 */
-	override fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): DlssDimensions? {
+	override fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): Dimensions? {
 		if (session.state != DlssSessionState.READY) {
 			return null
 		}
@@ -164,7 +164,7 @@ class LifecycleAdapter(
 	 * A failure here latches the session exactly like any other native stage, because a session
 	 * that cannot allocate the images DLSS writes into has nothing left to try.
 	 */
-	fun acquireImages(): DlssEvaluationImages? {
+	fun acquireImages(): EvaluationImages? {
 		if (session.state != DlssSessionState.READY) {
 			return null
 		}
@@ -221,7 +221,7 @@ class LifecycleAdapter(
 
 		val dimensions = renderDimensions ?: return false
 		return invokeStatus(DlssNativeStage.WRITE_MOTION) {
-			native.writeMotion(request.copy(renderDimensions = dimensions))
+			native.writeMotion(MotionRequest(request.commandBuffer, request.depth, request.reprojection, dimensions))
 		}
 	}
 
@@ -245,7 +245,9 @@ class LifecycleAdapter(
 
 		val dimensions = renderDimensions ?: return false
 		return invokeStatus(DlssNativeStage.WRITE_MOTION) {
-			native.fillVelocity(request.copy(renderDimensions = dimensions))
+			native.fillVelocity(
+				FillVelocityRequest(request.commandBuffer, request.depth, request.velocity, request.reprojection, request.reset, dimensions),
+			)
 		}
 	}
 
@@ -296,7 +298,19 @@ class LifecycleAdapter(
 
 		val dimensions = renderDimensions ?: return false
 		return invokeStatus(DlssNativeStage.EVALUATE) {
-			native.evaluate(request.copy(renderDimensions = dimensions))
+			native.evaluate(
+				EvaluationRequest.builder()
+					.commandBuffer(request.commandBuffer)
+					.color(request.color)
+					.depth(request.depth)
+					.jitter(request.jitter)
+					.motionScale(request.motionScale)
+					.frameTimeMilliseconds(request.frameTimeMilliseconds)
+					.resetHistory(request.resetHistory)
+					.renderDimensions(dimensions)
+					.camera(request.camera)
+					.build(),
+			)
 		}
 	}
 
@@ -482,7 +496,7 @@ class LifecycleAdapter(
 
 		return invokeStatus(DlssNativeStage.PRESENT_OUTPUT) {
 			native.presentOutput(
-				destination.copy(outputDimensions = session.config.outputDimensions),
+				PresentTarget(destination.commandBuffer, destination.image, session.config.outputDimensions),
 			)
 		}
 	}
@@ -506,7 +520,7 @@ class LifecycleAdapter(
 		return false
 	}
 
-	private fun invokeDimensions(operation: () -> DlssDimensions): DlssDimensions? {
+	private fun invokeDimensions(operation: () -> Dimensions): Dimensions? {
 		return try {
 			operation()
 		} catch (error: NativeException) {

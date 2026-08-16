@@ -6,7 +6,7 @@ import me.snowmii.dlss.readout.AcceptanceRecord
 import me.snowmii.dlss.readout.FramePacingProbe
 import me.snowmii.dlss.bridge.VulkanContextRegistry
 import me.snowmii.dlss.readout.SessionReadout
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
 import me.snowmii.dlss.session.DlssSession
@@ -31,8 +31,8 @@ import com.mojang.blaze3d.textures.GpuTextureView
 /** Dimension policy consumed by renderer hooks before world target allocation. */
 data class WorldTargetRoute(
 	val frame: DlssFrameDecision,
-	val worldDimensions: DlssDimensions,
-	val mainTargetDimensions: DlssDimensions,
+	val worldDimensions: Dimensions,
+	val mainTargetDimensions: Dimensions,
 )
 
 /**
@@ -62,7 +62,7 @@ data class WorldTargetRoute(
 class RenderRuntime(
 	private val session: DlssSession,
 	sceneTarget: SceneTarget,
-	private val startup: () -> DlssDimensions?,
+	private val startup: () -> Dimensions?,
 	private val clock: () -> Long = System::nanoTime,
 	/**
 	 * Records this frame's DLSS work, or null for a runtime that only routes targets. The world
@@ -99,7 +99,7 @@ class RenderRuntime(
 	 * resumes it. Defaults to the two signals [beginWorldPhase] itself carries, so runtimes
 	 * without client wiring - tests, target-only sessions - classify by frame and size.
 	 */
-	private val fgFrameSupported: (Boolean, DlssDimensions) -> Boolean =
+	private val fgFrameSupported: (Boolean, Dimensions) -> Boolean =
 		{ normalInWorldFrame, outputDimensions ->
 			normalInWorldFrame && outputDimensions == session.config.outputDimensions
 		},
@@ -165,7 +165,7 @@ class RenderRuntime(
 		get() = resources.currentVelocityView
 
 	/** Streamline-queried render dimensions, or null until a successful startup. */
-	var renderDimensions: DlssDimensions? = null
+	var renderDimensions: Dimensions? = null
 		private set
 
 	/** Startup configuration this runtime's session resolved. */
@@ -278,7 +278,7 @@ class RenderRuntime(
 	 */
 	fun beginWorldPhase(
 		normalInWorldFrame: Boolean,
-		outputDimensions: DlssDimensions,
+		outputDimensions: Dimensions,
 		camera: DlssCameraSample? = null,
 	): RenderTarget? {
 		// Switched off takes effect before startup is ever attempted, so a session that begins
@@ -596,7 +596,7 @@ class RenderRuntime(
 	 * the phase accumulates, and the render dimensions themselves, which are the routing
 	 * decision's one source of truth.
 	 */
-	private fun rebuildFrom(dimensions: DlssDimensions) {
+	private fun rebuildFrom(dimensions: Dimensions) {
 		renderDimensions = dimensions
 		phase.rebuild(dimensions, session.config.outputDimensions)
 	}
@@ -608,7 +608,7 @@ class RenderRuntime(
 	 * renders at the output size. The render dimensions are this runtime's own field, so there is
 	 * exactly one copy of them for the whole route path.
 	 */
-	private fun routeFrame(normalInWorldFrame: Boolean, outputDimensions: DlssDimensions): WorldTargetRoute {
+	private fun routeFrame(normalInWorldFrame: Boolean, outputDimensions: Dimensions): WorldTargetRoute {
 		val frame = session.beginFrame(normalInWorldFrame, outputDimensions)
 		// A DLSS route is only possible once startup set the render dimensions; a route that is
 		// somehow DLSS without them degrades to the output size rather than a null target.

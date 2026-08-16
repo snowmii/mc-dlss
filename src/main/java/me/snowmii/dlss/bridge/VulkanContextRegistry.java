@@ -1,5 +1,7 @@
 package me.snowmii.dlss.bridge;
 
+import me.snowmii.streamline.VulkanContext;
+
 /**
  * Mod-level holder for the captured Minecraft Vulkan context. Registered once at
  * {@code com.mojang.blaze3d.vulkan.VulkanDevice} construction by

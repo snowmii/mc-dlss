@@ -4,21 +4,21 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.CameraConstants
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.CameraConstants
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgTagRequest
-import me.snowmii.dlss.bridge.FillVelocityRequest
+import me.snowmii.streamline.FgTagRequest
+import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.NativeException
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.Vec2
-import me.snowmii.dlss.bridge.rowMajorOf
+
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -277,14 +277,14 @@ class FgImageOrientationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.writeMotion(
 						MotionRequest(
-							commandBuffer = frame1.address(),
-							depth = ImageBinding(
+							frame1.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							reprojection = reprojection,
-							renderDimensions = dimensions,
+							reprojection,
+							dimensions,
 						),
 					),
 					"the camera-only motion pass must record",
@@ -378,20 +378,20 @@ class FgImageOrientationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.fillVelocity(
 						FillVelocityRequest(
-							commandBuffer = frame2.address(),
-							depth = ImageBinding(
+							frame2.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							velocity = ImageBinding(
+							ImageBinding(
 								velocity.view(),
 								velocity.image(),
 								VK10.VK_FORMAT_R16G16_SFLOAT,
 							),
-							reprojection = reprojection,
-							reset = false,
-							renderDimensions = dimensions,
+							reprojection,
+							false,
+							dimensions,
 						),
 					),
 					"the velocity-MRT fill must record",
@@ -440,25 +440,25 @@ class FgImageOrientationTest {
 		hudless: HeadlessVulkanFixture.EngineImage,
 		ui: HeadlessVulkanFixture.EngineImage,
 		color: HeadlessVulkanFixture.EngineImage,
-		dimensions: DlssDimensions,
+		dimensions: Dimensions,
 		reset: Boolean,
 	) {
 		assertEquals(
 			NativeApi.SUCCESS_RESULT,
 			bridge.tagFgResources(
 				FgTagRequest(
-					commandBuffer = frame.address(),
-					depth = ImageBinding(
+					frame.address(),
+					ImageBinding(
 						depth.view(),
 						depth.image(),
 						VK10.VK_FORMAT_D32_SFLOAT,
 					),
-					hudless = ImageBinding(
+					ImageBinding(
 						hudless.view(),
 						hudless.image(),
 						VK10.VK_FORMAT_R8G8B8A8_UNORM,
 					),
-					ui = ImageBinding(
+					ImageBinding(
 						ui.view(),
 						ui.image(),
 						VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -471,13 +471,13 @@ class FgImageOrientationTest {
 			NativeApi.SUCCESS_RESULT,
 			bridge.tagSrResources(
 				SrTagRequest(
-					commandBuffer = frame.address(),
-					color = ImageBinding(
+					frame.address(),
+					ImageBinding(
 						color.view(),
 						color.image(),
 						VK10.VK_FORMAT_R8G8B8A8_UNORM,
 					),
-					depth = ImageBinding(
+					ImageBinding(
 						depth.view(),
 						depth.image(),
 						VK10.VK_FORMAT_D32_SFLOAT,
@@ -489,25 +489,25 @@ class FgImageOrientationTest {
 		assertEquals(
 			NativeApi.SUCCESS_RESULT,
 			bridge.evaluate(
-				EvaluationRequest(
-					commandBuffer = frame.address(),
-					color = ImageBinding(
+				EvaluationRequest.builder()
+					.commandBuffer(frame.address())
+					.color(ImageBinding(
 						color.view(),
 						color.image(),
 						VK10.VK_FORMAT_R8G8B8A8_UNORM,
-					),
-					depth = ImageBinding(
+					))
+					.depth(ImageBinding(
 						depth.view(),
 						depth.image(),
 						VK10.VK_FORMAT_D32_SFLOAT,
-					),
-					jitter = Vec2(0.25f, -0.5f),
-					motionScale = Vec2(1f, 1f),
-					frameTimeMilliseconds = 16.6f,
-					resetHistory = reset,
-					renderDimensions = dimensions,
-					camera = TEST_CAMERA,
-				),
+					))
+					.jitter(Vec2(0.25f, -0.5f))
+					.motionScale(Vec2(1f, 1f))
+					.frameTimeMilliseconds(16.6f)
+					.resetHistory(reset)
+					.renderDimensions(dimensions)
+					.camera(TEST_CAMERA)
+					.build(),
 			),
 			"the evaluation must record the frame's constants on both viewports",
 		)
@@ -515,18 +515,18 @@ class FgImageOrientationTest {
 			NativeApi.SUCCESS_RESULT,
 			bridge.tagFgResources(
 				FgTagRequest(
-					commandBuffer = frame.address(),
-					depth = ImageBinding(
+					frame.address(),
+					ImageBinding(
 						depth.view(),
 						depth.image(),
 						VK10.VK_FORMAT_D32_SFLOAT,
 					),
-					hudless = ImageBinding(
+					ImageBinding(
 						hudless.view(),
 						hudless.image(),
 						VK10.VK_FORMAT_R8G8B8A8_UNORM,
 					),
-					ui = ImageBinding(
+					ImageBinding(
 						ui.view(),
 						ui.image(),
 						VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -670,13 +670,21 @@ class FgImageOrientationTest {
 	 * The jitter's y negates, and everything else - the world-space position and basis and
 	 * the frustum scalars - is orientation-free and carries unchanged.
 	 */
-	private fun flippedForBackbuffer(camera: CameraConstants): CameraConstants = camera.copy(
-		viewToClip = columnYFlipped(camera.viewToClip),
-		clipToView = rowYFlipped(camera.clipToView),
-		clipToPrevClip = conjugatedY(camera.clipToPrevClip),
-		prevClipToClip = conjugatedY(camera.prevClipToClip),
-		jitterX = camera.jitterX,
-		jitterY = -camera.jitterY,
+	private fun flippedForBackbuffer(camera: CameraConstants): CameraConstants = CameraConstants(
+		columnYFlipped(camera.viewToClip),
+		rowYFlipped(camera.clipToView),
+		camera.pos,
+		camera.right,
+		camera.up,
+		camera.fwd,
+		conjugatedY(camera.clipToPrevClip),
+		conjugatedY(camera.prevClipToClip),
+		camera.near,
+		camera.far,
+		camera.fovRadians,
+		camera.aspectRatio,
+		camera.jitterX,
+		-camera.jitterY,
 	)
 
 	/** Output-side y flip M' = M · F: column 1 negated - flat indices 1, 5, 9, 13. */
@@ -1057,18 +1065,18 @@ class FgImageOrientationTest {
 			)
 			val step = Matrix4f().translation(0.03f, -0.02f, 0.01f).rotateY(0.05f)
 			CameraConstants(
-				viewToClip = rowMajorOf(projection),
-				clipToView = rowMajorOf(Matrix4f(projection).invert()),
-				pos = floatArrayOf(12f, 64f, -48f),
-				right = right,
-				up = up,
-				fwd = fwd,
-				clipToPrevClip = rowMajorOf(step),
-				prevClipToClip = rowMajorOf(Matrix4f(step).invert()),
-				near = 0.05f,
-				far = 1000f,
-				fovRadians = Math.toRadians(70.0).toFloat(),
-				aspectRatio = 16f / 9f,
+				CameraConstants.rowMajorOf(projection),
+				CameraConstants.rowMajorOf(Matrix4f(projection).invert()),
+				floatArrayOf(12f, 64f, -48f),
+				right,
+				up,
+				fwd,
+				CameraConstants.rowMajorOf(step),
+				CameraConstants.rowMajorOf(Matrix4f(step).invert()),
+				0.05f,
+				1000f,
+				Math.toRadians(70.0).toFloat(),
+				16f / 9f,
 			)
 		}
 	}

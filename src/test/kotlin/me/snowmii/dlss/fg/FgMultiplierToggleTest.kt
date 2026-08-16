@@ -2,16 +2,16 @@ package me.snowmii.dlss.fg
 import me.snowmii.dlss.session.TestSessionBridge
 
 import java.nio.file.Path
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgMultiplier
-import me.snowmii.dlss.bridge.FillVelocityRequest
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.FillVelocityRequest
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.dlss.client.RuntimeControls
 import me.snowmii.dlss.readout.AcceptanceRecord
 import me.snowmii.dlss.render.RenderRuntime
@@ -221,7 +221,7 @@ class FgMultiplierToggleTest {
 		DlssStartupConfig(
 			enabled = true,
 			qualityMode = SRMode.QUALITY,
-			outputDimensions = DlssDimensions(2560, 1440),
+			outputDimensions = Dimensions(2560, 1440),
 			sdkPath = null,
 			nativeLibraryPath = null,
 			dataPath = null,
@@ -237,8 +237,8 @@ class FgMultiplierToggleTest {
 				state = DlssSessionState.READY,
 				qualityMode = SRMode.QUALITY,
 				renderPreset = SRMode.QUALITY.defaultPreset,
-				outputDimensions = DlssDimensions(2560, 1440),
-				renderDimensions = DlssDimensions(1706, 960),
+				outputDimensions = Dimensions(2560, 1440),
+				renderDimensions = Dimensions(1706, 960),
 				fgMultiplier = multiplier ?: AcceptanceRecord.activeFgMultiplier,
 			)
 		}
@@ -251,8 +251,8 @@ class FgMultiplierToggleTest {
 				state = DlssSessionState.READY,
 				qualityMode = SRMode.QUALITY,
 				renderPreset = SRMode.QUALITY.defaultPreset,
-				outputDimensions = DlssDimensions(2560, 1440),
-				renderDimensions = DlssDimensions(1706, 960),
+				outputDimensions = Dimensions(2560, 1440),
+				renderDimensions = Dimensions(1706, 960),
 			)
 		} else {
 			render(fgMultiplier)
@@ -300,7 +300,7 @@ class FgMultiplierToggleTest {
 			dataPath: Path,
 		): Int = error("unexpected initialize")
 
-		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			error("unexpected queryOptimalDimensions")
 
 		override fun configure(
@@ -312,7 +312,7 @@ class FgMultiplierToggleTest {
 			renderPreset: Int,
 		): Int = error("unexpected configure")
 
-		override fun acquireImages(): DlssEvaluationImages = error("unexpected acquireImages")
+		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
 		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
@@ -344,7 +344,7 @@ class FgMultiplierToggleTest {
 		): Int = NativeApi.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
-			DlssDimensions(1280, 720)
+			Dimensions(1280, 720)
 
 		override fun configure(
 			outputWidth: Int,
@@ -355,7 +355,7 @@ class FgMultiplierToggleTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = error("unexpected acquireImages")
+		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
 		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")

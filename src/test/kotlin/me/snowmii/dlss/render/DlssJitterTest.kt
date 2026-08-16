@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -11,9 +11,9 @@ import kotlin.math.abs
  * the upscale ratio, and expresses one offset in both the units its two consumers need.
  */
 class DlssJitterTest {
-	private val output = DlssDimensions(2560, 1440)
-	private val quality = DlssDimensions(1707, 960)
-	private val performance = DlssDimensions(1280, 720)
+	private val output = Dimensions(2560, 1440)
+	private val quality = Dimensions(1707, 960)
+	private val performance = Dimensions(1280, 720)
 
 	@Test
 	fun `the sequence is a pure function of its phase`() {

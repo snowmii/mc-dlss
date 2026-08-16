@@ -1,19 +1,19 @@
 package me.snowmii.dlss.client
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.EvaluationRequest
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.DlssSessionState
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.render.SceneTarget
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
@@ -45,7 +45,7 @@ import java.nio.file.Path
  * the session exactly as it was, and that what the reviewer is told is what is actually running.
  */
 class RuntimeControlsTest {
-	private val output = DlssDimensions(2560, 1440)
+	private val output = Dimensions(2560, 1440)
 	private val mainTarget = FakeTarget(output.width, output.height)
 
 	@Test
@@ -302,15 +302,15 @@ class RuntimeControlsTest {
 		/** Records the calls whose *order* is the invariant, not just their count. */
 		var log: ((String) -> Unit)? = null
 		var configureResult = NativeApi.SUCCESS_RESULT
-		var lastConfiguredRender: DlssDimensions? = null
+		var lastConfiguredRender: Dimensions? = null
 		var lastConfiguredPreset: Int? = null
 
-		fun renderFor(mode: SRMode): DlssDimensions = when (mode) {
-			SRMode.DLAA -> DlssDimensions(2560, 1440)
-			SRMode.QUALITY -> DlssDimensions(1280, 720)
-			SRMode.BALANCED -> DlssDimensions(1485, 835)
-			SRMode.PERFORMANCE -> DlssDimensions(1706, 960)
-			SRMode.ULTRA_PERFORMANCE -> DlssDimensions(853, 480)
+		fun renderFor(mode: SRMode): Dimensions = when (mode) {
+			SRMode.DLAA -> Dimensions(2560, 1440)
+			SRMode.QUALITY -> Dimensions(1280, 720)
+			SRMode.BALANCED -> Dimensions(1485, 835)
+			SRMode.PERFORMANCE -> Dimensions(1706, 960)
+			SRMode.ULTRA_PERFORMANCE -> Dimensions(853, 480)
 		}
 
 		override fun initialize(
@@ -328,7 +328,7 @@ class RuntimeControlsTest {
 			outputWidth: Int,
 			outputHeight: Int,
 			qualityMode: Int,
-		): DlssDimensions = renderFor(SRMode.entries.first { it.ngxValue == qualityMode })
+		): Dimensions = renderFor(SRMode.entries.first { it.ngxValue == qualityMode })
 
 		override fun configure(
 			outputWidth: Int,
@@ -341,14 +341,14 @@ class RuntimeControlsTest {
 			if (configureResult != NativeApi.SUCCESS_RESULT) {
 				return configureResult
 			}
-			lastConfiguredRender = DlssDimensions(renderWidth, renderHeight)
+			lastConfiguredRender = Dimensions(renderWidth, renderHeight)
 			lastConfiguredPreset = renderPreset
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun acquireImages() = DlssEvaluationImages(
-			motion = ImageBinding(0x1002, 0x1001, 83),
-			output = ImageBinding(0x2002, 0x2001, 37),
+		override fun acquireImages() = EvaluationImages(
+			ImageBinding(0x1002, 0x1001, 83),
+			ImageBinding(0x2002, 0x2001, 37),
 		)
 
 		override fun releaseImages(): Int {

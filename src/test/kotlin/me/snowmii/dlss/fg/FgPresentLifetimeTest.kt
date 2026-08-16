@@ -1,23 +1,25 @@
 package me.snowmii.dlss.fg
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgTagRequest
-import me.snowmii.dlss.bridge.FillVelocityRequest
+import me.snowmii.streamline.FgTagRequest
+import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.SrTagRequest
-import me.snowmii.dlss.bridge.VulkanContext
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.SrTagRequest
+import me.snowmii.streamline.VulkanContext
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitter
@@ -225,11 +227,15 @@ class FgPresentLifetimeTest {
 			2L,
 			3L,
 			4L,
-			commandBufferSource = {
+			0,
+			0,
+			0,
+			0,
+			Supplier {
 				counters.buffers++
 				fakeCommandBuffer()
 			},
-			commandBufferSink = { counters.submits++ },
+			Consumer { counters.submits++ },
 		)
 		val evaluation = FrameEvaluation(
 			adapter,
@@ -366,7 +372,7 @@ class FgPresentLifetimeTest {
 			dataPath: Path,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			RENDER_DIMENSIONS
 
 		override fun configure(
@@ -378,9 +384,9 @@ class FgPresentLifetimeTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = DlssEvaluationImages(
-			motion = ImageBinding(401L, 402L, 124),
-			output = ImageBinding(501L, 502L, 37),
+		override fun acquireImages(): EvaluationImages = EvaluationImages(
+			ImageBinding(401L, 402L, 124),
+			ImageBinding(501L, 502L, 37),
 		)
 
 		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT
@@ -452,8 +458,8 @@ class FgPresentLifetimeTest {
 	}
 
 	private companion object {
-		val RENDER_DIMENSIONS = DlssDimensions(1280, 720)
-		val OUTPUT_DIMENSIONS = DlssDimensions(2560, 1440)
+		val RENDER_DIMENSIONS = Dimensions(1280, 720)
+		val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 
 		/** The engine's output-sized main target image the frame's SR output copy records into. */
 		const val DESTINATION = 900L

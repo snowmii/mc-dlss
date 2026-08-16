@@ -3,7 +3,7 @@ import me.snowmii.dlss.session.TestSessionBridge
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.DlssSessionState
 import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.dlss.session.DlssNativeStage
@@ -22,8 +22,8 @@ import org.junit.jupiter.api.Test
  * dimensions, and hands the world phase the right target for every route.
  */
 class RenderRuntimeTest {
-	private val output = DlssDimensions(2560, 1440)
-	private val render = DlssDimensions(1707, 960)
+	private val output = Dimensions(2560, 1440)
+	private val render = Dimensions(1707, 960)
 
 	private val allocated = mutableListOf<FakeTarget>()
 	private val released = mutableListOf<FakeTarget>()
@@ -207,7 +207,7 @@ class RenderRuntimeTest {
 		assertEquals(DlssSessionState.CLOSED, session.state)
 	}
 
-	private fun runtime(session: DlssSession, startup: () -> DlssDimensions?) = RenderRuntime(
+	private fun runtime(session: DlssSession, startup: () -> Dimensions?) = RenderRuntime(
 		session = session,
 		sceneTarget = SceneTarget(
 			allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },

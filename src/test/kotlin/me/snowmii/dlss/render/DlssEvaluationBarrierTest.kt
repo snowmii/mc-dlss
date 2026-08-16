@@ -1,15 +1,15 @@
 package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.LifecycleAdapter
 
 import java.nio.file.Files
@@ -44,7 +44,7 @@ import org.junit.jupiter.api.io.TempDir
  */
 @NativeBridge
 class DlssEvaluationBarrierTest {
-	private val output = DlssDimensions(2560, 1440)
+	private val output = Dimensions(2560, 1440)
 
 	@Test
 	fun `evaluation records transitions that submit clean and restore engine images to general`(
@@ -223,13 +223,13 @@ class DlssEvaluationBarrierTest {
 		commandBuffer: Long,
 		color: HeadlessVulkanFixture.EngineImage,
 		depth: HeadlessVulkanFixture.EngineImage,
-	): EvaluationRequest = EvaluationRequest(
-		commandBuffer = commandBuffer,
-		color = ImageBinding(color.view(), color.image(), color.format()),
-		depth = ImageBinding(depth.view(), depth.image(), depth.format()),
-		frameTimeMilliseconds = 16.6f,
-		resetHistory = true,
-	)
+	): EvaluationRequest = EvaluationRequest.builder()
+		.commandBuffer(commandBuffer)
+		.color(ImageBinding(color.view(), color.image(), color.format()))
+		.depth(ImageBinding(depth.view(), depth.image(), depth.format()))
+		.frameTimeMilliseconds(16.6f)
+		.resetHistory(true)
+		.build()
 
 	/** The frame's engine images, tagged the way FrameEvaluation tags them before evaluating. */
 	private fun tagRequest(
@@ -237,9 +237,9 @@ class DlssEvaluationBarrierTest {
 		color: HeadlessVulkanFixture.EngineImage,
 		depth: HeadlessVulkanFixture.EngineImage,
 	): SrTagRequest = SrTagRequest(
-		commandBuffer = commandBuffer,
-		color = ImageBinding(color.view(), color.image(), color.format()),
-		depth = ImageBinding(depth.view(), depth.image(), depth.format()),
+		commandBuffer,
+		ImageBinding(color.view(), color.image(), color.format()),
+		ImageBinding(depth.view(), depth.image(), depth.format()),
 	)
 
 	/**

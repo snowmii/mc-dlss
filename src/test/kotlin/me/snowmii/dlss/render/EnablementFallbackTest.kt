@@ -1,15 +1,15 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.MotionRequest
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.MotionRequest
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.DlssSessionState
 import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.dlss.session.DlssNativeStage
@@ -43,8 +43,8 @@ import java.nio.file.Path
  * nothing here needs a GPU.
  */
 class EnablementFallbackTest {
-	private val output = DlssDimensions(2560, 1440)
-	private val render = DlssDimensions(1280, 720)
+	private val output = Dimensions(2560, 1440)
+	private val render = Dimensions(1280, 720)
 
 	private val mainTarget = FakeTarget(output.width, output.height)
 
@@ -226,7 +226,9 @@ class EnablementFallbackTest {
 		fun latchDiagnostics() = diagnostics.filter { it.startsWith("DLSS fallback latched") }
 
 		/** One evaluation through the adapter, which takes every handle as a plain value. */
-		fun evaluate(): Boolean = adapter.evaluate(EvaluationRequest(commandBuffer = 0xF00DL))
+		fun evaluate(): Boolean = adapter.evaluate(EvaluationRequest.builder()
+			.commandBuffer(0xF00DL)
+			.build())
 
 		private fun camera(x: Double) = DlssCameraSample(
 			projection = Matrix4f().perspective(1.2f, 16f / 9f, 0.05f, 1000f),
@@ -253,7 +255,7 @@ class EnablementFallbackTest {
 	}
 
 	/** The native bridge as results, which is all the enablement and fallback paths read of it. */
-	private class FakeNative(private val initializeResult: Int, private val render: DlssDimensions) : NativeApi {
+	private class FakeNative(private val initializeResult: Int, private val render: Dimensions) : NativeApi {
 		var initializeCalls = 0
 		var evaluateCalls = 0
 		var evaluateResult = NativeApi.SUCCESS_RESULT
@@ -280,9 +282,9 @@ class EnablementFallbackTest {
 			renderPreset: Int,
 		) = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages() = DlssEvaluationImages(
-			motion = ImageBinding(0x1002, 0x1001, 83),
-			output = ImageBinding(0x2002, 0x2001, 37),
+		override fun acquireImages() = EvaluationImages(
+			ImageBinding(0x1002, 0x1001, 83),
+			ImageBinding(0x2002, 0x2001, 37),
 		)
 
 		override fun releaseImages() = NativeApi.SUCCESS_RESULT

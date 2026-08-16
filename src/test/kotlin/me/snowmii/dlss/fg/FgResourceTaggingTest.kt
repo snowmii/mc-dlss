@@ -2,18 +2,18 @@ package me.snowmii.dlss.fg
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
+import me.snowmii.streamline.PresentTarget
 import me.snowmii.dlss.session.DlssNativeStage
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssSessionState
@@ -64,7 +64,12 @@ class FgResourceTaggingTest {
 		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				FAIL_NOT_INITIALIZED,
-				bridge.tagFgResources(FgTagRequest()),
+				bridge.tagFgResources(FgTagRequest(
+					0,
+					ImageBinding(0, 0, 0),
+					ImageBinding(0, 0, 0),
+					ImageBinding(0, 0, 0),
+				)),
 				"tagFgResources before bootstrap must answer FAIL_NotInitialized",
 			)
 		}
@@ -112,15 +117,22 @@ class FgResourceTaggingTest {
 				// is recorded.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.tagFgResources(FgTagRequest(commandBuffer = 0)),
+					bridge.tagFgResources(FgTagRequest(
+						0,
+						ImageBinding(0, 0, 0),
+						ImageBinding(0, 0, 0),
+						ImageBinding(0, 0, 0),
+					)),
 					"a tag without a command buffer must answer FAIL_InvalidParameter",
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = 1L,
-							depth = ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
+							1L,
+							ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
+							ImageBinding(0, 0, 0),
+							ImageBinding(0, 0, 0),
 						),
 					),
 					"a tag with an unfilled HUD-less image must answer FAIL_InvalidParameter",
@@ -197,10 +209,10 @@ class FgResourceTaggingTest {
 					FAIL_INVALID_PARAMETER,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = 1L,
-							depth = ImageBinding(301L, 302L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							hudless = ImageBinding(401L, 402L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							ui = ImageBinding(501L, 502L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							1L,
+							ImageBinding(301L, 302L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							ImageBinding(401L, 402L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							ImageBinding(501L, 502L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
 						),
 					),
 					"a depth image not in the recorded D32_SFLOAT format must answer " +
@@ -210,10 +222,10 @@ class FgResourceTaggingTest {
 					FAIL_INVALID_PARAMETER,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = 1L,
-							depth = ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
-							hudless = ImageBinding(401L, 402L, VK10.VK_FORMAT_B8G8R8A8_UNORM),
-							ui = ImageBinding(501L, 502L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							1L,
+							ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
+							ImageBinding(401L, 402L, VK10.VK_FORMAT_B8G8R8A8_UNORM),
+							ImageBinding(501L, 502L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
 						),
 					),
 					"a HUD-less image not in the recorded R8G8B8A8_UNORM format must answer " +
@@ -223,10 +235,10 @@ class FgResourceTaggingTest {
 					FAIL_INVALID_PARAMETER,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = 1L,
-							depth = ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
-							hudless = ImageBinding(401L, 402L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							ui = ImageBinding(501L, 502L, VK10.VK_FORMAT_B8G8R8A8_UNORM),
+							1L,
+							ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
+							ImageBinding(401L, 402L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							ImageBinding(501L, 502L, VK10.VK_FORMAT_B8G8R8A8_UNORM),
 						),
 					),
 					"a UI image not in the recorded R8G8B8A8_UNORM format must answer " +
@@ -259,10 +271,10 @@ class FgResourceTaggingTest {
 					VK10.VK_IMAGE_ASPECT_COLOR_BIT,
 				)
 				val tagRequest = FgTagRequest(
-					commandBuffer = 0,
-					depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-					hudless = ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-					ui = ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+					0,
+					ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+					ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+					ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
 				)
 
 				// The frame's four tags record on ONE buffer: depth, motion, HUD-less, and UI
@@ -272,12 +284,12 @@ class FgResourceTaggingTest {
 				val frame = fixture.allocateAndBeginCommandBuffer()
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(tagRequest.copy(commandBuffer = frame.address())),
+					bridge.tagFgResources(FgTagRequest(frame.address(), tagRequest.depth, tagRequest.hudless, tagRequest.ui)),
 					"the frame's DLSS-G resources must tag on the caller's command buffer",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(tagRequest.copy(commandBuffer = frame.address())),
+					bridge.tagFgResources(FgTagRequest(frame.address(), tagRequest.depth, tagRequest.hudless, tagRequest.ui)),
 					"a repeated tag for the same frame must reuse the retained frame token",
 				)
 				fixture.endSubmitAndWait(frame)
@@ -289,14 +301,14 @@ class FgResourceTaggingTest {
 	@Test
 	fun `adapter gates FG tags on READY and latches failures`() {
 		val native = FakeNative()
-		val outputDimensions = DlssDimensions(2560, 1440)
+		val outputDimensions = Dimensions(2560, 1440)
 		val session = DlssSession(config(outputDimensions))
 		val adapter = LifecycleAdapter(session, native)
 		val request = FgTagRequest(
-			commandBuffer = 101L,
-			depth = ImageBinding(301L, 302L, 303),
-			hudless = ImageBinding(401L, 402L, 403),
-			ui = ImageBinding(501L, 502L, 503),
+			101L,
+			ImageBinding(301L, 302L, 303),
+			ImageBinding(401L, 402L, 403),
+			ImageBinding(501L, 502L, 503),
 		)
 
 		// Not ready yet: the tag must not reach the bridge.
@@ -333,7 +345,7 @@ class FgResourceTaggingTest {
 		depth: HeadlessVulkanFixture.EngineImage,
 		hudless: HeadlessVulkanFixture.EngineImage,
 		ui: HeadlessVulkanFixture.EngineImage,
-		images: DlssEvaluationImages,
+		images: EvaluationImages,
 	) {
 		assertTrue(
 			fixture.validationEnabled(),
@@ -371,7 +383,7 @@ class FgResourceTaggingTest {
 	private fun probeGraphicsQueueFamily(): Int =
 		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 
-	private fun config(outputDimensions: DlssDimensions) = DlssStartupConfig(
+	private fun config(outputDimensions: Dimensions) = DlssStartupConfig(
 		enabled = true,
 		qualityMode = SRMode.QUALITY,
 		outputDimensions = outputDimensions,
@@ -388,10 +400,10 @@ class FgResourceTaggingTest {
 	 * passes through or is refused by.
 	 */
 	private fun validTagRequest() = FgTagRequest(
-		commandBuffer = 1L,
-		depth = ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
-		hudless = ImageBinding(401L, 402L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
-		ui = ImageBinding(501L, 502L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
+		1L,
+		ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
+		ImageBinding(401L, 402L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
+		ImageBinding(501L, 502L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
 	)
 
 	/**
@@ -418,7 +430,7 @@ class FgResourceTaggingTest {
 		): Int = NativeApi.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
-			DlssDimensions(1280, 720)
+			Dimensions(1280, 720)
 
 		override fun configure(
 			outputWidth: Int,
@@ -429,7 +441,7 @@ class FgResourceTaggingTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = error("unexpected acquireImages")
+		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
 		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")

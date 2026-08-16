@@ -1,5 +1,5 @@
 package me.snowmii.dlss.fg
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.client.RuntimeControls
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneTarget
@@ -162,7 +162,7 @@ class FgSwapchainReconfigureTest {
 		DlssStartupConfig(
 			enabled = true,
 			qualityMode = SRMode.QUALITY,
-			outputDimensions = DlssDimensions(2560, 1440),
+			outputDimensions = Dimensions(2560, 1440),
 			sdkPath = null,
 			nativeLibraryPath = null,
 			dataPath = null,

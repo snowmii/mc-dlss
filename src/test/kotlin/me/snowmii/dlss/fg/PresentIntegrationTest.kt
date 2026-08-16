@@ -2,14 +2,14 @@ package me.snowmii.dlss.fg
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -231,18 +231,18 @@ class PresentIntegrationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -255,13 +255,13 @@ class PresentIntegrationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -292,27 +292,27 @@ class PresentIntegrationTest {
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.evaluate(
-						EvaluationRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+						EvaluationRequest.builder()
+							.commandBuffer(frame.address())
+							.color(ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
-							),
-							depth = ImageBinding(
+							))
+							.depth(ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
-							),
+							))
 							// The offset is in render pixels, the unit the jitter sequence is in.
 							// The motion buffer is normalized device units, so the scale that
 							// normalizes it onto [-1,1] is one.
-							jitter = Vec2(0.25f, -0.5f),
-							motionScale = Vec2(1f, 1f),
-							frameTimeMilliseconds = 16.6f,
-							resetHistory = true,
-							renderDimensions = dimensions,
-						),
+							.jitter(Vec2(0.25f, -0.5f))
+							.motionScale(Vec2(1f, 1f))
+							.frameTimeMilliseconds(16.6f)
+							.resetHistory(true)
+							.renderDimensions(dimensions)
+							.build(),
 					),
 					"the SR evaluation must record on the tagged frame's shared buffer",
 				)
@@ -328,18 +328,18 @@ class PresentIntegrationTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,

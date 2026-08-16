@@ -348,7 +348,7 @@ class MotionVectorCameraOnlyRetirementTest {
 			"src/main/resources/assets/mc-dlss/shaders/core/velocity_entity.fsh",
 			"src/main/resources/assets/mc-dlss/shaders/core/velocity_block.fsh",
 			"src/main/resources/assets/mc-dlss/shaders/core/velocity_clouds.fsh",
-			"src/main/kotlin/me/snowmii/dlss/bridge/FillVelocityRequest.kt",
+			"src/main/java/me/snowmii/streamline/FillVelocityRequest.java",
 		)
 	}
 }

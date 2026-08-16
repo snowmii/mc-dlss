@@ -3,7 +3,7 @@ import me.snowmii.dlss.nativeSource
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
@@ -34,8 +34,8 @@ import kotlin.math.abs
  * effort's depth reversed.
  */
 class MotionJitterTest {
-	private val output = DlssDimensions(2560, 1440)
-	private val render = DlssDimensions(1280, 720)
+	private val output = Dimensions(2560, 1440)
+	private val render = Dimensions(1280, 720)
 	private val tolerance = 1e-4f
 
 	private val projection: Matrix4f = Matrix4f().setPerspective(

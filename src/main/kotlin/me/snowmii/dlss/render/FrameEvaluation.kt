@@ -1,19 +1,19 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.CameraConstants
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.CameraConstants
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
-import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.streamline.EvaluationRequest
+import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.FgState
-import me.snowmii.dlss.bridge.FillVelocityRequest
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.FillVelocityRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.rowMajorOf
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.PresentTarget
+
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.Vec2
-import me.snowmii.dlss.bridge.VulkanContext
+import me.snowmii.streamline.VulkanContext
 import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.readout.SessionReadout
@@ -132,7 +132,7 @@ class FrameEvaluation(
 	 */
 	private val fgInputs: () -> FgFrameInputs? = { null },
 ) : AutoCloseable {
-	private var images: DlssEvaluationImages? = null
+	private var images: EvaluationImages? = null
 	private var reportedFirstEvaluation = false
 
 	fun presentStart(): Boolean = adapter.presentStart()
@@ -148,7 +148,7 @@ class FrameEvaluation(
 	fun reflexMarker(type: NativeApi.ReflexMarkerType): Boolean = adapter.reflexMarker(type)
 
 	/** The native-owned images this evaluation writes into, or null before the first frame. */
-	val evaluationImages: DlssEvaluationImages?
+	val evaluationImages: EvaluationImages?
 		get() = images
 
 	/**
@@ -244,10 +244,7 @@ class FrameEvaluation(
 	 * that recording.
 	 */
 	private fun present(buffer: VkCommandBuffer, destinationImage: Long): Boolean = adapter.presentOutput(
-		PresentTarget(
-			commandBuffer = buffer.address(),
-			image = destinationImage,
-		),
+		PresentTarget(buffer.address(), destinationImage),
 	)
 
 	private fun record(
@@ -266,9 +263,9 @@ class FrameEvaluation(
 		// request is route-independent.
 		val tagged = adapter.tagSrResources(
 			SrTagRequest(
-				commandBuffer = handle,
-				color = scene.color,
-				depth = scene.depth,
+				handle,
+				scene.color,
+				scene.depth,
 			),
 		)
 		if (!tagged) {
@@ -279,17 +276,17 @@ class FrameEvaluation(
 		// so a session that stays aliased while standing still says which one failed.
 		readout?.recordFrameJitter(jitter.index, jitter.pixelX, jitter.pixelY, motion.reset)
 		val evaluated = adapter.evaluate(
-			EvaluationRequest(
-				commandBuffer = handle,
-				color = scene.color,
-				depth = scene.depth,
+			EvaluationRequest.builder()
+				.commandBuffer(handle)
+				.color(scene.color)
+				.depth(scene.depth)
 				// NGX takes the offset in render pixels, which is the unit the sequence is in.
-				jitter = Vec2(jitter.pixelX, jitter.pixelY),
-				motionScale = Vec2(motion.motionScaleX, motion.motionScaleY),
-				frameTimeMilliseconds = motion.frameTimeMillis,
-				resetHistory = motion.reset,
-				camera = camera?.let { cameraConstants(it, motion) },
-			),
+				.jitter(Vec2(jitter.pixelX, jitter.pixelY))
+				.motionScale(Vec2(motion.motionScaleX, motion.motionScaleY))
+				.frameTimeMilliseconds(motion.frameTimeMillis)
+				.resetHistory(motion.reset)
+				.camera(camera?.let { cameraConstants(it, motion) })
+				.build(),
 		)
 		return evaluated
 	}
@@ -316,19 +313,21 @@ class FrameEvaluation(
 		// already merged so the motion it names is complete.
 		MotionVectorRoute.VELOCITY_MRT -> velocity != null && adapter.fillVelocity(
 			FillVelocityRequest(
-				commandBuffer = handle,
-				depth = scene.depth,
-				velocity = velocity,
-				reprojection = FloatArray(16).also { motion.reprojection.get(it) },
-				reset = motion.reset,
+				handle,
+				scene.depth,
+				velocity,
+				FloatArray(16).also { motion.reprojection.get(it) },
+				motion.reset,
+				null,
 			),
 		)
 
 		MotionVectorRoute.CAMERA_ONLY -> adapter.writeMotion(
 			MotionRequest(
-				commandBuffer = handle,
-				depth = scene.depth,
-				reprojection = FloatArray(16).also { motion.reprojection.get(it) },
+				handle,
+				scene.depth,
+				FloatArray(16).also { motion.reprojection.get(it) },
+				null,
 			),
 		)
 	}
@@ -395,10 +394,10 @@ class FrameEvaluation(
 	private fun tagFg(handle: Long, scene: SceneResources, fg: FgFrameInputs): Boolean =
 		adapter.tagFgResources(
 			FgTagRequest(
-				commandBuffer = handle,
-				depth = scene.depth,
-				hudless = fg.hudless,
-				ui = fg.ui,
+				handle,
+				scene.depth,
+				fg.hudless,
+				fg.ui,
 			),
 		)
 
@@ -412,7 +411,7 @@ class FrameEvaluation(
 	private fun reportFirstEvaluation(
 		recorded: Boolean,
 		scene: SceneResources,
-		held: DlssEvaluationImages,
+		held: EvaluationImages,
 	) {
 		if (reportedFirstEvaluation) {
 			return
@@ -433,7 +432,7 @@ class FrameEvaluation(
 	 *
 	 * [DlssCameraSample.projection] is already the jitter-free view-to-clip projection the
 	 * world rendered with (the jitter is applied after the seam captures it), so it converts
-	 * into [CameraConstants.viewToClip] through [rowMajorOf] unchanged; the clip-to-view
+	 * into [CameraConstants.viewToClip] through [CameraConstants.rowMajorOf] unchanged; the clip-to-view
 	 * inverse follows from it, the frustum scalars from [dlssFrustum], and the clip-to-prev-clip
 	 * pair from [motion] - the same camera step the motion pass reprojects with, minus the
 	 * jitter conjugation SL forbids in its matrices.
@@ -449,22 +448,24 @@ class FrameEvaluation(
 		val rotation = camera.viewRotation
 		val frustum = dlssFrustum(camera.projection)
 		return CameraConstants(
-			viewToClip = rowMajorOf(camera.projection),
-			clipToView = rowMajorOf(Matrix4f(camera.projection).invert()),
-			clipToPrevClip = rowMajorOf(motion.clipToPrevClip),
-			prevClipToClip = rowMajorOf(Matrix4f(motion.clipToPrevClip).invert()),
-			near = frustum[0],
-			far = frustum[1],
-			fovRadians = frustum[2],
-			aspectRatio = frustum[3],
-			pos = floatArrayOf(
+			CameraConstants.rowMajorOf(camera.projection),
+			CameraConstants.rowMajorOf(Matrix4f(camera.projection).invert()),
+			floatArrayOf(
 				camera.cameraX.toFloat(),
 				camera.cameraY.toFloat(),
 				camera.cameraZ.toFloat(),
 			),
-			right = floatArrayOf(rotation.m00(), rotation.m10(), rotation.m20()),
-			up = floatArrayOf(rotation.m01(), rotation.m11(), rotation.m21()),
-			fwd = floatArrayOf(-rotation.m02(), -rotation.m12(), -rotation.m22()),
+			floatArrayOf(rotation.m00(), rotation.m10(), rotation.m20()),
+			floatArrayOf(rotation.m01(), rotation.m11(), rotation.m21()),
+			floatArrayOf(-rotation.m02(), -rotation.m12(), -rotation.m22()),
+			CameraConstants.rowMajorOf(motion.clipToPrevClip),
+			CameraConstants.rowMajorOf(Matrix4f(motion.clipToPrevClip).invert()),
+			frustum[0],
+			frustum[1],
+			frustum[2],
+			frustum[3],
+			0f,
+			0f,
 		)
 	}
 

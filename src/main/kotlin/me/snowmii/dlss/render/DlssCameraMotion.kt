@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 
 import org.joml.Matrix4f
 
@@ -95,7 +95,7 @@ data class DlssFrameMotion(
  * [DlssJitterOffset] owns the pixel-to-clip conversion. This composition consumes its clip-space
  * form while evaluation sends the same signed pixel-space offset to DLSS.
  */
-class DlssCameraMotion(renderDimensions: DlssDimensions) {
+class DlssCameraMotion(renderDimensions: Dimensions) {
 	init {
 		require(renderDimensions.width > 0 && renderDimensions.height > 0) {
 			"Render dimensions must be positive"

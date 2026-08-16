@@ -1,22 +1,22 @@
 package me.snowmii.dlss.fg
 
 import java.nio.file.Path
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.NativeException
 import me.snowmii.streamline.PresentMarkerEvent
 import me.snowmii.streamline.PresentMarkerType
-import me.snowmii.dlss.bridge.PresentTarget
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.Vec2
 import me.snowmii.dlss.render.FrameEvaluation
 import me.snowmii.dlss.render.WorldPhase
@@ -289,10 +289,10 @@ class ReflexMarkersTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-							hudless = ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							ui = ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							frame.address(),
+							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+							ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
 						),
 					),
 					"the FG tag must record under the input sample's retained frame token",
@@ -301,9 +301,9 @@ class ReflexMarkersTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+							frame.address(),
+							ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
 						),
 					),
 					"the SR tag must record on the same buffer under the same retained frame token",
@@ -317,16 +317,16 @@ class ReflexMarkersTest {
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.evaluate(
-						EvaluationRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-							jitter = Vec2(0.25f, -0.5f),
-							motionScale = Vec2(1f, 1f),
-							frameTimeMilliseconds = 16.6f,
-							resetHistory = true,
-							renderDimensions = dimensions,
-						),
+						EvaluationRequest.builder()
+							.commandBuffer(frame.address())
+							.color(ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM))
+							.depth(ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT))
+							.jitter(Vec2(0.25f, -0.5f))
+							.motionScale(Vec2(1f, 1f))
+							.frameTimeMilliseconds(16.6f)
+							.resetHistory(true)
+							.renderDimensions(dimensions)
+							.build(),
 					),
 					"the SR evaluation must record the common constants under the retained frame token",
 				)
@@ -334,10 +334,10 @@ class ReflexMarkersTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-							hudless = ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							ui = ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							frame.address(),
+							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+							ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
 						),
 					),
 					"the FG tag must re-record after the evaluation under the same retained token",
@@ -416,10 +416,10 @@ class ReflexMarkersTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-							hudless = ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							ui = ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							frame.address(),
+							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+							ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
 						),
 					),
 					"the second frame's FG tag must record under its input sample's token",
@@ -428,9 +428,9 @@ class ReflexMarkersTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+							frame.address(),
+							ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
 						),
 					),
 					"the second frame's SR tag must record under the same token",
@@ -444,16 +444,16 @@ class ReflexMarkersTest {
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.evaluate(
-						EvaluationRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-							jitter = Vec2(0.25f, -0.5f),
-							motionScale = Vec2(1f, 1f),
-							frameTimeMilliseconds = 16.6f,
-							resetHistory = true,
-							renderDimensions = dimensions,
-						),
+						EvaluationRequest.builder()
+							.commandBuffer(frame.address())
+							.color(ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM))
+							.depth(ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT))
+							.jitter(Vec2(0.25f, -0.5f))
+							.motionScale(Vec2(1f, 1f))
+							.frameTimeMilliseconds(16.6f)
+							.resetHistory(true)
+							.renderDimensions(dimensions)
+							.build(),
 					),
 					"the second frame's SR evaluation must record under its own token",
 				)
@@ -461,10 +461,10 @@ class ReflexMarkersTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-							hudless = ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-							ui = ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							frame.address(),
+							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+							ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+							ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
 						),
 					),
 					"the second frame's FG tag must re-record after its evaluation",
@@ -651,8 +651,8 @@ class ReflexMarkersTest {
 	private fun probeGraphicsQueueFamily(): Int =
 		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 
-	private val output = DlssDimensions(2560, 1440)
-	private val render = DlssDimensions(1707, 960)
+	private val output = Dimensions(2560, 1440)
+	private val render = Dimensions(1707, 960)
 
 	private fun session() = DlssSession(
 		DlssStartupConfig(
@@ -682,8 +682,8 @@ class ReflexMarkersTest {
 			dataPath: Path,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
-			DlssDimensions(1707, 960)
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
+			Dimensions(1707, 960)
 
 		override fun configure(
 			outputWidth: Int,
@@ -694,9 +694,9 @@ class ReflexMarkersTest {
 			renderPreset: Int,
 		): Int = NativeApi.SUCCESS_RESULT
 
-		override fun acquireImages(): DlssEvaluationImages = DlssEvaluationImages(
-			motion = ImageBinding(401L, 402L, 124),
-			output = ImageBinding(501L, 502L, 37),
+		override fun acquireImages(): EvaluationImages = EvaluationImages(
+			ImageBinding(401L, 402L, 124),
+			ImageBinding(501L, 502L, 37),
 		)
 
 		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT

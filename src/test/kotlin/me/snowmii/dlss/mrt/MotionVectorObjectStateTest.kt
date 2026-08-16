@@ -1,6 +1,6 @@
 package me.snowmii.dlss.mrt
 
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.render.DlssCameraMotion
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
@@ -46,7 +46,7 @@ import kotlin.math.abs
  *   reprojection, so the velocity writer's reset flag keeps meaning what it meant.
  */
 class MotionVectorObjectStateTest {
-	private val renderDimensions = DlssDimensions(1280, 720)
+	private val renderDimensions = Dimensions(1280, 720)
 	private val tolerance = 1e-4f
 
 	private val projection: Matrix4f = Matrix4f().setPerspective(

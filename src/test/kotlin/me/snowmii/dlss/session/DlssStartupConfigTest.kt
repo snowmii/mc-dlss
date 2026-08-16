@@ -1,5 +1,5 @@
 package me.snowmii.dlss.session
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.config.ModConfig
 
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -17,7 +17,7 @@ class DlssStartupConfigTest {
 
 		assertTrue(config.enabled)
 		assertEquals(SRMode.QUALITY, config.qualityMode)
-		assertEquals(DlssDimensions(2560, 1440), config.outputDimensions)
+		assertEquals(Dimensions(2560, 1440), config.outputDimensions)
 		assertTrue(config.warnings.isEmpty())
 	}
 
@@ -40,7 +40,7 @@ class DlssStartupConfigTest {
 
 		assertFalse(config.enabled)
 		assertEquals(SRMode.PERFORMANCE, config.qualityMode)
-		assertEquals(DlssDimensions(1920, 1080), config.outputDimensions)
+		assertEquals(Dimensions(1920, 1080), config.outputDimensions)
 		assertEquals(Path.of("C:/NVIDIA/DLSS"), config.sdkPath)
 		assertEquals(Path.of("C:/mc-dlss/mc_dlss.dll"), config.nativeLibraryPath)
 		assertEquals(Path.of("C:/mc-dlss/data"), config.dataPath)
@@ -71,7 +71,7 @@ class DlssStartupConfigTest {
 
 		assertTrue(config.enabled)
 		assertEquals(SRMode.QUALITY, config.qualityMode)
-		assertEquals(DlssDimensions(2560, 1440), config.outputDimensions)
+		assertEquals(Dimensions(2560, 1440), config.outputDimensions)
 		assertEquals(4, config.warnings.size)
 	}
 }

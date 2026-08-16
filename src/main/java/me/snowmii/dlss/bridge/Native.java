@@ -1,12 +1,22 @@
 package me.snowmii.dlss.bridge;
 
+import me.snowmii.streamline.CameraConstants;
+import me.snowmii.streamline.Dimensions;
+import me.snowmii.streamline.EvaluationImages;
+import me.snowmii.streamline.EvaluationRequest;
 import me.snowmii.streamline.FgMultiplier;
 import me.snowmii.streamline.FgState;
+import me.snowmii.streamline.FgTagRequest;
+import me.snowmii.streamline.FillVelocityRequest;
 import me.snowmii.streamline.FrameTimings;
+import me.snowmii.streamline.ImageBinding;
+import me.snowmii.streamline.MotionRequest;
 import me.snowmii.streamline.PresentMarkerEvent;
 import me.snowmii.streamline.PresentMarkerEvents;
 import me.snowmii.streamline.PresentMarkerType;
+import me.snowmii.streamline.PresentTarget;
 import me.snowmii.streamline.SlQueueRequirements;
+import me.snowmii.streamline.SrTagRequest;
 import me.snowmii.streamline.TaggedFrameIndexes;
 
 import java.lang.foreign.Arena;
@@ -906,7 +916,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
-	public DlssDimensions queryOptimalDimensions(
+	public Dimensions queryOptimalDimensions(
 		final int outputWidth,
 		final int outputHeight,
 		final int qualityMode
@@ -924,7 +934,7 @@ public final class Native implements AutoCloseable, NativeApi {
 			if (result != SUCCESS) {
 				throw new NativeException("query-dimensions", result);
 			}
-			return new DlssDimensions(renderWidth.get(JAVA_INT, 0), renderHeight.get(JAVA_INT, 0));
+			return new Dimensions(renderWidth.get(JAVA_INT, 0), renderHeight.get(JAVA_INT, 0));
 		} catch (NativeException error) {
 			throw error;
 		} catch (Throwable error) {
@@ -1007,7 +1017,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
-	public DlssEvaluationImages acquireImages() {
+	public EvaluationImages acquireImages() {
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment motion = callArena.allocate(IMAGE_LAYOUT);
 			final MemorySegment output = callArena.allocate(IMAGE_LAYOUT);
@@ -1015,7 +1025,7 @@ public final class Native implements AutoCloseable, NativeApi {
 			if (result != SUCCESS) {
 				throw new NativeException("acquire-images", result);
 			}
-			return new DlssEvaluationImages(readImage(motion), readImage(output));
+			return new EvaluationImages(readImage(motion), readImage(output));
 		} catch (NativeException error) {
 			throw error;
 		} catch (Throwable error) {
@@ -1040,9 +1050,9 @@ public final class Native implements AutoCloseable, NativeApi {
 		final VarHandle format,
 		final ImageBinding binding
 	) {
-		view.set(target, 0L, binding.getView());
-		image.set(target, 0L, binding.getImage());
-		format.set(target, 0L, binding.getFormat());
+		view.set(target, 0L, binding.view());
+		image.set(target, 0L, binding.image());
+		format.set(target, 0L, binding.format());
 	}
 
 	@Override
@@ -1089,20 +1099,20 @@ public final class Native implements AutoCloseable, NativeApi {
 
 	@Override
 	public int writeMotion(final MotionRequest request) {
-		final float[] reprojection = request.getReprojection();
+		final float[] reprojection = request.reprojection();
 		if (reprojection.length != 16) {
 			throw new IllegalArgumentException("Reprojection must be 16 column-major floats");
 		}
-		final DlssDimensions render = requireDimensions(request.getRenderDimensions(), "write-motion");
+		final Dimensions render = requireDimensions(request.renderDimensions(), "write-motion");
 		try {
 			final MemorySegment matrix = this.reprojectionScratch;
 			MemorySegment.copy(reprojection, 0, matrix, JAVA_FLOAT, 0, reprojection.length);
 			final MemorySegment info = this.motionScratch;
-			MOTION_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
-			writeImage(info, MOTION_DEPTH_VIEW, MOTION_DEPTH_IMAGE, MOTION_DEPTH_FORMAT, request.getDepth());
+			MOTION_COMMAND_BUFFER.set(info, 0L, request.commandBuffer());
+			writeImage(info, MOTION_DEPTH_VIEW, MOTION_DEPTH_IMAGE, MOTION_DEPTH_FORMAT, request.depth());
 			MOTION_REPROJECTION.set(info, 0L, matrix);
-			MOTION_RENDER_WIDTH.set(info, 0L, render.getWidth());
-			MOTION_RENDER_HEIGHT.set(info, 0L, render.getHeight());
+			MOTION_RENDER_WIDTH.set(info, 0L, render.width());
+			MOTION_RENDER_HEIGHT.set(info, 0L, render.height());
 			return (int)this.writeMotion.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("write-motion", error);
@@ -1111,22 +1121,22 @@ public final class Native implements AutoCloseable, NativeApi {
 
 	@Override
 	public int fillVelocity(final FillVelocityRequest request) {
-		final float[] reprojection = request.getReprojection();
+		final float[] reprojection = request.reprojection();
 		if (reprojection.length != 16) {
 			throw new IllegalArgumentException("Reprojection must be 16 column-major floats");
 		}
-		final DlssDimensions render = requireDimensions(request.getRenderDimensions(), "fill-velocity");
+		final Dimensions render = requireDimensions(request.renderDimensions(), "fill-velocity");
 		try {
 			final MemorySegment matrix = this.reprojectionScratch;
 			MemorySegment.copy(reprojection, 0, matrix, JAVA_FLOAT, 0, reprojection.length);
 			final MemorySegment info = this.fillScratch;
-			FILL_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
-			writeImage(info, FILL_DEPTH_VIEW, FILL_DEPTH_IMAGE, FILL_DEPTH_FORMAT, request.getDepth());
-			writeImage(info, FILL_VELOCITY_VIEW, FILL_VELOCITY_IMAGE, FILL_VELOCITY_FORMAT, request.getVelocity());
+			FILL_COMMAND_BUFFER.set(info, 0L, request.commandBuffer());
+			writeImage(info, FILL_DEPTH_VIEW, FILL_DEPTH_IMAGE, FILL_DEPTH_FORMAT, request.depth());
+			writeImage(info, FILL_VELOCITY_VIEW, FILL_VELOCITY_IMAGE, FILL_VELOCITY_FORMAT, request.velocity());
 			FILL_REPROJECTION.set(info, 0L, matrix);
-			FILL_RENDER_WIDTH.set(info, 0L, render.getWidth());
-			FILL_RENDER_HEIGHT.set(info, 0L, render.getHeight());
-			FILL_RESET.set(info, 0L, request.getReset() ? 1 : 0);
+			FILL_RENDER_WIDTH.set(info, 0L, render.width());
+			FILL_RENDER_HEIGHT.set(info, 0L, render.height());
+			FILL_RESET.set(info, 0L, request.reset() ? 1 : 0);
 			return (int)this.fillVelocity.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("fill-velocity", error);
@@ -1147,13 +1157,13 @@ public final class Native implements AutoCloseable, NativeApi {
 
 	@Override
 	public int presentOutput(final PresentTarget target) {
-		final DlssDimensions output = requireDimensions(target.getOutputDimensions(), "present-output");
+		final Dimensions output = requireDimensions(target.outputDimensions(), "present-output");
 		try {
 			final MemorySegment info = this.presentScratch;
-			PRESENT_COMMAND_BUFFER.set(info, 0L, target.getCommandBuffer());
-			PRESENT_IMAGE.set(info, 0L, target.getImage());
-			PRESENT_WIDTH.set(info, 0L, output.getWidth());
-			PRESENT_HEIGHT.set(info, 0L, output.getHeight());
+			PRESENT_COMMAND_BUFFER.set(info, 0L, target.commandBuffer());
+			PRESENT_IMAGE.set(info, 0L, target.image());
+			PRESENT_WIDTH.set(info, 0L, output.width());
+			PRESENT_HEIGHT.set(info, 0L, output.height());
 			return (int)this.presentOutput.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("present-output", error);
@@ -1162,36 +1172,36 @@ public final class Native implements AutoCloseable, NativeApi {
 
 	@Override
 	public int evaluate(final EvaluationRequest request) {
-		final DlssDimensions render = requireDimensions(request.getRenderDimensions(), "evaluate");
+		final Dimensions render = requireDimensions(request.renderDimensions(), "evaluate");
 		// The camera's six arrays are fixed-length fields of the ABI struct: an array of any
 		// other length would either read past its field or leave the field's tail holding the
 		// previous frame's floats through the reused scratch - a partially-written camera no
 		// diagnostic would catch. The check runs before any byte of the scratch is written,
 		// so a refused camera never half-corrupts the struct a later valid call reads.
-		final CameraConstants camera = request.getCamera();
+		final CameraConstants camera = request.camera();
 		if (camera != null) {
-			requireCameraLength(camera.getViewToClip(), 16, "viewToClip");
-			requireCameraLength(camera.getClipToView(), 16, "clipToView");
-			requireCameraLength(camera.getClipToPrevClip(), 16, "clipToPrevClip");
-			requireCameraLength(camera.getPrevClipToClip(), 16, "prevClipToClip");
-			requireCameraLength(camera.getPos(), 3, "pos");
-			requireCameraLength(camera.getRight(), 3, "right");
-			requireCameraLength(camera.getUp(), 3, "up");
-			requireCameraLength(camera.getFwd(), 3, "fwd");
+			requireCameraLength(camera.viewToClip(), 16, "viewToClip");
+			requireCameraLength(camera.clipToView(), 16, "clipToView");
+			requireCameraLength(camera.clipToPrevClip(), 16, "clipToPrevClip");
+			requireCameraLength(camera.prevClipToClip(), 16, "prevClipToClip");
+			requireCameraLength(camera.pos(), 3, "pos");
+			requireCameraLength(camera.right(), 3, "right");
+			requireCameraLength(camera.up(), 3, "up");
+			requireCameraLength(camera.fwd(), 3, "fwd");
 		}
 		try {
 			final MemorySegment info = this.evaluateScratch;
-			EVALUATE_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
-			writeImage(info, EVALUATE_COLOR_VIEW, EVALUATE_COLOR_IMAGE, EVALUATE_COLOR_FORMAT, request.getColor());
-			writeImage(info, EVALUATE_DEPTH_VIEW, EVALUATE_DEPTH_IMAGE, EVALUATE_DEPTH_FORMAT, request.getDepth());
-			EVALUATE_JITTER_X.set(info, 0L, request.getJitter().x());
-			EVALUATE_JITTER_Y.set(info, 0L, request.getJitter().y());
-			EVALUATE_MOTION_SCALE_X.set(info, 0L, request.getMotionScale().x());
-			EVALUATE_MOTION_SCALE_Y.set(info, 0L, request.getMotionScale().y());
-			EVALUATE_RENDER_WIDTH.set(info, 0L, render.getWidth());
-			EVALUATE_RENDER_HEIGHT.set(info, 0L, render.getHeight());
-			EVALUATE_FRAME_TIME.set(info, 0L, request.getFrameTimeMilliseconds());
-			EVALUATE_RESET_HISTORY.set(info, 0L, request.getResetHistory() ? 1 : 0);
+			EVALUATE_COMMAND_BUFFER.set(info, 0L, request.commandBuffer());
+			writeImage(info, EVALUATE_COLOR_VIEW, EVALUATE_COLOR_IMAGE, EVALUATE_COLOR_FORMAT, request.color());
+			writeImage(info, EVALUATE_DEPTH_VIEW, EVALUATE_DEPTH_IMAGE, EVALUATE_DEPTH_FORMAT, request.depth());
+			EVALUATE_JITTER_X.set(info, 0L, request.jitter().x());
+			EVALUATE_JITTER_Y.set(info, 0L, request.jitter().y());
+			EVALUATE_MOTION_SCALE_X.set(info, 0L, request.motionScale().x());
+			EVALUATE_MOTION_SCALE_Y.set(info, 0L, request.motionScale().y());
+			EVALUATE_RENDER_WIDTH.set(info, 0L, render.width());
+			EVALUATE_RENDER_HEIGHT.set(info, 0L, render.height());
+			EVALUATE_FRAME_TIME.set(info, 0L, request.frameTimeMilliseconds());
+			EVALUATE_RESET_HISTORY.set(info, 0L, request.resetHistory() ? 1 : 0);
 			// The frame's camera travels in the same struct so the evaluation's single
 			// slSetConstants records it together with the jitter and reset flag under the frame's
 			// retained token. The scratch is reused across calls, so a null camera zeroes the
@@ -1199,18 +1209,18 @@ public final class Native implements AutoCloseable, NativeApi {
 			if (camera == null) {
 				info.asSlice(EVALUATE_CAMERA_OFFSET, CAMERA_LAYOUT.byteSize()).fill((byte)0);
 			} else {
-				writeCameraFloats(info, evaluateCameraFieldOffset("view_to_clip"), camera.getViewToClip());
-				writeCameraFloats(info, evaluateCameraFieldOffset("clip_to_view"), camera.getClipToView());
-				writeCameraFloats(info, evaluateCameraFieldOffset("clip_to_prev_clip"), camera.getClipToPrevClip());
-				writeCameraFloats(info, evaluateCameraFieldOffset("prev_clip_to_clip"), camera.getPrevClipToClip());
-				writeCameraFloats(info, evaluateCameraFieldOffset("pos"), camera.getPos());
-				writeCameraFloats(info, evaluateCameraFieldOffset("right"), camera.getRight());
-				writeCameraFloats(info, evaluateCameraFieldOffset("up"), camera.getUp());
-				writeCameraFloats(info, evaluateCameraFieldOffset("fwd"), camera.getFwd());
-				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("near_plane"), camera.getNear());
-				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("far_plane"), camera.getFar());
-				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("fov_radians"), camera.getFovRadians());
-				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("aspect_ratio"), camera.getAspectRatio());
+				writeCameraFloats(info, evaluateCameraFieldOffset("view_to_clip"), camera.viewToClip());
+				writeCameraFloats(info, evaluateCameraFieldOffset("clip_to_view"), camera.clipToView());
+				writeCameraFloats(info, evaluateCameraFieldOffset("clip_to_prev_clip"), camera.clipToPrevClip());
+				writeCameraFloats(info, evaluateCameraFieldOffset("prev_clip_to_clip"), camera.prevClipToClip());
+				writeCameraFloats(info, evaluateCameraFieldOffset("pos"), camera.pos());
+				writeCameraFloats(info, evaluateCameraFieldOffset("right"), camera.right());
+				writeCameraFloats(info, evaluateCameraFieldOffset("up"), camera.up());
+				writeCameraFloats(info, evaluateCameraFieldOffset("fwd"), camera.fwd());
+				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("near_plane"), camera.near());
+				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("far_plane"), camera.far());
+				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("fov_radians"), camera.fovRadians());
+				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("aspect_ratio"), camera.aspectRatio());
 			}
 			return (int)this.evaluate.invokeExact(info);
 		} catch (Throwable error) {
@@ -1233,9 +1243,9 @@ public final class Native implements AutoCloseable, NativeApi {
 	public int tagSrResources(final SrTagRequest request) {
 		try {
 			final MemorySegment info = this.tagScratch;
-			TAG_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
-			writeImage(info, TAG_COLOR_VIEW, TAG_COLOR_IMAGE, TAG_COLOR_FORMAT, request.getColor());
-			writeImage(info, TAG_DEPTH_VIEW, TAG_DEPTH_IMAGE, TAG_DEPTH_FORMAT, request.getDepth());
+			TAG_COMMAND_BUFFER.set(info, 0L, request.commandBuffer());
+			writeImage(info, TAG_COLOR_VIEW, TAG_COLOR_IMAGE, TAG_COLOR_FORMAT, request.color());
+			writeImage(info, TAG_DEPTH_VIEW, TAG_DEPTH_IMAGE, TAG_DEPTH_FORMAT, request.depth());
 			return (int)this.tagSrResources.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("tag-sr-resources", error);
@@ -1247,10 +1257,10 @@ public final class Native implements AutoCloseable, NativeApi {
 		if (tagFgResources == null) throw new NativeException("tag-fg-resources", new IllegalStateException("Native bridge lacks FG tag"));
 		try {
 			final MemorySegment info = this.fgTagScratch;
-			FG_TAG_COMMAND_BUFFER.set(info, 0L, request.getCommandBuffer());
-			writeImage(info, FG_TAG_DEPTH_VIEW, FG_TAG_DEPTH_IMAGE, FG_TAG_DEPTH_FORMAT, request.getDepth());
-			writeImage(info, FG_TAG_HUDLESS_VIEW, FG_TAG_HUDLESS_IMAGE, FG_TAG_HUDLESS_FORMAT, request.getHudless());
-			writeImage(info, FG_TAG_UI_VIEW, FG_TAG_UI_IMAGE, FG_TAG_UI_FORMAT, request.getUi());
+			FG_TAG_COMMAND_BUFFER.set(info, 0L, request.commandBuffer());
+			writeImage(info, FG_TAG_DEPTH_VIEW, FG_TAG_DEPTH_IMAGE, FG_TAG_DEPTH_FORMAT, request.depth());
+			writeImage(info, FG_TAG_HUDLESS_VIEW, FG_TAG_HUDLESS_IMAGE, FG_TAG_HUDLESS_FORMAT, request.hudless());
+			writeImage(info, FG_TAG_UI_VIEW, FG_TAG_UI_IMAGE, FG_TAG_UI_FORMAT, request.ui());
 			return (int)this.tagFgResources.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("tag-fg-resources", error);
@@ -1263,7 +1273,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	 * native failure - it would otherwise be sent as a zero the bridge rejects for the wrong
 	 * reason.
 	 */
-	private static DlssDimensions requireDimensions(final DlssDimensions dimensions, final String stage) {
+	private static Dimensions requireDimensions(final Dimensions dimensions, final String stage) {
 		if (dimensions == null) {
 			throw new IllegalStateException(stage + " requires dimensions stamped by the adapter");
 		}

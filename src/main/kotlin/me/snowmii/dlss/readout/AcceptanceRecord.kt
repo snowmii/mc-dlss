@@ -1,5 +1,5 @@
 package me.snowmii.dlss.readout
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
 import me.snowmii.dlss.session.DlssSessionState
@@ -62,8 +62,8 @@ object AcceptanceRecord {
 		state: DlssSessionState,
 		qualityMode: SRMode,
 		renderPreset: SRModelPreset,
-		outputDimensions: DlssDimensions,
-		renderDimensions: DlssDimensions?,
+		outputDimensions: Dimensions,
+		renderDimensions: Dimensions?,
 		/**
 		 * The FG multiplier in `numFramesToGenerate` units (1 = 2x), defaulting to
 		 * [activeFgMultiplier] so the record reports the multiplier actually in effect.

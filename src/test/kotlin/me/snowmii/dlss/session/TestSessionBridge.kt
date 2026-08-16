@@ -1,6 +1,6 @@
 package me.snowmii.dlss.session
 
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.FgMultiplier
 import me.snowmii.streamline.FgState
 
@@ -15,7 +15,7 @@ import me.snowmii.streamline.FgState
  * this exists for the cases where the session deliberately never reaches READY.
  */
 open class TestSessionBridge : SessionBridge {
-	override fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): DlssDimensions? = null
+	override fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): Dimensions? = null
 
 	override fun waitDeviceIdle(): Boolean = true
 

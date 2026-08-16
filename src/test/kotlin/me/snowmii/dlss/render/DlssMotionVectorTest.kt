@@ -1,15 +1,15 @@
 package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.ImageBinding
-import me.snowmii.dlss.bridge.MotionRequest
-import me.snowmii.dlss.bridge.DlssEvaluationImages
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
+import me.snowmii.streamline.EvaluationImages
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.LifecycleAdapter
 
 import java.nio.file.Files
@@ -41,7 +41,7 @@ import org.junit.jupiter.api.io.TempDir
  */
 @NativeBridge
 class DlssMotionVectorTest {
-	private val output = DlssDimensions(2560, 1440)
+	private val output = Dimensions(2560, 1440)
 
 	@Test
 	fun `motion pass fills the motion image from depth and reprojection`(@TempDir dataPath: Path) {
@@ -181,10 +181,10 @@ class DlssMotionVectorTest {
 					NativeApi.SUCCESS_RESULT,
 					native.writeMotion(
 						MotionRequest(
-							commandBuffer = mismatched.address(),
-							depth = ImageBinding(depth.view(), depth.image(), depth.format()),
-							reprojection = FloatArray(16).also { Matrix4f().get(it) },
-							renderDimensions = DlssDimensions(render.width + 1, render.height),
+							mismatched.address(),
+							ImageBinding(depth.view(), depth.image(), depth.format()),
+							FloatArray(16).also { Matrix4f().get(it) },
+							Dimensions(render.width + 1, render.height),
 						),
 					),
 				)
@@ -198,10 +198,10 @@ class DlssMotionVectorTest {
 					NativeApi.SUCCESS_RESULT,
 					native.writeMotion(
 						MotionRequest(
-							commandBuffer = released.address(),
-							depth = ImageBinding(depth.view(), depth.image(), depth.format()),
-							reprojection = FloatArray(16).also { Matrix4f().get(it) },
-							renderDimensions = DlssDimensions(render.width, render.height),
+							released.address(),
+							ImageBinding(depth.view(), depth.image(), depth.format()),
+							FloatArray(16).also { Matrix4f().get(it) },
+							Dimensions(render.width, render.height),
 						),
 					),
 				)
@@ -218,8 +218,8 @@ class DlssMotionVectorTest {
 		vulkan: HeadlessVulkanFixture,
 		native: Native,
 		depth: HeadlessVulkanFixture.EngineImage,
-		images: DlssEvaluationImages,
-		render: DlssDimensions,
+		images: EvaluationImages,
+		render: Dimensions,
 		reprojection: Matrix4f,
 		depthValue: Float,
 	): FloatArray {
@@ -229,10 +229,10 @@ class DlssMotionVectorTest {
 			NativeApi.SUCCESS_RESULT,
 			native.writeMotion(
 				MotionRequest(
-					commandBuffer = commandBuffer.address(),
-					depth = ImageBinding(depth.view(), depth.image(), depth.format()),
-					reprojection = FloatArray(16).also { reprojection.get(it) },
-					renderDimensions = DlssDimensions(render.width, render.height),
+					commandBuffer.address(),
+					ImageBinding(depth.view(), depth.image(), depth.format()),
+					FloatArray(16).also { reprojection.get(it) },
+					Dimensions(render.width, render.height),
 				),
 			),
 		)

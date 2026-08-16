@@ -1,6 +1,6 @@
 package me.snowmii.dlss.session
 
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import java.nio.file.Path
 
 /**
@@ -15,7 +15,7 @@ data class DlssStartupConfig(
 	val qualityMode: SRMode,
 	/** Preset this session runs; the mode's own documented default unless one was asked for. */
 	val renderPreset: SRModelPreset = qualityMode.defaultPreset,
-	val outputDimensions: DlssDimensions,
+	val outputDimensions: Dimensions,
 	val sdkPath: Path?,
 	val nativeLibraryPath: Path?,
 	val dataPath: Path?,

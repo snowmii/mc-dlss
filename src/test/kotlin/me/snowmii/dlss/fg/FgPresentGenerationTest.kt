@@ -2,19 +2,19 @@ package me.snowmii.dlss.fg
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.CameraConstants
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.CameraConstants
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.streamline.FgState
-import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.Vec2
-import me.snowmii.dlss.bridge.rowMajorOf
+
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -348,7 +348,7 @@ class FgPresentGenerationTest {
 		bridge: NativeApi,
 		fixture: HeadlessVulkanFixture,
 		swapchain: HeadlessVulkanFixture.Swapchain,
-		dimensions: DlssDimensions,
+		dimensions: Dimensions,
 		color: HeadlessVulkanFixture.EngineImage,
 		depth: HeadlessVulkanFixture.EngineImage,
 		hudless: HeadlessVulkanFixture.EngineImage,
@@ -387,10 +387,10 @@ class FgPresentGenerationTest {
 			NativeApi.SUCCESS_RESULT,
 			bridge.tagFgResources(
 				FgTagRequest(
-					commandBuffer = frame.address(),
-					depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-					hudless = ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-					ui = ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+					frame.address(),
+					ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+					ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+					ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
 				),
 			),
 			"the FG tag must record first on the caller's command buffer",
@@ -399,9 +399,9 @@ class FgPresentGenerationTest {
 			NativeApi.SUCCESS_RESULT,
 			bridge.tagSrResources(
 				SrTagRequest(
-					commandBuffer = frame.address(),
-					color = ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-					depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+					frame.address(),
+					ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+					ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
 				),
 			),
 			"the SR tag must record last so the evaluation reads its SHADER_READ_ONLY declarations",
@@ -409,17 +409,17 @@ class FgPresentGenerationTest {
 		assertEquals(
 			NativeApi.SUCCESS_RESULT,
 			bridge.evaluate(
-				EvaluationRequest(
-					commandBuffer = frame.address(),
-					color = ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-					depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-					jitter = Vec2(0.25f, -0.5f),
-					motionScale = Vec2(1f, 1f),
-					frameTimeMilliseconds = 16.6f,
-					resetHistory = resetHistory,
-					renderDimensions = dimensions,
-					camera = TEST_CAMERA,
-				),
+				EvaluationRequest.builder()
+					.commandBuffer(frame.address())
+					.color(ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM))
+					.depth(ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT))
+					.jitter(Vec2(0.25f, -0.5f))
+					.motionScale(Vec2(1f, 1f))
+					.frameTimeMilliseconds(16.6f)
+					.resetHistory(resetHistory)
+					.renderDimensions(dimensions)
+					.camera(TEST_CAMERA)
+					.build(),
 			),
 			"the SR evaluation must record on the tagged frame's shared buffer",
 		)
@@ -427,10 +427,10 @@ class FgPresentGenerationTest {
 			NativeApi.SUCCESS_RESULT,
 			bridge.tagFgResources(
 				FgTagRequest(
-					commandBuffer = frame.address(),
-					depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
-					hudless = ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-					ui = ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+					frame.address(),
+					ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+					ImageBinding(hudless.view(), hudless.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+					ImageBinding(ui.view(), ui.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
 				),
 			),
 			"the FG tag must re-record after the evaluation so the present path reads its " +
@@ -526,12 +526,12 @@ class FgPresentGenerationTest {
 		 * hands the plugin through [rowMajorOf].
 		 */
 		private val TEST_CAMERA: CameraConstants = CameraConstants(
-			viewToClip = rowMajorOf(TEST_PROJECTION),
-			clipToView = rowMajorOf(Matrix4f(TEST_PROJECTION).invert()),
-			pos = floatArrayOf(12f, 64f, -48f),
-			right = floatArrayOf(1f, 0f, 0f),
-			up = floatArrayOf(0f, 1f, 0f),
-			fwd = floatArrayOf(0f, 0f, -1f),
+			CameraConstants.rowMajorOf(TEST_PROJECTION),
+			CameraConstants.rowMajorOf(Matrix4f(TEST_PROJECTION).invert()),
+			floatArrayOf(12f, 64f, -48f),
+			floatArrayOf(1f, 0f, 0f),
+			floatArrayOf(0f, 1f, 0f),
+			floatArrayOf(0f, 0f, -1f),
 		)
 
 		/** Healthy input processing advances within one frame; five seconds still covers startup jitter. */

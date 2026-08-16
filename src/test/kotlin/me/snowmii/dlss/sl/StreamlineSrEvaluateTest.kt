@@ -2,9 +2,9 @@ package me.snowmii.dlss.sl
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -89,9 +89,9 @@ class StreamlineSrEvaluateTest {
 				VK10.VK_IMAGE_ASPECT_DEPTH_BIT,
 			)
 			val tagRequest = SrTagRequest(
-				commandBuffer = 0,
-				color = ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
-				depth = ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
+				0,
+				ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM),
+				ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
 			)
 
 			// Frame one: the frame's resources tag and then evaluate on ONE buffer, the way
@@ -100,7 +100,7 @@ class StreamlineSrEvaluateTest {
 			val frame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.tagSrResources(tagRequest.copy(commandBuffer = frame.address())),
+				bridge.tagSrResources(SrTagRequest(frame.address(), tagRequest.color, tagRequest.depth)),
 				"the frame's resources must tag on the caller's command buffer",
 			)
 			assertEquals(
@@ -116,7 +116,7 @@ class StreamlineSrEvaluateTest {
 			val secondFrame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.tagSrResources(tagRequest.copy(commandBuffer = secondFrame.address())),
+				bridge.tagSrResources(SrTagRequest(secondFrame.address(), tagRequest.color, tagRequest.depth)),
 				"the second frame must tag with a fresh frame token",
 			)
 			assertEquals(

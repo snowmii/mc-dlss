@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 
 import kotlin.math.ceil
 
@@ -16,7 +16,7 @@ data class DlssJitterOffset(
 	val index: Int,
 	val pixelX: Float,
 	val pixelY: Float,
-	val renderDimensions: DlssDimensions,
+	val renderDimensions: Dimensions,
 ) {
 	/** Normalized-device X translation for [pixelX] at [renderDimensions]. */
 	val clipOffsetX: Float
@@ -44,8 +44,8 @@ data class DlssJitterOffset(
  * and the evaluation parameter checkable off the render thread.
  */
 class DlssJitter(
-	private val renderDimensions: DlssDimensions,
-	outputDimensions: DlssDimensions,
+	private val renderDimensions: Dimensions,
+	outputDimensions: Dimensions,
 ) {
 	init {
 		require(renderDimensions.width > 0 && renderDimensions.height > 0) {
@@ -92,7 +92,7 @@ class DlssJitter(
 		const val BASE_PHASE_COUNT = 8
 
 		/** `BASE_PHASE_COUNT * ratio^2`, using the wider of the two axis ratios. */
-		private fun phaseCountFor(renderDimensions: DlssDimensions, outputDimensions: DlssDimensions): Int {
+		private fun phaseCountFor(renderDimensions: Dimensions, outputDimensions: Dimensions): Int {
 			val ratio = maxOf(
 				outputDimensions.width.toDouble() / renderDimensions.width,
 				outputDimensions.height.toDouble() / renderDimensions.height,

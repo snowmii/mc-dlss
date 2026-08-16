@@ -1,4 +1,5 @@
 package me.snowmii.dlss.bridge
+import me.snowmii.streamline.Dimensions;
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -90,7 +91,7 @@ class DlssRuntimeLoadTest {
 				val config = DlssStartupConfig(
 					enabled = true,
 					qualityMode = SRMode.QUALITY,
-					outputDimensions = DlssDimensions(2560, 1440),
+					outputDimensions = Dimensions(2560, 1440),
 					// The sdk path is a compatibility input the retired direct-NGX path used to
 					// consume; initialize validates it and records only the Vulkan tuple.
 					sdkPath = dataPath,

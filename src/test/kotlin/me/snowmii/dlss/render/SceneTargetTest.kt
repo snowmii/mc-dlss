@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.dlss.session.DlssFrameDecision
 
@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class SceneTargetTest {
-	private val output = DlssDimensions(2560, 1440)
-	private val render = DlssDimensions(1707, 960)
+	private val output = Dimensions(2560, 1440)
+	private val render = Dimensions(1707, 960)
 
 	private val allocated = mutableListOf<FakeTarget>()
 	private val released = mutableListOf<FakeTarget>()
@@ -39,12 +39,12 @@ class SceneTargetTest {
 		val scene = sceneTarget()
 		val first = scene.acquire(dlssRoute(render))
 
-		val second = scene.acquire(dlssRoute(DlssDimensions(1280, 720)))
+		val second = scene.acquire(dlssRoute(Dimensions(1280, 720)))
 
 		assertNotSame(first, second)
 		assertEquals(listOf(first), released)
 		assertEquals(2, allocated.size)
-		assertEquals(DlssDimensions(1280, 720), scene.currentDimensions)
+		assertEquals(Dimensions(1280, 720), scene.currentDimensions)
 	}
 
 	@Test
@@ -83,7 +83,7 @@ class SceneTargetTest {
 		val first = scene.acquire(dlssRoute(render))
 		val firstVelocity = scene.currentVelocity!!
 
-		val second = scene.acquire(dlssRoute(DlssDimensions(1280, 720)))
+		val second = scene.acquire(dlssRoute(Dimensions(1280, 720)))
 
 		assertNotSame(first, second)
 		assertEquals(listOf(first, firstVelocity), released)
@@ -174,7 +174,7 @@ class SceneTargetTest {
 		val scene = sceneTarget()
 
 		scene.acquire(dlssRoute())
-		scene.acquire(dlssRoute(DlssDimensions(1280, 720)))
+		scene.acquire(dlssRoute(Dimensions(1280, 720)))
 		scene.acquire(vanillaRoute())
 		scene.close()
 
@@ -184,7 +184,7 @@ class SceneTargetTest {
 		assertFalse(allocated.contains(mainTarget))
 	}
 
-	private fun dlssRoute(renderDimensions: DlssDimensions = render) = WorldTargetRoute(
+	private fun dlssRoute(renderDimensions: Dimensions = render) = WorldTargetRoute(
 		frame = DlssFrameDecision(DlssFrameRoute.DLSS, "test"),
 		worldDimensions = renderDimensions,
 		mainTargetDimensions = output,

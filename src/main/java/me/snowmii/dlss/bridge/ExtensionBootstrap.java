@@ -1,6 +1,7 @@
 package me.snowmii.dlss.bridge;
 import me.snowmii.dlss.config.ModConfig;
 import me.snowmii.streamline.SlQueueRequirements;
+import me.snowmii.streamline.VulkanContext;
 
 import java.io.IOException;
 import java.io.InputStream;

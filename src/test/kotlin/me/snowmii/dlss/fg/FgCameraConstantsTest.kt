@@ -2,18 +2,18 @@ package me.snowmii.dlss.fg
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.CameraConstants
-import me.snowmii.dlss.bridge.EvaluationRequest
+import me.snowmii.streamline.CameraConstants
+import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.FgTagRequest
+import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.ImageBinding
+import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.Native
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.NativeException
-import me.snowmii.dlss.bridge.SrTagRequest
+import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.Vec2
-import me.snowmii.dlss.bridge.rowMajorOf
+
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -70,7 +70,7 @@ class FgCameraConstantsTest {
 			13f, 14f, 15f, 16f,
 		)
 		assertTrue(
-			rowMajorOf(m).contentEquals(expected),
+			CameraConstants.rowMajorOf(m).contentEquals(expected),
 			"rowMajorOf must pass the get() payload through unchanged",
 		)
 	}
@@ -84,7 +84,7 @@ class FgCameraConstantsTest {
 		// and Minecraft's real projection did not.
 		// 70 degrees in radians: Minecraft's default field of view.
 		val projection = Matrix4f().perspective(1.2217305f, 16f / 9f, 0.05f, 1000f)
-		val payload = rowMajorOf(projection)
+		val payload = CameraConstants.rowMajorOf(projection)
 		assertEquals(-1f, payload[11], "the perspective w term must sit at flat index 11")
 		// Index 14 carries the depth translation term. The old transpose swapped 11 and 14, so
 		// finding the w term here is the exact shape of the bug this rung fixes.
@@ -236,18 +236,18 @@ class FgCameraConstantsTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
 						FgTagRequest(
-							commandBuffer = frame.address(),
-							depth = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
 							),
-							hudless = ImageBinding(
+							ImageBinding(
 								hudless.view(),
 								hudless.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							ui = ImageBinding(
+							ImageBinding(
 								ui.view(),
 								ui.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
@@ -260,13 +260,13 @@ class FgCameraConstantsTest {
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
 						SrTagRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+							frame.address(),
+							ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
 							),
-							depth = ImageBinding(
+							ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
@@ -278,25 +278,25 @@ class FgCameraConstantsTest {
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.evaluate(
-						EvaluationRequest(
-							commandBuffer = frame.address(),
-							color = ImageBinding(
+						EvaluationRequest.builder()
+							.commandBuffer(frame.address())
+							.color(ImageBinding(
 								color.view(),
 								color.image(),
 								VK10.VK_FORMAT_R8G8B8A8_UNORM,
-							),
-							depth = ImageBinding(
+							))
+							.depth(ImageBinding(
 								depth.view(),
 								depth.image(),
 								VK10.VK_FORMAT_D32_SFLOAT,
-							),
-							jitter = Vec2(0.25f, -0.5f),
-							motionScale = Vec2(1f, 1f),
-							frameTimeMilliseconds = 16.6f,
-							resetHistory = true,
-							renderDimensions = dimensions,
-							camera = TEST_CAMERA,
-						),
+							))
+							.jitter(Vec2(0.25f, -0.5f))
+							.motionScale(Vec2(1f, 1f))
+							.frameTimeMilliseconds(16.6f)
+							.resetHistory(true)
+							.renderDimensions(dimensions)
+							.camera(TEST_CAMERA)
+							.build(),
 					),
 					"the SR evaluation must record the frame's constants on the tagged frame's shared buffer",
 				)
@@ -452,18 +452,18 @@ class FgCameraConstantsTest {
 			// that reached the plugin as INVALID_FLOAT until the mod wrote them.
 			val step = Matrix4f().translation(0.03f, -0.02f, 0.01f).rotateY(0.05f)
 			CameraConstants(
-				viewToClip = rowMajorOf(projection),
-				clipToView = rowMajorOf(Matrix4f(projection).invert()),
-				pos = floatArrayOf(12f, 64f, -48f),
-				right = right,
-				up = up,
-				fwd = fwd,
-				clipToPrevClip = rowMajorOf(step),
-				prevClipToClip = rowMajorOf(Matrix4f(step).invert()),
-				near = 0.05f,
-				far = 1000f,
-				fovRadians = Math.toRadians(70.0).toFloat(),
-				aspectRatio = 16f / 9f,
+				CameraConstants.rowMajorOf(projection),
+				CameraConstants.rowMajorOf(Matrix4f(projection).invert()),
+				floatArrayOf(12f, 64f, -48f),
+				right,
+				up,
+				fwd,
+				CameraConstants.rowMajorOf(step),
+				CameraConstants.rowMajorOf(Matrix4f(step).invert()),
+				0.05f,
+				1000f,
+				Math.toRadians(70.0).toFloat(),
+				16f / 9f,
 			)
 		}
 
