@@ -10,9 +10,9 @@ import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.dlss.bridge.Native
-import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.NativeException
+import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.NativeException
 import me.snowmii.streamline.PresentMarkerEvent
 import me.snowmii.streamline.PresentMarkerType
 import me.snowmii.streamline.PresentTarget

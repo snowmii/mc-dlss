@@ -5,7 +5,7 @@ import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.config.ModConfig
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 

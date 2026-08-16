@@ -9,7 +9,7 @@ import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgMultiplier
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.dlss.client.RuntimeControls

@@ -3,7 +3,7 @@ package me.snowmii.dlss.sl
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull

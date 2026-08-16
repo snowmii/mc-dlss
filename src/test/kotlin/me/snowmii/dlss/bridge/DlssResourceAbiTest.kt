@@ -9,6 +9,8 @@ import me.snowmii.streamline.MotionRequest;
 import me.snowmii.streamline.PresentTarget;
 
 import me.snowmii.streamline.Vec2
+import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeApi
 
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
@@ -60,7 +62,7 @@ class DlssResourceAbiTest {
 	@Test
 	fun compiledFfmBindingMatchesTheNativeStructLayout() {
 		val request = request().renderDimensions(Dimensions(1280, 720)).build()
-		assertTrue(Files.isRegularFile(Path.of("build", "native", "mc_dlss.dll")))
+		assertTrue(Files.isRegularFile(Path.of("streamline", "build", "native", "mc_dlss.dll")))
 
 		// The probe is compiled against native/mc_dlss.h itself, so it reads every field at the
 		// offset the real C compiler placed it. A Java StructLayout that disagreed - a missing
@@ -252,7 +254,7 @@ class DlssResourceAbiTest {
 			"Microsoft Visual Studio", "2022", "BuildTools", "Common7", "Tools", "VsDevCmd.bat",
 		)
 		assertTrue(Files.isRegularFile(vsDevCmd), "Visual Studio Build Tools missing: $vsDevCmd")
-		val nativeHeaders = Path.of("native").toAbsolutePath()
+		val nativeHeaders = Path.of("streamline", "native").toAbsolutePath()
 		val compiler = "call \"$vsDevCmd\" -arch=x64 -host_arch=x64 >nul && cl.exe /nologo /std:c++17 /LD /O2 /I\"$nativeHeaders\" /Fe\"$library\" \"$source\""
 		val process = ProcessBuilder("cmd.exe", "/d", "/c", compiler)
 			.directory(directory.toFile())

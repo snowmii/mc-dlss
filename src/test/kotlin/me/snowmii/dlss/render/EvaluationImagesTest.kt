@@ -1,8 +1,8 @@
 package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.ExtensionBootstrap
-import me.snowmii.dlss.bridge.Native
-import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.NativeException
+import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.NativeException
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
@@ -206,7 +206,7 @@ class EvaluationImagesTest {
 		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 
 	private fun nativeLibrary(): Path {
-		val library = Path.of("").toAbsolutePath().resolve("build/native/mc_dlss.dll")
+		val library = Path.of("").toAbsolutePath().resolve("streamline/build/native/mc_dlss.dll")
 		assertTrue(Files.isRegularFile(library), "buildNativeDlss must produce mc_dlss.dll")
 		return library
 	}

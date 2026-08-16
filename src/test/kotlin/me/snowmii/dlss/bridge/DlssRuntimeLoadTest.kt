@@ -1,5 +1,7 @@
 package me.snowmii.dlss.bridge
 import me.snowmii.streamline.Dimensions;
+import me.snowmii.streamline.Native;
+import me.snowmii.streamline.NativeApi;
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -33,7 +35,7 @@ class DlssRuntimeLoadTest {
 	@Test
 	fun `injected Streamline extensions enable initialize support and dimension queries`(@TempDir dataPath: Path) {
 		val repository = Path.of("").toAbsolutePath()
-		val library = repository.resolve("build/native/mc_dlss.dll")
+		val library = repository.resolve("streamline/build/native/mc_dlss.dll")
 		assertEquals(true, Files.isRegularFile(library), "buildNativeDlss must produce mc_dlss.dll")
 
 		// Instance extensions are queried before any Vulkan object exists; the production seam

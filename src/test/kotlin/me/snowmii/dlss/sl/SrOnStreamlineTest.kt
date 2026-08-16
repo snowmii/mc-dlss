@@ -5,9 +5,9 @@ import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.dlss.bridge.Native
-import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.NativeException
+import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.NativeException
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -151,8 +151,8 @@ class SrOnStreamlineTest {
 	@Order(1)
 	@Test
 	fun `close shuts Streamline down after module resources and resets the bootstrap bookkeeping`() {
-		val sessionSource = Files.readString(Path.of("native", "internal", "session.cpp"))
-		val slSource = Files.readString(Path.of("native", "internal", "sl_dlss.cpp"))
+		val sessionSource = Files.readString(Path.of("streamline", "native", "internal", "session.cpp"))
+		val slSource = Files.readString(Path.of("streamline", "native", "internal", "sl_dlss.cpp"))
 
 		// The teardown order is the lifecycle contract: the module's own GPU objects die
 		// first, the Streamline runtime shuts down while the caller's device is still alive,
@@ -188,7 +188,7 @@ class SrOnStreamlineTest {
 	fun `native code contains no direct NGX runtime calls and the build links no NGX library`() {
 		// Every native translation unit and header, walked rather than enumerated so a new
 		// unit cannot silently reintroduce the retired path.
-		val nativeFiles = Files.walk(Path.of("native"))
+		val nativeFiles = Files.walk(Path.of("streamline", "native"))
 			.filter { Files.isRegularFile(it) }
 			.filter { it.toString().endsWith(".cpp") || it.toString().endsWith(".h") }
 			.toList()
@@ -208,7 +208,7 @@ class SrOnStreamlineTest {
 		// The build links Streamline and the Vulkan loader and nothing from the NGX SDK: the
 		// reference-only 310.7.0 headers stay on the include path, the library never reaches
 		// the link line.
-		val buildScript = Files.readString(Path.of("build.gradle.kts"))
+		val buildScript = Files.readString(Path.of("streamline", "build.gradle.kts"))
 		assertTrue(
 			!buildScript.contains("nvsdk_ngx_s.lib"),
 			"buildNativeDlss must not link nvsdk_ngx_s.lib",

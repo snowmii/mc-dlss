@@ -1,21 +1,4 @@
-package me.snowmii.dlss.bridge;
-
-import me.snowmii.streamline.CameraConstants;
-import me.snowmii.streamline.Dimensions;
-import me.snowmii.streamline.EvaluationImages;
-import me.snowmii.streamline.EvaluationRequest;
-import me.snowmii.streamline.FgMultiplier;
-import me.snowmii.streamline.FgState;
-import me.snowmii.streamline.FgTagRequest;
-import me.snowmii.streamline.FillVelocityRequest;
-import me.snowmii.streamline.FrameTimings;
-import me.snowmii.streamline.ImageBinding;
-import me.snowmii.streamline.MotionRequest;
-import me.snowmii.streamline.PresentMarkerEvents;
-import me.snowmii.streamline.PresentTarget;
-import me.snowmii.streamline.SlQueueRequirements;
-import me.snowmii.streamline.SrTagRequest;
-import me.snowmii.streamline.TaggedFrameIndexes;
+package me.snowmii.streamline;
 
 import java.nio.file.Path;
 import java.util.List;

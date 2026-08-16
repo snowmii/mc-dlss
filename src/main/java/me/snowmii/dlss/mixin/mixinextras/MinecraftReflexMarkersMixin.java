@@ -3,7 +3,7 @@ package me.snowmii.dlss.mixin.mixinextras;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.systems.CommandEncoder;
-import me.snowmii.dlss.bridge.NativeApi;
+import me.snowmii.streamline.NativeApi;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.render.WorldPhase;
 import net.minecraft.client.Minecraft;

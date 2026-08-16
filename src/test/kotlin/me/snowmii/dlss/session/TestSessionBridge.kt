@@ -11,7 +11,7 @@ import me.snowmii.streamline.FgState
  * Every method is the refusal a real bridge gives when its session cannot answer, so a test
  * overrides only the calls its own behaviour depends on and the rest stay visibly inert. Tests
  * that want the production shape - the READY gates, the latching - build a real
- * [LifecycleAdapter] over a [me.snowmii.dlss.bridge.NativeApi] double and pass that instead;
+ * [LifecycleAdapter] over a [me.snowmii.streamline.NativeApi] double and pass that instead;
  * this exists for the cases where the session deliberately never reaches READY.
  */
 open class TestSessionBridge : SessionBridge {

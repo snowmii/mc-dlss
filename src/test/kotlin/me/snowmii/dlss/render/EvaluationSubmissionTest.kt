@@ -7,8 +7,8 @@ import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.dlss.bridge.Native
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.VulkanContext
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
@@ -372,7 +372,7 @@ class EvaluationSubmissionTest {
 	)
 
 	private fun nativeLibrary(): Path {
-		val library = Path.of("").toAbsolutePath().resolve("build/native/mc_dlss.dll")
+		val library = Path.of("").toAbsolutePath().resolve("streamline/build/native/mc_dlss.dll")
 		assertTrue(Files.isRegularFile(library), "buildNativeDlss must produce mc_dlss.dll")
 		return library
 	}

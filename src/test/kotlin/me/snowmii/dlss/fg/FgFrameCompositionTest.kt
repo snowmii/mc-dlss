@@ -12,7 +12,7 @@ import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.VulkanContext

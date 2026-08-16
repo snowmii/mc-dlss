@@ -21,4 +21,4 @@ import java.nio.file.Path
  * checkout hands the same file back with CRLF.
  */
 fun nativeSource(relativePath: String): String =
-	Files.readString(Path.of("native", *relativePath.split("/").toTypedArray())).replace("\r\n", "\n")
+	Files.readString(Path.of("streamline", "native", *relativePath.split("/").toTypedArray())).replace("\r\n", "\n")

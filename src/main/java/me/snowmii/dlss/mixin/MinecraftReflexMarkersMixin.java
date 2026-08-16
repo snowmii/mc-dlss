@@ -1,6 +1,6 @@
 package me.snowmii.dlss.mixin;
 
-import me.snowmii.dlss.bridge.NativeApi;
+import me.snowmii.streamline.NativeApi;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.render.WorldPhase;
 import net.minecraft.client.Minecraft;

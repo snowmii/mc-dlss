@@ -1,6 +1,6 @@
 package me.snowmii.dlss.session
 import me.snowmii.streamline.Dimensions
-import me.snowmii.dlss.bridge.NativeException
+import me.snowmii.streamline.NativeException
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.EvaluationRequest
@@ -9,7 +9,7 @@ import me.snowmii.streamline.FgMultiplier
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import java.nio.file.Path

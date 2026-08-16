@@ -12,7 +12,7 @@ import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.VulkanContext
@@ -239,7 +239,7 @@ class MotionVectorRouteTest {
 
 		val java = Path.of("")
 			.toAbsolutePath()
-			.resolve("src/main/java/me/snowmii/dlss/bridge/Native.java")
+			.resolve("streamline/src/main/java/me/snowmii/streamline/Native.java")
 			.readText()
 		assertTrue(java.contains("IMAGE_LAYOUT.withName(\"depth\")"), "the FFM tag layout must mirror the tag struct")
 		assertFalse(java.contains("TAG_VELOCITY_VIEW"), "the FFM tag layout must carry no velocity field")

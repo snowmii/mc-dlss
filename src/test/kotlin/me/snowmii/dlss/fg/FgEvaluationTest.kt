@@ -12,8 +12,8 @@ import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.dlss.bridge.Native
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.dlss.session.DlssNativeStage
@@ -757,7 +757,7 @@ class FgEvaluationTest {
 	fun `native source contains no direct DLSS-G evaluation call`() {
 		// Every native translation unit and header, walked rather than enumerated so a new
 		// unit cannot silently reintroduce the direct-evaluate path.
-		val nativeFiles = Files.walk(Path.of("native"))
+		val nativeFiles = Files.walk(Path.of("streamline", "native"))
 			.filter { Files.isRegularFile(it) }
 			.filter { it.toString().endsWith(".cpp") || it.toString().endsWith(".h") }
 			.toList()

@@ -1,5 +1,8 @@
 package me.snowmii.dlss.bridge;
 import me.snowmii.dlss.config.ModConfig;
+import me.snowmii.streamline.Native;
+import me.snowmii.streamline.NativeApi;
+import me.snowmii.streamline.NativeException;
 import me.snowmii.streamline.SlQueueRequirements;
 import me.snowmii.streamline.VulkanContext;
 
@@ -142,7 +145,7 @@ public final class ExtensionBootstrap {
 	/**
 	 * The staged Streamline runtime directory: where sl.common.dll, sl.interposer.dll, and the
 	 * feature plugins were copied by processResources. Resolves the packaged resource first,
-	 * then walks up from the working directory for plain {@code buildNativeDlss} runs.
+	 * then walks up from the working directory for plain {@code :streamline:buildNativeDlss} runs.
 	 */
 	public static Path streamlineRuntimeDirectory() {
 		final URL resource = ExtensionBootstrap.class.getResource(STREAMLINE_RESOURCE_PATH);
@@ -163,7 +166,7 @@ public final class ExtensionBootstrap {
 	/**
 	 * Locates the workstation-local native bridge: explicit override first, then the packaged
 	 * namespaced resource, then the build output relative to an ancestor of the working
-	 * directory. The last case keeps a plain {@code buildNativeDlss} run usable before
+	 * directory. The last case keeps a plain {@code :streamline:buildNativeDlss} run usable before
 	 * resources are processed; the dev client's working directory is {@code run/} while tests
 	 * run from the repository root, so the walk-up covers both.
 	 */
@@ -190,7 +193,7 @@ public final class ExtensionBootstrap {
 		throw new NativeException(
 			"load-library",
 			new IllegalStateException(
-				"Native DLSS bridge not found. Run ./gradlew.bat buildNativeDlss, or set -D"
+				"Native DLSS bridge not found. Run ./gradlew.bat :streamline:buildNativeDlss, or set -D"
 					+ ModConfig.NATIVE_LIBRARY_PROPERTY + "=<path to mc_dlss.dll>. Tried:" + tried
 			)
 		);

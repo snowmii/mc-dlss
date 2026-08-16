@@ -5,8 +5,8 @@ import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.dlss.bridge.Native
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeApi
 import me.snowmii.dlss.bridge.StreamlineVulkanProvider
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue

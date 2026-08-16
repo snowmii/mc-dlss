@@ -14,8 +14,8 @@ import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.dlss.bridge.Native
-import me.snowmii.dlss.bridge.NativeApi
+import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.VulkanContext

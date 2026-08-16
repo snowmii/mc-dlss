@@ -1,4 +1,4 @@
-package me.snowmii.dlss.bridge;
+package me.snowmii.streamline;
 
 import java.util.Locale;
 
