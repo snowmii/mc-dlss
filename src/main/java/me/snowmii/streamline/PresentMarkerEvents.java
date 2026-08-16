@@ -1,6 +1,7 @@
 package me.snowmii.streamline;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * The present-marker oracle: how many PRESENT_START and PRESENT_END markers the module has
@@ -32,4 +33,8 @@ public record PresentMarkerEvents(
 	 * events than this, while the counts keep answering the whole session.
 	 */
 	public static final int LOG_CAPACITY = 16;
+
+	public PresentMarkerEvents {
+		Objects.requireNonNull(events, "events");
+	}
 }
