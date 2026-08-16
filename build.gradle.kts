@@ -308,4 +308,10 @@ tasks.jar {
 	from("LICENSE") {
 		rename { "${it}_$projectName" }
 	}
+
+	// The jar stages NVIDIA binaries that LICENSE deliberately does not cover, so the notices
+	// naming their separate terms have to travel with them rather than staying in the repository.
+	from("THIRD-PARTY-NOTICES.md") {
+		rename { "${it}_$projectName" }
+	}
 }
