@@ -1,16 +1,16 @@
 package me.snowmii.dlss.render
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.client.ClientRuntime
+import me.snowmii.dlss.readout.FramePacingProbe
 import me.snowmii.dlss.readout.SessionFacts
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.mrt.MotionVectorPipeline
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import net.minecraft.client.renderer.entity.state.EntityRenderState
 import org.joml.Matrix4f
 import org.joml.Vector3f
-import me.snowmii.dlss.session.DlssFrameDecision
-import me.snowmii.dlss.session.DlssFrameRoute
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.FilterMode
@@ -20,6 +20,22 @@ import com.mojang.blaze3d.vulkan.VulkanGpuTextureView
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.RenderPipelines
 import java.util.Optional
+
+/**
+ * The evaluate-and-compose seam a phase closes through: rendered scene, destination, this frame's
+ * jitter and motion, the session's world-motion route, the scene velocity companion view behind
+ * it, and the camera the projection seam sampled. Answers true when the destination holds the
+ * upscaled frame.
+ */
+typealias EvaluateFrame = (
+	RenderTarget,
+	RenderTarget,
+	DlssJitterOffset,
+	DlssFrameMotion,
+	MotionVectorRoute,
+	GpuTextureView?,
+	DlssCameraSample?,
+) -> Boolean
 
 /**
  * Scopes one world render phase, which is the only window in which the mod's low-resolution
@@ -51,17 +67,16 @@ class WorldPhase(
 	 * into the destination, returning true when the destination now holds the upscaled frame.
 	 *
 	 * Injected because reaching the raw Vulkan handles behind a target needs Minecraft's backend
-	 * types, and everything else here is verifiable off the render thread. [route] is the
-	 * session's world-motion route and [velocityView] the scene velocity companion view behind
+	 * types, and everything else here is verifiable off the render thread. The route parameter is
+	 * the session's world-motion route and the velocity view the scene velocity companion behind
 	 * it, captured at close time so the evaluation can feed the velocity MRT to Streamline on
-	 * the velocity route and keep the compute writer on the camera-only route. [camera] is the
+	 * the velocity route and keep the compute writer on the camera-only route. The camera is the
 	 * frame's camera as the projection seam sampled it, snapshotted when [prepare] stored it
 	 * (the seam's matrices are reused across frames) and read at close time: the phase clears
 	 * its own field as it closes, so the sample travels as a parameter rather than as a field
 	 * the production wiring would read after the clear.
 	 */
-	private val evaluateFrame: (RenderTarget, RenderTarget, DlssJitterOffset, DlssFrameMotion, MotionVectorRoute, GpuTextureView?, DlssCameraSample?) -> Boolean =
-		{ _, _, _, _, _, _, _ -> false },
+	private val evaluateFrame: EvaluateFrame = { _, _, _, _, _, _, _ -> false },
 	/**
 	 * Formats and emits the session's reporting lines, fed by this phase and by the evaluation.
 	 */
@@ -96,22 +111,52 @@ class WorldPhase(
 	 * presentation pipelines run outside this window and cannot change the session's
 	 * world-motion route.
 	 */
-	fun presentStart(): Boolean = runtime.frameEvaluation?.presentStart() == true
-	fun presentEnd(): Boolean = runtime.frameEvaluation?.presentEnd() == true
+	fun presentStart(): Boolean {
+		runtime.pacing.begin(FramePacingProbe.Span.QUEUE_PRESENT)
+		return runtime.frameEvaluation?.presentStart() == true
+	}
 
-	// The five Reflex/PCL frame markers of the M-12 surface, reached the same way the
-	// present bracket is: the Minecraft run/runTick/renderFrame mixins call the active
-	// world phase (the render loop's handle to the runtime, null before the DLSS path was
-	// built), and this object passes the call through to the evaluation and its adapter.
+	fun presentEnd(): Boolean {
+		val emitted = runtime.frameEvaluation?.presentEnd() == true
+		runtime.pacing.end(FramePacingProbe.Span.QUEUE_PRESENT)
+		return emitted
+	}
+
+	// The swapchain acquire, measured on every frame rather than only FG-active ones: an acquire
+	// that blocks is the pacer holding every image, and the comparison that says so is the same
+	// call's cost with FG off. No marker and no native call - unlike the present bracket this
+	// seam exists only to be measured.
+	fun acquireStart() = runtime.pacing.begin(FramePacingProbe.Span.SWAPCHAIN_ACQUIRE)
+	fun acquireEnd() = runtime.pacing.end(FramePacingProbe.Span.SWAPCHAIN_ACQUIRE)
+
+	// The frame's command submission, measured from the seam that already brackets it with the
+	// render-submit Reflex markers.
+	fun submitStart() = runtime.pacing.begin(FramePacingProbe.Span.RENDER_SUBMIT)
+	fun submitEnd() = runtime.pacing.end(FramePacingProbe.Span.RENDER_SUBMIT)
+
+	// The Reflex/PCL frame markers of the M-12 surface, reached the same way the present
+	// bracket is: the Minecraft run/runTick/renderFrame mixins call the active world phase
+	// (the render loop's handle to the runtime, null before the DLSS path was built), and this
+	// object passes the call through to the evaluation and its adapter. The marker itself is a
+	// value, so a mixin naming a new seam adds an enum constant rather than a method here.
 	// The input and simulation seams fire outside the world phase's own window - before
 	// LevelRenderer.render opens it - which is fine: the phase object exists for the whole
 	// session once the render loop built the path, and the markers themselves are gated on
 	// the READY session inside the adapter, not on the phase being open.
-	fun reflexInputSample(): Boolean = runtime.frameEvaluation?.reflexInputSample() == true
-	fun reflexSimulateStart(): Boolean = runtime.frameEvaluation?.reflexSimulateStart() == true
-	fun reflexSimulateEnd(): Boolean = runtime.frameEvaluation?.reflexSimulateEnd() == true
-	fun reflexRenderSubmitStart(): Boolean = runtime.frameEvaluation?.reflexRenderSubmitStart() == true
-	fun reflexRenderSubmitEnd(): Boolean = runtime.frameEvaluation?.reflexRenderSubmitEnd() == true
+	fun reflexInputSample(): Boolean {
+		// This marker runs slReflexSleep on the native side before it emits, so it is the frame's
+		// only blocking call outside the render seams - and the first measurement left 56ms of a
+		// 57ms frame outside every span the probe had. Bracketed here rather than in the adapter
+		// so the span covers the sleep even when the marker itself is refused.
+		runtime.pacing.begin(FramePacingProbe.Span.REFLEX_SLEEP)
+		try {
+			return runtime.frameEvaluation?.reflexInputSample() == true
+		} finally {
+			runtime.pacing.end(FramePacingProbe.Span.REFLEX_SLEEP)
+		}
+	}
+	fun reflexMarker(type: NativeApi.ReflexMarkerType): Boolean =
+		runtime.frameEvaluation?.reflexMarker(type) == true
 
 	fun observePipeline(pipeline: MotionVectorPipeline) {
 		if (isOpen) {
@@ -299,6 +344,7 @@ class WorldPhase(
 				renderDimensions = runtime.renderDimensions,
 			),
 			frameTimings = { runtime.frameEvaluation?.sampleTimings() },
+			pacing = { runtime.pacing.sampleAndReset() },
 			fgState = {
 				// The monitor reads the plugin only while FG is active: with FG off the plugin's
 				// presented count and fence are stale, and the line would report noise as news.
@@ -486,7 +532,7 @@ class WorldPhase(
 		 * missing, mismatched in size, or not a Vulkan view.
 		 */
 		internal fun resolveFgInputs(): FgFrameInputs? {
-			val main = Minecraft.getInstance().gameRenderer.mainRenderTarget() ?: return null
+			val main = Minecraft.getInstance().gameRenderer.mainRenderTarget()
 			val ui = ClientRuntime.active().activeUiPhase()?.uiTarget ?: return null
 			if (ui.width != main.width || ui.height != main.height) {
 				return null

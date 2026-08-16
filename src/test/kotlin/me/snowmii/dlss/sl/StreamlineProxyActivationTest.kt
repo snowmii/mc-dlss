@@ -2,6 +2,7 @@ package me.snowmii.dlss.sl
 
 import java.nio.file.Files
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.bridge.Native
@@ -32,6 +33,7 @@ import org.lwjgl.vulkan.VkQueueFamilyProperties
  * runs the orderly slShutdown while the device is still alive - the fix that keeps the fork's
  * JVM exit from crashing in sl.common.dll / nvcuda64.dll.
  */
+@NativeBridge
 class StreamlineProxyActivationTest {
 
 	@Test
@@ -89,8 +91,9 @@ class StreamlineProxyActivationTest {
 			val path = StreamlineVulkanProvider.redirectToInterposer()
 			assertTrue(Files.isRegularFile(path), "staged interposer must be a regular file")
 			assertEquals("sl.interposer.dll", path.fileName.toString())
+			val expectedLibname = path.toAbsolutePath().toString()
 			assertEquals(
-				path.toAbsolutePath().toString(),
+				expectedLibname,
 				System.getProperty("org.lwjgl.vulkan.libname"),
 				"LWJGL must be pointed at the absolute interposer path",
 			)
@@ -119,6 +122,6 @@ class StreamlineProxyActivationTest {
 				}
 			}
 		}
-		throw IllegalStateException("No graphics queue family on the fixture's physical device")
+		error("No graphics queue family on the fixture's physical device")
 	}
 }

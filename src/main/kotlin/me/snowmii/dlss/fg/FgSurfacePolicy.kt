@@ -18,60 +18,79 @@ package me.snowmii.dlss.fg
  * - while FG is active the swapchain minimum image count is raised to at least the declared
  *   DLSS-G back buffers, never lowered below what Minecraft would create.
  *
- * A third axis, frame support, suspends the *effective* mode without touching the user's mode
- * or the latch: unsupported frames (pause, loading, menu, panorama, resize, fullscreen
- * transition) flip [active] off through [setFrameSupported], the composition seam then records
- * SR-only frames, and the first supported frame flips it back on - a user-off or latched policy
- * stays off through the whole cycle. The swapchain reads ([effectiveVsyncEnabled],
- * [minImageCount]) deliberately follow the user's mode, not the effective one: a suspension is
- * transient, and recreating the swapchain FIFO on every pause and back on every resume would
- * leave FG running on exactly the swapchain the guide forbids.
+ * A second axis, frame support, suspends the *effective* mode without touching the user's
+ * mode: unsupported frames (pause, loading, menu, panorama, resize, fullscreen transition, and
+ * an unhealthy DLSS-G status) flip [active] off through [setFrameSupported], the composition
+ * seam then records SR-only frames, and the first supported frame flips it back on - a
+ * user-off policy stays off through the whole cycle. The swapchain reads
+ * ([effectiveVsyncEnabled], [minImageCount]) deliberately follow the user's mode, not the
+ * effective one: a suspension is transient, and recreating the swapchain FIFO on every pause
+ * and back on every resume would leave FG running on exactly the swapchain the guide forbids.
  *
- * The declared back-buffer count defaults to the number the mod records with
- * [me.snowmii.dlss.session.LifecycleAdapter.configureFg]; a policy for a different declaration
- * is constructed explicitly.
+ * There is deliberately no session latch. An earlier design let the first non-OK
+ * `slDLSSGGetState` status end frame generation for the session, which also restored FIFO
+ * vsync for good; but the status word is a bitmask about *this frame* - a quality-mode change
+ * produces one for a frame or two by construction - so a transient bit killed FG with no way
+ * back short of a restart. Every "FG must stop" condition is a suspension on the frame-support
+ * axis instead, and every one of them is reversible.
+ *
+ * The declared back-buffer count is derived from [numFramesToGenerate], not fixed: it is the
+ * number [me.snowmii.dlss.session.LifecycleAdapter.configureFg] records AND the swapchain
+ * minimum, and both have to grow with the multiplier (see [backBuffersFor]).
  */
 class FgSurfacePolicy(
-	private val declaredBackBuffers: Int = DEFAULT_DECLARED_BACK_BUFFERS,
 	private val invalidateSurfaceConfiguration: () -> Unit = {},
 ) {
 	private var frameGenerationActive = false
-	private var latchedOff = false
 	private var frameSupported = true
+
+	/**
+	 * The DLSS-G multiplier in effect in `numFramesToGenerate` units: 1 = 2x, 2 = 3x, and so on.
+	 *
+	 * Written by [me.snowmii.dlss.render.RenderRuntime.setFgMultiplier] on a successful native
+	 * record, immediately before it invalidates the surface configuration, so the swapchain the
+	 * next frame creates is sized for the multiplier the plugin is now generating at.
+	 */
+	var numFramesToGenerate: Int = 1
+		set(value) {
+			field = maxOf(1, value)
+		}
+
+	/**
+	 * The back-buffer count this multiplier needs, in both the recorded `DLSSGOptions` and the
+	 * swapchain: [backBuffersFor] of [numFramesToGenerate].
+	 */
+	val declaredBackBuffers: Int
+		get() = backBuffersFor(numFramesToGenerate)
 
 	/**
 	 * Whether FG is effective right now: the user's mode AND a frame FG may compose on.
 	 *
 	 * Suspended frames read false here while [frameGenerationActive] keeps the user's mode,
-	 * so a supported frame resumes exactly what the user's mode says - and a user-off or
-	 * latched policy reads false through the whole cycle.
+	 * so a supported frame resumes exactly what the user's mode says - and a user-off policy
+	 * reads false through the whole cycle.
 	 */
 	val active: Boolean
 		get() = frameGenerationActive && frameSupported
 
 	/**
-	 * Whether a non-OK DLSS-G status latched FG off for the session.
+	 * The user's FG mode, regardless of whether this frame may compose on it.
 	 *
-	 * A latched policy is off for good: every later re-arm is refused, the vsync and
-	 * image-count reads answer the stored/vanilla values, and only a fresh session's new
-	 * policy instance can run FG again.
+	 * What the swapchain policy follows, and what a caller polling the plugin has to gate on:
+	 * gating a poll on [active] means a suspension stops the polling that would end it, so the
+	 * suspension never lifts.
 	 */
-	val latched: Boolean
-		get() = latchedOff
+	val armed: Boolean
+		get() = frameGenerationActive
 
 	/**
 	 * Switches FG on or off and reports whether the mode changed.
 	 *
 	 * A real transition invalidates Minecraft's surface configuration exactly once, so the next
 	 * frame recreates the swapchain under the new policy; a call that leaves the mode where it
-	 * was is a no-op that invalidates nothing. A re-arm of a latched policy is refused before
-	 * anything else: the latch is the plugin's own failure verdict for the session, and no
-	 * toggle may overturn it.
+	 * was is a no-op that invalidates nothing.
 	 */
 	fun setFrameGenerationActive(active: Boolean): Boolean {
-		if (latchedOff && active) {
-			return false
-		}
 		if (active == frameGenerationActive) {
 			return false
 		}
@@ -84,13 +103,13 @@ class FgSurfacePolicy(
 	 * Marks whether the current frame may compose FG, and reports whether the effective mode
 	 * changed.
 	 *
-	 * A supported-to-unsupported flip suspends [active] off while the user's mode and the latch
-	 * stay untouched, so the caller can attach its one eOff options record to exactly this
+	 * A supported-to-unsupported flip suspends [active] off while the user's mode stays
+	 * untouched, so the caller can attach its one eOff options record to exactly this
 	 * transition; the frames in between change nothing, and a supported frame resumes. The
 	 * return answers true only when the user's mode is on - suspending an already-off policy
-	 * changes nothing, and so does resuming a user-off or latched one, which is the user-off
-	 * and session-latch precedence. Deliberately no surface invalidation: see the class
-	 * comment, the swapchain policy follows the user's mode across a suspension.
+	 * changes nothing, and so does resuming a user-off one, which is the user-off precedence.
+	 * Deliberately no surface invalidation: see the class comment, the swapchain policy follows
+	 * the user's mode across a suspension.
 	 */
 	fun setFrameSupported(supported: Boolean): Boolean {
 		if (supported == frameSupported) {
@@ -98,26 +117,6 @@ class FgSurfacePolicy(
 		}
 		frameSupported = supported
 		return frameGenerationActive
-	}
-
-	/**
-	 * Latches FG off for the session: records the latch, switches the mode off - invalidating
-	 * the surface configuration exactly once when the mode actually changes, so the next
-	 * frame recreates the swapchain with vsync and image count restored - and refuses every
-	 * later re-arm. Returns whether this call was the one that latched; a repeat call answers
-	 * false so its caller can keep a one-shot side effect (the eOff options record, the exact
-	 * diagnostic) attached to the first latch.
-	 */
-	fun latchOff(): Boolean {
-		if (latchedOff) {
-			return false
-		}
-		latchedOff = true
-		if (frameGenerationActive) {
-			frameGenerationActive = false
-			invalidateSurfaceConfiguration()
-		}
-		return true
 	}
 
 	/**
@@ -141,9 +140,29 @@ class FgSurfacePolicy(
 
 	companion object {
 		/**
-		 * The DLSS-G back-buffer count the mod declares when recording FG options:
-		 * `numBackBuffers = 3` in the recorded `DLSSGOptions`.
+		 * Images beyond the ones one app frame presents: one being scanned out and one free to
+		 * acquire while the pacer still holds the rest.
+		 *
+		 * Below this the presenter starves and DLSS-G cannot hold its generated frames back for
+		 * equal spacing - the acquire blocks instead, and the interval the plugin divides is the
+		 * blocked one. That is a mild wobble at 2x, where a single generated frame absorbs the
+		 * whole error, and it compounds with the multiplier: at Nx the same irregular interval is
+		 * cut N ways and every sub-interval carries all of it.
 		 */
-		const val DEFAULT_DECLARED_BACK_BUFFERS = 3
+		const val PRESENT_HEADROOM = 2
+
+		/**
+		 * The back-buffer count a multiplier needs: one present per generated frame plus one for
+		 * the rendered frame, plus [PRESENT_HEADROOM].
+		 *
+		 * A fixed 3 - which is what this policy declared while the multiplier was pinned at 2x -
+		 * is already one short at 2x and two short at 3x, which is why 3x paces far worse than
+		 * 2x rather than a little worse.
+		 */
+		fun backBuffersFor(numFramesToGenerate: Int): Int =
+			numFramesToGenerate + 1 + PRESENT_HEADROOM
+
+		/** [backBuffersFor] the default 2x multiplier. */
+		const val DEFAULT_DECLARED_BACK_BUFFERS = 4
 	}
 }

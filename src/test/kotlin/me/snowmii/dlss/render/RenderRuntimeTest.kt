@@ -1,4 +1,5 @@
 package me.snowmii.dlss.render
+import me.snowmii.dlss.session.TestSessionBridge
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -219,7 +220,12 @@ class RenderRuntimeTest {
 			startupCalls++
 			startup()
 		},
-		quiesce = { freeLog += "quiesce" },
+		bridge = object : TestSessionBridge() {
+			override fun waitDeviceIdle(): Boolean {
+				freeLog += "quiesce"
+				return true
+			}
+		},
 	)
 
 	private fun markReady(session: DlssSession) {

@@ -10,6 +10,8 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The review keys: F6 toggles DLSS, F7 cycles the quality mode, F8 cycles the preset, F9
@@ -33,6 +35,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(KeyboardHandler.class)
 public class KeyboardHandlerControlsMixin {
+	private static final Logger LOGGER = LoggerFactory.getLogger("mc-dlss");
 	/** GLFW_PRESS; a repeat or a release must not cycle a second time. */
 	private static final int MC_DLSS_PRESS = 1;
 	private static final int MC_DLSS_KEY_TOGGLE = 295; // GLFW_KEY_F6
@@ -57,6 +60,14 @@ public class KeyboardHandlerControlsMixin {
 				ChatReadout.send(readout);
 			}
 			return;
+		}
+
+		// DIAGNOSTIC: a review key that never reaches the switch and one whose action is refused
+		// are indistinguishable from chat, and F10 in particular is a key Windows itself claims.
+		// Logging every key in the review range separates "GLFW never delivered it" from
+		// "delivered, dispatched, and the action declined".
+		if (event.key() >= MC_DLSS_KEY_TOGGLE && event.key() <= MC_DLSS_KEY_FG_MULTIPLIER) {
+			LOGGER.info("DLSS review key: {}", event.key());
 		}
 
 		final RuntimeControls controls = ClientRuntime.active().activeControls();

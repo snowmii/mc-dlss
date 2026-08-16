@@ -14,6 +14,7 @@ import me.snowmii.dlss.session.LifecycleAdapter
 
 import java.nio.file.Files
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -41,6 +42,7 @@ import org.junit.jupiter.api.io.TempDir
  * itself - colour and depth from GENERAL - is the restoration claim: validation contradicts it if
  * the evaluation left them in the read layout.
  */
+@NativeBridge
 class DlssEvaluationBarrierTest {
 	private val output = DlssDimensions(2560, 1440)
 
@@ -126,8 +128,9 @@ class DlssEvaluationBarrierTest {
 				)
 				assertNotNull(render, session.failure?.diagnostic())
 
-				val images = adapter.acquireImages()
-				assertNotNull(images, session.failure?.diagnostic())
+				val acquired = adapter.acquireImages()
+				assertNotNull(acquired, session.failure?.diagnostic())
+				val images = checkNotNull(acquired)
 
 				// Stand-ins for the scene target the world phase renders into: render-sized, created
 				// and left in GENERAL exactly as VulkanGpuTexture leaves Minecraft's own textures.
@@ -174,8 +177,8 @@ class DlssEvaluationBarrierTest {
 					vulkan.validationErrorsAbout(
 						color.image(),
 						depth.image(),
-						images!!.motion.image,
-						images!!.output.image,
+						images.motion.image,
+						images.output.image,
 					),
 					"no validation error may name a resource this evaluation transitions",
 				)
@@ -198,8 +201,8 @@ class DlssEvaluationBarrierTest {
 					vulkan.validationErrorsAbout(
 						color.image(),
 						depth.image(),
-						images!!.motion.image,
-						images!!.output.image,
+						images.motion.image,
+						images.output.image,
 					),
 				)
 

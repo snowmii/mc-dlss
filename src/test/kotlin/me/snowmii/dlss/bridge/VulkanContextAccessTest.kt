@@ -1,7 +1,9 @@
 package me.snowmii.dlss.bridge
 
+import me.snowmii.dlss.NativeBridge
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -14,6 +16,7 @@ import org.junit.jupiter.api.Test
  * [VulkanContext.recordCommandBuffer], [VulkanContextRegistry]) against a headless
  * Vulkan context it builds itself - no Minecraft instance, device, or window needed.
  */
+@NativeBridge
 class VulkanContextAccessTest {
 
 	@Test
@@ -48,7 +51,7 @@ class VulkanContextAccessTest {
 
 			// Mod-level registration keeps the captured context reachable.
 			VulkanContextRegistry.register(context)
-			assertEquals(context, VulkanContextRegistry.getCurrent())
+			assertSame(context, VulkanContextRegistry.getCurrent(), "the registry hands back the registered context")
 		}
 	}
 }

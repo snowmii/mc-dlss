@@ -26,7 +26,6 @@ import com.mojang.blaze3d.textures.GpuSampler
 import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
 import java.nio.ByteBuffer
-import java.util.Optional
 import java.util.OptionalDouble
 import java.util.function.Supplier
 import me.snowmii.dlss.client.ClientRuntime

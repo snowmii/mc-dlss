@@ -13,6 +13,8 @@ import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkPresentInfoKHR;
 import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkSwapchainCreateInfoKHR;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
@@ -39,6 +41,8 @@ import org.spongepowered.asm.mixin.injection.At;
  */
 @Mixin(VulkanGpuSurface.class)
 public class VulkanGpuSurfaceProxyMixin {
+	private static final Logger LOGGER = LoggerFactory.getLogger("mc-dlss");
+
 	@WrapOperation(
 		method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V",
 		at = @At(
@@ -75,12 +79,19 @@ public class VulkanGpuSurfaceProxyMixin {
 		final LongBuffer images,
 		final Operation<Integer> original
 	) {
-		if (!StreamlineVulkanProxies.available()) {
-			return original.call(device, swapchain, imageCount, images);
+		final int result = StreamlineVulkanProxies.available()
+			? StreamlineVulkanProxies.getSwapchainImages(
+				device.address(), swapchain, address(imageCount), address(images)
+			)
+			: original.call(device, swapchain, imageCount, images);
+		// DIAGNOSTIC: the count query (images == null) answers how many images the driver actually
+		// created, which is the number that decides whether the pacer can hold its generated frames
+		// back or the next acquire blocks instead. The declared back-buffer count is only a request:
+		// the surface capabilities can cap it, and nothing else reports what survived.
+		if (images == null && imageCount != null) {
+			LOGGER.info("DLSS swapchain images: created={}", imageCount.get(0));
 		}
-		return StreamlineVulkanProxies.getSwapchainImages(
-			device.address(), swapchain, address(imageCount), address(images)
-		);
+		return result;
 	}
 
 	@WrapOperation(

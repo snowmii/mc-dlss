@@ -35,6 +35,7 @@ import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.session.SRMode
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
+import me.snowmii.dlss.NativeBridge
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -76,6 +77,7 @@ import org.lwjgl.vulkan.VkSemaphoreTypeCreateInfo
  * timeline semaphore: the wait blocks until the reported value is reached, so a regression
  * that treated the semaphore as a VkFence or ignored the value fails the proof.
  */
+@NativeBridge
 class FgPresentLifetimeTest {
 
 	@Test
@@ -110,8 +112,8 @@ class FgPresentLifetimeTest {
 
 		assertEquals(
 			listOf(
-				"waitFgInputs", "writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "fgTag", "handoff", "present",
-				"waitFgInputs", "writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "fgTag", "handoff", "present",
+				"waitFgInputs", "writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "present", "fgTag", "handoff",
+				"waitFgInputs", "writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "present", "fgTag", "handoff",
 			),
 			calls.order,
 			"each FG-active frame must wait for the previous frame's input processing at its " +
@@ -314,9 +316,9 @@ class FgPresentLifetimeTest {
 			startup = { RENDER_DIMENSIONS },
 			frameEvaluation = evaluation,
 			frameGeneration = policy,
-			waitForFgInputs = { adapter.waitFgInputsIdle() },
+			bridge = adapter,
 		)
-		return Harness(runtime, session, calls, evaluation)
+		return Harness(runtime, session, evaluation)
 	}
 
 	/** A [VkCommandBuffer] instance whose address() answers without any Vulkan device. */
@@ -385,7 +387,7 @@ class FgPresentLifetimeTest {
 
 	private fun checkVk(result: Int, what: String) {
 		if (result != VK10.VK_SUCCESS) {
-			throw IllegalStateException("$what failed with VkResult $result")
+			error("$what failed with VkResult $result")
 		}
 	}
 
@@ -407,7 +409,6 @@ class FgPresentLifetimeTest {
 	private class Harness(
 		val runtime: RenderRuntime,
 		val session: DlssSession,
-		val calls: RecordingNative,
 		val evaluation: FrameEvaluation,
 	)
 
@@ -528,13 +529,13 @@ class FgPresentLifetimeTest {
 		const val DESTINATION = 900L
 
 		/** NVSDK_NGX_Result_Fail = 0xBAD00000 | 1. */
-		private val FAIL = 0xBAD00001.toInt()
+		const val FAIL = 0xBAD00001.toInt()
 
 		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
-		private val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
+		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
 
 		/** NVSDK_NGX_Result_FAIL_NotInitialized = NVSDK_NGX_Result_Fail | 7 (0xBAD00000 | 7). */
-		private val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
+		const val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
 
 		/** How long a blocked wait must survive a probe before it is judged not to answer. */
 		private const val WAIT_PROBE_MS = 400L

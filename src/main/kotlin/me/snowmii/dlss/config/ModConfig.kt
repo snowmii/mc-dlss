@@ -79,7 +79,12 @@ class ModConfig(
 
 		private const val DEFAULT_OUTPUT_WIDTH = 2560
 		private const val DEFAULT_OUTPUT_HEIGHT = 1440
-		private const val DEFAULT_STRESS_STEPS = 64
+		// Retuned down from 64 when the stress march stopped branching on density: every step now
+		// pays the secondary sun march that used to run on dense samples only, so a step costs
+		// roughly three times what an average one did and the same total load needs about a third
+		// of the count. Re-tune with mc.dlss.stress-steps; the cost is flat in it now, which is
+		// what makes it a usable dial.
+		private const val DEFAULT_STRESS_STEPS = 24
 		private const val DEFAULT_STRESS_OCTAVES = 5
 		private const val DEFAULT_STRESS_GODRAY_TAPS = 24
 

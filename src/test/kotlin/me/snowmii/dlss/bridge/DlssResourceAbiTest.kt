@@ -12,7 +12,9 @@ import org.junit.jupiter.api.Test
 import java.lang.reflect.Proxy
 import java.nio.file.Files
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 
+@NativeBridge
 class DlssResourceAbiTest {
 	@Test
 	fun adapterStampsConfiguredDimensionsOntoTheRequest() {

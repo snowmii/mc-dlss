@@ -12,12 +12,41 @@
 #include <sl_pcl.h>
 #include <sl_reflex.h>
 
+#include <atomic>
+#include <windows.h>
+
 /*
  * The Streamline DLSS surface of the module, layered above state like the NGX unit. The ABI
  * keeps the NGX-valued parameters the rest of the module already validates against; the
  * mapping to sl:: types happens here, where the Streamline headers live.
  */
 namespace mc_dlss {
+
+namespace {
+
+HWND g_pclWindow = nullptr;
+WNDPROC g_previousWindowProc = nullptr;
+std::atomic_uint32_t g_pclStatsMessage{0};
+std::atomic_bool g_pclPingPending{false};
+
+LRESULT CALLBACK pcl_window_proc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    const uint32_t statsMessage = g_pclStatsMessage.load(std::memory_order_relaxed);
+    if (statsMessage != 0 && message == statsMessage) {
+        g_pclPingPending.store(true, std::memory_order_release);
+    }
+    return g_previousWindowProc != nullptr
+               ? CallWindowProcW(g_previousWindowProc, window, message, wParam, lParam)
+               : DefWindowProcW(window, message, wParam, lParam);
+}
+
+void refresh_pcl_stats_message() noexcept {
+    sl::PCLState state{};
+    if (slPCLGetState(state) == sl::Result::eOk) {
+        g_pclStatsMessage.store(state.statsWindowMessage, std::memory_order_relaxed);
+    }
+}
+
+} // namespace
 
 bool sl_session_ready() noexcept {
     return g_state.streamlineInitialized && g_state.proxyDevice != 0;
@@ -152,7 +181,17 @@ sl::DLSSGOptions make_fg_options(const uint32_t numBackBuffers,
     // configuration the session cycles.
     options.numFramesToGenerate = g_state.fgNumFramesToGenerate;
     options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
-    options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockNoClientQueues;
+    // eBlockPresentingClientQueue, the SDK default, rather than the Vulkan-only
+    // eBlockNoClientQueues this recorded first. The parallel mode's gains are documented for
+    // "GPU-limited applications having workload types employing multiple queues for
+    // submissions"; Minecraft renders and presents on one queue, so there is no other queue's
+    // work to overlap with DLSS-G's and nothing to gain - while the mode's cost is unavoidable:
+    // on Vulkan it makes the wait on DLSSGState::inputsProcessingCompletionFence *always
+    // required*, and that wait measured at 10-11ms of every 13ms app frame, which is the base
+    // frame rate collapsing from ~450fps to ~75 with FG on. Under this mode the wait is only
+    // "recommended but not required" when the tagged inputs are modified on the presenting
+    // queue, which is the only queue Minecraft has - so the host-side wait goes away with it.
+    options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
     options.enableUserInterfaceRecomposition = sl::Boolean::eTrue;
     options.numBackBuffers = numBackBuffers;
     // The depth/motion inputs are render-sized and the colour backbuffer is output-sized, the
@@ -314,23 +353,6 @@ void invalidate_frame_eligibility() noexcept {
     g_state.fgCopiedFrameIndex = 0;
 }
 
-// Appends one marker this module actually emitted to the present-marker event log: the
-// per-type count, the total count, and the ring slot. The ring keeps only the most recent
-// events; the counts are cumulative, so the exactly-one-START-and-one-END-per-handoff oracle
-// stays exact once the ring has wrapped.
-static void record_present_marker_event(const PresentMarkerType type,
-                                        const sl::FrameToken* frameToken) noexcept {
-    const uint32_t frameIndex = static_cast<uint32_t>(*frameToken);
-    g_state.presentMarkerLog[g_state.presentMarkerEventCount % kPresentMarkerLogSize] =
-        PresentMarkerEvent{type, frameIndex};
-    g_state.presentMarkerEventCount += 1;
-    if (type == kPresentMarkerStart) {
-        g_state.presentMarkerStartCount += 1;
-    } else {
-        g_state.presentMarkerEndCount += 1;
-    }
-}
-
 int32_t record_present_handoff() noexcept {
     if (!sl_session_ready()) return kNotInitialized;
     if (!g_state.fgOptionsRecorded || !images_match_configuration()) return kInvalidParameter;
@@ -371,7 +393,7 @@ int32_t present_start() noexcept {
     const sl::Result result = slPCLSetMarker(sl::PCLMarker::ePresentStart, *token);
     if (result != sl::Result::eOk) return static_cast<int32_t>(result);
     g_state.presentStartEmitted = true;
-    record_present_marker_event(kPresentMarkerStart, token);
+    g_state.presentMarkers.record(kPresentMarkerStart, token);
     return kSuccess;
 }
 
@@ -393,7 +415,7 @@ int32_t present_end() noexcept {
     if (g_state.presentStartEmitted && g_state.frameToken != nullptr) {
         const sl::FrameToken* token = g_state.frameToken;
         result = slPCLSetMarker(sl::PCLMarker::ePresentEnd, *token);
-        if (result == sl::Result::eOk) record_present_marker_event(kPresentMarkerEnd, token);
+        if (result == sl::Result::eOk) g_state.presentMarkers.record(kPresentMarkerEnd, token);
     }
     g_state.presentStartEmitted = false;
     g_state.presentTokenArmed = false;
@@ -405,49 +427,20 @@ int32_t present_end() noexcept {
 
 int32_t query_present_markers(uint32_t* startCount, uint32_t* endCount, uint32_t* eventCount,
                               uint32_t* events, const uint32_t eventsCapacity) noexcept {
-    if (startCount == nullptr || endCount == nullptr || eventCount == nullptr ||
-        events == nullptr) {
+    if (startCount == nullptr || endCount == nullptr) {
         return kInvalidParameter;
     }
-    // The oracle answers only once this session actually emitted a marker: before that
-    // there is no event any marker was emitted under, and the refusal is exactly what makes
-    // "refused or pre-ready handoffs emit no markers" observable to the test - a handoff
-    // that leaked markers would populate the log before the test expects it to.
-    if (g_state.presentMarkerEventCount == 0) {
-        return kNotInitialized;
+    // The log counts by type; this oracle names its two types separately, so the read fills a
+    // local count array and the two out-pointers take their entries from it.
+    uint32_t counts[kMarkerTypeCapacity] = {};
+    const int32_t result = g_state.presentMarkers.read(counts, kPresentMarkerTypeCount,
+                                                      eventCount, events, eventsCapacity);
+    if (result != kSuccess) {
+        return result;
     }
-    *startCount = g_state.presentMarkerStartCount;
-    *endCount = g_state.presentMarkerEndCount;
-    *eventCount = g_state.presentMarkerEventCount;
-    // The ring holds the most recent min(eventCount, kPresentMarkerLogSize) events, oldest
-    // first: the slot at eventCount % kPresentMarkerLogSize holds the oldest kept event (it
-    // is the next to be overwritten), and the kept events follow it around the ring.
-    const uint32_t kept = g_state.presentMarkerEventCount < kPresentMarkerLogSize
-                              ? g_state.presentMarkerEventCount
-                              : kPresentMarkerLogSize;
-    const uint32_t copied = eventsCapacity < kept ? eventsCapacity : kept;
-    const uint32_t oldest = (g_state.presentMarkerEventCount - kept) % kPresentMarkerLogSize;
-    for (uint32_t i = 0; i < copied; ++i) {
-        const PresentMarkerEvent& event =
-            g_state.presentMarkerLog[(oldest + i) % kPresentMarkerLogSize];
-        events[i * 2] = static_cast<uint32_t>(event.type);
-        events[i * 2 + 1] = event.frameIndex;
-    }
+    *startCount = counts[kPresentMarkerStart];
+    *endCount = counts[kPresentMarkerEnd];
     return kSuccess;
-}
-
-// Appends one Reflex/PCL marker this module actually emitted to the reflex-marker event
-// log: the per-type count, the total count, and the ring slot. Same discipline as the
-// present-marker log: the ring keeps only the most recent events, the counts are cumulative,
-// and the entry is recorded only after the marker call succeeded, so the oracle reports
-// exactly what reached the plugin.
-static void record_reflex_marker_event(const ReflexMarkerType type,
-                                       const sl::FrameToken* frameToken) noexcept {
-    const uint32_t frameIndex = static_cast<uint32_t>(*frameToken);
-    g_state.reflexMarkerLog[g_state.reflexMarkerEventCount % kReflexMarkerLogSize] =
-        ReflexMarkerEvent{type, frameIndex};
-    g_state.reflexMarkerEventCount += 1;
-    g_state.reflexMarkerTypeCounts[static_cast<uint32_t>(type)] += 1;
 }
 
 // Emits one PCL marker under the retained frame token and records it in the reflex-marker
@@ -468,7 +461,27 @@ static int32_t emit_reflex_marker(const ReflexMarkerType type, const sl::PCLMark
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
-    record_reflex_marker_event(type, token);
+    g_state.reflexMarkers.record(type, token);
+    return kSuccess;
+}
+
+int32_t install_pcl_window(const uint64_t hwnd) noexcept {
+    if (hwnd == 0) return kInvalidParameter;
+    const HWND window = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(hwnd));
+    if (g_pclWindow == window) {
+        refresh_pcl_stats_message();
+        return kSuccess;
+    }
+    if (g_pclWindow != nullptr) return kInvalidParameter;
+
+    SetLastError(0);
+    const LONG_PTR previous = SetWindowLongPtrW(
+        window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&pcl_window_proc));
+    if (previous == 0 && GetLastError() != 0) return kFailure;
+
+    g_previousWindowProc = reinterpret_cast<WNDPROC>(previous);
+    g_pclWindow = window;
+    refresh_pcl_stats_message();
     return kSuccess;
 }
 
@@ -497,65 +510,52 @@ int32_t reflex_input_sample() noexcept {
         invalidate_frame_eligibility();
         return static_cast<int32_t>(result);
     }
-    // The pinned 2.12 vocabulary removed eInputSample from PCLMarker, so the input seam
-    // emits ePCLatencyPing instead: the PCL guide defines the ping as the marker whose
-    // frame index identifies which frame picks up the simulated input, which is the
-    // input-sample seam semantics this marker surface exists for.
+    // PCL sends a private Win32 message periodically. The window procedure records it and
+    // this first post-poll seam associates it with the frame that consumes that input.
+    if (!g_pclPingPending.exchange(false, std::memory_order_acq_rel)) return kSuccess;
     result = slPCLSetMarker(sl::PCLMarker::ePCLatencyPing, *g_state.frameToken);
-    if (result != sl::Result::eOk) {
-        return static_cast<int32_t>(result);
-    }
-    record_reflex_marker_event(kReflexMarkerInputSample, g_state.frameToken);
+    if (result != sl::Result::eOk) return static_cast<int32_t>(result);
+    g_state.reflexMarkers.record(kReflexMarkerInputSample, g_state.frameToken);
     return kSuccess;
 }
 
-int32_t reflex_simulate_start() noexcept {
-    return emit_reflex_marker(kReflexMarkerSimulationStart, sl::PCLMarker::eSimulationStart);
-}
-
-int32_t reflex_simulate_end() noexcept {
-    return emit_reflex_marker(kReflexMarkerSimulationEnd, sl::PCLMarker::eSimulationEnd);
-}
-
-int32_t reflex_render_submit_start() noexcept {
-    return emit_reflex_marker(kReflexMarkerRenderSubmitStart, sl::PCLMarker::eRenderSubmitStart);
-}
-
-int32_t reflex_render_submit_end() noexcept {
-    return emit_reflex_marker(kReflexMarkerRenderSubmitEnd, sl::PCLMarker::eRenderSubmitEnd);
+int32_t reflex_marker(const uint32_t markerType) noexcept {
+    // The one place a ReflexMarkerType becomes an sl::PCLMarker. INPUT_SAMPLE is deliberately
+    // absent: its seam obtains the frame's token and runs the Reflex sleep before it emits
+    // anything, so it is its own entry rather than a marker this one could stand in for, and
+    // naming it here would emit a ping without the frame start that earns it.
+    switch (markerType) {
+        case kReflexMarkerSimulationStart:
+            return emit_reflex_marker(kReflexMarkerSimulationStart,
+                                      sl::PCLMarker::eSimulationStart);
+        case kReflexMarkerSimulationEnd:
+            return emit_reflex_marker(kReflexMarkerSimulationEnd, sl::PCLMarker::eSimulationEnd);
+        case kReflexMarkerRenderSubmitStart:
+            return emit_reflex_marker(kReflexMarkerRenderSubmitStart,
+                                      sl::PCLMarker::eRenderSubmitStart);
+        case kReflexMarkerRenderSubmitEnd:
+            return emit_reflex_marker(kReflexMarkerRenderSubmitEnd,
+                                      sl::PCLMarker::eRenderSubmitEnd);
+        default:
+            return kInvalidParameter;
+    }
 }
 
 int32_t query_reflex_markers(uint32_t* typeCounts, uint32_t* eventCount, uint32_t* events,
                              const uint32_t eventsCapacity) noexcept {
-    if (typeCounts == nullptr || eventCount == nullptr || events == nullptr) {
-        return kInvalidParameter;
-    }
-    // The oracle answers only once this session actually emitted a marker: before that
-    // there is no event any marker was emitted under, and the refusal is exactly what makes
-    // "refused sessions emit none" observable to the test.
-    if (g_state.reflexMarkerEventCount == 0) {
-        return kNotInitialized;
-    }
-    for (uint32_t i = 0; i < kReflexMarkerTypeCount; ++i) {
-        typeCounts[i] = g_state.reflexMarkerTypeCounts[i];
-    }
-    *eventCount = g_state.reflexMarkerEventCount;
-    // The ring holds the most recent min(eventCount, kReflexMarkerLogSize) events, oldest
-    // first, exactly like the present-marker log: the slot at eventCount %
-    // kReflexMarkerLogSize holds the oldest kept event (it is the next to be overwritten),
-    // and the kept events follow it around the ring.
-    const uint32_t kept = g_state.reflexMarkerEventCount < kReflexMarkerLogSize
-                              ? g_state.reflexMarkerEventCount
-                              : kReflexMarkerLogSize;
-    const uint32_t copied = eventsCapacity < kept ? eventsCapacity : kept;
-    const uint32_t oldest = (g_state.reflexMarkerEventCount - kept) % kReflexMarkerLogSize;
-    for (uint32_t i = 0; i < copied; ++i) {
-        const ReflexMarkerEvent& event =
-            g_state.reflexMarkerLog[(oldest + i) % kReflexMarkerLogSize];
-        events[i * 2] = static_cast<uint32_t>(event.type);
-        events[i * 2 + 1] = event.frameIndex;
-    }
-    return kSuccess;
+    return g_state.reflexMarkers.read(typeCounts, kReflexMarkerTypeCount, eventCount, events,
+                                      eventsCapacity);
+}
+
+// The Reflex options record, shared by the READY registration and the frame-limit record:
+// eLowLatency is the mode the contract pins even without a Reflex UI, the cap is the stored
+// frameLimitUs (zero is no Reflex-side cap), and the marker/thread fields stay the SDK
+// defaults.
+sl::ReflexOptions make_reflex_options() noexcept {
+    sl::ReflexOptions options{};
+    options.mode = sl::ReflexMode::eLowLatency;
+    options.frameLimitUs = g_state.reflexFrameLimitUs;
+    return options;
 }
 
 int32_t record_reflex_options() noexcept {
@@ -564,20 +564,45 @@ int32_t record_reflex_options() noexcept {
     }
     // The one registration the pinned Reflex guide requires: called once at the READY
     // transition and never per frame, because the guide says there is no need to repeat the
-    // call while the options do not change. eLowLatency is the mode the contract pins even
-    // without a Reflex UI; frameLimitUs stays zero (no Reflex-side FPS cap - pacing is not
-    // this module's), and the marker/thread fields stay the SDK defaults.
-    sl::ReflexOptions options{};
-    options.mode = sl::ReflexMode::eLowLatency;
+    // call while the options do not change.
     // The call count advances with the attempt itself, so the oracle proves the call
     // happened exactly once whether or not the plugin accepted it.
     g_state.reflexSetOptionsCalls += 1;
-    const sl::Result result = slReflexSetOptions(options);
+    const sl::Result result = slReflexSetOptions(make_reflex_options());
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
     g_state.reflexOptionsRecorded = true;
     g_state.reflexMode = static_cast<uint32_t>(sl::ReflexMode::eLowLatency);
+    return kSuccess;
+}
+
+int32_t record_reflex_frame_limit(const uint32_t frameLimitUs) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    // The registration has to exist before its cap can change: a session whose READY
+    // registration never succeeded has no Reflex options for the cap to join, and recording
+    // one here would make the exactly-once-at-READY discipline unprovable.
+    if (!g_state.reflexOptionsRecorded) {
+        return kInvalidParameter;
+    }
+    // A cap that is already in effect records nothing. The guide is explicit that the call
+    // need not repeat while the options do not change, and the host calls this from the frame
+    // seam that reads Minecraft's limit, which answers the same value on almost every frame.
+    if (frameLimitUs == g_state.reflexFrameLimitUs) {
+        return kSuccess;
+    }
+    // Stored before the record so make_reflex_options reads it, restored on failure, so a
+    // refused record leaves the plugin's options and the stored cap exactly as they were.
+    const uint32_t previous = g_state.reflexFrameLimitUs;
+    g_state.reflexFrameLimitUs = frameLimitUs;
+    g_state.reflexSetOptionsCalls += 1;
+    const sl::Result result = slReflexSetOptions(make_reflex_options());
+    if (result != sl::Result::eOk) {
+        g_state.reflexFrameLimitUs = previous;
+        return static_cast<int32_t>(result);
+    }
     return kSuccess;
 }
 
@@ -1261,20 +1286,32 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     const uint32_t outputWidth = g_state.outputWidth;
     const uint32_t outputHeight = g_state.outputHeight;
 
-    // The frame's first FG tag call records the orientation copies: three y-inverting blits
-    // from the engine's depth, HUD-less, and UI images into the module's flipped copies -
+    // The frame's post-evaluation FG tag call records the orientation copies: three y-inverting
+    // blits from the engine's depth, HUD-less, and UI images into the module's flipped copies -
     // the motion copy is filled by the motion dispatches on the same command buffer before
     // this call. The copies are what the tag below declares, in the backbuffer's orientation
     // rather than the engine's. The engine images are read as transfer sources and handed
     // back in their engine-resting layout; nothing here writes them.
     //
-    // A frame's second FG tag call - the post-evaluation re-declaration - skips the blits:
-    // the copies still hold the frame's content and the first call already declared them
-    // valid-until-present, so re-blitting would rewrite the frame's own tagged inputs for
-    // no change at double the per-frame cost. The retained frame token's index tells the
-    // two calls apart: it advances between frames and never within one.
+    // The frame's *first* FG tag call - the one before the SR tag, which exists to obtain the
+    // frame token and to mark the frame composed for the evaluation - skips the blits, and
+    // that is the whole point of recording them here instead. The blit is a snapshot the
+    // DLSS-G plugin reads at present, so its timing decides what the plugin interpolates: run
+    // on the first call it would capture the engine's colour target before mc_dlss_present_output
+    // copied this frame's upscaled output into it, which is the previous frame's finished image
+    // with its whole HUD composited in - a HUD-less tag that is neither this frame's nor
+    // HUD-less. Run here, after the output copy, the target holds this frame's world alone.
+    // The blits are recorded once per frame either way; a third call within one frame would
+    // skip them, as the second used to.
+    //
+    // The two calls are told apart by the SR side of this frame's record: the SR tag sits
+    // between them, so its index matches the retained token only from the post-evaluation call
+    // onward. The token index itself advances between frames and never within one, so the
+    // fgCopiedFrameIndex guard still holds the blits to once per frame.
     const uint32_t frameIndex = static_cast<uint32_t>(*frameToken);
-    if (!g_state.fgCopiesRecorded || g_state.fgCopiedFrameIndex != frameIndex) {
+    const bool afterSrTag =
+        g_state.srTagFrameIndexRecorded && g_state.lastSrTagFrameIndex == frameIndex;
+    if (afterSrTag && (!g_state.fgCopiesRecorded || g_state.fgCopiedFrameIndex != frameIndex)) {
         record_flip_blit(commandBuffer, info.depth.image, g_state.fgDepthImage,
                          renderWidth, renderHeight, true);
         record_flip_blit(commandBuffer, info.hudless.image, g_state.fgHudlessImage,

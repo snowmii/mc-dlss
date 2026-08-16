@@ -260,11 +260,9 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryQueueRequirements;
 	private final MethodHandle queryTaggedFrameIndexes;
 	private final MethodHandle queryPresentMarkers;
+	private final MethodHandle installPclWindow;
 	private final MethodHandle reflexInputSample;
-	private final MethodHandle reflexSimulateStart;
-	private final MethodHandle reflexSimulateEnd;
-	private final MethodHandle reflexRenderSubmitStart;
-	private final MethodHandle reflexRenderSubmitEnd;
+	private final MethodHandle reflexMarker;
 	private final MethodHandle queryReflexMarkers;
 	private final MethodHandle queryReflexOptions;
 	private final MethodHandle waitFgInputsValue;
@@ -306,6 +304,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle presentStart;
 	private final MethodHandle presentEnd;
 	private final MethodHandle waitFgInputsIdle;
+	private final MethodHandle recordReflexFrameLimit;
 	private final MethodHandle reset;
 	private final MethodHandle close;
 	private boolean closed;
@@ -379,14 +378,15 @@ public final class Native implements AutoCloseable, NativeApi {
 				JAVA_INT // events_capacity
 			)
 		);
-		// Optional like queryPresentMarkers: the ABI-probe DLL does not export the M-12
-		// reflex-marker entries either, while every real build since these symbols exist
-		// carries them.
+		// Optional like queryPresentMarkers: the ABI-probe DLL does not export the PCL window
+		// hook or M-12 marker entries, while real builds carry them.
+		this.installPclWindow = bindOptional(
+			lookup,
+			"mc_dlss_install_pcl_window",
+			FunctionDescriptor.of(JAVA_INT, JAVA_LONG)
+		);
 		this.reflexInputSample = bindOptional(lookup, "mc_dlss_reflex_input_sample", FunctionDescriptor.of(JAVA_INT));
-		this.reflexSimulateStart = bindOptional(lookup, "mc_dlss_reflex_simulate_start", FunctionDescriptor.of(JAVA_INT));
-		this.reflexSimulateEnd = bindOptional(lookup, "mc_dlss_reflex_simulate_end", FunctionDescriptor.of(JAVA_INT));
-		this.reflexRenderSubmitStart = bindOptional(lookup, "mc_dlss_reflex_render_submit_start", FunctionDescriptor.of(JAVA_INT));
-		this.reflexRenderSubmitEnd = bindOptional(lookup, "mc_dlss_reflex_render_submit_end", FunctionDescriptor.of(JAVA_INT));
+		this.reflexMarker = bindOptional(lookup, "mc_dlss_reflex_marker", FunctionDescriptor.of(JAVA_INT, JAVA_INT));
 		this.queryReflexMarkers = bindOptional(
 			lookup,
 			"mc_dlss_query_reflex_markers",
@@ -522,6 +522,13 @@ public final class Native implements AutoCloseable, NativeApi {
 			lookup,
 			"mc_dlss_wait_fg_inputs_idle",
 			FunctionDescriptor.of(JAVA_INT)
+		);
+		// Optional like waitFgInputsIdle: the ABI-probe DLL does not export the Reflex
+		// frame-limit record either, while every real build since this symbol exists carries it.
+		this.recordReflexFrameLimit = bindOptional(
+			lookup,
+			"mc_dlss_record_reflex_frame_limit",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT)
 		);
 		// Optional like waitFgInputsIdle: the ABI-probe DLL does not export the wait oracle
 		// either, while every real build since this symbol exists carries it.
@@ -800,33 +807,22 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
+	public int installPclWindow(final long hwnd) {
+		if (installPclWindow == null) throw new NativeException("install-pcl-window", new IllegalStateException("Native bridge lacks the PCL window hook"));
+		try { return (int)installPclWindow.invokeExact(hwnd); } catch (Throwable error) { throw nativeError("install-pcl-window", error); }
+	}
+
+	@Override
 	public int reflexInputSample() {
 		if (reflexInputSample == null) throw new NativeException("reflex-input-sample", new IllegalStateException("Native bridge lacks the reflex input-sample marker"));
 		try { return (int)reflexInputSample.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-input-sample", error); }
 	}
 
 	@Override
-	public int reflexSimulateStart() {
-		if (reflexSimulateStart == null) throw new NativeException("reflex-simulate-start", new IllegalStateException("Native bridge lacks the reflex simulation-start marker"));
-		try { return (int)reflexSimulateStart.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-simulate-start", error); }
-	}
-
-	@Override
-	public int reflexSimulateEnd() {
-		if (reflexSimulateEnd == null) throw new NativeException("reflex-simulate-end", new IllegalStateException("Native bridge lacks the reflex simulation-end marker"));
-		try { return (int)reflexSimulateEnd.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-simulate-end", error); }
-	}
-
-	@Override
-	public int reflexRenderSubmitStart() {
-		if (reflexRenderSubmitStart == null) throw new NativeException("reflex-render-submit-start", new IllegalStateException("Native bridge lacks the reflex render-submit-start marker"));
-		try { return (int)reflexRenderSubmitStart.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-render-submit-start", error); }
-	}
-
-	@Override
-	public int reflexRenderSubmitEnd() {
-		if (reflexRenderSubmitEnd == null) throw new NativeException("reflex-render-submit-end", new IllegalStateException("Native bridge lacks the reflex render-submit-end marker"));
-		try { return (int)reflexRenderSubmitEnd.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-render-submit-end", error); }
+	public int reflexMarker(final NativeApi.ReflexMarkerType type) {
+		if (reflexMarker == null) throw new NativeException("reflex-marker", new IllegalStateException("Native bridge lacks the reflex marker entry"));
+		final int value = type.getNativeValue();
+		try { return (int)reflexMarker.invokeExact(value); } catch (Throwable error) { throw nativeError("reflex-marker", error); }
 	}
 
 	@Override
@@ -1282,6 +1278,16 @@ public final class Native implements AutoCloseable, NativeApi {
 			return (int)this.waitFgInputsIdle.invokeExact();
 		} catch (Throwable error) {
 			throw nativeError("wait-fg-inputs", error);
+		}
+	}
+
+	@Override
+	public int recordReflexFrameLimit(int frameLimitUs) {
+		if (recordReflexFrameLimit == null) throw new NativeException("record-reflex-frame-limit", new IllegalStateException("Native bridge lacks the Reflex frame-limit record"));
+		try {
+			return (int)this.recordReflexFrameLimit.invokeExact(frameLimitUs);
+		} catch (Throwable error) {
+			throw nativeError("record-reflex-frame-limit", error);
 		}
 	}
 

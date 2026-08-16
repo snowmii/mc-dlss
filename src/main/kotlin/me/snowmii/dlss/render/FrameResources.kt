@@ -33,10 +33,6 @@ class FrameResources(
 	 */
 	private val quiesce: () -> Unit,
 ) : AutoCloseable {
-	/** The scene target currently held, or null when the last route did not need one. */
-	val currentTarget: RenderTarget?
-		get() = sceneTarget.current
-
 	/**
 	 * The velocity view of the held scene target, or null when the last route did not need one.
 	 *

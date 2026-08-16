@@ -19,7 +19,7 @@ import org.joml.Vector3f
  *
  * Positions are kept as doubles and only reduced to the float [Vector3f] the reprojection math
  * consumes when a displacement is derived. An immutable value object rather than a mutable
- * vector, so a caller holding a [previous] result cannot corrupt the buffer's state by editing
+ * vector, so a caller holding a `previous` result cannot corrupt the buffer's state by editing
  * what it was handed.
  */
 data class ObjectPosition(
@@ -200,7 +200,7 @@ class ObjectMotionState {
  * [ObjectMotionState.displacement] derives. A surface point of the object at camera-relative
  * position `x` this frame sat at `x - objectDelta` last frame, which is what the conjugation
  * is shifting by. The invariants fall out: a world-still object (`objectDelta` zero) is
- * [camera.reprojection] itself - returned as a copy, so mutating the result cannot touch the
+ * `camera.reprojection` itself - returned as a copy, so mutating the result cannot touch the
  * frame's matrix - and a translating object shifts its pixels by exactly its own
  * camera-relative NDC motion. Jitter is stripped and re-added exactly as the camera's
  * composition does, so it cancels against the untouched `ndc(clip)` term and a still frame

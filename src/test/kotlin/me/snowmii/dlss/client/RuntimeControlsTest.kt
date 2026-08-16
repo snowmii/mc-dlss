@@ -243,8 +243,7 @@ class RuntimeControlsTest {
 				now += 16_000_000L
 				now
 			},
-			reconfigure = adapter::reconfigure,
-			quiesce = { adapter.waitDeviceIdle() },
+			bridge = adapter,
 		)
 
 		val controls = RuntimeControls(runtime, announced::add)

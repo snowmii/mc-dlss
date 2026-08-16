@@ -1,7 +1,5 @@
 package me.snowmii.dlss.mrt
 
-import java.nio.file.Path
-import kotlin.io.path.readText
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue

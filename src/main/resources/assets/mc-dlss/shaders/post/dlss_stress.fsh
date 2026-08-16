@@ -227,27 +227,36 @@ void main() {
     vec3 sunDirection = normalize(SunDirection.xyz);
 
     float stepSize = sceneDistance / float(steps);
-    // Per-pixel dither, otherwise a low step count bands badly.
-    float dither = hash13(vec3(gl_FragCoord.xy, time * 60.0));
+    // Per-pixel dither, otherwise a low step count bands badly. Fixed in screen space rather than
+    // animated: a time-varying dither moves which samples land inside the density field, so the
+    // same static camera cost a different amount every frame - and it also feeds DLSS per-frame
+    // noise to accumulate, in the one pass whose whole purpose is a stable measurement.
+    float dither = hash13(vec3(gl_FragCoord.xy, 0.0));
 
     float transmittance = 1.0;
     vec3 scattered = vec3(0.0);
     float cosTheta = dot(rayDirection, sunDirection);
     float phase = phaseHG(cosTheta, 0.62) + 0.35 * phaseHG(cosTheta, -0.18);
 
+    // Every pixel walks the same number of steps and pays the same work at each one. The march
+    // used to stop early once transmittance ran out and to skip the sun march on thin samples,
+    // which made a pixel's cost depend on how much aurora it happened to look through: turning the
+    // camera into or away from the ribbons moved the frame time in steps, and a frame-pacing
+    // measurement cannot read anything through that. Density decides how much a sample
+    // contributes, never whether it is computed.
     for (int i = 0; i < MAX_STEPS; i++) {
-        if (i >= steps || transmittance < 0.01) {
+        if (i >= steps) {
             break;
         }
 
         float distanceAlongRay = (float(i) + dither) * stepSize;
         vec3 samplePosition = origin + rayDirection * distanceAlongRay;
         float density = auroraDensity(samplePosition, time, octaves);
-        if (density <= 0.002) {
-            continue;
-        }
 
-        // Short secondary march toward the sun, so the curtains shadow themselves.
+        // Short secondary march toward the sun, so the curtains shadow themselves. Unconditional:
+        // this is the dominant cost, so branching on it is what the swing was made of. An empty
+        // sample still pays it and still adds nothing, because `absorbed` goes to zero with
+        // density.
         float sunTransmittance = 1.0;
         for (int s = 1; s <= MAX_SUN_STEPS; s++) {
             vec3 sunSample = samplePosition + sunDirection * (float(s) * 9.0);
@@ -268,8 +277,14 @@ void main() {
     // Radial godrays from the sun's screen position over the scene's bright pixels. Screen space,
     // so it costs another pass over the frame with no relation to the march above.
     vec2 sunUv = ScreenParams.zw;
-    if (godrayTaps > 0 && sunUv.x >= -0.5 && sunUv.y >= -0.5) {
-        vec2 delta = (texCoord - sunUv) / float(godrayTaps) * 0.85;
+    // The gather runs whenever taps are configured, on or off screen. Making it conditional on the
+    // sun being in frame deleted every tap from the frame's cost in a single camera turn - the
+    // largest step this pass could put in a frame-time trace. An off-screen sun gathers along a
+    // clamped direction and is multiplied out of the result instead.
+    if (godrayTaps > 0) {
+        vec2 gatherUv = clamp(sunUv, 0.0, 1.0);
+        float sunOnScreen = (sunUv.x >= -0.5 && sunUv.y >= -0.5) ? 1.0 : 0.0;
+        vec2 delta = (texCoord - gatherUv) / float(godrayTaps) * 0.85;
         vec2 sampleUv = texCoord;
         float decay = 1.0;
         vec3 rays = vec3(0.0);
@@ -285,8 +300,8 @@ void main() {
             decay *= 0.96;
         }
 
-        float towardSun = clamp(1.0 - length(texCoord - sunUv), 0.0, 1.0);
-        color += rays / float(godrayTaps) * 1.8 * towardSun * SunDirection.w;
+        float towardSun = clamp(1.0 - length(texCoord - gatherUv), 0.0, 1.0);
+        color += rays / float(godrayTaps) * 1.8 * towardSun * SunDirection.w * sunOnScreen;
     }
 
     // Grade: mild bloom-free exposure lift, ACES, and a vignette that keeps the ribbons the

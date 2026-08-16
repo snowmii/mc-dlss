@@ -2,15 +2,18 @@ package me.snowmii.dlss.client
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.Native
+import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.session.DlssNativeFailure
 import me.snowmii.dlss.session.DlssNativeStage
-import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.ui.UiPhase
 import me.snowmii.dlss.config.ModConfig
 import me.snowmii.McDlss
+import net.minecraft.client.Minecraft
+import org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window
+import org.lwjgl.system.Platform
 import org.slf4j.LoggerFactory
 
 /**
@@ -75,6 +78,13 @@ object ClientRuntime : RenderLoopView, ActiveView {
 
 	@Volatile
 	private var controls: RuntimeControls? = null
+
+	/**
+	 * The bridge the render loop opened, kept so shutdown can close it. Nothing else holds it:
+	 * the runtime only ever sees the [NativeApi] view.
+	 */
+	@Volatile
+	private var native: Native? = null
 	private var initialized = false
 
 	/** The render-loop view: the only side that can build the DLSS path. */
@@ -125,6 +135,13 @@ object ClientRuntime : RenderLoopView, ActiveView {
 
 		phase = try {
 			val native = Native.open(ExtensionBootstrap.nativeLibrary())
+			this.native = native
+			if (Platform.get() == Platform.WINDOWS) {
+				val hwnd = glfwGetWin32Window(Minecraft.getInstance().window.handle())
+				if (native.installPclWindow(hwnd) != NativeApi.SUCCESS_RESULT) {
+					LOGGER.warn("PCL latency-stat window hook failed; NVIDIA latency overlay will be unavailable")
+				}
+			}
 			val diagnostics: (String) -> Unit = { message -> LOGGER.info(message) }
 			// One reporter for the whole session: the readout owns every "log is the acceptance
 			// record" line, fed by the phase and by the evaluation's first record. It is built
@@ -147,6 +164,47 @@ object ClientRuntime : RenderLoopView, ActiveView {
 		// mod that never built the world path routes no GUI either.
 		uiPhase = if (phase != null) UiPhase.forMinecraft() else null
 		return phase
+	}
+
+	/**
+	 * Releases everything the DLSS path owns, while the device that owns it is still alive.
+	 *
+	 * `Minecraft.close()` destroys the swapchain and then the Vulkan device. Streamline's
+	 * DLSS-G still holds the tagged resources and its present hook at that point, and tearing
+	 * the device down underneath a live feature faults inside NVIDIA's own libraries - after
+	 * "Stopping!" is logged, so the game log shows a clean exit and the crash lands on the
+	 * process. Closing here puts the release in front of the destroy.
+	 *
+	 * Nothing may propagate: a failed release must not turn an exiting client into a
+	 * "Shutdown failure!". Each step is closed independently so one failure cannot skip the
+	 * rest, and every phase is dropped either way - a second call, and every read through
+	 * [ActiveView] on the way out, has to answer "no DLSS path".
+	 */
+	@JvmStatic
+	fun shutdown() {
+		val ui = uiPhase
+		val world = phase
+		val bridge = native
+		uiPhase = null
+		phase = null
+		controls = null
+		native = null
+		// Left latched: the client is exiting, and a rebuild from a late render call would open
+		// the native bridge again against a device that is already going away.
+		initialized = true
+
+		close("UI phase", ui)
+		close("world phase", world)
+		// Last: the world phase releases native images through this bridge on its way down.
+		close("native bridge", bridge)
+	}
+
+	private fun close(what: String, resource: AutoCloseable?) {
+		if (resource == null) {
+			return
+		}
+		runCatching { resource.close() }
+			.onFailure { error -> LOGGER.warn("DLSS shutdown: closing the {} failed", what, error) }
 	}
 
 	/** Whether the render loop has built the DLSS path, used by the seam's own test. */

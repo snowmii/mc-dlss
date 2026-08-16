@@ -10,7 +10,6 @@ import org.joml.Matrix4f
 import org.joml.Vector3f
 import org.joml.Vector4f
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -47,20 +46,20 @@ import kotlin.math.abs
  *   reprojection, so the velocity writer's reset flag keeps meaning what it meant.
  */
 class MotionVectorObjectStateTest {
-	private val RENDER_DIMENSIONS = DlssDimensions(1280, 720)
+	private val renderDimensions = DlssDimensions(1280, 720)
 	private val tolerance = 1e-4f
 
 	private val projection: Matrix4f = Matrix4f().setPerspective(
 		Math.toRadians(70.0).toFloat(),
-		RENDER_DIMENSIONS.width.toFloat() / RENDER_DIMENSIONS.height,
+		renderDimensions.width.toFloat() / renderDimensions.height,
 		1000f,
 		0.05f,
 		true,
 	)
 
 	/** The two frames jitter differently, so neither offset can quietly cancel the other. */
-	private val previousOffset = DlssJitterOffset(0, pixelX = -0.44f, pixelY = 0.31f, renderDimensions = RENDER_DIMENSIONS)
-	private val currentOffset = DlssJitterOffset(1, pixelX = 0.37f, pixelY = -0.21f, renderDimensions = RENDER_DIMENSIONS)
+	private val previousOffset = DlssJitterOffset(0, pixelX = -0.44f, pixelY = 0.31f, renderDimensions = renderDimensions)
+	private val currentOffset = DlssJitterOffset(1, pixelX = 0.37f, pixelY = -0.21f, renderDimensions = renderDimensions)
 
 	/** Sample points spread across the frustum, from near the eye to the far plane. */
 	private val probes = listOf(
@@ -219,8 +218,8 @@ class MotionVectorObjectStateTest {
 		val supplied = Matrix4f().rotateX(0.35f).translate(2f, -1f, 0.5f)
 		val frame = DlssFrameMotion(
 			reprojection = Matrix4f(supplied),
-			motionScaleX = RENDER_DIMENSIONS.width / 2f,
-			motionScaleY = RENDER_DIMENSIONS.height / 2f,
+			motionScaleX = renderDimensions.width / 2f,
+			motionScaleY = renderDimensions.height / 2f,
 			frameTimeMillis = 16f,
 			reset = false,
 		)
@@ -345,7 +344,7 @@ class MotionVectorObjectStateTest {
 
 	@Test
 	fun `a reset camera frame composes no object displacement and reports the identity`() {
-		val motion = DlssCameraMotion(RENDER_DIMENSIONS)
+		val motion = DlssCameraMotion(renderDimensions)
 		val first = motion.advance(sample(), currentOffset, 0L)
 		assertTrue(first.reset)
 
@@ -444,7 +443,7 @@ class MotionVectorObjectStateTest {
 		previous: DlssCameraSample,
 		current: DlssCameraSample,
 	): Triple<DlssFrameMotion, Matrix4f, Matrix4f> {
-		val motion = DlssCameraMotion(RENDER_DIMENSIONS)
+		val motion = DlssCameraMotion(renderDimensions)
 		motion.advance(previous, previousOffset, 0L)
 		val frame = motion.advance(current, currentOffset, 16_000_000L)
 		return Triple(

@@ -68,7 +68,7 @@ class StressConfigTest {
 		val config = StressConfig.from(properties)
 
 		assertFalse(config.enabled)
-		assertEquals(64, config.steps)
+		assertEquals(24, config.steps)
 	}
 
 	@Test

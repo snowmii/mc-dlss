@@ -573,7 +573,7 @@ class MotionVectorMrtTest {
 
 	/** Records every per-frame native call so the fill boundary is assertable off the render thread. */
 	private class RecordingNative(
-		private val RENDER_DIMENSIONS: DlssDimensions,
+		private val renderDimensions: DlssDimensions,
 	) : NativeApi {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
@@ -591,7 +591,7 @@ class MotionVectorMrtTest {
 		): Int = NativeApi.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
-			DlssDimensions(RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height)
+			DlssDimensions(renderDimensions.width, renderDimensions.height)
 
 		override fun configure(
 			outputWidth: Int,

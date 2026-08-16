@@ -2,7 +2,7 @@ package me.snowmii.dlss.sl
 
 import java.nio.file.Files
 import java.nio.file.Path
-import me.snowmii.dlss.bridge.DlssDimensions
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.Native
@@ -44,6 +44,7 @@ import org.lwjgl.vulkan.VK10
  * dependent methods must run before the live session, and nothing bootstraps after it.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
+@NativeBridge
 class SrOnStreamlineTest {
 
 	@Order(5)

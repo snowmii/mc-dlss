@@ -1,32 +1,14 @@
 package me.snowmii.dlss.mrt
 
-import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.IndexType
 import com.mojang.blaze3d.PrimitiveTopology
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuBufferSlice
-import com.mojang.blaze3d.pipeline.ColorTargetState
-import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.systems.ScissorState
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
-import com.mojang.blaze3d.vertex.PoseStack
-import java.lang.reflect.Method
-import java.lang.reflect.Proxy
-import java.nio.ByteBuffer
-import java.nio.file.Path
-import java.util.Optional
-import java.util.OptionalDouble
-import kotlin.io.path.readText
-import kotlin.math.abs
 import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitterOffset
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneTarget
-import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -34,24 +16,16 @@ import net.minecraft.SharedConstants
 import net.minecraft.WorldVersion
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.renderer.StagedVertexBuffer
-import net.minecraft.client.renderer.SubmitNodeCollector
 import net.minecraft.client.renderer.block.MovingBlockRenderState
-import net.minecraft.client.renderer.blockentity.BlockEntityRenderer
-import net.minecraft.client.renderer.blockentity.PistonHeadRenderer
-import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState
-import net.minecraft.client.renderer.blockentity.state.PistonHeadRenderState
 import net.minecraft.client.renderer.rendertype.OutputTarget
 import net.minecraft.client.renderer.rendertype.PreparedRenderType
 import net.minecraft.client.renderer.rendertype.RenderTypes
-import net.minecraft.client.renderer.state.level.CameraRenderState
 import net.minecraft.core.BlockPos
-import net.minecraft.resources.Identifier
 import net.minecraft.server.Bootstrap
 import net.minecraft.server.packs.metadata.pack.PackFormat
 import net.minecraft.world.level.storage.DataVersion
 import org.joml.Matrix4f
 import org.joml.Vector3f
-import org.joml.Vector4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -59,12 +33,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.lwjgl.system.MemoryStack
-import org.lwjgl.system.MemoryUtil
-import org.lwjgl.util.shaderc.Shaderc
-import org.lwjgl.util.spvc.Spvc
-import org.lwjgl.util.spvc.SpvcReflectedResource
-import com.google.gson.JsonParser
 
 /**
  * Piston moving-block vertical proof for M-6's velocity writer.
@@ -121,12 +89,6 @@ class MotionVectorMovingBlockTest {
 			)
 			Bootstrap.bootStrap()
 		}
-
-		/** SPIR-V DecorationLocation, the decoration `createFromSpirv` rewrites and this suite reads back. */
-		const val LOCATION_DECORATION = 30
-
-		/** The shared payload's sentinel, mirrored so the JVM classification asserts the same value. */
-		const val INVALID_VELOCITY = 10000f
 	}
 
 	@Test
@@ -366,40 +328,29 @@ class MotionVectorMovingBlockTest {
 		try {
 			assertFalse(MovingBlockVelocityWriterBindings.isGoverning(), "a fresh frame has no governing machine")
 
-			// The mixin's rule, driven with its boundary flags: the moving-block machine governs
-			// from its own fresh boundary (an eligible draw or the eligibility-ending transition)
-			// until the entity machine takes a fresh boundary of its own.
-			var movingBoundary = true
-			var entityBoundary = false
-			MovingBlockVelocityWriterBindings.setGoverning(
-				movingBoundary || (MovingBlockVelocityWriterBindings.isGoverning() && !entityBoundary),
-			)
+			// The rule the mixin delegates to, driven with the two machines' boundary flags: the
+			// moving-block machine governs from its own fresh boundary (an eligible draw or the
+			// eligibility-ending transition) until the entity machine takes a fresh boundary.
+			MovingBlockVelocityWriterBindings.updateGoverning(movingBoundary = true, entityBoundary = false)
 			assertTrue(MovingBlockVelocityWriterBindings.isGoverning(), "a moving-block fresh boundary takes the decision")
 
 			// An entity fresh boundary outranks a stale moving-block history.
-			movingBoundary = false
-			entityBoundary = true
-			MovingBlockVelocityWriterBindings.setGoverning(
-				movingBoundary || (MovingBlockVelocityWriterBindings.isGoverning() && !entityBoundary),
-			)
+			MovingBlockVelocityWriterBindings.updateGoverning(movingBoundary = false, entityBoundary = true)
 			assertFalse(MovingBlockVelocityWriterBindings.isGoverning(), "an entity fresh boundary outranks the stale moving-block history")
 
 			// A moving-block fresh boundary takes the decision back...
-			movingBoundary = true
-			entityBoundary = false
-			MovingBlockVelocityWriterBindings.setGoverning(
-				movingBoundary || (MovingBlockVelocityWriterBindings.isGoverning() && !entityBoundary),
-			)
+			MovingBlockVelocityWriterBindings.updateGoverning(movingBoundary = true, entityBoundary = false)
 			assertTrue(MovingBlockVelocityWriterBindings.isGoverning(), "a moving-block fresh boundary takes the decision back")
 
 			// ...and consecutive ineligible draws stay with the governing machine (the
 			// moving-block post-eligible bookkeeping owns them).
-			movingBoundary = false
-			entityBoundary = false
-			MovingBlockVelocityWriterBindings.setGoverning(
-				movingBoundary || (MovingBlockVelocityWriterBindings.isGoverning() && !entityBoundary),
-			)
+			MovingBlockVelocityWriterBindings.updateGoverning(movingBoundary = false, entityBoundary = false)
 			assertTrue(MovingBlockVelocityWriterBindings.isGoverning(), "consecutive ineligible draws stay with the governing machine")
+
+			// Both machines fresh at once cannot happen in a group, but the rule still answers
+			// the moving-block boundary rather than leaving the marker stale.
+			MovingBlockVelocityWriterBindings.updateGoverning(movingBoundary = true, entityBoundary = true)
+			assertTrue(MovingBlockVelocityWriterBindings.isGoverning(), "a moving-block fresh boundary wins its own boundary")
 		} finally {
 			MovingBlockVelocityWriterBindings.clearFrame()
 			assertFalse(MovingBlockVelocityWriterBindings.isGoverning(), "clearFrame drops the marker with the frame")
@@ -622,25 +573,6 @@ class MotionVectorMovingBlockTest {
 		)
 	}
 
-	/** The mixin redirect handler itself: executable proof of the piston branch without a live Mixin transform. */
-	private fun dispatcherHandler(): Method {
-		val mixinClass = Class.forName("me.snowmii.dlss.mixin.BlockEntityRenderDispatcherMotionMixin")
-		val handler = mixinClass.getDeclaredMethod(
-			"mcDlssSubmitBlockEntity",
-			BlockEntityRenderer::class.java,
-			BlockEntityRenderState::class.java,
-			PoseStack::class.java,
-			SubmitNodeCollector::class.java,
-			CameraRenderState::class.java,
-		)
-		handler.isAccessible = true
-		return handler
-	}
-
-	/** The untransformed mixin class is a plain object at test runtime: the receiver for the handler. */
-	private fun mixinInstance(): Any =
-		Class.forName("me.snowmii.dlss.mixin.BlockEntityRenderDispatcherMotionMixin").getDeclaredConstructor().newInstance()
-
 	private fun emptyExecuteInfo() = StagedVertexBuffer.ExecuteInfo(
 		FakeBuffer(),
 		FakeBuffer(),
@@ -649,9 +581,4 @@ class MotionVectorMovingBlockTest {
 		0,
 		3,
 	)
-
-	/** Sample points spread across the frustum, from near the eye to the far plane. */
-
-	/** A foreign piston renderer subclass: exact membership keeps it on the vanilla route. */
-	private class DynamicPistonSubclass : PistonHeadRenderer()
 }

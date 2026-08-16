@@ -357,64 +357,42 @@ public interface NativeApi {
 		throw new UnsupportedOperationException("presentMarkers");
 	}
 
+	/** Installs the Win32 message hook that receives PCL's periodic latency-stat ping. */
+	default int installPclWindow(long hwnd) {
+		throw new UnsupportedOperationException("installPclWindow");
+	}
+
 	/**
-	 * Emits the frame's INPUT_SAMPLE Reflex/PCL marker at Minecraft's GLFW input poll seam.
-	 *
-	 * <p>This is the frame-start seam: the native side obtains the frame's Streamline token
-	 * ({@code slGetNewFrameToken}, replacing a token a previous frame never consumed), runs
-	 * the unconditional {@code slReflexSleep}, and emits the input marker through
-	 * {@code slPCLSetMarker} under that retained token. The pinned Streamline 2.12
-	 * vocabulary removed {@code eInputSample} from {@code PCLMarker}, so the marker emitted
-	 * is {@code ePCLatencyPing}: the PCL guide defines the ping as the marker whose frame
-	 * index identifies which frame picks up the simulated input, which is exactly the
-	 * input-sample seam semantics the M-12 contract retains.
-	 *
-	 * <p>Answers {@code FAIL_NotInitialized} while the session is not ready. A refused or
-	 * failed call emits nothing and never latches the session: the markers are the
-	 * PCL/Reflex diagnostic surface, not a frame-route stage.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #presentHandoff()}.
+	 * Starts the frame's Reflex work at Minecraft's GLFW input poll seam.
+	 * The native side obtains the frame token, runs {@code slReflexSleep}, and emits
+	 * {@code ePCLatencyPing} only when the installed window hook received
+	 * {@code PclState::statsWindowMessage}.
 	 */
 	default int reflexInputSample() {
 		throw new UnsupportedOperationException("reflexInputSample");
 	}
 
 	/**
-	 * Emits the SIMULATION_START Reflex/PCL marker under the frame's retained token, at the
-	 * head of Minecraft's runTick simulation seam. Answers {@code FAIL_NotInitialized} while
-	 * the session is not ready or no frame token is retained (a frame that never ran its
-	 * input sample emits no markers). Default-implemented for the same reason as
-	 * {@link #reflexInputSample()}.
+	 * Emits one Reflex/PCL frame marker under the frame's retained token, as reported by
+	 * {@link #reflexMarkers()} and named by the same {@link ReflexMarkerType} vocabulary.
+	 *
+	 * <p>The marker travels as a value rather than as a method each, because that is the shape
+	 * the flat ABI takes ({@code mc_dlss_reflex_marker}) and because a marker added later is
+	 * then an enum constant rather than one new method on every layer between the mixin and
+	 * Streamline. The four this call emits are the simulation pair around Minecraft's runTick
+	 * simulation and the render-submit pair around renderFrame's
+	 * {@code CommandEncoder.submit()}.
+	 *
+	 * <p>{@link ReflexMarkerType#INPUT_SAMPLE} is refused with
+	 * {@code FAIL_InvalidParameter}: that seam obtains the frame's token and runs
+	 * {@code slReflexSleep} before it emits anything, so it stays {@link #reflexInputSample()}
+	 * rather than becoming a marker value this call could stand in for. Answers
+	 * {@code FAIL_NotInitialized} while the session is not ready or no frame token is retained
+	 * (a frame that never ran its input sample emits no markers). Default-implemented for the
+	 * same reason as {@link #reflexInputSample()}.
 	 */
-	default int reflexSimulateStart() {
-		throw new UnsupportedOperationException("reflexSimulateStart");
-	}
-
-	/**
-	 * Emits the SIMULATION_END Reflex/PCL marker under the frame's retained token, at the
-	 * end of Minecraft's runTick simulation (immediately before {@code renderFrame}). Same
-	 * refusals as {@link #reflexSimulateStart()}. Default-implemented for the same reason.
-	 */
-	default int reflexSimulateEnd() {
-		throw new UnsupportedOperationException("reflexSimulateEnd");
-	}
-
-	/**
-	 * Emits the RENDER_SUBMIT_START Reflex/PCL marker under the frame's retained token,
-	 * immediately before renderFrame's {@code CommandEncoder.submit()}. Same refusals as
-	 * {@link #reflexSimulateStart()}. Default-implemented for the same reason.
-	 */
-	default int reflexRenderSubmitStart() {
-		throw new UnsupportedOperationException("reflexRenderSubmitStart");
-	}
-
-	/**
-	 * Emits the RENDER_SUBMIT_END Reflex/PCL marker under the frame's retained token,
-	 * immediately after renderFrame's {@code CommandEncoder.submit()} returned. Same
-	 * refusals as {@link #reflexSimulateStart()}. Default-implemented for the same reason.
-	 */
-	default int reflexRenderSubmitEnd() {
-		throw new UnsupportedOperationException("reflexRenderSubmitEnd");
+	default int reflexMarker(ReflexMarkerType type) {
+		throw new UnsupportedOperationException("reflexMarker");
 	}
 
 	/**
@@ -457,6 +435,28 @@ public interface NativeApi {
 	 */
 	default ReflexRegistration queryReflexOptions() {
 		throw new UnsupportedOperationException("queryReflexOptions");
+	}
+
+	/**
+	 * Re-records the Reflex options with a frame-rate cap: {@code frameLimitUs} microseconds per
+	 * frame, {@code 0} for no Reflex-side cap.
+	 *
+	 * <p>Reflex's limiter is the frame-rate cap DLSS-G tolerates: it sleeps at the start of the
+	 * frame, before simulation, where the driver is aware of the pacer's schedule. Minecraft's
+	 * own {@code FramerateLimiter} parks and spin-waits after Present instead, and the jitter it
+	 * leaves in the app frame interval is what multi-frame generation divides N ways - every
+	 * sub-interval carries the whole error, so the wobble grows with the multiplier.
+	 *
+	 * <p>Answers {@code FAIL_NotInitialized} while the Streamline session is not ready and
+	 * {@code FAIL_InvalidParameter} while the READY transition's Reflex registration never
+	 * recorded. A cap already in effect records nothing and answers success, so the frame seam
+	 * that reads Minecraft's own limit may call this every frame.
+	 *
+	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not have
+	 * to declare a call they never reach; {@link Native} overrides it.
+	 */
+	default int recordReflexFrameLimit(int frameLimitUs) {
+		throw new UnsupportedOperationException("recordReflexFrameLimit");
 	}
 
 	/**

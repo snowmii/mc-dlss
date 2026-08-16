@@ -1,6 +1,7 @@
 package me.snowmii.dlss.bridge
 
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.Test
  * retired direct-NGX discovery fallback no longer answers a query that ran before bootstrap,
  * so the bridge bootstraps Streamline first, exactly as the production seams do.
  */
+@NativeBridge
 class DlssExtensionRequirementsTest {
 	@Test
 	fun `queries exact Streamline instance and device extension requirements pre-creation`() {

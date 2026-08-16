@@ -1,35 +1,16 @@
 package me.snowmii.dlss.mrt
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.pipeline.BlendFunction
-import com.mojang.blaze3d.pipeline.ColorTargetState
 import com.mojang.blaze3d.pipeline.RenderPipeline
-import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.systems.RenderPassDescriptor
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
-import java.nio.file.Path
-import java.util.Optional
-import kotlin.io.path.readText
-import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.render.DlssCameraSample
-import me.snowmii.dlss.render.RenderRuntime
-import me.snowmii.dlss.render.SceneTarget
 import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.session.DlssFrameRoute
-import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssSessionState
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer
-import net.minecraft.resources.Identifier
 import org.joml.Matrix4f
-import org.joml.Vector4fc
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -203,17 +184,4 @@ class MotionVectorPipelineTest {
 		cameraZ = 0.0,
 	)
 
-	private fun session(enabled: Boolean) = DlssSession(
-		DlssStartupConfig(
-			enabled = enabled,
-			qualityMode = SRMode.QUALITY,
-			outputDimensions = OUTPUT_DIMENSIONS,
-			sdkPath = null,
-			nativeLibraryPath = null,
-			dataPath = null,
-			warnings = emptyList(),
-		),
-	)
-
-	/** Render target with a fake view over a fake texture, so the seams are verifiable off the render thread. */
 }

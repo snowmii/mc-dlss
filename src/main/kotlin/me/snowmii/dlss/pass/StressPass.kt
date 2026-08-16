@@ -7,6 +7,7 @@ import me.snowmii.dlss.render.DlssCameraSample
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.PrimitiveTopology
 import com.mojang.blaze3d.buffers.GpuBuffer
+import com.mojang.blaze3d.buffers.GpuBufferSlice
 import com.mojang.blaze3d.buffers.Std140Builder
 import com.mojang.blaze3d.buffers.Std140SizeCalculator
 import com.mojang.blaze3d.pipeline.BindGroupLayout
@@ -23,7 +24,6 @@ import net.minecraft.resources.Identifier
 import org.joml.Matrix4f
 import org.joml.Vector4f
 import org.lwjgl.system.MemoryStack
-import java.util.Locale
 import java.util.Optional
 import java.util.Properties
 
@@ -170,7 +170,7 @@ class StressPass(
 				encoder.createRenderPass({ "DLSS stress" }, scratchColor, Optional.empty())
 			} else {
 				encoder.createRenderPass(
-					RenderPassDescriptor.create({ "DLSS stress velocity" })
+					RenderPassDescriptor.create { "DLSS stress velocity" }
 						.withColorAttachment(scratchColor, Optional.empty())
 						.withColorAttachment(velocity.view, Optional.empty())
 						.withRenderArea(RenderPass.RenderArea(0, 0, target.width, target.height)),
@@ -227,7 +227,12 @@ class StressPass(
 	 * measurement load, and a light that moves with the day cycle would make two runs of the same
 	 * benchmark cost visibly different amounts.
 	 */
-	private fun writeUniforms(camera: DlssCameraSample, width: Int, height: Int, velocity: VelocityContext?): com.mojang.blaze3d.buffers.GpuBufferSlice {
+	private fun writeUniforms(
+		camera: DlssCameraSample,
+		width: Int,
+		height: Int,
+		velocity: VelocityContext?,
+	): GpuBufferSlice {
 		val now = System.nanoTime()
 		if (startedAtNanos == 0L) {
 			startedAtNanos = now

@@ -79,15 +79,30 @@ fun <T> T.redirectJvmCrashDumps() where T : Task, T : JavaForkOptions {
 	doFirst { crashDirectory.mkdirs() }
 }
 
+// The @NativeBridge tag, mirrored from the annotation the test sources carry. Only the classes
+// that load the bridge need a process of their own - see the annotation's own documentation for
+// why - and a fork costs about fifteen seconds of Minecraft/Loom classpath loading. The suite used
+// to run forkEvery = 1 for every class, so seventy-odd of them spent roughly eighteen minutes
+// forking to execute under two seconds of tests.
+val nativeBridgeTag = "native-bridge"
+
 tasks.test {
-	useJUnitPlatform()
+	// One worker for every class that never touches the bridge, which is most of them.
+	useJUnitPlatform { excludeTags(nativeBridgeTag) }
 	redirectJvmCrashDumps()
-	// Streamline's runtime accepts exactly one Vulkan device per process (its plugin manager
-	// refuses a second slSetVulkanInfo, and slShutdown cannot tear an initialized device down
-	// reliably), and the native bridge module is unloaded with every FFM library arena. Both
-	// make SL-state-dependent tests order- and JVM-lifetime-sensitive, so every test class runs
-	// in its own worker: the Streamline activation tests each get a pristine runtime, and no
-	// earlier class's device leaks into a later one.
+	// The bridge is loaded with System::load and called through FFM downcalls, both restricted
+	// methods the JVM warns about today and blocks in a future release.
+	jvmArgs("--enable-native-access=ALL-UNNAMED")
+}
+
+val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
+	group = "verification"
+	description = "Runs the @NativeBridge test classes, one JVM per class."
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	useJUnitPlatform { includeTags(nativeBridgeTag) }
+	redirectJvmCrashDumps()
+	jvmArgs("--enable-native-access=ALL-UNNAMED")
 	forkEvery = 1
 	// Reproduces the mod's StreamlineVulkanProvider redirect inside a test worker. Production
 	// points LWJGL at the staged sl.interposer.dll; the live FG rungs never did, which is the
@@ -98,7 +113,9 @@ tasks.test {
 		?.let { systemProperty("org.lwjgl.vulkan.libname", it) }
 }
 
-val buildNativeDlss by tasks.registering(Exec::class) {
+tasks.check { dependsOn(nativeBridgeTest) }
+
+val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 	group = "build"
 	description = "Builds the workstation-local DLSS native bridge with MSVC."
 
@@ -234,6 +251,8 @@ tasks.processResources {
 // value is overridable, e.g. `./gradlew.bat runClient -Pmc.dlss.mode=performance`.
 tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configureEach {
 	redirectJvmCrashDumps()
+	// Same restricted-method warning as the test task: System::load plus FFM downcalls.
+	jvmArgs("--enable-native-access=ALL-UNNAMED")
 
 	// DLSS only supports Minecraft's Vulkan backend. Force it for every dev-client launch so a
 	// persisted OpenGL option cannot produce a misleading waiting-for-vulkan session.

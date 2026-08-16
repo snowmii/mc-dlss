@@ -99,9 +99,10 @@ class SessionReadout(
 		facts: SessionFacts,
 		frameTimings: () -> DlssFrameTimings?,
 		fgState: () -> FgState? = { null },
+		pacing: () -> String? = { null },
 	) {
 		reportFirstPhase(mainTarget, scene, frame, facts)
-		sampleWorldFrameRate(scene, frame, frameTimings, fgState)
+		sampleWorldFrameRate(scene, frame, frameTimings, fgState, pacing)
 	}
 
 	/**
@@ -174,6 +175,7 @@ class SessionReadout(
 		frame: DlssFrameDecision?,
 		frameTimings: () -> DlssFrameTimings?,
 		fgState: () -> FgState?,
+		pacing: () -> String?,
 	) {
 		val now = System.nanoTime()
 		if (sampleStartedAt == 0L) {
@@ -193,13 +195,14 @@ class SessionReadout(
 		// a frame rate that did not change while the chain costs a millisecond is a client whose
 		// frames are bounded by something other than the GPU.
 		emit(
-			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s%s".format(
+			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s%s%s".format(
 				fps,
 				sampledFrames,
 				frame?.route ?: DlssFrameRoute.VANILLA,
 				scene?.let { "${it.width}x${it.height}" } ?: "main-target",
 				frameTimings() ?: "unmeasured",
 				fgMonitorSuffix(fgState(), fps),
+				pacing() ?: "",
 				accumulationSuffix(),
 			),
 		)

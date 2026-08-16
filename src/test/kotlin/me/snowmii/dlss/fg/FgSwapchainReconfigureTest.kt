@@ -6,6 +6,7 @@ import me.snowmii.dlss.render.SceneTarget
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
+import me.snowmii.dlss.session.TestSessionBridge
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -72,23 +73,39 @@ class FgSwapchainReconfigureTest {
 		assertEquals(5, policy.minImageCount(5), "and never raises it")
 
 		policy.setFrameGenerationActive(true)
-		assertEquals(3, policy.minImageCount(3), "three images already meet three declared back buffers")
+		assertEquals(4, policy.minImageCount(3), "2x declares four back buffers, so three is raised to four")
 		assertEquals(5, policy.minImageCount(5), "a larger Minecraft count is never lowered")
+	}
 
-		// A policy declaring more back buffers than Minecraft's default raises the count.
-		val fourBackBuffers = FgSurfacePolicy(declaredBackBuffers = 4)
-		fourBackBuffers.setFrameGenerationActive(true)
-		assertEquals(4, fourBackBuffers.minImageCount(3), "four declared back buffers raise three to four")
-		fourBackBuffers.setFrameGenerationActive(false)
-		assertEquals(3, fourBackBuffers.minImageCount(3), "FG off restores Minecraft's count")
+	@Test
+	fun `the declared back buffers grow with the multiplier`() {
+		val policy = FgSurfacePolicy()
+		policy.setFrameGenerationActive(true)
+
+		// One present per generated frame plus one for the rendered frame, plus the headroom that
+		// keeps the presenter from starving - a fixed count paces worse the higher the multiplier.
+		assertEquals(4, policy.declaredBackBuffers, "2x presents two frames per app frame")
+		policy.numFramesToGenerate = 2
+		assertEquals(5, policy.declaredBackBuffers, "3x presents three")
+		assertEquals(5, policy.minImageCount(3), "and the swapchain must hold them")
+		policy.numFramesToGenerate = 3
+		assertEquals(6, policy.declaredBackBuffers, "4x presents four")
+
+		policy.setFrameGenerationActive(false)
+		assertEquals(3, policy.minImageCount(3), "FG off restores Minecraft's count at any multiplier")
 	}
 
 	@Test
 	fun `the default policy declares the back buffers the mod records for DLSS-G`() {
 		assertEquals(
-			3,
+			FgSurfacePolicy.backBuffersFor(1),
 			FgSurfacePolicy.DEFAULT_DECLARED_BACK_BUFFERS,
 			"the swapchain policy must declare what LifecycleAdapter.configureFg records",
+		)
+		assertEquals(
+			FgSurfacePolicy.DEFAULT_DECLARED_BACK_BUFFERS,
+			FgSurfacePolicy().declaredBackBuffers,
+			"a fresh policy starts at the 2x multiplier's count",
 		)
 	}
 

@@ -4,7 +4,6 @@ import com.mojang.blaze3d.systems.CommandEncoder
 import com.mojang.blaze3d.systems.RenderPass
 import com.mojang.blaze3d.textures.GpuTextureView
 import org.joml.Vector4f
-import org.joml.Vector4fc
 
 /**
  * The terrain chunk passes' velocity-companion handling: the pre-object-write SENTINEL clear.
@@ -18,15 +17,15 @@ import org.joml.Vector4fc
  * entities, and the breaking overlay - is classified as "no object motion" by the post-scene
  * fill, which reconstructs camera motion for it. [createPass] emits that clear (an encoder
  * command, never a pass clear) exactly once, before the opaque terrain group's pass exists,
- * and then delegates pass creation to [create] unchanged.
+ * and then delegates pass creation to `create` unchanged.
  *
- * [clearBeforeObjectWrites] is true only for the opaque group, which is the first terrain
+ * `clearBeforeObjectWrites` is true only for the opaque group, which is the first terrain
  * group of the frame: the translucent group loads the companion instead of clearing it, so
- * the opaque-written state survives through its work. A null [velocity] (a closed phase, a
+ * the opaque-written state survives through its work. A null `velocity` (a closed phase, a
  * vanilla session, the latched camera-only route, or a frame whose scene target carries no
  * companion) skips the clear.
  *
- * The helper never owns pass creation: [create] runs through the caller, and the
+ * The helper never owns pass creation: `create` runs through the caller, and the
  * `@WrapOperation` handler passes a lambda over `Operation.call`, so the MixinExtras chain
  * around `CommandEncoder.createRenderPass` keeps working for other mods and the original is
  * invoked exactly once with the original arguments.
@@ -44,9 +43,9 @@ object TerrainVelocityPass {
 
 	/**
 	 * Emits the companion's sentinel clear before the pass exists when [velocity] is offered
-	 * and [clearBeforeObjectWrites] is set, then creates the pass through [create]. The pass
+	 * and [clearBeforeObjectWrites] is set, then creates the pass through `create`. The pass
 	 * keeps the exact shape the caller asks for - vanilla `renderGroup` asks for the exact
-	 * vanilla one-attachment pass, and [create] adds nothing to it.
+	 * vanilla one-attachment pass, and `create` adds nothing to it.
 	 */
 	@JvmStatic
 	fun createPass(

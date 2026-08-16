@@ -1,6 +1,7 @@
 package me.snowmii.dlss.fg
 
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
@@ -39,6 +40,7 @@ import org.lwjgl.vulkan.VK10
  * live rung: the close-path slShutdown is what makes the fork's exit clean, and a fork that
  * followed an unclean exit comes up with the plugin manager already initialized.
  */
+@NativeBridge
 class FgResourceContractTest {
 
 	@Test

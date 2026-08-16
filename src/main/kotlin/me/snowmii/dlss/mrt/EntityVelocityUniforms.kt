@@ -13,8 +13,6 @@ import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.GpuTextureView
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
 import me.snowmii.dlss.client.ClientRuntime
-import me.snowmii.dlss.render.DlssFrameMotion
-import me.snowmii.dlss.render.DlssJitterOffset
 import me.snowmii.dlss.render.WorldPhase
 import net.minecraft.client.renderer.StagedVertexBuffer
 import net.minecraft.client.renderer.rendertype.OutputTarget
@@ -32,7 +30,7 @@ import java.util.OptionalDouble
  *
  * The entity twin keeps the source entity shader and all of its defines/layouts, then swaps only
  * the fragment shader and adds this block. A missing object predecessor, a reset camera/object
- * history, or a missing active world context sets [INVALID_VELOCITY] through [VelocityParams.x];
+ * history, or a missing active world context sets [INVALID_VELOCITY] through `VelocityParams.x`;
  * the fragment shader classifies every pixel before dividing its previous homogeneous coordinate.
  *
  * The static block-entity camera-motion writer is retired: static block-entity geometry keeps
@@ -89,10 +87,10 @@ object EntityVelocityUniforms {
 		val displacement = phase.objectMotionDisplacement(entityId)
 		val invalid = motion == null || motion.reset || currentViewProjection == null || jitter == null || displacement == null
 		val reprojection = if (invalid) IDENTITY else objectReprojection(
-			requireNotNull(motion),
-			requireNotNull(currentViewProjection),
-			requireNotNull(jitter),
-			requireNotNull(displacement),
+			motion,
+			currentViewProjection,
+			jitter,
+			displacement,
 		)
 		writePayload(encoder, buffer, reprojection, invalid, view)
 	}
@@ -168,10 +166,6 @@ object EntityVelocityWriterBindings {
 			submitIds[submit] = entityId
 		}
 	}
-
-	/** The entity id one submit record belongs to, or null for identity-less submits. */
-	@JvmStatic
-	fun submitEntityId(submit: Any): Int? = submitIds[submit]
 
 	@JvmStatic
 	fun beginSubmit(submit: Any) {
@@ -268,11 +262,6 @@ object EntityVelocityWriterBindings {
 	internal fun isEligibleRenderType(renderType: RenderType, pipelineEligible: Boolean): Boolean =
 		pipelineEligible && renderType.outputTarget() === OutputTarget.MAIN_TARGET
 
-	/** Forces one staged draw per supported main-target entity or static block-entity draw, defeating same-render-type consolidation. */
-	@JvmStatic
-	fun shouldIsolateDraw(renderType: RenderType): Boolean =
-		isEligibleRenderType(renderType, shouldIsolateDraw(renderType.pipeline()))
-
 	/** Forces one staged draw per supported entity or static block-entity draw, defeating same-render-type consolidation. */
 	@JvmStatic
 	fun shouldIsolateDraw(pipeline: RenderPipeline): Boolean =
@@ -339,50 +328,68 @@ object EntityVelocityRender {
 
 	@JvmStatic
 	fun draw(prepared: PreparedRenderType, info: StagedVertexBuffer.ExecuteInfo): Boolean = runCatching {
-			val phase = EntityVelocityUniforms.activeVelocityPhase() ?: return@runCatching false
-			if (!canDraw(prepared, info, phase)) return@runCatching false
-			val entityId = EntityVelocityWriterBindings.executeInfoEntityId(info) ?: return@runCatching false
+		val phase = EntityVelocityUniforms.activeVelocityPhase() ?: return@runCatching false
+		if (!canDraw(prepared, info, phase)) return@runCatching false
+		val entityId = EntityVelocityWriterBindings.executeInfoEntityId(info) ?: return@runCatching false
+		val attachments = attachments(prepared, phase) ?: return@runCatching false
 
-			val scene = phase.worldTargetOverride ?: return@runCatching false
-			val renderTarget = prepared.outputTarget().getRenderTarget()
-			val colorTexture = RenderSystem.outputColorTextureOverride ?: renderTarget.colorTextureView
-			val depthTexture = if (renderTarget.useDepth) {
-				RenderSystem.outputDepthTextureOverride ?: renderTarget.depthTextureView
-			} else {
-				null
-			}
-			val velocityTexture = phase.terrainVelocityView ?: return@runCatching false
-			if (colorTexture == null || colorTexture !== scene.colorTextureView) return@runCatching false
+		val encoder = RenderSystem.getDevice().createCommandEncoder()
+		EntityVelocityUniforms.writeFrame(encoder, buffer(), phase, entityId, attachments.velocity)
+		encoder.createRenderPass(descriptor(prepared, attachments)).use { pass ->
+			record(pass, prepared, info)
+		}
+		true
+	}.getOrDefault(false)
 
-			val encoder = RenderSystem.getDevice().createCommandEncoder()
-			EntityVelocityUniforms.writeFrame(encoder, buffer(), phase, entityId, velocityTexture)
+	/** The three views one entity draw writes through, resolved together or not at all. */
+	private class Attachments(val color: GpuTextureView, val velocity: GpuTextureView, val depth: GpuTextureView?)
 
-			val descriptor = RenderPassDescriptor.create { "Entity velocity draw with ${prepared.pipeline()}" }
-				.withColorAttachment(colorTexture, Optional.empty())
-				.withColorAttachment(velocityTexture, Optional.empty())
-			if (depthTexture != null) {
-				descriptor.withDepthAttachment(depthTexture, OptionalDouble.empty())
-			}
-			descriptor.withRenderArea(RenderPass.RenderArea(0, 0, colorTexture.getWidth(0), colorTexture.getHeight(0)))
+	/**
+	 * Resolves the draw's attachments, or null when this draw must stay vanilla: no scene
+	 * override, no scene-sized velocity companion, or a colour view that is not the held scene
+	 * target's - the identity check that keeps a foreign target off the velocity route.
+	 */
+	private fun attachments(prepared: PreparedRenderType, phase: WorldPhase): Attachments? {
+		val scene = phase.worldTargetOverride ?: return null
+		val renderTarget = prepared.outputTarget().getRenderTarget()
+		val colorTexture = RenderSystem.outputColorTextureOverride ?: renderTarget.colorTextureView
+		val depthTexture = if (renderTarget.useDepth) {
+			RenderSystem.outputDepthTextureOverride ?: renderTarget.depthTextureView
+		} else {
+			null
+		}
+		val velocityTexture = phase.terrainVelocityView ?: return null
+		if (colorTexture == null || colorTexture !== scene.colorTextureView) return null
+		return Attachments(colorTexture, velocityTexture, depthTexture)
+	}
 
-			encoder.createRenderPass(descriptor).use { pass ->
-				pass.setPipeline(writerTwin(prepared.pipeline(), VelocityWriter.ENTITY))
-				if (prepared.scissorState().enabled()) {
-					val scissor = prepared.scissorState()
-					pass.enableScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height())
-				}
-				RenderSystem.bindDefaultUniforms(pass)
-				pass.setUniform("DynamicTransforms", prepared.dynamicTransforms())
-				pass.setUniform(EntityVelocityUniforms.UNIFORM_NAME, buffer().slice())
-				pass.setVertexBuffer(0, info.vertexBuffer().slice())
-				for (texture in prepared.textures()) {
-					pass.bindTexture(texture.name(), texture.textureView(), texture.sampler())
-				}
-				pass.setIndexBuffer(info.indexBuffer(), info.indexType())
-				pass.drawIndexed(info.indexCount(), 1, info.firstIndex(), info.baseVertex(), 0)
-			}
-			true
-		}.getOrDefault(false)
+	private fun descriptor(prepared: PreparedRenderType, attachments: Attachments): RenderPassDescriptor {
+		val descriptor = RenderPassDescriptor.create { "Entity velocity draw with ${prepared.pipeline()}" }
+			.withColorAttachment(attachments.color, Optional.empty())
+			.withColorAttachment(attachments.velocity, Optional.empty())
+		if (attachments.depth != null) {
+			descriptor.withDepthAttachment(attachments.depth, OptionalDouble.empty())
+		}
+		val color = attachments.color
+		return descriptor.withRenderArea(RenderPass.RenderArea(0, 0, color.getWidth(0), color.getHeight(0)))
+	}
+
+	private fun record(pass: RenderPass, prepared: PreparedRenderType, info: StagedVertexBuffer.ExecuteInfo) {
+		pass.setPipeline(writerTwin(prepared.pipeline(), VelocityWriter.ENTITY))
+		if (prepared.scissorState().enabled()) {
+			val scissor = prepared.scissorState()
+			pass.enableScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height())
+		}
+		RenderSystem.bindDefaultUniforms(pass)
+		pass.setUniform("DynamicTransforms", prepared.dynamicTransforms())
+		pass.setUniform(EntityVelocityUniforms.UNIFORM_NAME, buffer().slice())
+		pass.setVertexBuffer(0, info.vertexBuffer().slice())
+		for (texture in prepared.textures()) {
+			pass.bindTexture(texture.name(), texture.textureView(), texture.sampler())
+		}
+		pass.setIndexBuffer(info.indexBuffer(), info.indexType())
+		pass.drawIndexed(info.indexCount(), 1, info.firstIndex(), info.baseVertex(), 0)
+	}
 
 	private fun buffer(): GpuBuffer {
 		return uniformBuffer ?: RenderSystem.getDevice().createBuffer(

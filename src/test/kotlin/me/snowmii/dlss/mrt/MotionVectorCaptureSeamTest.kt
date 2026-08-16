@@ -1,34 +1,13 @@
 package me.snowmii.dlss.mrt
 
-import java.nio.file.Path
-import kotlin.io.path.readText
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.mixin.LevelExtractorCaptureMixin
-import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.RenderRuntime
-import me.snowmii.dlss.render.SceneTarget
 import me.snowmii.dlss.render.WorldPhase
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
-import net.minecraft.client.renderer.entity.state.EntityRenderState
-import net.minecraft.client.renderer.extract.LevelExtractor
-import net.minecraft.world.entity.Entity
-import org.joml.Matrix4f
 import org.joml.Vector3f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.spongepowered.asm.mixin.injection.Inject
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
-import org.spongepowered.asm.mixin.injection.callback.LocalCapture
 
 /**
  * M-6's capture seam: the visible-entity extraction pass feeds each entity's interpolated render
@@ -82,11 +61,11 @@ class MotionVectorCaptureSeamTest {
 		// Second frame: the published frame is the predecessor the draw path composes from, and
 		// it stays readable while the phase is open - between capture and publish.
 		phase.captureEntity(7, 10.5, 64.0, 5.0)
-		assertEquals(vec(0.5f, 0f, 0f), runtime.objectMotion.displacement(7))
+		assertEquals(Vector3f(0.5f, 0f, 0f), runtime.objectMotion.displacement(7))
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		assertEquals(
-			vec(0.5f, 0f, 0f),
+			Vector3f(0.5f, 0f, 0f),
 			runtime.objectMotion.displacement(7),
 			"the draw path reads this frame's displacement while the phase is open",
 		)
@@ -259,7 +238,6 @@ class MotionVectorCaptureSeamTest {
 
 	private fun position(x: Double, y: Double, z: Double) = ObjectPosition(x, y, z)
 
-	private fun vec(x: Float, y: Float, z: Float) = Vector3f(x, y, z)
 
 	/** Render target with a fake view over a fake texture, so the frame lifecycle is testable off the render thread. */
 }

@@ -88,7 +88,7 @@ import kotlin.math.abs
  *
  * Ineligible routes - a closed phase, a vanilla session, the latched camera-only route, or a
  * frame whose scene target carries no velocity companion - answer false from the gates and
- * null from [velocityView]: the pass-creation redirect falls through to the exact vanilla
+ * null from `velocityView`: the pass-creation redirect falls through to the exact vanilla
  * one-attachment creation and the source cloud pipeline binds unchanged. Every read here is
  * a plain field or enum read, and every device call sits behind a guarded seam, so the
  * fallback path cannot throw.
@@ -191,15 +191,10 @@ object CloudVelocityRender {
 	internal var cloudClockProvider: () -> CloudClock? = {
 		runCatching {
 			val minecraft = Minecraft.getInstance()
-			if (minecraft == null) {
-				null
-			} else {
-				val level = minecraft.level
-				CloudClock(
-					if (level == null) 0L else level.getGameTime(),
-					minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false),
-				)
-			}
+			CloudClock(
+				minecraft.level?.gameTime ?: 0L,
+				minecraft.deltaTracker.getGameTimeDeltaPartialTick(false),
+			)
 		}.getOrNull()
 	}
 
@@ -226,22 +221,6 @@ object CloudVelocityRender {
 	fun activePhase(): WorldPhase? = runCatching {
 		(activePhaseOverride ?: ClientRuntime.active().activeWorldPhase())
 	}.getOrNull()
-
-	/**
-	 * Whether one pipeline is safe to replace with the cloud writer.
-	 *
-	 * The cloud render types bind the owned core/rendertype_clouds shader family: exactly the
-	 * `CLOUDS` and `FLAT_CLOUDS` pipelines the cloud pass draws with. The same check never
-	 * admits any terrain, entity, weather, particle, block, or crumbling pipeline, whose
-	 * shader paths differ.
-	 */
-	@JvmStatic
-	fun isCloudPipeline(pipeline: RenderPipeline): Boolean {
-		val vertex = pipeline.vertexShader
-		val fragment = pipeline.fragmentShader
-		return vertex.path == "core/rendertype_clouds" && fragment.path == "core/rendertype_clouds" &&
-			vertex.namespace in OWNED_SHADER_NAMESPACES && fragment.namespace in OWNED_SHADER_NAMESPACES
-	}
 
 	/**
 	 * The cloud pattern's drift delta between two rendered frames: the game-clock advance.
@@ -603,5 +582,4 @@ object CloudVelocityRender {
 	/** Identity reprojection for invalid frames; never mutated, only read into the block. */
 	private val IDENTITY = Matrix4f()
 
-	private val OWNED_SHADER_NAMESPACES = setOf("minecraft", "mc-dlss")
 }

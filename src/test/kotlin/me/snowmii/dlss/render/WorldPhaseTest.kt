@@ -301,7 +301,7 @@ class WorldPhaseTest {
 		runtime = runtime,
 		present = { scene, main -> presented += scene to main },
 		onWorldTargetChanged = { targetChanges++ },
-		evaluateFrame = { rendered, destination, jitter, motion, route, velocity, camera ->
+		evaluateFrame = { rendered, destination, jitter, motion, _, _, camera ->
 			presentedWhenEvaluated = presented.size
 			evaluated += Triple(rendered, jitter, motion)
 			evaluatedCameras += camera

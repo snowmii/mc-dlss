@@ -18,7 +18,6 @@ import me.snowmii.dlss.bridge.PresentTarget
 import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.VulkanContext
 import me.snowmii.dlss.client.RuntimeControls
-import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
@@ -37,6 +36,7 @@ import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.sl.SrLiveSession
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
+import me.snowmii.dlss.NativeBridge
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -48,39 +48,39 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
- * M-13 rung: status-driven FG-off session latch, the user-toggle disable path, and the
+ * M-13 rung: the status-driven FG-off suspension, the user-toggle disable path, and the
  * frame-support suspension.
  *
  * While FG is active, any status other than eDLSSGStatusOk (word zero) in the live
- * `slDLSSGGetState` read latches FG off for the session: the surface policy turns the mode
- * off (vsync and image-count reads restored, every re-arm refused), the DLSS-G options are
- * re-recorded in the eOff mode with retained resources, the SR session stays READY - the
- * fallback is SR-only, not vanilla - and one exact diagnostic names the status word.
+ * `slDLSSGGetState` read suspends composition: the surface policy's frame-support axis turns
+ * the effective mode off, the DLSS-G options are re-recorded in the eOff mode with retained
+ * resources, the SR session stays READY - the fallback is SR-only, not vanilla - and one exact
+ * diagnostic names the status word. The suspension is reversible by construction: the status
+ * word is a bitmask about one frame, so the first healthy frame resumes and announces it.
  *
- * The user toggle rides the same seams with the opposite re-arm rule: switching FG off
- * through the controls restores the policy reads and records the retained eOff options
- * exactly once on the transition, leaves SR READY and the split active, and stays
- * re-armable - while a status-latched policy keeps refusing the re-arm without a second
- * diagnostic.
+ * The user toggle rides the same seams: switching FG off through the controls restores the
+ * policy reads and records the retained eOff options exactly once on the transition, leaves SR
+ * READY and the split active, and stays re-armable.
  *
  * Frame support suspends the effective mode through the same retained eOff record without
- * touching the user's mode or the latch: FG composes only on supported in-world frames, an
- * unsupported frame (pause, loading, menu, panorama, resize, fullscreen transition)
- * suspends exactly once per transition, the frames in between compose SR-only, a supported
- * frame resumes, and a user-off or latched policy stays off through the whole cycle.
+ * touching the user's mode: FG composes only on supported in-world frames, an unsupported
+ * frame (pause, loading, menu, panorama, resize, fullscreen transition) suspends exactly once
+ * per transition, the frames in between compose SR-only, a supported frame resumes, and a
+ * user-off policy stays off through the whole cycle.
  *
  * A level-change discontinuity resets the shared history: the first supported composed frame
  * afterwards records resetHistory through the shared evaluation seam and the next frame
- * accumulates normally, while FG stays on and suspension, user-off, and session-latch
- * precedence stay intact.
+ * accumulates normally, while FG stays on and the suspension and user-off precedence stay
+ * intact.
  *
  * The M-11 and M-12 rungs already proved the native seams live (present handoff, input
- * wait, markers); this rung proves the latch wiring off the render thread through the
- * production seams: the runtime's per-frame poll, the policy's latch and re-arm refusal,
- * the adapter's non-latching eOff record, and the SR-only frame that follows - plus the
- * native mode record's live gates and eOff acceptance against the real Streamline session,
- * the same live proof shape as the M-9 options rung.
+ * wait, markers); this rung proves the wiring off the render thread through the production
+ * seams: the runtime's per-frame poll, the policy's suspension and resume, the adapter's
+ * non-latching eOff record, and the SR-only frame that follows - plus the native mode
+ * record's live gates and eOff acceptance against the real Streamline session, the same live
+ * proof shape as the M-9 options rung.
  */
+@NativeBridge
 class FgEnablementFallbackTest {
 
 	@Test
@@ -113,6 +113,20 @@ class FgEnablementFallbackTest {
 		assertEquals(1, calls.fgModeOffRecords, "the suspension records the retained eOff mode exactly once")
 		assertEquals(0, harness.probe.diagnostics.size, "a suspension is not a latch: no diagnostic")
 
+		// The readout must not call a suspension "off". Cycling the multiplier invalidates the
+		// surface configuration and so suspends the very next frame, which put the announcement
+		// inside exactly this window: the log read `fg off at 6x` while the frame-rate line that
+		// followed reported six times the app rate presented.
+		controls.cycleFgMultiplier()
+		assertTrue(
+			announced.last().contains("fg on (suspended)"),
+			"a suspension must read as the user's mode plus its suspension: ${announced.last()}",
+		)
+		assertFalse(
+			announced.last().contains("fg off"),
+			"\"off\" is reserved for the mode the user set: ${announced.last()}",
+		)
+
 		// More unsupported frames record nothing, and a suspended frame composes SR-only.
 		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		harness.runtime.endWorldPhase()
@@ -122,6 +136,8 @@ class FgEnablementFallbackTest {
 			"an SR-only frame during the suspension must record and present",
 		)
 		assertEquals(1, calls.fgConfigures.size, "no FG options may record while suspended")
+		// Two, from the composed frame before the suspension: its opening tag and its
+		// post-evaluation re-tag. The count must not grow while suspended.
 		assertEquals(2, calls.fgTags.size, "no FG tags may record while suspended")
 		assertEquals(1, calls.handoffs, "no present handoff may record while suspended")
 
@@ -174,7 +190,6 @@ class FgEnablementFallbackTest {
 		harness.runtime.endWorldPhase()
 		assertFalse(policy.active, "an SR-off frame must not resume FG")
 		assertEquals(1, calls.fgModeOffRecords, "a suspension already in effect records nothing")
-		assertFalse(policy.latched, "SR off is not the plugin's failure verdict")
 
 		// SR back on: the user's FG mode was never touched, so the first supported frame
 		// resumes it and re-records the eOn options per frame.
@@ -228,7 +243,6 @@ class FgEnablementFallbackTest {
 		// The discontinuity leaves every other precedence intact: FG stays on, nothing suspends
 		// or latches, nothing re-records the eOff mode, and the SR session stays READY.
 		assertTrue(policy.active, "a discontinuity is not a suspension: FG stays on")
-		assertFalse(policy.latched, "a discontinuity is not a latch")
 		assertEquals(0, calls.fgModeOffRecords, "a discontinuity records no eOff mode")
 		assertEquals(0, harness.probe.diagnostics.size, "a discontinuity emits no diagnostic")
 		assertEquals(DlssSessionState.READY, harness.session.state, "the SR session stays READY")
@@ -273,7 +287,7 @@ class FgEnablementFallbackTest {
 	)
 
 	@Test
-	fun `unsupported frames never overturn a user-off policy or the session latch`() {
+	fun `unsupported frames never overturn a user-off policy and no condition is permanent`() {
 		// User-off precedence: with FG off, a suspension cycle records no mode and a resume
 		// does not re-arm.
 		val calls = RecordingNative()
@@ -290,30 +304,47 @@ class FgEnablementFallbackTest {
 		assertFalse(policy.active, "a user-off policy stays off through suspend and resume")
 		assertEquals(0, calls.fgModeOffRecords, "a suspended user-off policy records no mode")
 
-		// Latch precedence: the latch owns the one eOff record and diagnostic; a following
-		// suspension and resume change nothing and never re-arm.
-		val latchedCalls = RecordingNative()
-		val latchedPolicy = FgSurfacePolicy()
-		var latchedSupported = true
-		val latchedHarness = harness(latchedCalls, latchedPolicy, fgFrameSupported = { _, _ -> latchedSupported })
-		assertTrue(latchedPolicy.setFrameGenerationActive(true), "FG must arm first")
-		latchedCalls.status = FgState(2, 1, 0L, 0L)
-		latchedHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
-		latchedHarness.runtime.endWorldPhase()
-		assertTrue(latchedPolicy.latched, "the bad status must latch FG off")
-		assertEquals(1, latchedCalls.fgModeOffRecords, "the latch records the eOff mode")
+		// An unhealthy status suspends composition and nothing more: the status word reports
+		// conditions of the frame, and the policy's user mode and the swapchain it implies must
+		// survive them.
+		val unhealthyCalls = RecordingNative()
+		val unhealthyPolicy = FgSurfacePolicy()
+		var unhealthySupported = true
+		val unhealthyHarness =
+			harness(unhealthyCalls, unhealthyPolicy, fgFrameSupported = { _, _ -> unhealthySupported })
+		assertTrue(unhealthyPolicy.setFrameGenerationActive(true), "FG must arm first")
+		unhealthyCalls.status = FgState(2, 1, 0L, 0L)
+		unhealthyHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
+		unhealthyHarness.runtime.endWorldPhase()
+		assertFalse(unhealthyPolicy.active, "an unhealthy status suspends composition")
+		assertTrue(unhealthyPolicy.armed, "the user's mode - and so the swapchain policy - survives it")
+		assertEquals(1, unhealthyCalls.fgModeOffRecords, "the suspension records the eOff mode once")
 
-		latchedSupported = false
-		latchedHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
-		latchedHarness.runtime.endWorldPhase()
-		latchedSupported = true
-		latchedHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
-		latchedHarness.runtime.endWorldPhase()
+		// Held: the status is still unhealthy, so nothing changes and nothing is recorded again.
+		unhealthyHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
+		unhealthyHarness.runtime.endWorldPhase()
+		assertEquals(1, unhealthyCalls.fgModeOffRecords, "a held suspension records nothing further")
+		assertEquals(1, unhealthyHarness.probe.diagnostics.size, "a held suspension says nothing further")
 
-		assertFalse(latchedPolicy.active, "a latched policy stays off through suspend and resume")
-		assertTrue(latchedPolicy.latched, "the resume must not overturn the latch")
-		assertEquals(1, latchedCalls.fgModeOffRecords, "the latch keeps the one eOff record")
-		assertEquals(1, latchedHarness.probe.diagnostics.size, "the latch keeps its one diagnostic")
+		// The condition clears, and the next frame composes again. This is the whole point: a
+		// quality-mode or preset change reports a transient bit for a frame or two, and FG used to
+		// end for the session there - with vsync restored, which is what made it visible.
+		unhealthyCalls.status = FgState(0, 1, 0L, 0L)
+		unhealthyHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
+		unhealthyHarness.runtime.endWorldPhase()
+		assertTrue(unhealthyPolicy.active, "a healthy status resumes composition")
+		assertEquals(2, unhealthyHarness.probe.diagnostics.size, "the resume is reported once")
+
+		// A frame-support suspension still composes nothing while the status stays healthy, and
+		// still resumes.
+		unhealthySupported = false
+		unhealthyHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
+		unhealthyHarness.runtime.endWorldPhase()
+		assertFalse(unhealthyPolicy.active, "an unsupported frame suspends as it always did")
+		unhealthySupported = true
+		unhealthyHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
+		unhealthyHarness.runtime.endWorldPhase()
+		assertTrue(unhealthyPolicy.active, "and resumes")
 	}
 
 	@Test
@@ -398,7 +429,7 @@ class FgEnablementFallbackTest {
 	}
 
 	@Test
-	fun `a non-OK status while FG is active latches FG off once with one exact diagnostic and keeps SR READY`() {
+	fun `a non-OK status suspends FG once with one exact diagnostic, keeps SR READY, and resumes`() {
 		val calls = RecordingNative()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
@@ -415,90 +446,60 @@ class FgEnablementFallbackTest {
 			"an OK-status FG frame must route to the scene target",
 		)
 		harness.runtime.endWorldPhase()
-		assertTrue(policy.active, "an OK status must not latch FG off")
+		assertTrue(policy.active, "an OK status must not suspend FG")
 		assertEquals(0, harness.probe.diagnostics.size, "an OK status must emit no diagnostic")
 		assertEquals(0, calls.fgModeOffRecords, "an OK status must record no eOff options")
 
-		// Frame 2: status 0x2 (eFailReflexNotDetectedAtRuntime) while FG is active latches
-		// FG off for the session, re-records the eOff options once, and emits exactly one
-		// diagnostic naming the status word.
+		// Frame 2: status 0x2 (eFailReflexNotDetectedAtRuntime) while FG is active suspends
+		// composition, re-records the eOff options once, and emits exactly one diagnostic naming
+		// the status word.
 		calls.status = FgState(2, 1, 0L, 0L)
 		assertNotNull(
 			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS),
-			"the latched frame must still route to the scene target: SR stays READY",
+			"the suspended frame must still route to the scene target: SR stays READY",
 		)
 		harness.runtime.endWorldPhase()
 
-		assertFalse(policy.active, "a non-OK status must switch FG off")
-		assertTrue(policy.latched, "the latch must be recorded for the session")
-		assertEquals(1, calls.fgModeOffRecords, "the latch must re-record the DLSS-G options in the eOff mode exactly once")
+		assertFalse(policy.active, "a non-OK status must stop FG composing")
+		assertTrue(policy.armed, "the user's mode must survive it, and with it the swapchain policy")
+		assertEquals(1, calls.fgModeOffRecords, "the suspension must re-record the DLSS-G options in the eOff mode exactly once")
 		assertEquals(
 			listOf(
-				"Frame generation latched off: slDLSSGGetState status=0x2 (eDLSSGStatusOk=0); " +
-					"eOff options retained, vsync restored, SR session stays READY, re-arm refused.",
+				"Frame generation suspended: slDLSSGGetState status=0x2 (eDLSSGStatusOk=0); " +
+					"composition suspended and the eOff options retained while the status is " +
+					"unhealthy, swapchain policy unchanged, and the first healthy frame resumes.",
 			),
 			harness.probe.diagnostics,
-			"the latch must emit exactly one diagnostic naming the status word",
+			"the suspension must emit exactly one diagnostic naming the status word",
 		)
 		assertEquals(
 			DlssSessionState.READY,
 			harness.session.state,
-			"the status latch must not touch the SR session: SR stays READY",
+			"the status suspension must not touch the SR session: SR stays READY",
 		)
 
-		// Frame 3: the poll no longer runs (FG is off), and a further bad status must not
-		// re-emit the diagnostic or re-record the eOff options.
-		calls.status = FgState(2, 1, 0L, 0L)
+		// Frame 3: the status is still unhealthy, so the suspension is held rather than
+		// re-announced or re-recorded.
 		assertNotNull(
 			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS),
-			"an SR-only frame after the latch must still route to the scene target",
+			"an SR-only frame during the suspension must still route to the scene target",
 		)
 		harness.runtime.endWorldPhase()
-		assertEquals(1, calls.fgModeOffRecords, "the eOff record must stay attached to the first latch")
-		assertEquals(1, harness.probe.diagnostics.size, "the diagnostic must be emitted exactly once per session")
+		assertEquals(1, calls.fgModeOffRecords, "the eOff record must stay attached to the transition")
+		assertEquals(1, harness.probe.diagnostics.size, "a held suspension must not re-announce itself")
+
+		// Frame 4: the condition clears and FG composes again. The poll has to keep running while
+		// the user's mode is on for this to be reachable at all - gating it on composition is what
+		// would make the suspension permanent.
+		calls.status = FgState(0, 1, 0L, 0L)
+		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
+		harness.runtime.endWorldPhase()
+		assertTrue(policy.active, "the first healthy frame must resume composition")
+		assertEquals(2, harness.probe.diagnostics.size, "the resume must be announced exactly once")
 	}
 
 	@Test
-	fun `a latched policy refuses re-arm and restores vsync and image count`() {
-		var invalidations = 0
-		val policy = FgSurfacePolicy(invalidateSurfaceConfiguration = { invalidations++ })
-
-		assertTrue(policy.setFrameGenerationActive(true), "FG must arm first")
-		assertFalse(policy.effectiveVsyncEnabled(true), "while FG is active the reconfigure path must read vsync false")
-		assertEquals(3, policy.minImageCount(2), "while FG is active the swapchain count must cover the declared back buffers")
-
-		assertTrue(policy.latchOff(), "the first latch is the one that latches")
-		assertFalse(policy.active, "the latch must switch FG off")
-		assertTrue(policy.latched, "the latch must be recorded")
-		assertEquals(2, invalidations, "arming and latching each invalidate the surface configuration exactly once")
-
-		// Restored policy reads: the stored vsync value untouched and Minecraft's own image
-		// count, exactly as before FG ever armed.
-		assertTrue(policy.effectiveVsyncEnabled(true), "after the latch vsync must read the stored option again")
-		assertEquals(2, policy.minImageCount(2), "after the latch the image count must be Minecraft's own")
-
-		// Re-arm is refused: the toggle may not overturn the plugin's own failure verdict,
-		// and the refusal must not invalidate anything.
-		assertFalse(policy.setFrameGenerationActive(true), "a latched policy must refuse re-arm")
-		assertFalse(policy.active, "the refused re-arm must leave FG off")
-		assertEquals(2, invalidations, "a refused re-arm must not invalidate the surface configuration")
-
-		// A repeat latch is a no-op, so a caller can keep one-shot side effects (the eOff
-		// record, the diagnostic) attached to the first latch.
-		assertFalse(policy.latchOff(), "a repeat latch must answer false")
-
-		// A policy that latches before it ever armed still latches, and invalidates nothing
-		// because the mode never changed.
-		var offArmInvalidations = 0
-		val neverArmed = FgSurfacePolicy(invalidateSurfaceConfiguration = { offArmInvalidations++ })
-		assertTrue(neverArmed.latchOff(), "a never-armed policy can still latch")
-		assertTrue(neverArmed.latched)
-		assertFalse(neverArmed.active)
-		assertEquals(0, offArmInvalidations, "a latch that changes no mode must invalidate nothing")
-	}
-
-	@Test
-	fun `after the latch the frame records SR only with no FG calls and the session stays READY`() {
+	fun `during a status suspension the frame records SR only with no FG calls and the session stays READY`() {
 		val calls = RecordingNative()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
@@ -507,27 +508,27 @@ class FgEnablementFallbackTest {
 		calls.status = FgState(2, 1, 0L, 0L)
 		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		harness.runtime.endWorldPhase()
-		assertTrue(policy.latched, "the frame must latch before its recording")
+		assertFalse(policy.active, "the frame must suspend before its recording")
 
-		// The frame that follows the latch records the SR-only composition: motion, SR tag,
+		// The frame that follows the suspension records the SR-only composition: motion, SR tag,
 		// evaluation, present - no FG options, no FG tags, no handoff - and still succeeds,
 		// which is the subsequent SR evaluation the fallback exists to keep.
 		assertTrue(
 			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
-			"an SR-only frame after the latch must record and present",
+			"an SR-only frame during the suspension must record and present",
 		)
 		assertEquals(
 			listOf("writeMotion", "srTag", "evaluate", "present"),
 			calls.order.filter { it != "waitFgInputs" && it != "setFgModeOff" },
-			"after the latch the frame must record the SR composition with no FG calls at all",
+			"during the suspension the frame must record the SR composition with no FG calls at all",
 		)
-		assertEquals(0, calls.fgConfigures.size, "after the latch no FG options may record")
-		assertEquals(0, calls.fgTags.size, "after the latch no FG tags may record")
-		assertEquals(0, calls.handoffs, "after the latch no present handoff may record")
+		assertEquals(0, calls.fgConfigures.size, "during the suspension no FG options may record")
+		assertEquals(0, calls.fgTags.size, "during the suspension no FG tags may record")
+		assertEquals(0, calls.handoffs, "during the suspension no present handoff may record")
 		assertEquals(
 			DlssSessionState.READY,
 			harness.session.state,
-			"the SR session must stay READY through the latched frame",
+			"the SR session must stay READY through the suspended frame",
 		)
 	}
 
@@ -542,7 +543,6 @@ class FgEnablementFallbackTest {
 		// Arm through the controls: the reviewer's key press is the public boundary.
 		controls.toggleFrameGeneration()
 		assertTrue(policy.active, "the controls switch FG on")
-		assertFalse(policy.latched, "arming never latches")
 		assertEquals(0, calls.fgModeOffRecords, "arming records no mode")
 		assertTrue(announced.last().contains("fg on"), "the readout names the mode in effect: ${announced.last()}")
 
@@ -557,7 +557,6 @@ class FgEnablementFallbackTest {
 		// and nothing about the SR session changes.
 		controls.toggleFrameGeneration()
 		assertFalse(policy.active, "the controls switch FG off")
-		assertFalse(policy.latched, "a user toggle is not a latch")
 		assertEquals(1, calls.fgModeOffRecords, "the off transition records the eOff mode exactly once")
 		assertEquals(listOf(0), calls.fgModeValues, "the eOff record passes mode zero to the bridge")
 		assertTrue(policy.effectiveVsyncEnabled(true), "the reconfigure read is the stored vsync again")
@@ -576,6 +575,8 @@ class FgEnablementFallbackTest {
 			"an SR-only frame after the user toggle must record and present",
 		)
 		assertEquals(1, calls.fgConfigures.size, "no FG options may record after the toggle")
+		// Two, from the composed frame before the toggle: its opening tag and its
+		// post-evaluation re-tag. The count must not grow after the toggle.
 		assertEquals(2, calls.fgTags.size, "no FG tags may record after the toggle")
 		assertEquals(1, calls.handoffs, "no present handoff may record after the toggle")
 		assertEquals(1, calls.fgModeOffRecords, "the eOff record must stay attached to the one transition")
@@ -584,7 +585,6 @@ class FgEnablementFallbackTest {
 		// frame re-records the eOn options through the per-frame options record.
 		controls.toggleFrameGeneration()
 		assertTrue(policy.active, "a user-off policy re-arms")
-		assertFalse(policy.latched)
 		assertEquals(1, calls.fgModeOffRecords, "re-arming records no mode")
 		assertTrue(
 			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
@@ -605,7 +605,7 @@ class FgEnablementFallbackTest {
 	}
 
 	@Test
-	fun `a status-latched policy refuses the user re-arm without a second diagnostic or record`() {
+	fun `a status suspension leaves the user's FG mode theirs to switch off and back on`() {
 		val calls = RecordingNative()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
@@ -617,34 +617,27 @@ class FgEnablementFallbackTest {
 		calls.status = FgState(2, 1, 0L, 0L)
 		assertNotNull(
 			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS),
-			"the latched frame must still route to the scene target: SR stays READY",
+			"the suspended frame must still route to the scene target: SR stays READY",
 		)
 		harness.runtime.endWorldPhase()
-		assertTrue(policy.latched, "the bad status must latch")
-		assertEquals(1, calls.fgModeOffRecords, "the latch records the eOff mode")
-		assertEquals(1, harness.probe.diagnostics.size, "the latch emits its one exact diagnostic")
+		assertFalse(policy.active, "the bad status must suspend composition")
+		assertEquals(1, calls.fgModeOffRecords, "the suspension records the eOff mode")
+		assertEquals(1, harness.probe.diagnostics.size, "the suspension emits its one exact diagnostic")
 
-		// The user re-arm is refused: the plugin's own failure verdict may not be overturned,
-		// and the refusal records nothing and emits no new diagnostic.
+		// The user's mode is still theirs. Switching off is a real transition of the armed mode,
+		// which is what restores the vanilla swapchain policy - the status never did that.
 		controls.toggleFrameGeneration()
-		assertFalse(policy.active, "the re-arm after the latch must stay refused")
-		assertTrue(policy.latched)
-		assertEquals(1, calls.fgModeOffRecords, "the refused re-arm records no mode")
-		assertEquals(
-			listOf(
-				"Frame generation latched off: slDLSSGGetState status=0x2 (eDLSSGStatusOk=0); " +
-					"eOff options retained, vsync restored, SR session stays READY, re-arm refused.",
-			),
-			harness.probe.diagnostics,
-			"the latch's one exact diagnostic must remain the only one",
-		)
+		assertFalse(policy.armed, "the user's off must disarm")
 		assertTrue(announced.last().contains("fg off"), "the readout reports the state actually in effect: ${announced.last()}")
 
-		// A second attempt changes nothing either.
+		// And switching back on re-arms rather than being refused, so the swapchain returns to the
+		// FG policy and a healthy frame composes again.
 		controls.toggleFrameGeneration()
-		assertFalse(policy.active, "the re-arm must stay refused on every attempt")
-		assertEquals(1, harness.probe.diagnostics.size, "no attempt may emit a new diagnostic")
-		assertEquals(1, calls.fgModeOffRecords, "no attempt may record a new mode")
+		assertTrue(policy.armed, "the user's on must re-arm: no verdict stands in the way")
+		calls.status = FgState(0, 1, 0L, 0L)
+		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
+		harness.runtime.endWorldPhase()
+		assertTrue(policy.active, "a healthy frame on a re-armed policy composes")
 	}
 
 	@Test
@@ -827,13 +820,11 @@ class FgEnablementFallbackTest {
 			startup = { RENDER_DIMENSIONS },
 			frameEvaluation = evaluation,
 			frameGeneration = policy,
-			waitForFgInputs = { adapter.waitFgInputsIdle() },
-			// Production wiring shape: the poll reads through the adapter, the off-transition
-			// eOff record (status latch, user toggle, and frame-support suspension alike) goes
-			// through it too, and the latch's one exact diagnostic is emitted through the
-			// diagnostics seam.
-			pollFgState = { adapter.queryFgState() },
-			recordFgModeOff = { adapter.recordFgModeOff() },
+			// Production wiring shape: the input wait, the status poll, and the off-transition
+			// eOff record (status suspension, user toggle, and frame-support suspension alike)
+			// all go through the one adapter, and the suspension's exact diagnostic is emitted
+			// through the diagnostics seam.
+			bridge = adapter,
 			diagnostics = { probe.diagnostics += it },
 			fgFrameSupported = fgFrameSupported,
 		)
@@ -1062,9 +1053,9 @@ class FgEnablementFallbackTest {
 		const val DESTINATION = 999L
 
 		/** NVSDK_NGX_Result_FAIL_NotInitialized = NVSDK_NGX_Result_Fail | 7 (0xBAD00000 | 7). */
-		private val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
+		const val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
 
 		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
-		private val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
+		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
 	}
 }

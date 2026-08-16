@@ -1,6 +1,7 @@
 package me.snowmii.dlss.sl
 
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.SrTagRequest
@@ -29,6 +30,7 @@ import org.lwjgl.vulkan.VK10
  * makes slSetVulkanInfo answer eErrorInvalidIntegration. Splitting the scenario across two
  * forks makes the second fork's activation fail on this workstation no matter what it does.
  */
+@NativeBridge
 class StreamlineSrEvaluateTest {
 
 	@Test

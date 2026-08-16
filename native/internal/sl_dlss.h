@@ -93,21 +93,21 @@ int32_t present_end() noexcept;
 // token-obtain point stays once per frame at frame start; the tag calls keep their own
 // obtain-and-sleep for the callers that never run an input sample (tests, direct tag
 // sequences), and because they only sleep when they themselves obtain the token, a frame
-// that ran its input sample sleeps exactly once. The pinned Streamline 2.12 vocabulary has
-// no eInputSample marker (removed from PCLMarker), so the input seam emits ePCLatencyPing:
-// the PCL guide defines the ping as the marker that identifies which frame picks up the
-// simulated input, which is exactly the input-sample seam semantics the contract retains.
-// The simulation and render-submit entries emit eSimulationStart/eSimulationEnd and
-// eRenderSubmitStart/eRenderSubmitEnd. Every entry requires the ready session
-// (kNotInitialized) and refuses when no token is retained (kNotInitialized) - a frame that
-// never ran its input sample emits no markers - and records the emitted marker in the
-// reflex-marker log only after its slPCLSetMarker call succeeded, so the oracle reports
-// exactly what reached the plugin.
+// that ran its input sample sleeps exactly once. The input seam emits ePCLatencyPing only
+// after the installed window hook receives PclState::statsWindowMessage, not once per frame.
+// The simulation and render-submit markers travel as a value rather than as an entry point
+// each: reflex_marker takes the ReflexMarkerType and is the one place that vocabulary becomes
+// an sl::PCLMarker. It requires the ready session (kNotInitialized), refuses when no token is
+// retained (kNotInitialized) - a frame that never ran its input sample emits no markers -
+// refuses a type outside the four it emits (kInvalidParameter, which is what INPUT_SAMPLE
+// answers: that seam is its own entry because it obtains the token and sleeps first), and
+// records the emitted marker in the reflex-marker log only after its slPCLSetMarker call
+// succeeded, so the oracle reports exactly what reached the plugin.
+// Installs the Win32 message hook that records PCL's periodic stats message. The next
+// input-sample seam emits one ePCLatencyPing under that frame's token.
+int32_t install_pcl_window(uint64_t hwnd) noexcept;
 int32_t reflex_input_sample() noexcept;
-int32_t reflex_simulate_start() noexcept;
-int32_t reflex_simulate_end() noexcept;
-int32_t reflex_render_submit_start() noexcept;
-int32_t reflex_render_submit_end() noexcept;
+int32_t reflex_marker(uint32_t markerType) noexcept;
 
 // The reflex-marker oracle: how many of each of the five Reflex/PCL markers this module has
 // actually emitted (per-type cumulative counts, in ReflexMarkerType order), the total event
@@ -132,6 +132,16 @@ int32_t query_reflex_markers(uint32_t* typeCounts, uint32_t* eventCount, uint32_
 // reports the attempt truthfully either way. The ABI layer (mc_dlss_initialize) decides how
 // a failure surfaces; this record never latches anything.
 int32_t record_reflex_options() noexcept;
+
+// Re-records the Reflex options with a frame-rate cap: frameLimitUs microseconds per frame,
+// zero for no Reflex-side cap. Reflex's limiter is the one DLSS-G tolerates - it sleeps
+// before the frame's simulation, where the driver is aware of the pacer's schedule, instead
+// of spinning after Present the way an engine-side limiter does. Requires sl_session_ready
+// (kNotInitialized) and an existing registration (kInvalidParameter): the cap joins the
+// READY record rather than creating one. A cap that is already in effect records nothing and
+// answers kSuccess, so the per-frame seam that reads Minecraft's limit can call it every
+// frame; a refused record restores the stored cap. Never latches anything.
+int32_t record_reflex_frame_limit(uint32_t frameLimitUs) noexcept;
 
 // The reflex-options oracle: the sl::ReflexMode value the recorded options carry (1 =
 // eLowLatency) and how many slReflexSetOptions calls this session made, so the test can

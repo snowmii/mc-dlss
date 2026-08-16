@@ -262,7 +262,7 @@ object MovingBlockVelocityRender {
 	 * failure inside the device work - a lost device, a pipeline compile failure, a pass
 	 * reject - commits the draw instead of falling through, so the source draw is never
 	 * replayed over partial writer work (an encoder or pass that already carries the writer's
-	 * state) and the batch never sees a torn two-attachment pass. See [committedDrawFailure].
+	 * state) and the batch never sees a torn two-attachment pass.
 	 */
 	@JvmStatic
 	fun draw(prepared: PreparedRenderType, info: StagedVertexBuffer.ExecuteInfo): Boolean {
@@ -317,49 +317,70 @@ object MovingBlockVelocityRender {
 			val encoder = RenderSystem.getDevice().createCommandEncoder()
 			writeFrame(encoder, payload, phase, blockId, velocityTexture)
 
-			val descriptor = RenderPassDescriptor.create { "Moving block velocity draw with ${prepared.pipeline()}" }
-				.withColorAttachment(colorTexture, Optional.empty())
-				.withColorAttachment(velocityTexture, Optional.empty())
-			if (depthTexture != null) {
-				descriptor.withDepthAttachment(depthTexture, OptionalDouble.empty())
-			}
-			descriptor.withRenderArea(RenderPass.RenderArea(0, 0, renderWidth, renderHeight))
+			val descriptor = descriptor(
+				label = "Moving block velocity draw with ${prepared.pipeline()}",
+				color = colorTexture,
+				velocity = velocityTexture,
+				depth = depthTexture,
+				width = renderWidth,
+				height = renderHeight,
+			)
 
 			encoder.createRenderPass(descriptor).use { pass ->
 				pass.setPipeline(twin)
-				if (scissorEnabled) {
-					pass.enableScissor(scissorX, scissorY, scissorWidth, scissorHeight)
-				}
+				applyScissor(pass, scissorEnabled, scissorX, scissorY, scissorWidth, scissorHeight)
 				RenderSystem.bindDefaultUniforms(pass)
 				pass.setUniform("DynamicTransforms", dynamicTransforms)
 				pass.setUniform(UNIFORM_NAME, payload.slice())
 				pass.setVertexBuffer(0, vertexBuffer.slice())
-				for (texture in textures) {
-					pass.bindTexture(texture.name(), texture.textureView(), texture.sampler())
-				}
+				bindTextures(pass, textures)
 				pass.setIndexBuffer(indexBuffer, indexType)
 				pass.drawIndexed(indexCount, 1, firstIndex, baseVertex, 0)
 			}
 			true
-		} catch (failure: Throwable) {
-			committedDrawFailure(failure)
+		} catch (_: Throwable) {
+			// The draw the writer owned could not complete: the device work threw after the
+			// command encoder existed, so the encoder or pass may already carry partial writer
+			// state. The failure is committed rather than reported - answering true keeps the
+			// source draw from being replayed over partial writer work, which would draw the
+			// block twice into a torn pass. The phase and session expose no per-draw failure
+			// seam to signal mid-frame; the established failure handling is the phase's
+			// end-of-frame disposition, where a frame whose evaluation does not complete resets
+			// the object history. That runs regardless of this draw's outcome.
 			true
 		}
 	}
 
-	/**
-	 * Disposes a draw the writer owned but could not complete: the device work threw after the
-	 * command encoder existed, so the encoder or pass may already carry partial writer state.
-	 *
-	 * The failure is committed rather than reported: the caller answers true and the source
-	 * draw is not replayed, because replaying it over partial writer work would draw the block
-	 * twice into a torn pass. The phase and session expose no per-draw failure seam to signal
-	 * mid-frame; the established failure handling is the phase's end-of-frame disposition,
-	 * where a frame whose evaluation does not complete resets the object history. That runs
-	 * regardless of this draw's outcome, so nothing needs to be retained here. Never throws.
-	 */
-	@Suppress("UNUSED_PARAMETER")
-	private fun committedDrawFailure(failure: Throwable) {
+	/** The owned pass's two colour attachments, the depth one when the target has it, and the area. */
+	private fun descriptor(
+		label: String,
+		color: GpuTextureView,
+		velocity: GpuTextureView,
+		depth: GpuTextureView?,
+		width: Int,
+		height: Int,
+	): RenderPassDescriptor {
+		val descriptor = RenderPassDescriptor.create { label }
+			.withColorAttachment(color, Optional.empty())
+			.withColorAttachment(velocity, Optional.empty())
+		if (depth != null) {
+			descriptor.withDepthAttachment(depth, OptionalDouble.empty())
+		}
+		return descriptor.withRenderArea(RenderPass.RenderArea(0, 0, width, height))
+	}
+
+	/** The source draw's scissor rect, applied only when the source draw had one. */
+	private fun applyScissor(pass: RenderPass, enabled: Boolean, x: Int, y: Int, width: Int, height: Int) {
+		if (enabled) {
+			pass.enableScissor(x, y, width, height)
+		}
+	}
+
+	/** The source draw's texture bindings, replayed onto the owned pass unchanged. */
+	private fun bindTextures(pass: RenderPass, textures: List<PreparedRenderType.Texture>) {
+		for (texture in textures) {
+			pass.bindTexture(texture.name(), texture.textureView(), texture.sampler())
+		}
 	}
 
 	private fun buffer(): GpuBuffer {
@@ -488,7 +509,8 @@ object MovingBlockVelocityWriterBindings {
 	fun isGoverning(): Boolean = governingContext.get() == true
 
 	/**
-	 * Records which batching machine governs the current draw boundary.
+	 * Records which batching machine governs the current draw boundary, from the two machines'
+	 * fresh-boundary answers.
 	 *
 	 * Called by the shared feature-renderer mixin at every Group.getVertexBuilder boundary: the
 	 * moving-block machine governs from its own fresh boundary (an eligible draw or the
@@ -496,10 +518,13 @@ object MovingBlockVelocityWriterBindings {
 	 * so a moving-block history can never steer an entity group's reorder decision and an entity
 	 * history can never steer a moving-block group's. With neither machine ever fresh, the marker
 	 * stays false and the reorder decision is exactly vanilla's.
+	 *
+	 * The rule lives here rather than in the mixin so the handler stays a delegation and the
+	 * decision is provable off the render thread.
 	 */
 	@JvmStatic
-	fun setGoverning(governing: Boolean) {
-		governingContext.set(governing)
+	fun updateGoverning(movingBoundary: Boolean, entityBoundary: Boolean) {
+		governingContext.set(movingBoundary || (isGoverning() && !entityBoundary))
 	}
 
 	/**

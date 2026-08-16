@@ -2,9 +2,8 @@ package me.snowmii.dlss.render
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.dlss.bridge.NativeApi
-import me.snowmii.dlss.bridge.FgState
-import me.snowmii.dlss.bridge.FgMultiplier
 import me.snowmii.dlss.readout.AcceptanceRecord
+import me.snowmii.dlss.readout.FramePacingProbe
 import me.snowmii.dlss.bridge.VulkanContextRegistry
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.bridge.DlssDimensions
@@ -22,6 +21,7 @@ import net.minecraft.client.renderer.entity.state.EntityRenderState
 import org.joml.Matrix4f
 import java.util.IdentityHashMap
 import me.snowmii.dlss.session.LifecycleAdapter
+import me.snowmii.dlss.session.SessionBridge
 import me.snowmii.dlss.fg.FgSurfacePolicy
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.screens.LoadingOverlay
@@ -70,11 +70,14 @@ class RenderRuntime(
 	 */
 	val frameEvaluation: FrameEvaluation? = null,
 	/**
-	 * Re-queries the native render dimensions for a mode and preset chosen while the session
-	 * runs, or null for a runtime whose configuration cannot change. Separate from [startup]
-	 * because it must not re-initialize the Streamline session.
+	 * Every native call this runtime makes on the running session - the reconfigure, the device
+	 * stall, the FG input wait, the status poll, the eOff record, and the multiplier pair - or
+	 * null for a runtime that only routes targets and never reaches the native side.
+	 *
+	 * One collaborator rather than seven lambdas over it: see [SessionBridge]. Separate from
+	 * [startup] because none of these may re-initialize the Streamline session.
 	 */
-	private val reconfigure: ((SRMode, SRModelPreset) -> DlssDimensions?)? = null,
+	private val bridge: SessionBridge? = null,
 	/** Session compatibility latch populated by world-pipeline compilation. */
 	private val motionVectors: MotionVectorCompatibility = MotionVectorCompatibility(),
 	/**
@@ -83,59 +86,6 @@ class RenderRuntime(
 	 * image count the swapchain needs for the declared DLSS-G back buffers.
 	 */
 	val frameGeneration: FgSurfacePolicy = FgSurfacePolicy(),
-	/**
-	 * Blocks until the device has finished every frame already submitted, or does nothing for a
-	 * runtime with no device behind it.
-	 *
-	 * Releasing the scene target and the native images frees GPU objects that Minecraft's still
-	 * in-flight frames read from. Nothing on the CPU side observes that: the key that triggered
-	 * the release is polled between frames, the release itself succeeds, and the device is lost
-	 * several frames later inside an unrelated semaphore wait.
-	 */
-	quiesce: () -> Unit = {},
-	/**
-	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
-	 * completed, or does nothing for a runtime without FG wiring.
-	 *
-	 * Runs on the render thread at the start of every FG-active frame, before the world phase
-	 * rewrites the DLSS-G-tagged inputs (the scene depth, the native motion image, and the
-	 * HUD-less and UI targets). Under the recorded eBlockNoClientQueues mode the plugin reads
-	 * those inputs asynchronously after Present, so the wait is what retires the resource-reuse
-	 * race between the previous frame's DLSS-G processing and this frame's rewrites. A wait
-	 * failure latches the session through the adapter; the routing decision below then reads
-	 * the latched state and degrades the frame to vanilla.
-	 */
-	private val waitForFgInputs: () -> Unit = {},
-	/**
-	 * Reads the live DLSS-G state for the per-frame status poll, or null for a runtime
-	 * without FG wiring or a session that cannot answer.
-	 *
-	 * Polled on the render thread at the start of every FG-active frame, after the input
-	 * wait: while FG is active, a reported status other than eDLSSGStatusOk (word zero)
-	 * latches FG off for the session. A null read is no information, not a verdict - a
-	 * refused query must not latch the plugin's own status onto its behalf.
-	 */
-	private val pollFgState: () -> FgState? = { null },
-	/**
-	 * Re-records the DLSS-G options in the eOff mode (retained resources) when FG switches
-	 * off, or does nothing for a runtime without FG wiring: the status latch, the user
-	 * toggle, and the frame-support suspension all go through it, each recording exactly
-	 * once on its own transition. The SR session stays READY, so this is deliberately not
-	 * a session-latching call.
-	 */
-	private val recordFgModeOff: () -> Unit = {},
-	/**
-	 * Reads the stored FG multiplier and the device's numFramesToGenerateMax through the
-	 * bridge, or null for a runtime without FG wiring or a session that cannot answer: the
-	 * F12 cycle computes its next value from this, so a null answer means no cycle.
-	 */
-	private val queryFgMultiplier: () -> FgMultiplier? = { null },
-	/**
-	 * Records a new FG multiplier with the bridge, or refuses for a runtime without FG
-	 * wiring: the native side validates the value against the device ceiling, and a
-	 * refusal leaves the multiplier in effect unchanged.
-	 */
-	private val recordFgMultiplier: (Int) -> Boolean = { false },
 	/**
 	 * Invalidates Minecraft's surface configuration once per real multiplier change, so the
 	 * next frame recreates the swapchain under the options the new multiplier records.
@@ -156,7 +106,7 @@ class RenderRuntime(
 	/** Emits diagnostics; the FG status latch reports its one exact line through this. */
 	private val diagnostics: (String) -> Unit = {},
 ) : AutoCloseable {
-	private val resources = FrameResources(sceneTarget, frameEvaluation, quiesce)
+	private val resources = FrameResources(sceneTarget, frameEvaluation) { bridge?.waitDeviceIdle() }
 	private val phase = WorldPhaseState()
 	private val entityIds = IdentityHashMap<EntityRenderState, Int>()
 	private var currentViewProjectionState: Matrix4f? = null
@@ -186,6 +136,12 @@ class RenderRuntime(
 	 */
 	var fgMultiplier: Int = 1
 		private set
+
+	/**
+	 * Where each app frame's wall time goes, sampled by the seams that can stall one and reported
+	 * on the frame-rate line. See [FramePacingProbe].
+	 */
+	val pacing = FramePacingProbe()
 
 	/**
 	 * Target the world phase must render into, or null when the frame renders vanilla
@@ -245,9 +201,33 @@ class RenderRuntime(
 	val motionVectorRoute: MotionVectorRoute
 		get() = motionVectors.route
 
+	/**
+	 * Set when the compatibility latch flips, consumed at the next phase start.
+	 *
+	 * Not applied where the flip happens: Vulkan compiles a pipeline lazily, at its first draw,
+	 * so the latch flips in the middle of a frame whose phase is already open. Resetting there
+	 * would clear that frame's camera out from under its own velocity writers, and the frame
+	 * would lose the motion it was rendering with.
+	 */
+	private var motionRouteChanged = false
+
+	/**
+	 * Whether the plugin's last reported status was `eOk`, which composition is gated on.
+	 *
+	 * Starts healthy: a session that has never polled has nothing to suspend for, and the first
+	 * poll of an unhealthy plugin suspends on its own transition.
+	 */
+	private var fgStatusHealthy = true
+
 	/** Records one pipeline seen at the Vulkan lazy-compile seam while the world phase is open. */
-	internal fun observeWorldPipeline(pipeline: MotionVectorPipeline): MotionVectorRoute =
-		motionVectors.observe(pipeline)
+	internal fun observeWorldPipeline(pipeline: MotionVectorPipeline): MotionVectorRoute {
+		val previous = motionVectors.route
+		val route = motionVectors.observe(pipeline)
+		if (route != previous) {
+			motionRouteChanged = true
+		}
+		return route
+	}
 
 	/**
 	 * The frame-boundary object-motion history: the published predecessors and in-flight
@@ -305,16 +285,23 @@ class RenderRuntime(
 		// switched off never initializes the bridge at all.
 		val started = if (runtimeEnabled) ensureStarted() else false
 
-		// The frame is about to rewrite the DLSS-G-tagged inputs - the world phase renders into
-		// the scene depth, the motion pass overwrites the native motion image, and the split
-		// renders into the HUD-less and UI targets - so the previously presented frame's input
-		// processing must be complete first. The wait runs on every FG-active frame, whatever
-		// this frame's route: a vanilla-routed frame (menu, loading) rewrites the same persistent
-		// targets the last FG frame's tags still name. A wait failure latches the session inside
-		// the adapter, and the routing decision below then degrades this frame to vanilla.
-		if (frameGeneration.active) {
-			waitForFgInputs()
+		// No wait on DLSSGState::inputsProcessingCompletionFence here any more, and the measurement
+		// is why: it cost 10-11ms of every 13ms FG frame, which is the whole difference between
+		// ~450fps with FG off and ~75 with it on. The wait is required only under the
+		// eBlockNoClientQueues queue-parallelism mode, whose documented gains are for applications
+		// submitting from several queues; Minecraft renders and presents on one. The recorded
+		// options are eBlockPresentingClientQueue now, under which the guide makes the wait
+		// "recommended but not required" when the tagged inputs are modified on the presenting
+		// queue - the only queue this frame has - and the plugin blocks that queue itself for as
+		// long as it actually needs. [me.snowmii.dlss.bridge.NativeApi.waitFgInputsIdle] stays on
+		// the ABI: it is the mode's obligation, and the mode is one options field away.
+		// Polled on the user's mode rather than the effective one: an unhealthy status suspends
+		// composition, and gating the poll on composition would stop the polling that observes the
+		// status becoming healthy again - the suspension would never lift.
+		if (frameGeneration.armed) {
+			pacing.begin(FramePacingProbe.Span.FG_STATUS_POLL)
 			pollFrameGenerationStatus()
+			pacing.end(FramePacingProbe.Span.FG_STATUS_POLL)
 		}
 
 		// FG composes only on supported in-world frames. The classifier runs after the
@@ -330,9 +317,10 @@ class RenderRuntime(
 		// not-started return for that reason - returning first left the mode eOn with tags
 		// naming released images, which the intercepted present turned into
 		// VK_ERROR_DEVICE_LOST.
-		val frameSupported = started && fgFrameSupported(normalInWorldFrame, outputDimensions)
+		val frameSupported =
+			started && fgStatusHealthy && fgFrameSupported(normalInWorldFrame, outputDimensions)
 		if (frameGeneration.setFrameSupported(frameSupported) && !frameSupported) {
-			recordFgModeOff()
+			bridge?.recordFgModeOff()
 		}
 
 		if (!started) {
@@ -341,6 +329,17 @@ class RenderRuntime(
 			// nothing to continue into a session that never started.
 			releaseFrameState(releaseImages = false)
 			return null
+		}
+
+		// The frames before the latch flipped were evaluated against a motion image a different
+		// writer produced, and DLSS still holds the history they accumulated. The writer changing
+		// is the same kind of discontinuity as a replaced scene - the reprojection the history
+		// describes is not the one the frames that follow will produce - so the history breaks
+		// here, at the first phase start after the flip, where clearing it cannot strand an open
+		// frame.
+		if (motionRouteChanged) {
+			motionRouteChanged = false
+			resetHistory()
 		}
 
 		val route = routeFrame(normalInWorldFrame, outputDimensions)
@@ -438,7 +437,7 @@ class RenderRuntime(
 			return false
 		}
 		if (!enabled) {
-			recordFgModeOff()
+			bridge?.recordFgModeOff()
 		}
 		return true
 	}
@@ -457,11 +456,15 @@ class RenderRuntime(
 		if (numFramesToGenerate == fgMultiplier || numFramesToGenerate < 1) {
 			return false
 		}
-		if (!recordFgMultiplier(numFramesToGenerate)) {
+		if (bridge?.setFgMultiplier(numFramesToGenerate) != true) {
 			return false
 		}
 		fgMultiplier = numFramesToGenerate
 		AcceptanceRecord.activeFgMultiplier = numFramesToGenerate
+		// The swapchain policy's back-buffer count is derived from the multiplier, so it moves
+		// before the invalidation that recreates the swapchain: a higher multiplier presents more
+		// frames per app frame and needs the images to hold them (see FgSurfacePolicy).
+		frameGeneration.numFramesToGenerate = numFramesToGenerate
 		invalidateSurfaceConfiguration()
 		return true
 	}
@@ -476,7 +479,7 @@ class RenderRuntime(
 	 * native record leaves the runtime on the multiplier it was already running.
 	 */
 	fun cycleFgMultiplier(): Boolean {
-		val state = queryFgMultiplier() ?: return false
+		val state = bridge?.queryFgMultiplier() ?: return false
 		val next = if (state.max <= 1 || state.current >= state.max) 1 else state.current + 1
 		return setFgMultiplier(next)
 	}
@@ -507,7 +510,7 @@ class RenderRuntime(
 			return true
 		}
 
-		val dimensions = reconfigure?.invoke(mode, preset) ?: return false
+		val dimensions = bridge?.reconfigure(mode, preset) ?: return false
 		qualityMode = mode
 		renderPreset = preset
 		rebuildFrom(dimensions)
@@ -546,7 +549,7 @@ class RenderRuntime(
 			// keeps this reversible: the mode itself is untouched, so the first supported frame
 			// after the images come back resumes FG without the reviewer re-arming anything.
 			if (frameGeneration.setFrameSupported(false)) {
-				recordFgModeOff()
+				bridge?.recordFgModeOff()
 			}
 		}
 		endWorldPhase()
@@ -577,7 +580,7 @@ class RenderRuntime(
 		val dimensions = if (qualityMode == session.config.qualityMode && renderPreset == session.config.renderPreset) {
 			startupDimensions
 		} else {
-			reconfigure?.invoke(qualityMode, renderPreset) ?: run {
+			bridge?.reconfigure(qualityMode, renderPreset) ?: run {
 				qualityMode = session.config.qualityMode
 				renderPreset = session.config.renderPreset
 				startupDimensions
@@ -622,34 +625,40 @@ class RenderRuntime(
 	}
 
 	/**
-	 * The per-frame DLSS-G status poll: while FG is active, any status other than
-	 * eDLSSGStatusOk latches FG off for the session.
+	 * Reads the plugin's status and suspends composition while it is unhealthy.
 	 *
-	 * The latch is the plugin's own verdict, so it is deliberately narrow: the policy turns
-	 * FG off (restoring vsync and image-count reads and refusing every re-arm), the adapter
-	 * re-records the DLSS-G options in the eOff mode with retained resources, the SR session
-	 * stays READY, and one exact diagnostic names the status word. A null read latches
-	 * nothing. The latch runs once - the policy answers false on the repeat, so the eOff
-	 * record and the diagnostic stay attached to the first latch - and the frames that
-	 * follow record SR-only through the inactive policy.
+	 * `sl::DLSSGStatus` is a bitmask of conditions the plugin is reporting about *this frame*, not
+	 * a verdict about the session: `eFailResolutionTooLow` holds while the back buffers are too
+	 * small, `eFailCommonConstantsInvalid` while a frame's constants have not settled, and
+	 * `eFailReflexNotDetectedAtRuntime` while the plugin has not observed Reflex yet. Every one of
+	 * them clears when the condition does, and a quality-mode or preset change produces them for a
+	 * frame or two by construction: the reconfigure rebuilds the images and the resolution, and the
+	 * plugin reports on the frames in between.
+	 *
+	 * This used to latch FG off for the whole session on the first non-zero word, which also
+	 * restored vsync - so one transient bit during a settings change ended frame generation and put
+	 * the swapchain back on FIFO for good, with no way back short of a restart. It is routed
+	 * through the frame-support axis instead: composition suspends, the retained eOff record
+	 * attaches to the transition exactly as it does for a pause or a menu, the swapchain policy
+	 * deliberately does not move (see [FgSurfacePolicy]), and the first healthy frame resumes.
 	 */
 	private fun pollFrameGenerationStatus() {
-		val state = pollFgState() ?: return
-		if (state.status == FG_STATUS_OK) {
+		val state = bridge?.queryFgState() ?: return
+		val healthy = state.status == FG_STATUS_OK
+		if (healthy == fgStatusHealthy) {
 			return
 		}
-		latchFrameGeneration(state.status)
-	}
-
-	private fun latchFrameGeneration(status: Int) {
-		if (!frameGeneration.latchOff()) {
-			return
-		}
-		recordFgModeOff()
+		fgStatusHealthy = healthy
 		diagnostics(
-			"Frame generation latched off: slDLSSGGetState status=0x" +
-				status.toString(16) +
-				" (eDLSSGStatusOk=0); eOff options retained, vsync restored, SR session stays READY, re-arm refused.",
+			if (healthy) {
+				"Frame generation resumed: slDLSSGGetState status=0x0 (eDLSSGStatusOk)."
+			} else {
+				"Frame generation suspended: slDLSSGGetState status=0x" +
+					state.status.toString(16) +
+					" (eDLSSGStatusOk=0); composition suspended and the eOff options retained while " +
+					"the status is unhealthy, swapchain policy unchanged, and the first healthy " +
+					"frame resumes."
+			},
 		)
 	}
 
@@ -712,27 +721,16 @@ class RenderRuntime(
 				// targets: the main target as the HUD-less colour and the UI phase's held
 				// target as the UI colour+alpha, both output-sized (see WorldPhase).
 				fgInputs = { WorldPhase.resolveFgInputs() },
-			), reconfigure = adapter::reconfigure,
+			),
+			// Every native call a frame makes - the reconfigure, the device stall, the FG input
+			// wait, the status poll, the eOff record, and the multiplier pair - goes through the
+			// same adapter as the frame's recording, on the render thread. The wait and the
+			// reconfigure degrade through the session state like any other native stage; the FG
+			// records deliberately do not (see SessionBridge and LifecycleAdapter).
+			bridge = adapter,
 			motionVectors = MotionVectorCompatibility(diagnostics),
-			quiesce = { adapter.waitDeviceIdle() },
-			// The frame-start wait for the previously presented frame's DLSS-G input processing
-			// runs through the same adapter as the frame's recording, on the render thread: the
-			// runtime asks before the world phase rewrites the tagged inputs, and a refused or
-			// failed wait degrades through the session state exactly like any other native stage.
-			waitForFgInputs = { adapter.waitFgInputsIdle() },
-			// The per-frame status poll reads the same live DLSS-G state the input wait's
-			// fence came from; a non-OK status latches FG off through the policy while the SR
-			// session stays READY. The off-transition eOff options record - the status latch's
-			// and the user toggle's alike - goes through the same adapter, non-latching like
-			// the poll itself.
-			pollFgState = { adapter.queryFgState() },
-			recordFgModeOff = { adapter.recordFgModeOff() },
-			// The F12 multiplier cycle reads the stored multiplier and the device ceiling
-			// through the same adapter as the status poll, records through it non-latching
-			// like the eOff record, and invalidates the surface configuration once per real
-			// change through Minecraft's own reconfigure path.
-			queryFgMultiplier = { adapter.queryFgMultiplier() },
-			recordFgMultiplier = { adapter.setFgMultiplier(it) },
+			// The F12 multiplier cycle invalidates the surface configuration once per real change
+			// through Minecraft's own reconfigure path.
 			invalidateSurfaceConfiguration = { Minecraft.getInstance().invalidateSurfaceConfiguration() },
 			diagnostics = diagnostics,
 			// The frame-support classifier's client half: the world-phase entry's own signals

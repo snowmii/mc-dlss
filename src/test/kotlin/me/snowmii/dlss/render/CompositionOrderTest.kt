@@ -14,6 +14,7 @@ import me.snowmii.dlss.session.LifecycleAdapter
 
 import java.nio.file.Files
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -48,6 +49,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  *   destination of the wrong size means the caller and the configuration disagree about what output
  *   resolution is.
  */
+@NativeBridge
 class CompositionOrderTest {
 	private val output = DlssDimensions(1280, 720)
 

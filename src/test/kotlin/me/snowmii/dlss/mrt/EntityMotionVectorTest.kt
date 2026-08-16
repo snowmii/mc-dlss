@@ -1,42 +1,16 @@
 package me.snowmii.dlss.mrt
 
-import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.IndexType
 import com.mojang.blaze3d.PrimitiveTopology
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuBufferSlice
-import com.mojang.blaze3d.pipeline.ColorTargetState
-import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.systems.RenderPassDescriptor
 import com.mojang.blaze3d.systems.ScissorState
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
-import com.mojang.blaze3d.vertex.VertexConsumer
 import net.minecraft.client.renderer.StagedVertexBuffer
 import net.minecraft.client.renderer.rendertype.OutputTarget
 import net.minecraft.client.renderer.rendertype.PreparedRenderType
-import net.minecraft.client.renderer.rendertype.RenderType
 import net.minecraft.client.renderer.rendertype.RenderTypes
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
-import java.nio.ByteBuffer
-import java.nio.file.Path
-import java.util.Optional
-import kotlin.io.path.readText
-import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.mixin.PreparedRenderTypeMotionMixin
-import me.snowmii.dlss.mixin.RenderTypeFeatureRendererMotionMixin
-import me.snowmii.dlss.render.DlssCameraSample
-import me.snowmii.dlss.render.DlssJitterOffset
-import me.snowmii.dlss.render.RenderRuntime
-import me.snowmii.dlss.render.SceneTarget
-import me.snowmii.dlss.render.WorldPhase
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.renderer.entity.state.EntityRenderState
 import net.minecraft.resources.Identifier
-import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -44,24 +18,16 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.lwjgl.system.MemoryStack
-import org.lwjgl.system.MemoryUtil
-import org.lwjgl.util.shaderc.Shaderc
-import org.lwjgl.util.spvc.Spvc
-import org.lwjgl.util.spvc.SpvcReflectedResource
-import org.spongepowered.asm.mixin.injection.Inject
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
-import com.google.gson.JsonParser
 
 /**
  * Entity-model vertical proof for M-6's first dynamic writer.
  *
  * Descriptor tests exercise every supported core/entity pipeline family. Behavior tests drive the
  * CPU identity/batch state and safe no-identity draw fallback directly; reflection checks bind the
- * mapped 26.2 methods, callback descriptors, and JSON registration; Shaderc/SPIR-V-Cross compiles
- * the actual velocity_entity.fsh and verifies output locations. The test JVM does not apply Fabric
- * mixins or own a live Blaze3D RenderPass, so this suite makes no live transformed/GPU draw claim.
+ * mapped 26.2 methods, callback descriptors, and JSON registration. The shader itself is compiled
+ * and its output locations verified by `VelocityWriterContractTest`, which owns that proof for
+ * every writer. The test JVM does not apply Fabric mixins or own a live Blaze3D RenderPass, so
+ * this suite makes no live transformed/GPU draw claim.
  */
 class EntityMotionVectorTest {
 	private val mainTarget = fakeMainTarget()
@@ -280,26 +246,6 @@ class EntityMotionVectorTest {
 		assertFalse(EntityVelocityUniforms.isSupportedPipeline(RenderPipelines.SOLID_TERRAIN))
 	}
 
-	private fun supportedEntityPipelines() = listOf(
-		RenderPipelines.ARMOR_CUTOUT_NO_CULL,
-		RenderPipelines.ARMOR_DECAL_CUTOUT_NO_CULL,
-		RenderPipelines.ARMOR_TRANSLUCENT,
-		RenderPipelines.ENTITY_SOLID,
-		RenderPipelines.ENTITY_SOLID_Z_OFFSET_FORWARD,
-		RenderPipelines.ENTITY_CUTOUT_CULL,
-		RenderPipelines.ENTITY_CUTOUT,
-		RenderPipelines.ENTITY_CUTOUT_Z_OFFSET,
-		RenderPipelines.ENTITY_CUTOUT_DISSOLVE,
-		RenderPipelines.ENTITY_TRANSLUCENT,
-		RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE,
-		RenderPipelines.ENTITY_TRANSLUCENT_CULL,
-		RenderPipelines.END_CRYSTAL_BEAM,
-		RenderPipelines.BANNER_PATTERN,
-		RenderPipelines.BREEZE_WIND,
-		RenderPipelines.ENERGY_SWIRL,
-		RenderPipelines.EYES,
-	)
-
 	private fun emptyExecuteInfo() = StagedVertexBuffer.ExecuteInfo(
 		FakeBuffer(),
 		FakeBuffer(),
@@ -308,52 +254,4 @@ class EntityMotionVectorTest {
 		0,
 		3,
 	)
-
-	/** Compiles the actual entity shader after resolving its two canonical 26.2 imports. */
-
-	private companion object {
-		const val LOCATION_DECORATION = 30
-
-		// Exact bodies of Minecraft 26.2's imported fog.glsl and dynamictransforms.glsl, without
-		// their duplicate #version lines. The shader under test remains the repository asset itself.
-		val FOG_INCLUDE = """
-			layout(std140) uniform Fog {
-			    vec4 FogColor;
-			    float FogEnvironmentalStart;
-			    float FogEnvironmentalEnd;
-			    float FogRenderDistanceStart;
-			    float FogRenderDistanceEnd;
-			    float FogSkyEnd;
-			    float FogCloudsEnd;
-			};
-
-			float linear_fog_value(float vertexDistance, float fogStart, float fogEnd) {
-			    if (vertexDistance <= fogStart) {
-			        return 0.0;
-			    } else if (vertexDistance >= fogEnd) {
-			        return 1.0;
-			    }
-
-			    return (vertexDistance - fogStart) / (fogEnd - fogStart);
-			}
-
-			float total_fog_value(float sphericalVertexDistance, float cylindricalVertexDistance, float environmentalStart, float environmantalEnd, float renderDistanceStart, float renderDistanceEnd) {
-			    return max(linear_fog_value(sphericalVertexDistance, environmentalStart, environmantalEnd), linear_fog_value(cylindricalVertexDistance, renderDistanceStart, renderDistanceEnd));
-			}
-
-			vec4 apply_fog(vec4 inColor, float sphericalVertexDistance, float cylindricalVertexDistance, float environmentalStart, float environmantalEnd, float renderDistanceStart, float renderDistanceEnd, vec4 fogColor) {
-			    float fogValue = total_fog_value(sphericalVertexDistance, cylindricalVertexDistance, environmentalStart, environmantalEnd, renderDistanceStart, renderDistanceEnd);
-			    return vec4(mix(inColor.rgb, fogColor.rgb, fogValue * fogColor.a), inColor.a);
-			}
-		""".trimIndent()
-
-		val DYNAMIC_TRANSFORMS_INCLUDE = """
-			layout(std140) uniform DynamicTransforms {
-			    mat4 ModelViewMat;
-			    vec4 ColorModulator;
-			    vec3 ModelOffset;
-			    mat4 TextureMat;
-			};
-		""".trimIndent()
-	}
 }

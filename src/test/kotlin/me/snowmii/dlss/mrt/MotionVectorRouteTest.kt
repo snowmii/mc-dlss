@@ -21,15 +21,11 @@ import me.snowmii.dlss.render.DlssJitterOffset
 import me.snowmii.dlss.render.FrameEvaluation
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneResources
-import me.snowmii.dlss.render.SceneTarget
 import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.LifecycleAdapter
-import me.snowmii.dlss.session.SRMode
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -183,6 +179,53 @@ class MotionVectorRouteTest {
 	}
 
 	@Test
+	fun `the frame after the latch flips breaks the history the previous route accumulated`() {
+		val runtime = velocityRuntime()
+		val resets = mutableListOf<Boolean>()
+		val phase = worldPhase(runtime) { _, _, _, motion, _, _, _ ->
+			resets += motion.reset
+			true
+		}
+
+		// Two frames on the velocity route: the first opens the chain, the second continues it,
+		// so there is accumulated history for the flip to invalidate.
+		repeat(2) {
+			phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
+			phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+			phase.end()
+		}
+		assertEquals(listOf(true, false), resets, "the second velocity-route frame continues the first")
+
+		// Vulkan compiles the foreign pipeline lazily, so this arrives mid-session, after frames
+		// have already evaluated on the route it replaces.
+		runtime.observeWorldPipeline(
+			MotionVectorPipeline(
+				"example:pipeline/waving_terrain",
+				listOf(MotionVectorShader("example:core/waving_terrain", "example")),
+			),
+		)
+		assertEquals(MotionVectorRoute.CAMERA_ONLY, runtime.motionVectorRoute)
+
+		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
+		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		assertEquals(
+			listOf(true, false, true),
+			resets,
+			"the first frame on the new writer must not continue the previous writer's history",
+		)
+
+		// The flip is consumed once: the frame after it continues the new route's own history
+		// rather than resetting on every frame that follows.
+		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
+		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
+		phase.end()
+
+		assertEquals(listOf(true, false, true, false), resets, "the reset must not latch on")
+	}
+
+	@Test
 	fun `the tag ABI carries no velocity and the native tag call always selects the module motion image`() {
 		val header = nativeSource("mc_dlss.h")
 		val tagStruct = header.substringAfter("typedef struct McDlssTagInfo {")
@@ -293,7 +336,7 @@ class MotionVectorRouteTest {
 
 	/** Records every per-frame native call so the route gate is assertable off the render thread. */
 	private class RecordingNative(
-		private val RENDER_DIMENSIONS: DlssDimensions,
+		private val renderDimensions: DlssDimensions,
 	) : NativeApi {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
@@ -311,7 +354,7 @@ class MotionVectorRouteTest {
 		): Int = NativeApi.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
-			DlssDimensions(RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height)
+			DlssDimensions(renderDimensions.width, renderDimensions.height)
 
 		override fun configure(
 			outputWidth: Int,

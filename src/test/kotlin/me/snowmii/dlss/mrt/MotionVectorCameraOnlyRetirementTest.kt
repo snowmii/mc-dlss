@@ -31,7 +31,6 @@ import java.nio.file.Files
 import java.util.Optional
 import java.util.OptionalDouble
 import java.util.function.Supplier
-import org.joml.Vector4f
 import org.joml.Vector4fc
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

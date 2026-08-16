@@ -793,6 +793,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_present_markers(
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_install_pcl_window(const uint64_t hwnd) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return install_pcl_window(hwnd);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_input_sample(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -802,37 +811,10 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_input_sample(void) {
     }
 }
 
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_simulate_start(void) {
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_marker(const uint32_t marker_type) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        return reflex_simulate_start();
-    } catch (...) {
-        return kFailure;
-    }
-}
-
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_simulate_end(void) {
-    try {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        return reflex_simulate_end();
-    } catch (...) {
-        return kFailure;
-    }
-}
-
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_render_submit_start(void) {
-    try {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        return reflex_render_submit_start();
-    } catch (...) {
-        return kFailure;
-    }
-}
-
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_render_submit_end(void) {
-    try {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        return reflex_render_submit_end();
+        return reflex_marker(marker_type);
     } catch (...) {
         return kFailure;
     }
@@ -846,6 +828,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_markers(
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         return query_reflex_markers(type_counts, event_count, events, events_capacity);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_record_reflex_frame_limit(const uint32_t frame_limit_us) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return record_reflex_frame_limit(frame_limit_us);
     } catch (...) {
         return kFailure;
     }

@@ -26,7 +26,7 @@ import java.nio.file.Path
 class LifecycleAdapter(
 	private val session: DlssSession,
 	private val native: NativeApi,
-) {
+) : SessionBridge {
 	private var renderDimensions: DlssDimensions? = null
 
 	fun initialize(
@@ -85,7 +85,7 @@ class LifecycleAdapter(
 	 * exactly like any other native stage - a session whose mode change was refused knows nothing
 	 * about what it is now configured to.
 	 */
-	fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): DlssDimensions? {
+	override fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): DlssDimensions? {
 		if (session.state != DlssSessionState.READY) {
 			return null
 		}
@@ -147,7 +147,7 @@ class LifecycleAdapter(
 	 * and FAIL_InvalidParameter while no DLSS-G options record is stored, the same gates as
 	 * the FG tag.
 	 */
-	fun recordFgModeOff(): Boolean {
+	override fun recordFgModeOff(): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
 		}
@@ -191,7 +191,7 @@ class LifecycleAdapter(
 	 * device that cannot be waited on has been lost already, so the failure is latched and the
 	 * caller releases anyway - there is nothing left in flight to protect.
 	 */
-	fun waitDeviceIdle(): Boolean = invokeStatus(DlssNativeStage.WAIT_DEVICE_IDLE) { native.waitDeviceIdle() }
+	override fun waitDeviceIdle(): Boolean = invokeStatus(DlssNativeStage.WAIT_DEVICE_IDLE) { native.waitDeviceIdle() }
 
 	/**
 	 * GPU timings of the last frame that completed every recorded stage, or null when there is no
@@ -258,7 +258,8 @@ class LifecycleAdapter(
 	 * constants and feature evaluation against the token this call obtained, and evaluating
 	 * with no retained token fails.
 	 */
-	fun tagSrResources(request: SrTagRequest): Boolean {		if (session.state != DlssSessionState.READY) {
+	fun tagSrResources(request: SrTagRequest): Boolean {
+		if (session.state != DlssSessionState.READY) {
 			return false
 		}
 
@@ -331,17 +332,18 @@ class LifecycleAdapter(
 	// marker under the retained frame token and records it in the reflex-marker oracle only
 	// after slPCLSetMarker succeeded, so a refused or failed call is observable through the
 	// oracle rather than through the session state.
-	fun reflexInputSample(): Boolean = reflexMarker { native.reflexInputSample() }
+	fun reflexInputSample(): Boolean = emitMarker { native.reflexInputSample() }
 
-	fun reflexSimulateStart(): Boolean = reflexMarker { native.reflexSimulateStart() }
+	/**
+	 * Emits one of the four simulation/render-submit markers. The marker is a value the whole
+	 * way down to the ABI, so this seam does not grow a method per marker;
+	 * [NativeApi.ReflexMarkerType.INPUT_SAMPLE] is refused natively because that seam is
+	 * [reflexInputSample], which obtains the frame's token and sleeps before it emits.
+	 */
+	fun reflexMarker(type: NativeApi.ReflexMarkerType): Boolean =
+		emitMarker { native.reflexMarker(type) }
 
-	fun reflexSimulateEnd(): Boolean = reflexMarker { native.reflexSimulateEnd() }
-
-	fun reflexRenderSubmitStart(): Boolean = reflexMarker { native.reflexRenderSubmitStart() }
-
-	fun reflexRenderSubmitEnd(): Boolean = reflexMarker { native.reflexRenderSubmitEnd() }
-
-	private fun reflexMarker(operation: () -> Int): Boolean {
+	private fun emitMarker(operation: () -> Int): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
 		}
@@ -371,7 +373,7 @@ class LifecycleAdapter(
 	 * other failure latches the session exactly like any other native stage, and the routing
 	 * decision reads the latched state.
 	 */
-	fun waitFgInputsIdle(): Boolean {
+	override fun waitFgInputsIdle(): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
 		}
@@ -396,7 +398,7 @@ class LifecycleAdapter(
 		}
 	}
 
-	fun queryFgState(): FgState? {
+	override fun queryFgState(): FgState? {
 		if (session.state != DlssSessionState.READY) {
 			return null
 		}
@@ -418,7 +420,7 @@ class LifecycleAdapter(
 	 * (not READY, no options recorded, or a failed query) answers null and the cycle simply
 	 * does not run.
 	 */
-	fun queryFgMultiplier(): FgMultiplier? {
+	override fun queryFgMultiplier(): FgMultiplier? {
 		if (session.state != DlssSessionState.READY) {
 			return null
 		}
@@ -439,7 +441,23 @@ class LifecycleAdapter(
 	 * then reports the multiplier actually in effect, which is the contract's "a refusal
 	 * changes nothing" half.
 	 */
-	fun setFgMultiplier(numFramesToGenerate: Int): Boolean {
+	/**
+	 * Records the Reflex frame-rate cap. Never latches: a cap the plugin refuses is a session
+	 * that keeps Minecraft's own limiter, which is what the false answer tells the caller, not a
+	 * frame-route stage failure.
+	 */
+	override fun recordReflexFrameLimit(microsecondsPerFrame: Int): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			native.recordReflexFrameLimit(microsecondsPerFrame) == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
+		}
+	}
+
+	override fun setFgMultiplier(numFramesToGenerate: Int): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
 		}

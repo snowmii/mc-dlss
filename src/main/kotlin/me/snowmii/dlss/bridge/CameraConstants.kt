@@ -99,7 +99,31 @@ data class CameraConstants(
 	 */
 	val jitterX: Float = 0f,
 	val jitterY: Float = 0f,
-)
+) {
+	/**
+	 * Compares the payload, not the array identities the generated `equals` would compare.
+	 *
+	 * Every matrix and vector here is a `FloatArray`, so the generated implementation answers
+	 * false for two records holding the same camera in different arrays - which is exactly what
+	 * a test comparing an oracle read against an expected record holds.
+	 */
+	override fun equals(other: Any?): Boolean {
+		if (this === other) return true
+		if (other !is CameraConstants) return false
+		val sameArrays = arrays().zip(other.arrays()).all { (mine, theirs) -> mine.contentEquals(theirs) }
+		return sameArrays && scalars() == other.scalars()
+	}
+
+	override fun hashCode(): Int =
+		arrays().fold(scalars().hashCode()) { result, array -> 31 * result + array.contentHashCode() }
+
+	/** The array-valued fields in a fixed order, so equality and the hash read the same payload. */
+	private fun arrays(): List<FloatArray> =
+		listOf(viewToClip, clipToView, pos, right, up, fwd, clipToPrevClip, prevClipToClip)
+
+	/** The scalar fields, which compare and hash by value already. */
+	private fun scalars(): List<Float> = listOf(near, far, fovRadians, aspectRatio, jitterX, jitterY)
+}
 
 /** The row-major identity, the default camera step of a caller that reports no motion. */
 private val IDENTITY_MATRIX: FloatArray

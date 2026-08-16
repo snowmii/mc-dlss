@@ -10,7 +10,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  * plus a source of recording command buffers drawn from Minecraft's shared
  * [com.mojang.blaze3d.vulkan.VulkanCommandEncoder].
  *
- * Captured once, at [VulkanDevice] construction, by [me.snowmii.mixin.VulkanDeviceContextMixin]
+ * Captured once, at [VulkanDevice] construction, by `me.snowmii.dlss.mixin.VulkanDeviceContextMixin`
  * and kept reachable through [VulkanContextRegistry].
  *
  * This object owns no queue submission of its own. [recordCommandBuffer] produces a fresh,
@@ -105,7 +105,7 @@ class VulkanContext private constructor(
 
 		/**
 		 * Test / bootstrap seam: build a context from raw native handles plus an explicit
-		 * command-buffer source. Used by [VulkanContextAccessTest] against a self-built
+		 * command-buffer source. Used by `VulkanContextAccessTest` against a self-built
 		 * headless Vulkan context, and usable by a future headless/native bootstrap.
 		 */
 		fun fromNativeHandles(

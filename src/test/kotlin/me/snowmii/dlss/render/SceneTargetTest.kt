@@ -129,7 +129,7 @@ class SceneTargetTest {
 		val scene = SceneTarget(
 			allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
 			release = { released += it as FakeTarget },
-			allocateVelocity = { _, _ -> throw IllegalStateException("velocity allocation failed") },
+			allocateVelocity = { _, _ -> error("velocity allocation failed") },
 		)
 
 		assertThrows(IllegalStateException::class.java) { scene.acquire(dlssRoute()) }
@@ -150,7 +150,7 @@ class SceneTargetTest {
 			release = { released += it as FakeTarget },
 			allocateVelocity = { width, height ->
 				if (failVelocity) {
-					throw IllegalStateException("velocity allocation failed")
+					error("velocity allocation failed")
 				}
 				FakeTarget(width, height).also(velocityAllocated::add)
 			},

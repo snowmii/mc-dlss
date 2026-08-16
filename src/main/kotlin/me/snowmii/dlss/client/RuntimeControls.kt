@@ -1,9 +1,12 @@
 package me.snowmii.dlss.client
+
+import me.snowmii.McDlss
 import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
 import me.snowmii.dlss.config.ModConfig
+import org.slf4j.LoggerFactory
 
 /**
  * The reviewer's hands on the running DLSS session.
@@ -47,7 +50,25 @@ class RuntimeControls(
 	 * either way.
 	 */
 	fun toggleFrameGeneration() {
-		runtime.setFrameGenerationEnabled(!surfacePolicy.active)
+		// The user's own mode, not the effective one: while composition is suspended - a pause, a
+		// menu, an unhealthy plugin status - the effective mode reads off, and toggling against it
+		// would ask for the mode the policy is already in and change nothing. Pressing the key
+		// during a suspension has to switch the mode the user set, which is the armed one.
+		val before = surfacePolicy.armed
+		val changed = runtime.setFrameGenerationEnabled(!before)
+		// DIAGNOSTIC: the readout reports the FG mode but not whether the key reached this method,
+		// and those two failures look identical from chat - a keypress that never arrives leaves
+		// the last readout on screen, exactly like an arm that was refused. One line separates
+		// them: no line at all means the key never dispatched.
+		LOGGER.info(
+			"DLSS fg toggle: armed {} -> {} (requested={} changed={} active={} multiplier={})",
+			before,
+			surfacePolicy.armed,
+			!before,
+			changed,
+			surfacePolicy.active,
+			runtime.fgMultiplier,
+		)
 		announce(readout())
 	}
 
@@ -108,11 +129,33 @@ class RuntimeControls(
 		}
 		val internal = runtime.renderDimensions?.toString() ?: "not chosen yet"
 		return "DLSS $state" +
-			" | fg ${if (surfacePolicy.active) "on" else "off"} at ${runtime.fgMultiplier + 1}x" +
+			" | fg ${fgState()} at ${runtime.fgMultiplier + 1}x" +
 			" | mode ${runtime.qualityMode.propertyValue}" +
 			" | preset ${runtime.renderPreset.propertyValue}" +
 			" | internal $internal" +
 			" | output ${runtime.config.outputDimensions}"
+	}
+
+	/**
+	 * The FG half of the readout: the user's mode, and whether it is composing right now.
+	 *
+	 * These are two different facts and the line used to print only the second one, as if it were
+	 * the first. Composition suspends for a frame on every reconfigure - which cycling the
+	 * multiplier causes itself, by invalidating the surface configuration - so a keypress announced
+	 * inside that window reported "fg off" about a session that resumed generating on the next
+	 * frame. The log then disagreed with itself: `fg off at 6x`, followed by a frame-rate line
+	 * whose `presented` was six times the app rate.
+	 *
+	 * "off" is now reserved for the mode the user actually set, and a suspension says so.
+	 */
+	private fun fgState(): String = when {
+		!surfacePolicy.armed -> "off"
+		surfacePolicy.active -> "on"
+		else -> "on (suspended)"
+	}
+
+	private companion object {
+		private val LOGGER = LoggerFactory.getLogger(McDlss.MOD_ID)
 	}
 
 	private fun apply(mode: SRMode, preset: SRModelPreset) {
@@ -122,7 +165,10 @@ class RuntimeControls(
 		} else {
 			// Naming the refusal matters more than naming the request: the session kept rendering,
 			// and the reviewer needs to know the frames in front of them did not change.
-			announce("DLSS kept ${runtime.qualityMode.propertyValue}/${runtime.renderPreset.propertyValue}; ${mode.propertyValue}/${preset.propertyValue} was refused. ${readout()}")
+			announce(
+				"DLSS kept ${runtime.qualityMode.propertyValue}/${runtime.renderPreset.propertyValue}; " +
+					"${mode.propertyValue}/${preset.propertyValue} was refused. ${readout()}",
+			)
 		}
 	}
 }

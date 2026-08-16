@@ -3,7 +3,6 @@ package me.snowmii.dlss.mrt
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneTarget
-import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode

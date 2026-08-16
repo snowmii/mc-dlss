@@ -5,11 +5,8 @@ import com.mojang.blaze3d.IndexType
 import com.mojang.blaze3d.buffers.GpuBuffer
 import com.mojang.blaze3d.buffers.GpuBufferSlice
 import com.mojang.blaze3d.buffers.GpuFence
-import com.mojang.blaze3d.pipeline.BlendFunction
-import com.mojang.blaze3d.pipeline.ColorTargetState
 import com.mojang.blaze3d.pipeline.CompiledRenderPipeline
 import com.mojang.blaze3d.pipeline.RenderPipeline
-import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.shaders.ShaderSource
 import com.mojang.blaze3d.systems.CommandEncoder
 import com.mojang.blaze3d.systems.CommandEncoderBackend
@@ -34,50 +31,23 @@ import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
 import java.nio.ByteBuffer
 import java.nio.IntBuffer
-import java.nio.file.Path
 import java.util.Optional
 import java.util.OptionalDouble
 import java.util.function.Supplier
-import kotlin.io.path.readText
-import kotlin.math.abs
 import me.snowmii.dlss.bridge.DlssDimensions
-import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitterOffset
-import me.snowmii.dlss.render.RenderRuntime
-import me.snowmii.dlss.render.SceneTarget
-import me.snowmii.dlss.render.WorldPhase
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
-import net.minecraft.client.CloudStatus
-import net.minecraft.client.renderer.CloudRenderer
-import net.minecraft.client.renderer.MappableRingBuffer
 import net.minecraft.client.renderer.RenderPipelines
-import net.minecraft.resources.Identifier
-import net.minecraft.world.phys.Vec3
 import org.joml.Matrix4f
-import org.joml.Vector3f
-import org.joml.Vector4f
 import org.joml.Vector4fc
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotEquals
-import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.lwjgl.PointerBuffer
-import org.lwjgl.system.MemoryStack
-import org.lwjgl.system.MemoryUtil
-import org.lwjgl.util.shaderc.Shaderc
-import org.lwjgl.util.spvc.Spvc
-import org.lwjgl.util.spvc.SpvcReflectedResource
-import org.spongepowered.asm.mixin.injection.Inject
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
-import com.google.gson.JsonParser
 
 /**
  * Cloud vertical proof for M-6's velocity writer.
@@ -207,14 +177,21 @@ class MotionVectorCloudTest {
 			// A clock discontinuity (a world change restarts the game clock): the sentinel.
 			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 0L, partialTicks = 0f, meshRebuilt = false)
 			assertTrue(payload.invalid, "a clock jump beyond the discontinuity bound is the sentinel")
-			assertTrue(
-				CloudVelocityRender.MAX_CLOCK_JUMP_TICKS > 1f,
-				"the discontinuity bound is generous: normal frame advances are ~1 tick",
-			)
 
 			// A steady frame after the discontinuity measures from the new clock.
 			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 1L, partialTicks = 0.5f, meshRebuilt = false)
 			assertFalse(payload.invalid, "the state machine recovers from the discontinuity on the next frame")
+
+			// The bound is generous rather than frame-tight: an advance of several ticks - a
+			// slow frame, not a world change - still composes a drift instead of resetting.
+			val underBound = CloudVelocityRender.MAX_CLOCK_JUMP_TICKS.toLong() - 1L
+			payload = CloudVelocityRender.cloudPayload(
+				phase,
+				gameTime = 1L + underBound,
+				partialTicks = 0.5f,
+				meshRebuilt = false,
+			)
+			assertFalse(payload.invalid, "an advance under the discontinuity bound composes rather than resetting")
 			phase.end()
 		} finally {
 			CloudVelocityRender.resetState()
@@ -435,7 +412,6 @@ class MotionVectorCloudTest {
 			val backend = CloudFakeBackend()
 			CloudVelocityRender.deviceProvider = { backend.device }
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
-			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 			val mismatchedVelocity = FakeView(FakeTexture(GpuFormat.RG16_FLOAT, 640, 480))
 
 			// The guard itself: the size-mismatched velocity view is rejected before the
@@ -551,9 +527,11 @@ class MotionVectorCloudTest {
 	private fun resetSeams() {
 		CloudVelocityRender.activePhaseOverride = null
 		CloudVelocityRender.cloudClockProvider = {
+			// Mirrors production: the read is guarded, so a headless JVM with no client
+			// degrades to a null clock instead of throwing.
 			runCatching {
-				val minecraft = net.minecraft.client.Minecraft.getInstance()
-				if (minecraft == null) null else CloudVelocityRender.CloudClock(0L, 0f)
+				net.minecraft.client.Minecraft.getInstance()
+				CloudVelocityRender.CloudClock(0L, 0f)
 			}.getOrNull()
 		}
 		CloudVelocityRender.deviceProvider = { RenderSystem.getDevice() }
@@ -596,7 +574,7 @@ class MotionVectorCloudTest {
 			HintsAndWorkarounds(false, false),
 			DeviceType.OTHER,
 		)
-		private val deviceBackend = CloudGpuDeviceBackend(this, deviceInfo)
+		private val deviceBackend = CloudGpuDeviceBackend(deviceInfo)
 		private val passBackend = CloudPassBackend(this)
 		private val commandBackend = CloudCommandEncoderBackend()
 
@@ -605,7 +583,7 @@ class MotionVectorCloudTest {
 
 		fun failIf(point: String) {
 			if (failAt == point) {
-				throw IllegalStateException("injected $point failure")
+				error("injected $point failure")
 			}
 		}
 	}
@@ -651,7 +629,7 @@ class MotionVectorCloudTest {
 			// test. The failAt injection below is for every other call.
 			if (backend.failCreateRenderPassOnce) {
 				backend.failCreateRenderPassOnce = false
-				throw IllegalStateException("injected createRenderPass failure")
+				error("injected createRenderPass failure")
 			}
 			backend.failIf("createRenderPass")
 			backend.renderPassDescriptors.add(descriptor)
@@ -750,7 +728,7 @@ class MotionVectorCloudTest {
 	}
 
 	/** The device-info side of the fake device, so the real RenderPass constructor and validation can run. */
-	private class CloudGpuDeviceBackend(private val backend: CloudFakeBackend, private val info: DeviceInfo) : GpuDeviceBackend {
+	private class CloudGpuDeviceBackend(private val info: DeviceInfo) : GpuDeviceBackend {
 		override fun createSurface(windowHandle: Long): GpuSurfaceBackend = throw UnsupportedOperationException("test backend never creates surfaces")
 
 		override fun createCommandEncoder(): CommandEncoderBackend = throw UnsupportedOperationException("test backend never creates encoders")
@@ -800,22 +778,8 @@ class MotionVectorCloudTest {
 	}
 
 	private companion object {
-		/** SPIR-V DecorationLocation, the decoration `createFromSpirv` rewrites and this suite reads back. */
-		const val LOCATION_DECORATION = 30
-
-		/** The shared velocity payload's sentinel, mirrored so the JVM classification asserts the same value. */
-		const val INVALID_VELOCITY = 10000f
-
 		private val OUTPUT_DIMENSIONS = DlssDimensions(2560, 1440)
 		private val RENDER_DIMENSIONS = DlssDimensions(1707, 960)
 		private val mainTarget = FakeTarget(OUTPUT_DIMENSIONS.width, OUTPUT_DIMENSIONS.height)
-
-		/** Sample points spread across the frustum, from near the eye to the far plane. */
-		private val probes = listOf(
-			Vector4f(0f, 0f, 0.95f, 1f),
-			Vector4f(0.4f, 0.3f, 0.6f, 1f),
-			Vector4f(-0.5f, 0.2f, 0.25f, 1f),
-			Vector4f(0.1f, -0.4f, 0.05f, 1f),
-		)
 	}
 }

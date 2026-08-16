@@ -17,8 +17,7 @@ object ChatReadout {
 	@JvmStatic
 	fun send(message: String) {
 		try {
-			val minecraft = Minecraft.getInstance() ?: return
-			minecraft.gui.hud.getChat().addClientSystemMessage(Component.literal(message))
+			Minecraft.getInstance().gui.hud.chat.addClientSystemMessage(Component.literal(message))
 		} catch (_: Throwable) {
 			// No chat yet, or no client at all; the log line already went out.
 		}

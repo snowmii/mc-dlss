@@ -1,4 +1,5 @@
 package me.snowmii.dlss.fg
+import me.snowmii.dlss.session.TestSessionBridge
 
 import java.nio.file.Path
 import me.snowmii.dlss.bridge.DlssDimensions
@@ -131,8 +132,10 @@ class FgMultiplierToggleTest {
 				release = {},
 			),
 			startup = { null },
-			queryFgMultiplier = { null },
-			recordFgMultiplier = { error("no bridge answer must never reach the record") },
+			bridge = object : TestSessionBridge() {
+				override fun setFgMultiplier(numFramesToGenerate: Int): Boolean =
+					error("no bridge answer must never reach the record")
+			},
 			invalidateSurfaceConfiguration = { invalidations++ },
 		)
 		val controls = RuntimeControls(runtime, announced::add)
@@ -198,8 +201,12 @@ class FgMultiplierToggleTest {
 				release = {},
 			),
 			startup = { null },
-			queryFgMultiplier = { calls.multiplier() },
-			recordFgMultiplier = { calls.set(it) == NativeApi.SUCCESS_RESULT },
+			bridge = object : TestSessionBridge() {
+				override fun queryFgMultiplier(): FgMultiplier = calls.multiplier()
+
+				override fun setFgMultiplier(numFramesToGenerate: Int): Boolean =
+					calls.set(numFramesToGenerate) == NativeApi.SUCCESS_RESULT
+			},
 			invalidateSurfaceConfiguration = invalidateSurfaceConfiguration,
 		)
 		return Harness(runtime)

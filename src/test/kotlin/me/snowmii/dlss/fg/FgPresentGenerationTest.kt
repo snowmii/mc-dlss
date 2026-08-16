@@ -1,6 +1,7 @@
 package me.snowmii.dlss.fg
 
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.CameraConstants
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.EvaluationRequest
@@ -52,6 +53,7 @@ import org.lwjgl.vulkan.VK10
  * live rung: the close-path slShutdown is what makes the fork's exit clean, and a fork that
  * followed an unclean exit comes up with the plugin manager already initialized.
  */
+@NativeBridge
 class FgPresentGenerationTest {
 
 	@Test
@@ -244,8 +246,6 @@ class FgPresentGenerationTest {
 					fixture,
 					swapchain,
 					dimensions,
-					outputWidth,
-					outputHeight,
 					color,
 					depth,
 					hudless,
@@ -257,8 +257,6 @@ class FgPresentGenerationTest {
 					fixture,
 					swapchain,
 					dimensions,
-					outputWidth,
-					outputHeight,
 					color,
 					depth,
 					hudless,
@@ -271,8 +269,6 @@ class FgPresentGenerationTest {
 						fixture,
 						swapchain,
 						dimensions,
-						outputWidth,
-						outputHeight,
 						color,
 						depth,
 						hudless,
@@ -305,8 +301,6 @@ class FgPresentGenerationTest {
 						fixture,
 						swapchain,
 						dimensions,
-						outputWidth,
-						outputHeight,
 						color,
 						depth,
 						hudless,
@@ -355,8 +349,6 @@ class FgPresentGenerationTest {
 		fixture: HeadlessVulkanFixture,
 		swapchain: HeadlessVulkanFixture.Swapchain,
 		dimensions: DlssDimensions,
-		outputWidth: Int,
-		outputHeight: Int,
 		color: HeadlessVulkanFixture.EngineImage,
 		depth: HeadlessVulkanFixture.EngineImage,
 		hudless: HeadlessVulkanFixture.EngineImage,

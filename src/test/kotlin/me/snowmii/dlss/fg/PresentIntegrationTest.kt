@@ -1,6 +1,7 @@
 package me.snowmii.dlss.fg
 
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.FgTagRequest
@@ -55,6 +56,7 @@ import org.lwjgl.vulkan.VK10
  * live rung: the close-path slShutdown is what makes the fork's exit clean, and a fork that
  * followed an unclean exit comes up with the plugin manager already initialized.
  */
+@NativeBridge
 class PresentIntegrationTest {
 
 	@Test
@@ -445,9 +447,9 @@ class PresentIntegrationTest {
 
 	private companion object {
 		/** NVSDK_NGX_Result_FAIL_NotInitialized = NVSDK_NGX_Result_Fail | 7 (0xBAD00000 | 7). */
-		private val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
+		const val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
 
 		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
-		private val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
+		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
 	}
 }

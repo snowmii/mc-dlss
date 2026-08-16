@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Test
  * screenshots every frame) — exactly the failure M-8's risk names.
  *
  * A consumer is reachable from either side: by targeting the consumer class itself
- * ([Screenshot], [TracyFrameCapture]) or by owning the caller seam that feeds it -
+ * (`Screenshot`, `TracyFrameCapture`) or by owning the caller seam that feeds it -
  * `KeyboardHandler.keyPress` for the F2 grab is ratcheted here, while the reads inside
  * `Minecraft.renderFrame` (the present blit and the Tracy capture) are covered by the
  * `mainRenderTarget` routing-point ratchet below. The parsing recognizes every `@Mixin`
@@ -171,25 +171,29 @@ class CompositeRoutingTest {
 	 * handled, so attribute order and formatting never hide an injection.
 	 */
 	private fun annotationBodies(source: String): List<String> {
-		val bodies = mutableListOf<String>()
 		val annotation = Regex("""@(\w+)\s*\(""")
-		for (match in annotation.findAll(source)) {
-			var depth = 1
-			var i = match.range.last + 1
-			var inString = false
-			while (i < source.length && depth > 0) {
-				when (val c = source[i]) {
-					'"' -> inString = !inString
-					'(' -> if (!inString) depth++
-					')' -> if (!inString) depth--
-				}
-				i++
+		return annotation.findAll(source).mapNotNull { match ->
+			val open = match.range.last + 1
+			val close = closingParen(source, open)
+			close?.let { source.substring(open, it) }
+		}.toList()
+	}
+
+	/** The index of the parenthesis closing the one opened before [from], or null if unbalanced. */
+	private fun closingParen(source: String, from: Int): Int? {
+		var depth = 1
+		var i = from
+		var inString = false
+		while (i < source.length && depth > 0) {
+			when (source[i]) {
+				'"' -> inString = !inString
+				'(' -> if (!inString) depth++
+				')' -> if (!inString) depth--
+				else -> Unit
 			}
-			if (depth == 0) {
-				bodies += source.substring(match.range.last + 1, i - 1)
-			}
+			i++
 		}
-		return bodies
+		return if (depth == 0) i - 1 else null
 	}
 
 	/** The bodies of every injector annotation: any annotation carrying a `method` attribute. */

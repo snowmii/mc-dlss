@@ -7,6 +7,7 @@ import me.snowmii.dlss.session.LifecycleAdapter
 
 import java.nio.file.Files
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.io.TempDir
  * Teardown order matters: native teardown must complete before Vulkan destruction, so the
  * native handle closes (inner) before the fixture closes (outer).
  */
+@NativeBridge
 class DlssRuntimeLoadTest {
 	@Test
 	fun `injected Streamline extensions enable initialize support and dimension queries`(@TempDir dataPath: Path) {

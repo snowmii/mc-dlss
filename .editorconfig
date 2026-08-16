@@ -1,0 +1,32 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{kt,kts,java}]
+indent_style = tab
+indent_size = 4
+tab_width = 4
+max_line_length = 140
+
+[src/test/**.kt]
+max_line_length = 200
+
+[*.{yml,yaml,json,xml}]
+indent_style = space
+indent_size = 2
+
+[*.{gradle.kts,properties}]
+indent_style = tab
+indent_size = 4
+
+[{*.md,*.glsl,*.vsh,*.fsh}]
+trim_trailing_whitespace = false
+
+[*.{c,cpp,h,hpp}]
+indent_style = tab
+indent_size = 4
+max_line_length = 140

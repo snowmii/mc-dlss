@@ -8,12 +8,12 @@ import me.snowmii.dlss.bridge.FgState
 import me.snowmii.dlss.bridge.FillVelocityRequest
 import me.snowmii.dlss.bridge.ImageBinding
 import me.snowmii.dlss.bridge.MotionRequest
+import me.snowmii.dlss.bridge.NativeApi
 import me.snowmii.dlss.bridge.PresentTarget
 import me.snowmii.dlss.bridge.rowMajorOf
 import me.snowmii.dlss.bridge.SrTagRequest
 import me.snowmii.dlss.bridge.Vec2
 import me.snowmii.dlss.bridge.VulkanContext
-import me.snowmii.dlss.bridge.VulkanContextRegistry
 import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.readout.SessionReadout
@@ -138,17 +138,14 @@ class FrameEvaluation(
 	fun presentStart(): Boolean = adapter.presentStart()
 	fun presentEnd(): Boolean = adapter.presentEnd()
 
-	// The five Reflex/PCL frame markers of the M-12 surface, delegated straight to the
-	// adapter like the present bracket: the input sample at the GLFW poll seam, the
-	// simulation pair at runTick's simulation seam, and the render-submit pair at
-	// renderFrame's command-encoder submit. The mixin handlers never touch the adapter
-	// directly - they call the world phase, which reaches this object - so the whole
+	// The Reflex/PCL frame markers of the M-12 surface, delegated straight to the adapter like
+	// the present bracket: the input sample at the GLFW poll seam is its own call because it
+	// starts the frame, and the simulation and render-submit markers travel as a value, so
+	// this seam has one method rather than one per marker. The mixin handlers never touch the
+	// adapter directly - they call the world phase, which reaches this object - so the whole
 	// marker surface is verifiable off the render thread through this class.
 	fun reflexInputSample(): Boolean = adapter.reflexInputSample()
-	fun reflexSimulateStart(): Boolean = adapter.reflexSimulateStart()
-	fun reflexSimulateEnd(): Boolean = adapter.reflexSimulateEnd()
-	fun reflexRenderSubmitStart(): Boolean = adapter.reflexRenderSubmitStart()
-	fun reflexRenderSubmitEnd(): Boolean = adapter.reflexRenderSubmitEnd()
+	fun reflexMarker(type: NativeApi.ReflexMarkerType): Boolean = adapter.reflexMarker(type)
 
 	/** The native-owned images this evaluation writes into, or null before the first frame. */
 	val evaluationImages: DlssEvaluationImages?
@@ -188,8 +185,20 @@ class FrameEvaluation(
 		val held = images ?: adapter.acquireImages()?.also { images = it } ?: return false
 
 		val buffer = vulkan.recordCommandBuffer()
-		val recorded = record(buffer, scene, jitter, motion, held, route, velocity, camera) &&
-			(destinationImage == NO_DESTINATION || present(buffer, destinationImage))
+		// The FG frame composes its DLSS-G record around the SR evaluation, and only when the
+		// policy is active AND the runtime resolved this frame's FG inputs. An inactive frame or
+		// one without both output-sized targets records SR-only: no FG options, no FG tags, no
+		// handoff. Resolved here rather than inside [record] because the record's two halves
+		// straddle the output copy - see [openFgRecord] and [closeFgRecord].
+		val fg = if (frameGeneration.active) fgInputs() else null
+		val handle = buffer.address()
+		// The motion stage opens the recording, ahead of the FG record: it fills the module's
+		// motion copy, which the FG tag below names as the frame's motion source.
+		val recorded = recordMotion(handle, scene, route, velocity, motion) &&
+			openFgRecord(handle, scene, fg) &&
+			record(buffer, scene, jitter, motion, camera) &&
+			(destinationImage == NO_DESTINATION || present(buffer, destinationImage)) &&
+			closeFgRecord(handle, scene, fg)
 		// Submitted on every path: see the class comment - an abandoned buffer is what actually
 		// breaks the renderer, not a failed evaluation.
 		vulkan.submitCommandBuffer(buffer)
@@ -246,81 +255,9 @@ class FrameEvaluation(
 		scene: SceneResources,
 		jitter: DlssJitterOffset,
 		motion: DlssFrameMotion,
-		held: DlssEvaluationImages,
-		route: MotionVectorRoute,
-		velocity: ImageBinding?,
 		camera: DlssCameraSample?,
 	): Boolean {
 		val handle = buffer.address()
-
-		// The motion stage is the route's choice. On VELOCITY_MRT the post-scene fill merges the
-		// scene velocity companion into the native motion image - the sole Streamline motion
-		// source - while the compute camera-motion writer stays retired from this path; on
-		// CAMERA_ONLY the compute writer stays exactly as before. A VELOCITY_MRT frame that
-		// reached here without a velocity companion has no motion source at all and is skipped:
-		// evaluating with no motion vectors is worse than one frame of the low-resolution
-		// present.
-		val motionRecorded = when (route) {
-			MotionVectorRoute.VELOCITY_MRT -> {
-				if (velocity == null) {
-					return false
-				}
-				// The fill comes first in the frame's recording, before the tag: it opens the
-				// native timing chain with a real motion stage, and the tag must find the native
-				// motion image already merged so the motion it names is complete.
-				adapter.fillVelocity(
-					FillVelocityRequest(
-						commandBuffer = handle,
-						depth = scene.depth,
-						velocity = velocity,
-						reprojection = FloatArray(16).also { motion.reprojection.get(it) },
-						reset = motion.reset,
-					),
-				)
-			}
-
-			MotionVectorRoute.CAMERA_ONLY -> adapter.writeMotion(
-				MotionRequest(
-					commandBuffer = handle,
-					depth = scene.depth,
-					reprojection = FloatArray(16).also { motion.reprojection.get(it) },
-				),
-			)
-		}
-		if (!motionRecorded) {
-			return false
-		}
-
-		// The FG frame composes its DLSS-G record around the SR evaluation, and only when the
-		// policy is active AND the runtime resolved this frame's FG inputs. An inactive frame
-		// or one without both output-sized targets records SR-only below: no FG options, no FG
-		// tags, no handoff.
-		val fg = if (frameGeneration.active) fgInputs() else null
-
-		if (fg != null) {
-			// The frame's DLSS-G options record first, with the back-buffer count the
-			// swapchain policy declares: the FG tag refuses until the stored configuration has
-			// options, and a per-frame record also heals the invalidation a replaced SR
-			// configuration leaves behind. The handoff re-records the same options at the end
-			// of the frame, which is the guide's per-frame slDLSSGSetOptions.
-			if (!adapter.configureFg(FgSurfacePolicy.DEFAULT_DECLARED_BACK_BUFFERS)) {
-				return false
-			}
-			// The FG tag records BEFORE the SR tag, and obtains the Streamline frame token the
-			// SR tag reuses: the common plugin holds one tag per (buffer type, viewport) per
-			// frame, and the SR evaluation must read the depth and motion slots as the SR tag
-			// last wrote them, so the FG tag cannot be the last writer before it.
-			if (!adapter.tagFgResources(
-					FgTagRequest(
-						commandBuffer = handle,
-						depth = scene.depth,
-						hudless = fg.hudless,
-						ui = fg.ui,
-					),
-				)) {
-				return false
-			}
-		}
 
 		// The frame's SR resources tag between the motion stage and the evaluation, on the same
 		// buffer: the tag call obtains the Streamline frame token the evaluation consumes, and
@@ -354,32 +291,116 @@ class FrameEvaluation(
 				camera = camera?.let { cameraConstants(it, motion) },
 			),
 		)
-		if (!evaluated) {
-			return false
-		}
+		return evaluated
+	}
 
-		if (fg == null) {
-			return true
-		}
+	/**
+	 * Records the frame's motion stage, the route's choice, and reports whether it took.
+	 *
+	 * On VELOCITY_MRT the post-scene fill merges the scene velocity companion into the native
+	 * motion image - the sole Streamline motion source - while the compute camera-motion writer
+	 * stays retired from this path; on CAMERA_ONLY the compute writer stays exactly as before. A
+	 * VELOCITY_MRT frame that reached here without a velocity companion has no motion source at
+	 * all and is refused: evaluating with no motion vectors is worse than one frame of the
+	 * low-resolution present.
+	 */
+	private fun recordMotion(
+		handle: Long,
+		scene: SceneResources,
+		route: MotionVectorRoute,
+		velocity: ImageBinding?,
+		motion: DlssFrameMotion,
+	): Boolean = when (route) {
+		// The fill comes first in the frame's recording, before the tag: it opens the native
+		// timing chain with a real motion stage, and the tag must find the native motion image
+		// already merged so the motion it names is complete.
+		MotionVectorRoute.VELOCITY_MRT -> velocity != null && adapter.fillVelocity(
+			FillVelocityRequest(
+				commandBuffer = handle,
+				depth = scene.depth,
+				velocity = velocity,
+				reprojection = FloatArray(16).also { motion.reprojection.get(it) },
+				reset = motion.reset,
+			),
+		)
 
-		// The evaluation's restore leaves every FG-tagged resource - the shared depth and the
-		// bridge's motion image included - in the engine-resting GENERAL layout, so the frame
-		// re-declares its FG tags after it under the retained token: the present path reads
-		// the slots as they stand at present time, and they must declare the GENERAL layouts
-		// the images actually rest in until Present. The handoff is then the frame's terminal
-		// act, consuming the retained token exactly once so the next frame's tags advance it.
-		if (!adapter.tagFgResources(
-				FgTagRequest(
-					commandBuffer = handle,
-					depth = scene.depth,
-					hudless = fg.hudless,
-					ui = fg.ui,
-				),
-			)) {
-			return false
-		}
-		return adapter.presentHandoff()
-}
+		MotionVectorRoute.CAMERA_ONLY -> adapter.writeMotion(
+			MotionRequest(
+				commandBuffer = handle,
+				depth = scene.depth,
+				reprojection = FloatArray(16).also { motion.reprojection.get(it) },
+			),
+		)
+	}
+
+	/**
+	 * The composed frame's opening DLSS-G record: this frame's options, then its first FG tag.
+	 *
+	 * The options record first because the tag refuses until the stored configuration has them,
+	 * and a per-frame record also heals the invalidation a replaced SR configuration leaves
+	 * behind; the handoff at the end of the frame re-records the same options, which is the
+	 * guide's per-frame `slDLSSGSetOptions`.
+	 *
+	 * The tag records BEFORE the SR tag, and this ordering is not cosmetic. It obtains the
+	 * Streamline frame token the SR tag then reuses, and the native evaluation reads
+	 * `fgTagFrameIndexRecorded` to decide two things: whether to record the FG viewport's
+	 * (y-flipped) camera constants at all, and whether to retain the frame token past the
+	 * evaluation for the handoff to consume. A frame whose first FG tag comes after the
+	 * evaluation gets neither - it loses its FG constants and takes a fresh token, so its
+	 * handoff sees mismatched SR and FG frame indexes, refuses, and latches the fallback that
+	 * takes SR down with it. The common plugin also holds one tag per (buffer type, viewport)
+	 * per frame, and the SR evaluation must read the depth and motion slots as the SR tag last
+	 * wrote them, so the FG tag cannot be the last writer before it either.
+	 *
+	 * An SR-only frame passes straight through: no options, no tag, and the evaluation is then
+	 * free to consume the token itself.
+	 */
+	private fun openFgRecord(handle: Long, scene: SceneResources, fg: FgFrameInputs?): Boolean =
+		fg == null ||
+			(adapter.configureFg(frameGeneration.declaredBackBuffers) && tagFg(handle, scene, fg))
+
+	/**
+	 * The composed frame's closing DLSS-G record: the post-evaluation FG re-tag and the present
+	 * handoff, both after the SR output copy.
+	 *
+	 * The re-tag is the declaration the present path needs - the evaluation's restore has left
+	 * every tagged resource in the engine-resting GENERAL layout these tags declare - and it is
+	 * also where `tag_fg_resources` records the frame's orientation blits, which is why it sits
+	 * after `present` rather than before it.
+	 *
+	 * Those blits are the frame's DLSS-G snapshot, not a reference the plugin resolves later:
+	 * the depth, HUD-less colour, and UI are copied into module-owned images and the plugin
+	 * reads the copies at present. So the blit's *timing* decides what DLSS-G interpolates. It
+	 * used to run on the opening tag, before `present` copied the SR output into the main
+	 * target - so the HUD-less blit captured the main target as it stood at frame start, which
+	 * is the *previous* frame's finished image with its whole HUD composited in. DLSS-G was
+	 * handed a HUD-less colour that was both a frame stale and not HUD-less, so it read the HUD
+	 * as world content, interpolated it, and then recomposited the clean UI over the result.
+	 * The crosshair is where that showed first: high contrast, screen-locked, over the
+	 * fastest-moving background, and doubled on every generated frame.
+	 *
+	 * After the output copy the main target holds this frame's world and nothing else - the
+	 * screen effects, the 3D crosshair, and the GUI all draw later - so the blit captures
+	 * genuine HUD-less colour. `mc_dlss_present_output` returns the main target to the
+	 * engine-resting GENERAL layout the blit reads it in, so the copy and the blit compose in
+	 * one recording.
+	 *
+	 * The handoff is then the frame's terminal act, consuming the retained token exactly once so
+	 * the next frame's tags advance it.
+	 */
+	private fun closeFgRecord(handle: Long, scene: SceneResources, fg: FgFrameInputs?): Boolean =
+		fg == null || (tagFg(handle, scene, fg) && adapter.presentHandoff())
+
+	/** The frame's four FG tags: shared depth, HUD-less colour, and the UI colour+alpha pair. */
+	private fun tagFg(handle: Long, scene: SceneResources, fg: FgFrameInputs): Boolean =
+		adapter.tagFgResources(
+			FgTagRequest(
+				commandBuffer = handle,
+				depth = scene.depth,
+				hudless = fg.hudless,
+				ui = fg.ui,
+			),
+		)
 
 	/**
 	 * Feeds the first evaluation to the session readout exactly once.

@@ -1,6 +1,7 @@
 package me.snowmii.dlss.fg
 
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.CameraConstants
 import me.snowmii.dlss.bridge.EvaluationRequest
 import me.snowmii.dlss.bridge.ExtensionBootstrap
@@ -38,6 +39,7 @@ import org.lwjgl.vulkan.VK10
  * Like the other live FG rungs the scenario runs in ONE test method (one test fork): the
  * close-path slShutdown is what makes the fork's exit clean.
  */
+@NativeBridge
 class FgViewportSplitTest {
 
 	@Test

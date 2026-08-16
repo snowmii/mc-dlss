@@ -36,7 +36,21 @@ import org.spongepowered.asm.mixin.injection.At;
  * later {@code begin} consumes that decision instead of repeating it, so the session still sees
  * one frame decision per frame.
  */
-@Mixin(GameRenderer.class)
+/**
+ * Priority above the default 1000 so this wrap is applied last and therefore sits outermost.
+ *
+ * Sodium wraps the same {@code getBuffer} call and keeps the matrix it is handed
+ * ({@code GameRendererMixin.sodium$setProjection}), which {@code LevelRendererMixin} then builds
+ * {@code ChunkRenderMatrices} from - the projection Sodium's terrain shaders actually render with.
+ * At equal priority Mixin orders the two wraps by load order, which follows the classpath and
+ * differs between launches: half the sessions gave Sodium the jittered matrix and half gave it the
+ * unjittered one. An unjittered terrain pass still reports jitter to DLSS, so DLSS accumulates
+ * samples it was told moved while the terrain never did, and straight texel boundaries reconstruct
+ * ragged - visible only standing still, because camera motion supplies its own sub-pixel variation.
+ * Being outermost makes the jittered matrix what every inner consumer sees, Sodium's cache
+ * included.
+ */
+@Mixin(value = GameRenderer.class, priority = 1500)
 public class GameRendererProjectionJitterMixin {
 	/**
 	 * Read instead of {@code mainRenderTarget()}, which

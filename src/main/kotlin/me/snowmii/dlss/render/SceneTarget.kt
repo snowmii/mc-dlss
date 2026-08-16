@@ -26,7 +26,7 @@ class SceneTarget(
 	private val allocate: (Int, Int) -> RenderTarget,
 	private val release: (RenderTarget) -> Unit,
 	/**
-	 * Allocates the scene-sized velocity companion at [width]x[height], or returns null for a
+	 * Allocates the scene-sized velocity companion at `width`x`height`, or returns null for a
 	 * runtime that does not render a velocity attachment (the default keeps every existing
 	 * caller compiling and holding no companion).
 	 */

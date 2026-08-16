@@ -1,7 +1,7 @@
 package me.snowmii.dlss.sl
 
-import java.nio.file.Files
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.bridge.Native
@@ -35,6 +35,7 @@ import org.lwjgl.vulkan.VkPhysicalDevice
  * bootstraps after it.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
+@NativeBridge
 class StreamlineRequirementsMergeTest {
 
 	@Order(1)

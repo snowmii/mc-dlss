@@ -52,7 +52,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
 class FgFrameCompositionTest {
 
 	@Test
-	fun `an active FG frame records configure FG tag SR tag evaluation FG re-tag and one handoff on one buffer`() {
+	fun `an active FG frame records configure FG tag SR tag evaluation output copy FG re-tag and one handoff`() {
 		val calls = RecordingNative()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy, fgInputs())
@@ -63,22 +63,38 @@ class FgFrameCompositionTest {
 			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
 			"an active FG frame with both output-sized targets must compose and hand off",
 		)
+		// Two orderings are asserted here and each one is load-bearing.
+		//
+		// The first FG tag lands BEFORE the SR tag: it obtains the frame token the SR tag then
+		// reuses, and the native evaluation reads "an FG tag recorded" to decide both whether to
+		// give the FG viewport its camera constants and whether to retain the token for the
+		// handoff. An FG tag that only appeared after the evaluation left the frame with no FG
+		// constants and a fresh token, so the handoff saw mismatched SR and FG frame indexes and
+		// refused - which latched the fallback and took SR down with FG.
+		//
+		// The re-tag lands AFTER the output copy, because tag_fg_resources records the HUD-less
+		// flip-blit on that second call and the plugin reads the blitted copy at present. Blitted
+		// before the copy it would capture the main target as it stood at frame start - the
+		// previous frame's finished image, HUD composited in. DLSS-G then interpolated the HUD as
+		// world content and recomposited the clean UI on top of it, which is the doubled
+		// crosshair on generated frames. After the copy the main target holds this frame's world
+		// and nothing else.
 		assertEquals(
-			listOf("writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "fgTag", "handoff", "present"),
+			listOf("writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "present", "fgTag", "handoff"),
 			calls.order,
-			"the FG tag must record before the SR tag, the re-tag after the evaluation, and " +
+			"the FG tag must record before the SR tag, the re-tag after the output copy, and " +
 				"the handoff exactly once as the frame's terminal record",
 		)
 		assertEquals(1, calls.handoffs, "one active FG frame must hand off exactly once")
 		assertEquals(1, harness.buffers, "one frame must record on exactly one command buffer")
 		assertEquals(1, harness.submits, "the single buffer must be submitted")
+		// The FG tag names the frame's render-sized depth and the two output-sized targets the
+		// runtime resolved, exactly as the native side's tag contract reads them.
 		assertEquals(
 			1,
 			calls.fgTags.map { it.commandBuffer }.distinct().size,
 			"both FG tag records must land on the same command buffer as the rest of the frame",
 		)
-		// The FG tag names the frame's render-sized depth and the two output-sized targets the
-		// runtime resolved, exactly as the native side's tag contract reads them.
 		assertEquals(
 			FgTagRequest(
 				commandBuffer = calls.fgTags.first().commandBuffer,
@@ -142,7 +158,7 @@ class FgFrameCompositionTest {
 	}
 
 	@Test
-	fun `a refused FG tag skips the frame's SR evaluation and reports failure`() {
+	fun `a refused FG tag abandons the frame before the SR tag and never hands off`() {
 		val calls = RecordingNative(failFgTag = true)
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy, fgInputs())
@@ -151,14 +167,17 @@ class FgFrameCompositionTest {
 
 		assertFalse(
 			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
-			"a refused FG tag must fail the frame like any other refused stage",
+			"a refused FG tag must report the frame as not composed",
 		)
+		// The opening FG tag is the frame's token: a refusal there leaves nothing for the SR tag
+		// to reuse, so the frame stops on the spot rather than evaluating against a half-built
+		// record and presenting against a partial tag set.
 		assertEquals(
 			listOf("writeMotion", "configureFg", "fgTag"),
 			calls.order,
-			"a frame whose FG tag was refused must not record a partial SR+FG set - the SR " +
-				"evaluation never runs against FG-tagged resources the present path cannot consume",
+			"a refused opening FG tag must abandon the frame before the SR tag",
 		)
+		assertEquals(0, calls.handoffs, "a frame whose FG tag was refused must never hand off")
 		assertEquals(1, harness.submits, "a failed recording still hands its buffer back")
 	}
 
@@ -314,7 +333,7 @@ class FgFrameCompositionTest {
 		assertEquals(Math.toRadians(70.0).toFloat(), constants.fovRadians, 1e-3f, "cameraFOV")
 		assertEquals(16f / 9f, constants.aspectRatio, 1e-3f, "cameraAspectRatio")
 		for (value in listOf(constants.near, constants.far, constants.fovRadians, constants.aspectRatio)) {
-			assertTrue(value < INVALID_FLOAT, "no scalar may reach the plugin as INVALID_FLOAT")
+			assertTrue(value < invalidFloat, "no scalar may reach the plugin as INVALID_FLOAT")
 		}
 	}
 
@@ -377,7 +396,6 @@ class FgFrameCompositionTest {
 				frameGeneration = policy,
 				fgInputs = { inputs },
 			),
-			calls = calls,
 			counters = counters,
 		)
 	}
@@ -403,14 +421,13 @@ class FgFrameCompositionTest {
 	private fun jitter(): DlssJitterOffset = DlssJitter(RENDER_DIMENSIONS, OUTPUT_DIMENSIONS).advance()
 
 	/** sl_consts.h: `constexpr float INVALID_FLOAT = 3.402823466e38f`. */
-	private val INVALID_FLOAT = 3.402823466e38f
+	private val invalidFloat = 3.402823466e38f
 
 	private fun motion() =
 		DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, false)
 
 	private class Harness(
 		val evaluation: FrameEvaluation,
-		val calls: RecordingNative,
 		private val counters: Counters,
 	) {
 		val buffers: Int

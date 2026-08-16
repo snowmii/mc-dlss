@@ -684,8 +684,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
  * mirrors vertically relative to every engine texture, so the tag names module-owned
  * y-flipped copies instead. `depth`, `hudless`, and `ui` are still the engine's render-sized
  * depth, output-sized HUD-less colour, and output-sized UI colour+alpha target - on the
- * frame's first call of the two the module records y-inverting blits from them into its own
- * flipped copies (depth at render size, the two colours at output size) and tags the copies;
+ * frame's post-evaluation call of the two the module records y-inverting blits from them into
+ * its own flipped copies (depth at render size, the two colours at output size) and tags the copies;
  * the engine images are read as transfer sources, never written or relabeled, and handed
  * back in the layout they arrived in. The motion source is always the module's own flipped
  * motion copy - filled by mc_dlss_write_motion on the camera-only route and by
@@ -707,10 +707,13 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
  * dispatches leave them in the engine-resting GENERAL layout, and nothing in this call or
  * the evaluation moves them afterwards, so the declaration stays accurate through present.
  * The composed frame calls this function twice - once before the SR tag, once after the
- * evaluation - and the second call re-declares the same copies under the same retained
- * token without re-recording the blits: the copies still hold the frame's content, and the
- * blits would only double the per-frame cost. mc_dlss_query_fg_images reports the copies
- * for observability.
+ * evaluation and after mc_dlss_present_output - under one retained token. The first call
+ * obtains the token, marks the frame composed for the evaluation, and declares the copies; the
+ * second records the blits that fill them and re-declares them. The blits belong to the second
+ * call because they are a snapshot the plugin reads at present: recorded on the first they
+ * would capture the engine colour target before this frame's upscaled output was copied into
+ * it, which is the previous frame's fully composited image. They are still recorded once per
+ * frame. mc_dlss_query_fg_images reports the copies for observability.
  *
  * The frame token this call obtains and retains is shared with mc_dlss_tag_sr_resources for
  * the same frame: a repeated tag reuses the token rather than advancing the frame, and the
@@ -799,34 +802,40 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_start(void);
 
 /*
  * Emits the frame's Reflex/PCL markers at the M-12 input, simulation, and render-submit
- * seams: mc_dlss_reflex_input_sample at Minecraft's GLFW input poll, the simulation pair
- * around Minecraft's runTick simulation, and the render-submit pair around renderFrame's
- * command-encoder submit. All five emit through slPCLSetMarker under the retained
- * Streamline frame token, so the whole marker surface shares the token identity the
+ * seams: mc_dlss_reflex_input_sample at Minecraft's GLFW input poll, and mc_dlss_reflex_marker
+ * for the simulation pair around Minecraft's runTick simulation and the render-submit pair
+ * around renderFrame's command-encoder submit. Those four emit through slPCLSetMarker under
+ * the retained Streamline frame token, so the marker surface shares the token identity the
  * frame's SR/FG tags and common constants record under.
  *
- * The input-sample entry is the frame-start seam: it obtains the frame's token
- * (slGetNewFrameToken is called again even when a token is retained, replacing one a
- * previous frame never consumed), runs the unconditional slReflexSleep against it, and
- * emits the input marker. The pinned Streamline 2.12 vocabulary removed eInputSample from
- * PCLMarker, so the input seam emits ePCLatencyPing: the PCL guide defines the ping as
- * the marker whose frame index identifies which frame picks up the simulated input, which
- * is exactly the input-sample seam semantics the contract retains. The simulation and
- * render-submit entries emit eSimulationStart/eSimulationEnd and
- * eRenderSubmitStart/eRenderSubmitEnd.
+ * The marker is a value, not an entry point each: `marker_type` is the same vocabulary
+ * mc_dlss_query_reflex_markers reports - 1 for SIMULATION_START, 2 for SIMULATION_END, 3 for
+ * RENDER_SUBMIT_START, 4 for RENDER_SUBMIT_END - so a marker added later is a value this call
+ * accepts rather than an export every layer above has to re-declare.
  *
- * Every entry answers FAIL_NotInitialized while the Streamline session is not ready, and
- * the simulation and render-submit entries also answer FAIL_NotInitialized when no frame
- * token is retained (a frame that never ran its input sample emits no markers). A refused
- * or failed marker call emits nothing and never latches the session: the markers are the
- * PCL/Reflex diagnostic surface, not a frame-route stage, and a missing ping must not
- * degrade the frames that rendered anyway.
+ * The input-sample entry stays its own export because it is the frame-start seam and does more
+ * than emit: it obtains the frame's token (slGetNewFrameToken is called again even when a
+ * token is retained, replacing one a previous frame never consumed) and runs the unconditional
+ * slReflexSleep against it. It emits ePCLatencyPing only after the installed window hook
+ * receives PclState::statsWindowMessage; emitting it every frame corrupts latency statistics.
+ * Passing 0 (INPUT_SAMPLE) to mc_dlss_reflex_marker is therefore FAIL_InvalidParameter rather
+ * than a second way to reach that seam.
+ *
+ * Both entries answer FAIL_NotInitialized while the Streamline session is not ready, and
+ * mc_dlss_reflex_marker also answers FAIL_NotInitialized when no frame token is retained (a
+ * frame that never ran its input sample emits no markers) and FAIL_InvalidParameter for a
+ * marker type outside the four it emits. A refused or failed marker call emits nothing and
+ * never latches the session: the markers are the PCL/Reflex diagnostic surface, not a
+ * frame-route stage, and a missing ping must not degrade the frames that rendered anyway.
  */
+/*
+ * Installs the Win32 window-procedure hook used by PCL Stats. The hook recognizes
+ * PCLState::statsWindowMessage; the next input-sample call emits one ePCLatencyPing for
+ * the frame that consumed it. Reinstalling the same HWND is an idempotent success.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_install_pcl_window(uint64_t hwnd);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_input_sample(void);
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_simulate_start(void);
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_simulate_end(void);
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_render_submit_start(void);
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_render_submit_end(void);
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reflex_marker(uint32_t marker_type);
 
 /*
  * The reflex-marker oracle: how many of each of the five Reflex/PCL markers this module has
@@ -857,6 +866,24 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_markers(
     uint32_t* event_count,
     uint32_t* events,
     uint32_t events_capacity);
+
+/*
+ * Re-records the Reflex options with a frame-rate cap: frame_limit_us microseconds per
+ * frame, 0 for no Reflex-side cap.
+ *
+ * Reflex's limiter is the frame-rate cap DLSS-G tolerates. It sleeps at the start of the
+ * frame, before simulation, where the driver knows the pacer's schedule; an engine-side
+ * limiter spins after Present instead, and the jitter it leaves in the app frame interval
+ * is what multi-frame generation divides N ways - every sub-interval carries the whole
+ * error, which is why the wobble grows with the multiplier.
+ *
+ * Answers FAIL_NotInitialized while the Streamline session is not ready and
+ * FAIL_InvalidParameter while the READY transition's registration never recorded - the cap
+ * joins that record rather than creating one. A cap already in effect records nothing and
+ * answers SUCCESS, so the per-frame seam that reads Minecraft's own limit may call this
+ * every frame; a refused record leaves the plugin's options and the stored cap untouched.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_record_reflex_frame_limit(uint32_t frame_limit_us);
 
 /*
  * The reflex-options oracle: the sl::ReflexMode value the READY transition's

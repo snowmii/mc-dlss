@@ -15,6 +15,7 @@ import me.snowmii.dlss.session.LifecycleAdapter
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.abs
+import me.snowmii.dlss.NativeBridge
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -38,6 +39,7 @@ import org.junit.jupiter.api.io.TempDir
  * produce exactly zero at every depth - and the depth-dependent case is what separates a shader
  * that reads the depth buffer from one that ignores it and happens to look right.
  */
+@NativeBridge
 class DlssMotionVectorTest {
 	private val output = DlssDimensions(2560, 1440)
 

@@ -1,6 +1,7 @@
 package me.snowmii.dlss.sl
 
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.bridge.ImageBinding
@@ -38,6 +39,7 @@ import org.lwjgl.vulkan.VK10
  * Splitting the scenario across two forks makes the second fork's activation fail on this
  * workstation no matter what it does.
  */
+@NativeBridge
 class StreamlineSrOptionsTest {
 
 	@Test

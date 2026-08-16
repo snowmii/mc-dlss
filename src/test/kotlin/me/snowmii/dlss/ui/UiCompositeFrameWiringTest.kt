@@ -30,7 +30,6 @@ import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
 import java.nio.ByteBuffer
 import java.nio.IntBuffer
-import java.util.Optional
 import java.util.OptionalDouble
 import java.util.function.Supplier
 import org.joml.Vector4fc

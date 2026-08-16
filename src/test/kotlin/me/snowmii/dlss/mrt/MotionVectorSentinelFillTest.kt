@@ -3,6 +3,7 @@ package me.snowmii.dlss.mrt
 import java.nio.file.Path
 import kotlin.math.abs
 import kotlin.math.max
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.DlssEvaluationImages
 import me.snowmii.dlss.bridge.DlssFrameTimings
@@ -52,6 +53,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  * their mixins, and their tests are untouched; the CAMERA_ONLY route is asserted only to prove
  * the fill never rides it.
  */
+@NativeBridge
 class MotionVectorSentinelFillTest {
 	@Test
 	fun `the velocity route fills the native motion image from the sampled companion before tagging`() {
@@ -384,7 +386,7 @@ class MotionVectorSentinelFillTest {
 			// in GENERAL, the depth came back where the engine rests it, the motion image left
 			// the fill in the layout the tag and evaluation declare, and nothing submitted
 			// behind the caller's back.
-			SrLiveSession.assertValidationClean(fixture, color, depth, images!!)
+			SrLiveSession.assertValidationClean(fixture, color, depth, images)
 			val companionErrors =
 				fixture.validationErrorsAbout(velocity.image(), presentTarget.image())
 			assertTrue(
@@ -443,7 +445,7 @@ class MotionVectorSentinelFillTest {
 
 	/** Records every per-frame native call so the fill gate is assertable off the render thread. */
 	private class RecordingNative(
-		private val RENDER_DIMENSIONS: DlssDimensions,
+		private val renderDimensions: DlssDimensions,
 	) : NativeApi {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
@@ -461,7 +463,7 @@ class MotionVectorSentinelFillTest {
 		): Int = NativeApi.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): DlssDimensions =
-			DlssDimensions(RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height)
+			DlssDimensions(renderDimensions.width, renderDimensions.height)
 
 		override fun configure(
 			outputWidth: Int,

@@ -42,9 +42,7 @@ public class RenderTypeFeatureRendererMotionMixin {
 			this.lastDraw = null;
 			this.lastRenderType = null;
 		}
-		MovingBlockVelocityWriterBindings.setGoverning(
-			movingBoundary || (MovingBlockVelocityWriterBindings.isGoverning() && !entityBoundary)
-		);
+		MovingBlockVelocityWriterBindings.updateGoverning(movingBoundary, entityBoundary);
 	}
 
 	@Inject(method = "getVertexBuilder", at = @At("RETURN"))

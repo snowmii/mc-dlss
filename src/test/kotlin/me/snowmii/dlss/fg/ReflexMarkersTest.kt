@@ -35,16 +35,17 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
+import me.snowmii.dlss.NativeBridge
 
 /**
- * M-12 Reflex-marker rung: each READY frame emits ordered input, simulation, and
- * render-submit markers through one retained Streamline frame token shared with the frame's
- * SR/FG tags, common constants, and present markers; the unconditional slReflexSleep and
- * PCL marker calls remain; and refused sessions emit none.
+ * M-12 Reflex-marker rung: each READY frame emits ordered simulation and render-submit
+ * markers through one retained Streamline frame token shared with the frame's SR/FG tags,
+ * common constants, and present markers; the input seam obtains that token and runs the
+ * unconditional slReflexSleep; refused sessions emit none.
  *
  * The live half runs one real Streamline session on the headless Vulkan fixture and composes
- * one frame exactly like production: the input-sample marker at the GLFW-poll seam obtains
- * the frame's token, the simulation pair fires, the FG/SR tags and the SR evaluation record
+ * one frame exactly like production: the input seam at GLFW poll obtains the frame's token
+ * and runs Reflex sleep, the simulation pair fires, the FG/SR tags and SR evaluation record
  * under the same retained token, the render-submit pair fires around the command-encoder
  * submit, and the present bracket closes under the same token. The proof runs through the
  * native oracle `mc_dlss_query_reflex_markers` ([NativeApi.reflexMarkers]): the per-type
@@ -56,20 +57,19 @@ import com.mojang.blaze3d.pipeline.RenderTarget
  * the emit-none proof. Before any marker was emitted the oracle refuses, which is what makes
  * the refused and pre-ready no-marker halves observable.
  *
- * The pinned Streamline 2.12 vocabulary removed `eInputSample` from `PCLMarker`, so the
- * input seam emits `ePCLatencyPing` instead: the PCL guide defines the ping as the marker
- * whose frame index identifies which frame picks up the simulated input, which is exactly
- * the input-sample seam semantics the contract retains.
+ * `ePCLatencyPing` is deliberately absent: the PCL guide requires it only in response to
+ * `PclState::statsWindowMessage`. Emitting one every frame corrupts PC-latency statistics.
  *
  * Like the other live FG rungs, the whole live scenario runs in ONE test method (and
  * therefore one test fork): the close-path slShutdown is what makes the fork's exit clean,
  * and a fork that followed an unclean exit comes up with the plugin manager already
  * initialized.
  */
+@NativeBridge
 class ReflexMarkersTest {
 
 	@Test
-	fun `one live session emits ordered input simulation and render-submit markers per READY frame under the one shared frame token`(
+	fun `one live session emits ordered simulation and render-submit markers per READY frame under the one shared frame token`(
 		@TempDir dataPath: Path,
 	) {
 		// Pre-init: this fork's module has never bootstrapped and never emitted a marker, so
@@ -84,23 +84,23 @@ class ReflexMarkersTest {
 			)
 			assertEquals(
 				FAIL_NOT_INITIALIZED,
-				bridge.reflexSimulateStart(),
-				"reflexSimulateStart before bootstrap must answer FAIL_NotInitialized",
+				bridge.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START),
+				"the SIMULATION_START marker before bootstrap must answer FAIL_NotInitialized",
 			)
 			assertEquals(
 				FAIL_NOT_INITIALIZED,
-				bridge.reflexSimulateEnd(),
-				"reflexSimulateEnd before bootstrap must answer FAIL_NotInitialized",
+				bridge.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END),
+				"the SIMULATION_END marker before bootstrap must answer FAIL_NotInitialized",
 			)
 			assertEquals(
 				FAIL_NOT_INITIALIZED,
-				bridge.reflexRenderSubmitStart(),
-				"reflexRenderSubmitStart before bootstrap must answer FAIL_NotInitialized",
+				bridge.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START),
+				"the RENDER_SUBMIT_START marker before bootstrap must answer FAIL_NotInitialized",
 			)
 			assertEquals(
 				FAIL_NOT_INITIALIZED,
-				bridge.reflexRenderSubmitEnd(),
-				"reflexRenderSubmitEnd before bootstrap must answer FAIL_NotInitialized",
+				bridge.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END),
+				"the RENDER_SUBMIT_END marker before bootstrap must answer FAIL_NotInitialized",
 			)
 			assertEquals(
 				null,
@@ -262,7 +262,7 @@ class ReflexMarkersTest {
 				// pre-ready session answers, so the oracle stays silent either way.
 				assertEquals(
 					FAIL_NOT_INITIALIZED,
-					bridge.reflexSimulateStart(),
+					bridge.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START),
 					"a simulation marker before the frame's input sample must answer FAIL_NotInitialized",
 				)
 				assertEquals(
@@ -281,10 +281,10 @@ class ReflexMarkersTest {
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.reflexInputSample(),
-					"the input sample must obtain the frame's token and emit the ping marker",
+					"the input sample must obtain the frame's token and run Reflex sleep",
 				)
-				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexSimulateStart())
-				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexSimulateEnd())
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START))
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END))
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
@@ -349,32 +349,31 @@ class ReflexMarkersTest {
 				)
 				// The render-submit bracket fires around the actual command submission,
 				// between the handoff and the present bracket, under the same retained token.
-				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexRenderSubmitStart())
-				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexRenderSubmitEnd())
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START))
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END))
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentStart())
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentEnd())
 
-				// The oracle: exactly one of each marker type, in production order, all under
-				// the frame index the tags and the common constants recorded under.
+				// The oracle: one simulation and render-submit pair, in production order, all
+				// under the frame index the tags and common constants recorded under. The
+				// latency-ping slot stays zero because no stats-window ping was received.
 				val firstMarkers = bridge.reflexMarkers()
 				assertArrayEquals(
-					intArrayOf(1, 1, 1, 1, 1),
+					intArrayOf(0, 1, 1, 1, 1),
 					firstMarkers.typeCounts,
-					"the first READY frame must emit exactly one marker of each type",
+					"the first READY frame must emit frame markers but no unsolicited latency ping",
 				)
-				assertEquals(5, firstMarkers.eventCount, "one frame must emit exactly five reflex marker events")
+				assertEquals(4, firstMarkers.eventCount, "one frame must emit exactly four reflex marker events")
 				assertEquals(
 					listOf(
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.INPUT_SAMPLE, firstIndexes.srFrameIndex),
 						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_START, firstIndexes.srFrameIndex),
 						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_END, firstIndexes.srFrameIndex),
 						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START, firstIndexes.srFrameIndex),
 						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END, firstIndexes.srFrameIndex),
 					),
 					firstMarkers.events,
-					"one frame must emit INPUT_SAMPLE then SIMULATION_START then SIMULATION_END then " +
-						"RENDER_SUBMIT_START then RENDER_SUBMIT_END, all under the frame index the tags " +
-						"and the common constants recorded under",
+					"one frame must emit SIMULATION_START then SIMULATION_END then " +
+						"RENDER_SUBMIT_START then RENDER_SUBMIT_END under the frame's index",
 				)
 				// The present bracket of the same frame shares the same retained token: the
 				// M-11 oracle proves the frame's present markers correlate with the tags and
@@ -394,7 +393,7 @@ class ReflexMarkersTest {
 				// oracle exactly where the first frame left it.
 				assertEquals(
 					FAIL_NOT_INITIALIZED,
-					bridge.reflexRenderSubmitStart(),
+					bridge.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START),
 					"a render-submit marker without a retained token must answer FAIL_NotInitialized",
 				)
 				assertEquals(
@@ -411,8 +410,8 @@ class ReflexMarkersTest {
 					bridge.reflexInputSample(),
 					"the second frame's input sample must obtain a fresh frame token",
 				)
-				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexSimulateStart())
-				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexSimulateEnd())
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START))
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END))
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagFgResources(
@@ -475,28 +474,27 @@ class ReflexMarkersTest {
 					bridge.presentHandoff(),
 					"the second frame's complete tag set must arm once",
 				)
-				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexRenderSubmitStart())
-				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexRenderSubmitEnd())
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START))
+				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END))
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentStart())
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentEnd())
 
 				val secondMarkers = bridge.reflexMarkers()
 				assertArrayEquals(
-					intArrayOf(2, 2, 2, 2, 2),
+					intArrayOf(0, 2, 2, 2, 2),
 					secondMarkers.typeCounts,
-					"the second READY frame must emit exactly one more marker of each type",
+					"the second READY frame must emit one more frame marker pair without a latency ping",
 				)
-				assertEquals(10, secondMarkers.eventCount, "two frames must emit exactly ten reflex marker events")
+				assertEquals(8, secondMarkers.eventCount, "two frames must emit exactly eight reflex marker events")
 				assertEquals(
 					firstMarkers.events + listOf(
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.INPUT_SAMPLE, secondIndexes.srFrameIndex),
 						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_START, secondIndexes.srFrameIndex),
 						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_END, secondIndexes.srFrameIndex),
 						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START, secondIndexes.srFrameIndex),
 						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END, secondIndexes.srFrameIndex),
 					),
 					secondMarkers.events,
-					"each frame's five markers must bracket under their own frame index, in order",
+					"each frame's four markers must bracket under their own frame index, in order",
 				)
 				assertEquals(
 					listOf(
@@ -539,20 +537,20 @@ class ReflexMarkersTest {
 		val adapter = LifecycleAdapter(session, calls)
 		// Not READY yet: every marker is refused before it reaches the native side.
 		assertFalse(adapter.reflexInputSample(), "a non-READY session must refuse the input sample")
-		assertFalse(adapter.reflexSimulateStart(), "a non-READY session must refuse the simulation start")
-		assertFalse(adapter.reflexSimulateEnd(), "a non-READY session must refuse the simulation end")
-		assertFalse(adapter.reflexRenderSubmitStart(), "a non-READY session must refuse the render-submit start")
-		assertFalse(adapter.reflexRenderSubmitEnd(), "a non-READY session must refuse the render-submit end")
+		assertFalse(adapter.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START), "a non-READY session must refuse the simulation start")
+		assertFalse(adapter.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END), "a non-READY session must refuse the simulation end")
+		assertFalse(adapter.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START), "a non-READY session must refuse the render-submit start")
+		assertFalse(adapter.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END), "a non-READY session must refuse the render-submit end")
 		assertTrue(calls.reflexCalls.isEmpty(), "refused markers must never reach the native side")
 
 		// READY: every marker delegates and reports the native result.
 		adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data"))
 		assertEquals(DlssSessionState.READY, session.state)
 		assertTrue(adapter.reflexInputSample(), "a READY session must emit the input sample")
-		assertTrue(adapter.reflexSimulateStart(), "a READY session must emit the simulation start")
-		assertTrue(adapter.reflexSimulateEnd(), "a READY session must emit the simulation end")
-		assertTrue(adapter.reflexRenderSubmitStart(), "a READY session must emit the render-submit start")
-		assertTrue(adapter.reflexRenderSubmitEnd(), "a READY session must emit the render-submit end")
+		assertTrue(adapter.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START), "a READY session must emit the simulation start")
+		assertTrue(adapter.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END), "a READY session must emit the simulation end")
+		assertTrue(adapter.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START), "a READY session must emit the render-submit start")
+		assertTrue(adapter.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END), "a READY session must emit the render-submit end")
 		assertEquals(
 			listOf("inputSample", "simulateStart", "simulateEnd", "renderSubmitStart", "renderSubmitEnd"),
 			calls.reflexCalls,
@@ -598,10 +596,10 @@ class ReflexMarkersTest {
 		)
 
 		assertTrue(phase.reflexInputSample(), "the world phase must delegate the input sample")
-		assertTrue(phase.reflexSimulateStart(), "the world phase must delegate the simulation start")
-		assertTrue(phase.reflexSimulateEnd(), "the world phase must delegate the simulation end")
-		assertTrue(phase.reflexRenderSubmitStart(), "the world phase must delegate the render-submit start")
-		assertTrue(phase.reflexRenderSubmitEnd(), "the world phase must delegate the render-submit end")
+		assertTrue(phase.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START), "the world phase must delegate the simulation start")
+		assertTrue(phase.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END), "the world phase must delegate the simulation end")
+		assertTrue(phase.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START), "the world phase must delegate the render-submit start")
+		assertTrue(phase.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END), "the world phase must delegate the render-submit end")
 		assertEquals(
 			listOf("inputSample", "simulateStart", "simulateEnd", "renderSubmitStart", "renderSubmitEnd"),
 			calls.reflexCalls,
@@ -718,23 +716,14 @@ class ReflexMarkersTest {
 			return if (failReflex) NativeApi.SUCCESS_RESULT + 1 else NativeApi.SUCCESS_RESULT
 		}
 
-		override fun reflexSimulateStart(): Int {
-			reflexCalls += "simulateStart"
-			return NativeApi.SUCCESS_RESULT
-		}
-
-		override fun reflexSimulateEnd(): Int {
-			reflexCalls += "simulateEnd"
-			return NativeApi.SUCCESS_RESULT
-		}
-
-		override fun reflexRenderSubmitStart(): Int {
-			reflexCalls += "renderSubmitStart"
-			return NativeApi.SUCCESS_RESULT
-		}
-
-		override fun reflexRenderSubmitEnd(): Int {
-			reflexCalls += "renderSubmitEnd"
+		override fun reflexMarker(type: NativeApi.ReflexMarkerType): Int {
+			reflexCalls += when (type) {
+				NativeApi.ReflexMarkerType.SIMULATION_START -> "simulateStart"
+				NativeApi.ReflexMarkerType.SIMULATION_END -> "simulateEnd"
+				NativeApi.ReflexMarkerType.RENDER_SUBMIT_START -> "renderSubmitStart"
+				NativeApi.ReflexMarkerType.RENDER_SUBMIT_END -> "renderSubmitEnd"
+				NativeApi.ReflexMarkerType.INPUT_SAMPLE -> return FAIL_INVALID_PARAMETER
+			}
 			return NativeApi.SUCCESS_RESULT
 		}
 	}
@@ -751,18 +740,17 @@ class ReflexMarkersTest {
 			this.height = height
 		}
 
-		override fun destroyBuffers() {
-		}
+		override fun destroyBuffers() = Unit
 	}
 
 	private companion object {
 		/** NVSDK_NGX_Result_FAIL_NotInitialized = NVSDK_NGX_Result_Fail | 7 (0xBAD00000 | 7). */
-		private val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
+		const val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
 
 		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
-		private val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
+		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
 
 		/** sl::ReflexMode::eLowLatency, the mode the READY registration records. */
-		private val LOW_LATENCY = 1
+		const val LOW_LATENCY = 1
 	}
 }

@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory
  *
  * A pass has to run in sessions where DLSS never starts - `mc.dlss.enabled=false`, no NGX, a
  * latched native failure - because those are exactly the sessions a measurement is compared
- * against. [ClientRuntime] returns null in all of them, so the passes cannot hang off the
+ * against. `ClientRuntime` returns null in all of them, so the passes cannot hang off the
  * world phase; they hang off the same render-loop seam instead and ask the renderer which
  * target the world just went into.
  *
@@ -36,10 +36,6 @@ object StressRuntime {
 	 * reconstructing its rays from the previous frame's camera.
 	 */
 	private var camera: DlssCameraSample? = null
-
-	/** The passes once the render loop has built them, without ever creating them. */
-	@JvmStatic
-	fun activePasses(): List<ScenePass> = passes
 
 	/** Records the camera the world projection seam is about to upload. */
 	@JvmStatic

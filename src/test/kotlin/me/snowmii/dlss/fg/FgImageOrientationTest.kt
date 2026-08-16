@@ -3,6 +3,7 @@ package me.snowmii.dlss.fg
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Path
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.CameraConstants
 import me.snowmii.dlss.bridge.DlssDimensions
 import me.snowmii.dlss.bridge.EvaluationRequest
@@ -64,6 +65,7 @@ import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties
  * Like the other live FG rungs the scenario runs in ONE test method (one test fork): the
  * close-path slShutdown is what makes the fork's exit clean.
  */
+@NativeBridge
 class FgImageOrientationTest {
 
 	@Test
@@ -217,7 +219,7 @@ class FgImageOrientationTest {
 					val floats = bytes.order(ByteOrder.nativeOrder()).asFloatBuffer()
 					for (row in 0 until dimensions.height) {
 						val value = depthOfRow(row)
-						for (x in 0 until dimensions.width) {
+						repeat(dimensions.width) {
 							floats.put(value)
 						}
 					}
@@ -225,7 +227,7 @@ class FgImageOrientationTest {
 				stageIntoImage(fixture, hudless.image(), outputWidth, outputHeight,
 					VK10.VK_IMAGE_ASPECT_COLOR_BIT, 4) { bytes ->
 					for (row in 0 until outputHeight) {
-						for (x in 0 until outputWidth) {
+						repeat(outputWidth) {
 							bytes.put((row % 256).toByte())
 							bytes.put(((row / 256) % 256).toByte())
 							bytes.put((255 - row % 256).toByte())
@@ -236,7 +238,7 @@ class FgImageOrientationTest {
 				stageIntoImage(fixture, ui.image(), outputWidth, outputHeight,
 					VK10.VK_IMAGE_ASPECT_COLOR_BIT, 4) { bytes ->
 					for (row in 0 until outputHeight) {
-						for (x in 0 until outputWidth) {
+						repeat(outputWidth) {
 							bytes.put((255 - row % 256).toByte())
 							bytes.put((row % 256).toByte())
 							bytes.put(64.toByte())
@@ -250,7 +252,7 @@ class FgImageOrientationTest {
 					for (row in 0 until dimensions.height) {
 						val x = toHalf(velocityXOfRow(row))
 						val y = toHalf(velocityYOfRow(row))
-						for (column in 0 until dimensions.width) {
+						repeat(dimensions.width) {
 							halves.put(x).put(y)
 						}
 					}
