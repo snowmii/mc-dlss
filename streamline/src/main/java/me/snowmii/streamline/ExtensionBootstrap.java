@@ -1,10 +1,4 @@
-package me.snowmii.dlss.bridge;
-import me.snowmii.dlss.config.ModConfig;
-import me.snowmii.streamline.Native;
-import me.snowmii.streamline.NativeApi;
-import me.snowmii.streamline.NativeException;
-import me.snowmii.streamline.SlQueueRequirements;
-import me.snowmii.streamline.VulkanContext;
+package me.snowmii.streamline;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,20 +11,28 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
-/** Queries NGX's exact Vulkan requirements at Minecraft's pre-creation bootstrap seams. */
+/** Queries Streamline's exact Vulkan requirements at the game's pre-creation bootstrap seams. */
 public final class ExtensionBootstrap {
 	/**
 	 * Namespaced the same way the mod's other assets are, so in-game code can address it as
 	 * {@code McDlss.id("native/mc_dlss.dll")}. These seams run inside
-	 * {@code VulkanInstance.<init>}, before {@code Minecraft} exists, so there is no
-	 * ResourceManager yet and the bootstrap reads it off the classloader instead.
+	 * {@code VulkanInstance.<init>}, before the game's {@code Minecraft} instance exists, so
+	 * there is no ResourceManager yet and the bootstrap reads it off the classloader instead.
 	 */
 	static final String RESOURCE_PATH = "/assets/mc-dlss/native/mc_dlss.dll";
 	static final String STREAMLINE_RESOURCE_PATH = "/assets/mc-dlss/native/sl.interposer.dll";
 
-	private static final Path RELATIVE_LIBRARY = Path.of("build", "native", "mc_dlss.dll");
 	private static final Path RELATIVE_STREAMLINE = Path.of("build", "resources", "main", "assets", "mc-dlss", "native");
 
+	/**
+	 * The knob the mod's config reads for the native-library path, kept so the error message
+	 * names the knob users set. Reading it is the mod's job: the mod parses it in its config and
+	 * injects the result through {@link #setNativeLibraryPath}, because this seam runs before
+	 * the mod's own config handle can be built.
+	 */
+	private static final String NATIVE_LIBRARY_PROPERTY = "mc.dlss.native-library";
+
+	private static volatile Path configuredNativeLibrary;
 	private static volatile Path extracted;
 	private static volatile boolean streamlineRuntimeLoaded;
 
@@ -59,7 +61,7 @@ public final class ExtensionBootstrap {
 
 	/**
 	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features require the device
-	 * to enable, merged into Minecraft's enabled feature set at the createDevice seam. Opens a
+	 * to enable, merged into the game's enabled feature set at the createDevice seam. Opens a
 	 * fresh bridge like the other queries; bootstrap is idempotent.
 	 */
 	public static List<String> queryDeviceFeatures12() {
@@ -72,7 +74,7 @@ public final class ExtensionBootstrap {
 
 	/**
 	 * The deduplicated Vulkan 1.3 feature names Streamline's loaded features require, merged
-	 * into Minecraft's enabled feature set at the createDevice seam.
+	 * into the game's enabled feature set at the createDevice seam.
 	 */
 	public static List<String> queryDeviceFeatures13() {
 		loadStreamlineRuntime();
@@ -84,7 +86,7 @@ public final class ExtensionBootstrap {
 
 	/**
 	 * The summed extra graphics / compute / optical-flow queues Streamline's loaded features
-	 * require the host to create, added to Minecraft's queue-family create map at the
+	 * require the host to create, added to the game's queue-family create map at the
 	 * createDevice seam. Optical flow is reported but never created: without a host optical-flow
 	 * family, DLSS-G runs in interop mode.
 	 */
@@ -164,14 +166,24 @@ public final class ExtensionBootstrap {
 	}
 
 	/**
-	 * Locates the workstation-local native bridge: explicit override first, then the packaged
-	 * namespaced resource, then the build output relative to an ancestor of the working
-	 * directory. The last case keeps a plain {@code :streamline:buildNativeDlss} run usable before
-	 * resources are processed; the dev client's working directory is {@code run/} while tests
-	 * run from the repository root, so the walk-up covers both.
+	 * Injection seam for the workstation-local native bridge: the mod set the path once, at
+	 * {@code onInitialize}, strictly before any query seam runs, from its own config. Passing
+	 * null resets to packaged-resource resolution.
+	 */
+	public static void setNativeLibraryPath(final Path path) {
+		configuredNativeLibrary = path;
+	}
+
+	/**
+	 * Locates the workstation-local native bridge: the injected path first (absolute), then the
+	 * packaged namespaced resource. The mod reads its {@code -Dmc.dlss.native-library} knob in
+	 * its config and injects the result, so resolution does not depend on the working directory:
+	 * the dev client's working directory is {@code run/} while tests run from the repository
+	 * root. A bridge that exists only as build output has to be a staged resource first; there
+	 * is no build-directory walk-up to fall back on.
 	 */
 	public static Path nativeLibrary() {
-		final Path configured = ModConfig.fromSystemProperties().getNativeLibraryPath();
+		final Path configured = configuredNativeLibrary;
 		if (configured != null) {
 			return configured.toAbsolutePath();
 		}
@@ -181,20 +193,11 @@ public final class ExtensionBootstrap {
 			return packaged;
 		}
 
-		final StringBuilder tried = new StringBuilder("\n  classpath:").append(RESOURCE_PATH);
-		for (Path directory = Path.of("").toAbsolutePath(); directory != null; directory = directory.getParent()) {
-			final Path candidate = directory.resolve(RELATIVE_LIBRARY);
-			if (Files.isRegularFile(candidate)) {
-				return candidate;
-			}
-			tried.append("\n  ").append(candidate);
-		}
-
 		throw new NativeException(
 			"load-library",
 			new IllegalStateException(
 				"Native DLSS bridge not found. Run ./gradlew.bat :streamline:buildNativeDlss, or set -D"
-					+ ModConfig.NATIVE_LIBRARY_PROPERTY + "=<path to mc_dlss.dll>. Tried:" + tried
+					+ NATIVE_LIBRARY_PROPERTY + "=<path to mc_dlss.dll>. Tried:\n  classpath:" + RESOURCE_PATH
 			)
 		);
 	}

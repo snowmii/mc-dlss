@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.ExtensionBootstrap
+import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.EvaluationImages

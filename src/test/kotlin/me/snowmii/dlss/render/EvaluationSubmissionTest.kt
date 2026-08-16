@@ -2,7 +2,7 @@ package me.snowmii.dlss.render
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.dlss.bridge.ExtensionBootstrap
+import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.EvaluationImages

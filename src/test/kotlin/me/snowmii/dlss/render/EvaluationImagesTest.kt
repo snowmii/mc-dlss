@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.bridge.ExtensionBootstrap
+import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.NativeException

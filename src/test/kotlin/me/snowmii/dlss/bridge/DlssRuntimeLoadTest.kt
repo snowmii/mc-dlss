@@ -1,4 +1,5 @@
 package me.snowmii.dlss.bridge
+import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.Dimensions;
 import me.snowmii.streamline.Native;
 import me.snowmii.streamline.NativeApi;

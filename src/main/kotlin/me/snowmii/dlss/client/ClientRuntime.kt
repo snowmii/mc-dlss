@@ -1,6 +1,6 @@
 package me.snowmii.dlss.client
 import com.mojang.blaze3d.pipeline.RenderTarget
-import me.snowmii.dlss.bridge.ExtensionBootstrap
+import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeApi
 import me.snowmii.dlss.readout.SessionReadout

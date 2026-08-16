@@ -2,6 +2,7 @@ package me.snowmii.dlss.bridge;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import me.snowmii.streamline.ExtensionBootstrap;
 import me.snowmii.streamline.NativeException;
 
 /**

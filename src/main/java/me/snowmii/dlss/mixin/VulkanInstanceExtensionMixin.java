@@ -1,7 +1,7 @@
 package me.snowmii.dlss.mixin;
 
 import com.mojang.blaze3d.vulkan.VulkanInstance;
-import me.snowmii.dlss.bridge.ExtensionBootstrap;
+import me.snowmii.streamline.ExtensionBootstrap;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;

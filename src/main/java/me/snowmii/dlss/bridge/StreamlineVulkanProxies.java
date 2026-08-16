@@ -8,6 +8,7 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.nio.file.Path;
+import me.snowmii.streamline.ExtensionBootstrap;
 
 /**
  * The Streamline present-chain proxies, bound from {@code sl.interposer.dll}'s exported Vulkan

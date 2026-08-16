@@ -4,7 +4,7 @@ import java.util.function.Supplier;
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeApi
-import me.snowmii.dlss.bridge.ExtensionBootstrap
+import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.VulkanContext
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture

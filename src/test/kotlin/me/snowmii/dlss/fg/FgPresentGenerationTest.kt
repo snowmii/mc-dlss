@@ -5,7 +5,7 @@ import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.CameraConstants
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.dlss.bridge.ExtensionBootstrap
+import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.FgState
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture

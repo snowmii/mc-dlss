@@ -3,7 +3,7 @@ import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.dlss.bridge.ExtensionBootstrap
+import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.dlss.session.DlssSession

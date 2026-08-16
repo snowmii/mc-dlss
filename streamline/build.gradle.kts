@@ -21,6 +21,12 @@ repositories {
 
 dependencies {
 	implementation("org.joml:joml:1.10.8")
+	// Type references only: VulkanContext's command-buffer supplier/consumer are typed
+	// org.lwjgl.vulkan.VkCommandBuffer, and javac needs the jar on the compile classpath. No
+	// SDK static initializer touches an org.lwjgl.vulkan class - SlVulkanFeatures hardcodes its
+	// feature offsets precisely to avoid pulling one - so the Streamline runtime still loads
+	// before any LWJGL-Vulkan class initializes. Brings org.lwjgl:lwjgl:3.4.1 transitively.
+	implementation("org.lwjgl:lwjgl-vulkan:3.4.1")
 }
 
 val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {

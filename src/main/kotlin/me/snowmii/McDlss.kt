@@ -4,6 +4,7 @@ import net.fabricmc.api.ModInitializer
 import me.snowmii.dlss.config.ModConfig
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
+import me.snowmii.streamline.ExtensionBootstrap
 import net.minecraft.resources.Identifier
 import org.slf4j.LoggerFactory
 
@@ -15,6 +16,11 @@ object McDlss : ModInitializer {
 	val session: DlssSession = DlssSession(startupConfig) { message -> LOGGER.warn(message) }
 
 	override fun onInitialize() {
+		// The SDK's native-library seam is injected here, once, from the mod's own config.
+		// onInitialize runs strictly before any ExtensionBootstrap seam (the VulkanInstance
+		// <init> mixins and ClientRuntime), so this read lands EARLIER than the lazy ModConfig
+		// read it replaces at the first query seam — never later.
+		ExtensionBootstrap.setNativeLibraryPath(startupConfig.nativeLibraryPath)
 		startupConfig.warnings.forEach { warning -> LOGGER.warn("DLSS startup configuration: {}", warning) }
 		LOGGER.info(
 			"DLSS SR startup: enabled={} mode={} output={} native-library={}",

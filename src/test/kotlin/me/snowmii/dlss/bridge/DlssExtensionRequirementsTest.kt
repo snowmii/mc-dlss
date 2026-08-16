@@ -2,6 +2,7 @@ package me.snowmii.dlss.bridge
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
+import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeApi
 import org.junit.jupiter.api.Assertions.assertEquals
