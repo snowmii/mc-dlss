@@ -2,6 +2,7 @@ package me.snowmii.dlss.bridge
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import me.snowmii.streamline.VulkanContext;
+import me.snowmii.streamline.VulkanContextRegistry;
 
 import me.snowmii.dlss.NativeBridge
 import org.junit.jupiter.api.Assertions.assertEquals

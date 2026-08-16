@@ -5,7 +5,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
-import me.snowmii.dlss.bridge.StreamlineVulkanProxies;
+import me.snowmii.streamline.StreamlineVulkanProxies;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.system.Struct;
 import org.lwjgl.vulkan.VkAllocationCallbacks;

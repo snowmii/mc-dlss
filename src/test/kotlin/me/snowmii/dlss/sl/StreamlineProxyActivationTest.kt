@@ -7,7 +7,7 @@ import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeApi
-import me.snowmii.dlss.bridge.StreamlineVulkanProvider
+import me.snowmii.streamline.StreamlineVulkanProvider
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test

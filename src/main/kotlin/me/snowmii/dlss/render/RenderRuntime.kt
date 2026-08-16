@@ -4,7 +4,7 @@ import me.snowmii.dlss.session.DlssFrameRoute
 import me.snowmii.streamline.NativeApi
 import me.snowmii.dlss.readout.AcceptanceRecord
 import me.snowmii.dlss.readout.FramePacingProbe
-import me.snowmii.dlss.bridge.VulkanContextRegistry
+import me.snowmii.streamline.VulkanContextRegistry
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.SRMode

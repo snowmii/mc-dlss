@@ -1,4 +1,4 @@
-package me.snowmii.dlss.bridge;
+package me.snowmii.streamline;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
@@ -8,7 +8,6 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.nio.file.Path;
-import me.snowmii.streamline.ExtensionBootstrap;
 
 /**
  * The Streamline present-chain proxies, bound from {@code sl.interposer.dll}'s exported Vulkan

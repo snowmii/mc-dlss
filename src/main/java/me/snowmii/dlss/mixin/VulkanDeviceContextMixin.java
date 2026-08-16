@@ -7,7 +7,7 @@ import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
 import com.mojang.blaze3d.vulkan.checkpoints.CheckpointExtension;
 import me.snowmii.streamline.ExtensionBootstrap;
 import me.snowmii.streamline.VulkanContext;
-import me.snowmii.dlss.bridge.VulkanContextRegistry;
+import me.snowmii.streamline.VulkanContextRegistry;
 import org.lwjgl.vulkan.VkDevice;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -42,7 +42,7 @@ public class VulkanDeviceContextMixin {
 		CallbackInfo info
 	) {
 		VulkanContext context =
-			VulkanContext.fromVulkanDevice((VulkanDevice) (Object) this, physicalDevice);
+			VulkanContextCapture.capture((VulkanDevice) (Object) this, physicalDevice);
 		if (context != null) {
 			VulkanContextRegistry.register(context);
 			// Loud on failure: a device Streamline cannot hook must not be silently presented as

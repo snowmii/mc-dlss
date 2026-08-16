@@ -1,6 +1,4 @@
-package me.snowmii.dlss.bridge;
-
-import me.snowmii.streamline.VulkanContext;
+package me.snowmii.streamline;
 
 /**
  * Mod-level holder for the captured Minecraft Vulkan context. Registered once at

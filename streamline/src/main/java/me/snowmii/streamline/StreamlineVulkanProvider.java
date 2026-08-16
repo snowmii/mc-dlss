@@ -1,9 +1,7 @@
-package me.snowmii.dlss.bridge;
+package me.snowmii.streamline;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import me.snowmii.streamline.ExtensionBootstrap;
-import me.snowmii.streamline.NativeException;
 
 /**
  * Redirects LWJGL's Vulkan loading so Minecraft's Vulkan calls route through Streamline's
