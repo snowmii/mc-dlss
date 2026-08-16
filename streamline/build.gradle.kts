@@ -2,6 +2,19 @@ plugins {
 	`java-library`
 }
 
+version = providers.gradleProperty("mod_version").get()
+
+// The Fabric library-mod identity is ${version}-expanded here so the nested jar's
+// fabric.mod.json declares the real version (1.0.0) instead of leaving ${version} literal.
+tasks.processResources {
+	val version = version
+	inputs.property("version", version)
+
+	filesMatching("fabric.mod.json") {
+		expand("version" to version)
+	}
+}
+
 // Workstation-local toolchain roots. Every one is overridable by Gradle property first, then
 // environment variable, so a second machine only needs to point these somewhere else rather
 // than patch this file. The defaults are the paths the bridge was developed against.

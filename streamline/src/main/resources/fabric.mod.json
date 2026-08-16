@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "streamline-api",
+  "version": "${version}",
+  "name": "Streamline API",
+  "description": "JVM binding for the NVIDIA Streamline SDK, nested inside mc-dlss rather than shipped standalone.",
+  "environment": "*",
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "java": ">=25"
+  },
+  "custom": {
+    "modmenu": {
+      "parent": "mc-dlss"
+    }
+  }
+}
