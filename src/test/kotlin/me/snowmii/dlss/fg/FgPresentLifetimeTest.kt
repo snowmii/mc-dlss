@@ -27,9 +27,7 @@ import me.snowmii.dlss.render.FrameEvaluation
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneResources
 import me.snowmii.dlss.render.SceneTarget
-import me.snowmii.dlss.session.DlssNativeStage
 import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssSessionState
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.session.SRMode
@@ -39,7 +37,6 @@ import me.snowmii.dlss.NativeBridge
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.lwjgl.system.MemoryStack
@@ -57,39 +54,33 @@ import org.lwjgl.vulkan.VkSemaphoreSignalInfo
 import org.lwjgl.vulkan.VkSemaphoreTypeCreateInfo
 
 /**
- * M-11 present-lifetime rung: while FG is active, the frame's start waits for the previously
- * presented frame's DLSS-G input processing to complete - the eBlockNoClientQueues fence
- * discipline - BEFORE the frame rewrites any FG-tagged input, and that wait degrades through
- * the session state like every other native stage.
+ * M-11 present-lifetime rung, as it stands after the MFG latency fix: production no longer
+ * waits on `DLSSGState::inputsProcessingCompletionFence` at the frame's start, so no frame -
+ * FG-active or not - makes that wait, and the recorded call order proves it.
  *
- * The production seam is [RenderRuntime.beginWorldPhase]: the world phase renders into the
- * scene depth and the split renders into the HUD-less and UI targets after it returns, so the
- * wait has to run there - the earliest point the mod can block before rewriting the tagged
- * inputs - and the native bridge reads `DLSSGState::inputsProcessingCompletionFence` via
- * `slDLSSGGetState` and waits on the Vulkan device. The native refusal gates (no ready
- * session, no recorded DLSS-G options) and the null-fence no-op are the bridge's contract;
- * the headless fixture that proves them against a live Streamline session is a later slice.
- * What this rung proves is the production wiring - the wait runs once per FG-active frame
- * before any recording, never on an FG-off frame, the one refusal production can legitimately
- * hit - no options recorded yet, on the first FG frame - is benign, a genuine failure latches
- * the session to vanilla, and the native entry refuses before any Streamline session exists -
- * plus the wait's value semantics, proven live through the native wait oracle against a real
- * timeline semaphore: the wait blocks until the reported value is reached, so a regression
- * that treated the semaphore as a VkFence or ignored the value fails the proof.
+ * The wait was removed at [RenderRuntime.beginWorldPhase] because it cost 10-11ms of every
+ * 13ms FG frame; it is required only under `eBlockNoClientQueues`, and the recorded options
+ * are `eBlockPresentingClientQueue`, under which the guide makes it recommended rather than
+ * required for a single-queue application. That reasoning lives at the production seam.
+ *
+ * The wait entry stays on the ABI - the mode is one options field away - so what this class
+ * proves now is the ABI contract rather than the production wiring: the native entry refuses
+ * before any Streamline session exists, and the wait's value semantics hold against a real
+ * timeline semaphore, so a regression that treated the semaphore as a VkFence or ignored the
+ * value fails the proof. The three tests that asserted the production wait were retired with
+ * the wait itself; restoring the wait means restoring them.
  */
 @NativeBridge
 class FgPresentLifetimeTest {
 
 	@Test
-	fun `an FG-active frame waits for the previous frame's input processing before its own rewrites`() {
+	fun `an FG-active frame makes no input-processing wait`() {
 		val calls = RecordingNative()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
 
 		policy.setFrameGenerationActive(true)
 
-		// Frame A: the wait runs at the frame's start, before the first rewrite the recording
-		// owns (the motion pass), and the frame hands off when it presents.
 		assertTrue(
 			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS) != null,
 			"an FG-active eligible frame must route to the scene target",
@@ -100,27 +91,12 @@ class FgPresentLifetimeTest {
 			"the FG frame must record and hand off",
 		)
 
-		// Frame B: the wait must run again at the new frame's start - after frame A handed
-		// off and before frame B's first rewrite - because frame B is about to overwrite the
-		// inputs frame A's present is still processing.
-		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
-		harness.runtime.endWorldPhase()
-		assertTrue(
-			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
-			"the second FG frame must record and hand off",
-		)
-
 		assertEquals(
-			listOf(
-				"waitFgInputs", "writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "present", "fgTag", "handoff",
-				"waitFgInputs", "writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "present", "fgTag", "handoff",
-			),
+			listOf("writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "present", "fgTag", "handoff"),
 			calls.order,
-			"each FG-active frame must wait for the previous frame's input processing at its " +
-				"start - after the previous handoff, before its own first rewrite - and the wait " +
-				"must not disturb the composed recording",
+			"an FG-active frame must compose without the input-processing wait the latency fix removed",
 		)
-		assertEquals(2, calls.waits, "two FG-active frames must wait exactly once each")
+		assertEquals(0, calls.waits, "no frame waits on the input-processing fence any more")
 	}
 
 	@Test
@@ -141,52 +117,6 @@ class FgPresentLifetimeTest {
 			"an FG-off frame must make no wait and no FG calls at all",
 		)
 		assertEquals(0, calls.waits)
-	}
-
-	@Test
-	fun `the options-less refusal on the first FG frame is benign`() {
-		val calls = RecordingNative(waitResult = FAIL_INVALID_PARAMETER)
-		val policy = FgSurfacePolicy()
-		val harness = harness(calls, policy)
-
-		policy.setFrameGenerationActive(true)
-
-		// The first FG frame's start runs before any configureFg: no DLSS-G options have
-		// recorded yet, the bridge refuses the wait, and there is nothing to wait for because
-		// no frame has been presented through DLSS-G. The refusal must not latch the session -
-		// that would kill FG on its first frame.
-		assertTrue(
-			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS) != null,
-			"a refused wait on the first FG frame must not abort the frame",
-		)
-		assertEquals(DlssSessionState.READY, harness.session.state, "the options-less refusal must not latch the session")
-		assertNull(harness.session.failure, "the options-less refusal must not record a failure")
-		assertTrue(
-			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
-			"the first FG frame must still record and hand off",
-		)
-		assertEquals(1, calls.waits, "the wait must have been asked exactly once")
-	}
-
-	@Test
-	fun `a failed input-processing wait latches the session to vanilla fallback`() {
-		val calls = RecordingNative(waitResult = FAIL)
-		val policy = FgSurfacePolicy()
-		val harness = harness(calls, policy)
-
-		policy.setFrameGenerationActive(true)
-
-		assertNull(
-			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS),
-			"a genuine wait failure must degrade the frame to the vanilla main target",
-		)
-		assertEquals(DlssSessionState.FALLBACK_LATCHED, harness.session.state)
-		assertEquals(DlssNativeStage.WAIT_FG_INPUTS, harness.session.failure?.stage)
-		assertEquals(
-			FAIL,
-			harness.session.failure?.resultCode,
-			"the latched failure must carry the native result the wait answered",
-		)
 	}
 
 	@Test
@@ -527,9 +457,6 @@ class FgPresentLifetimeTest {
 
 		/** The engine's output-sized main target image the frame's SR output copy records into. */
 		const val DESTINATION = 900L
-
-		/** NVSDK_NGX_Result_Fail = 0xBAD00000 | 1. */
-		const val FAIL = 0xBAD00001.toInt()
 
 		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
 		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
