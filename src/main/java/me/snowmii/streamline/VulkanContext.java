@@ -68,6 +68,9 @@ public final class VulkanContext {
 			throw new IllegalArgumentException("Vulkan graphics queue handle must be non-zero");
 		}
 		Objects.requireNonNull(commandBufferSource, "command buffer source must be provided");
+		// Kotlin's non-null function parameter was enforced by the compiler at the factory
+		// boundary; Java needs the explicit guard to keep the guarantee.
+		Objects.requireNonNull(commandBufferSink, "command buffer sink must be provided");
 		this.instanceHandle = instanceHandle;
 		this.physicalDeviceHandle = physicalDeviceHandle;
 		this.deviceHandle = deviceHandle;

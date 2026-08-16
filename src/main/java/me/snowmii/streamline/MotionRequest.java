@@ -50,4 +50,17 @@ public record MotionRequest(
 		result = 31 * result + Objects.hashCode(renderDimensions);
 		return result;
 	}
+
+	/** Kotlin's all-defaults construction: zero command buffer, zeroed binding, fresh 16 reprojection floats, null dimensions. */
+	public MotionRequest() {
+		this(0L, new ImageBinding(0L, 0L, 0), new float[16], null);
+	}
+
+	/**
+	 * Kotlin's trailing-default form: dimensions left null for the adapter to stamp. Each
+	 * construction still gets a fresh reprojection array, as the Kotlin default did.
+	 */
+	public MotionRequest(long commandBuffer, ImageBinding depth, float[] reprojection) {
+		this(commandBuffer, depth, reprojection, null);
+	}
 }

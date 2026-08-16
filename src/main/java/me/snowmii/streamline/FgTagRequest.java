@@ -35,4 +35,9 @@ public record FgTagRequest(
 		Objects.requireNonNull(hudless, "hudless");
 		Objects.requireNonNull(ui, "ui");
 	}
+
+	/** Kotlin's all-defaults construction: zero command buffer and zeroed bindings. */
+	public FgTagRequest() {
+		this(0L, new ImageBinding(0L, 0L, 0), new ImageBinding(0L, 0L, 0), new ImageBinding(0L, 0L, 0));
+	}
 }

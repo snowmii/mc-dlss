@@ -28,4 +28,9 @@ public record SrTagRequest(
 		Objects.requireNonNull(color, "color");
 		Objects.requireNonNull(depth, "depth");
 	}
+
+	/** Kotlin's all-defaults construction: zero command buffer and zeroed bindings. */
+	public SrTagRequest() {
+		this(0L, new ImageBinding(0L, 0L, 0), new ImageBinding(0L, 0L, 0));
+	}
 }

@@ -71,4 +71,21 @@ public record FillVelocityRequest(
 		result = 31 * result + Objects.hashCode(renderDimensions);
 		return result;
 	}
+
+	/**
+	 * Kotlin's all-defaults construction: zero command buffer, zeroed bindings, fresh 16
+	 * reprojection floats, no reset, null dimensions.
+	 */
+	public FillVelocityRequest() {
+		this(0L, new ImageBinding(0L, 0L, 0), new ImageBinding(0L, 0L, 0), new float[16], false, null);
+	}
+
+	/**
+	 * Kotlin's trailing-default form: dimensions and reset left null/false for the adapter
+	 * to stamp. Each construction still gets a fresh reprojection array, as the Kotlin
+	 * default did.
+	 */
+	public FillVelocityRequest(long commandBuffer, ImageBinding depth, ImageBinding velocity, float[] reprojection, boolean reset) {
+		this(commandBuffer, depth, velocity, reprojection, reset, null);
+	}
 }
