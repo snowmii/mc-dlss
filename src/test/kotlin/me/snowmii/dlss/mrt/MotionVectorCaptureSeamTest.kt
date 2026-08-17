@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
 /**
- * M-6's capture seam: the visible-entity extraction pass feeds each entity's interpolated render
+ * Entity capture seam: the visible-entity extraction pass feeds each entity's interpolated render
  * position into the frame-boundary object-motion history the dynamic velocity writers will read.
  *
  * Minecraft 26.2 extracts entities in `GameRenderer.extract` -> `LevelExtractor.extract` ->
@@ -40,13 +40,13 @@ class MotionVectorCaptureSeamTest {
 		// open phase the way pipeline observation does - the captures have to land before open.
 		phase.captureEntity(7, 10.0, 64.0, 5.0)
 		phase.captureEntity(9, -3.5, 72.25, 11.125)
-		assertNull(runtime.objectMotion.previous(7), "nothing is a predecessor before the frame boundary")
+		assertNull(runtime.objectMotion.previousPosition(7), "nothing is a predecessor before the frame boundary")
 
 		renderDlssFrame(phase)
 
 		// The exact doubles the extraction produced, keyed by each entity's own stable id.
-		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previous(7))
-		assertEquals(position(-3.5, 72.25, 11.125), runtime.objectMotion.previous(9))
+		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previousPosition(7))
+		assertEquals(position(-3.5, 72.25, 11.125), runtime.objectMotion.previousPosition(9))
 	}
 
 	@Test
@@ -56,26 +56,26 @@ class MotionVectorCaptureSeamTest {
 
 		phase.captureEntity(7, 10.0, 64.0, 5.0)
 		renderDlssFrame(phase)
-		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previous(7))
+		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previousPosition(7))
 
 		// Second frame: the published frame is the predecessor the draw path composes from, and
 		// it stays readable while the phase is open - between capture and publish.
 		phase.captureEntity(7, 10.5, 64.0, 5.0)
-		assertEquals(Vector3f(0.5f, 0f, 0f), runtime.objectMotion.displacement(7))
+		assertEquals(Vector3f(0.5f, 0f, 0f), runtime.objectMotion.objectDisplacement(7))
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		assertEquals(
 			Vector3f(0.5f, 0f, 0f),
-			runtime.objectMotion.displacement(7),
+			runtime.objectMotion.objectDisplacement(7),
 			"the draw path reads this frame's displacement while the phase is open",
 		)
 		phase.end()
-		assertEquals(position(10.5, 64.0, 5.0), runtime.objectMotion.previous(7))
-		assertNull(runtime.objectMotion.displacement(7), "the in-flight set is empty between frames")
+		assertEquals(position(10.5, 64.0, 5.0), runtime.objectMotion.previousPosition(7))
+		assertNull(runtime.objectMotion.objectDisplacement(7), "the in-flight set is empty between frames")
 
 		// A re-entrant end is a no-op, so the frame cannot publish twice.
 		phase.end()
-		assertEquals(position(10.5, 64.0, 5.0), runtime.objectMotion.previous(7))
+		assertEquals(position(10.5, 64.0, 5.0), runtime.objectMotion.previousPosition(7))
 	}
 
 	@Test
@@ -86,8 +86,8 @@ class MotionVectorCaptureSeamTest {
 		phase.captureEntity(7, 10.0, 64.0, 5.0)
 		renderDlssFrame(phase)
 
-		assertNull(runtime.objectMotion.previous(7), "an uncomposed frame cannot become a predecessor")
-		assertNull(runtime.objectMotion.displacement(7))
+		assertNull(runtime.objectMotion.previousPosition(7), "an uncomposed frame cannot become a predecessor")
+		assertNull(runtime.objectMotion.objectDisplacement(7))
 	}
 
 	@Test
@@ -106,7 +106,7 @@ class MotionVectorCaptureSeamTest {
 		phase.end()
 
 		assertEquals(0, evaluations)
-		assertNull(runtime.objectMotion.previous(7), "a skipped evaluation cannot publish captures")
+		assertNull(runtime.objectMotion.previousPosition(7), "a skipped evaluation cannot publish captures")
 	}
 
 	@Test
@@ -120,8 +120,8 @@ class MotionVectorCaptureSeamTest {
 		assertThrows(IllegalStateException::class.java) { phase.end() }
 
 		assertFalse(phase.isOpen)
-		assertNull(runtime.objectMotion.previous(7), "a throwing evaluation cannot publish captures")
-		assertNull(runtime.objectMotion.displacement(7))
+		assertNull(runtime.objectMotion.previousPosition(7), "a throwing evaluation cannot publish captures")
+		assertNull(runtime.objectMotion.objectDisplacement(7))
 	}
 
 	@Test
@@ -131,7 +131,7 @@ class MotionVectorCaptureSeamTest {
 
 		phase.captureEntity(7, 10.0, 64.0, 5.0)
 		renderDlssFrame(phase)
-		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previous(7))
+		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previousPosition(7))
 
 		// A vanilla frame (unsupported frame, panorama) breaks the accumulated history exactly
 		// where the camera sequences break, so nothing survives into the next DLSS frame.
@@ -140,8 +140,8 @@ class MotionVectorCaptureSeamTest {
 		phase.begin(normalInWorldFrame = false, mainTarget = mainTarget)
 		phase.end()
 
-		assertNull(runtime.objectMotion.previous(7), "a vanilla frame must not retain the object history")
-		assertNull(runtime.objectMotion.displacement(7))
+		assertNull(runtime.objectMotion.previousPosition(7), "a vanilla frame must not retain the object history")
+		assertNull(runtime.objectMotion.objectDisplacement(7))
 	}
 
 	@Test
@@ -156,8 +156,8 @@ class MotionVectorCaptureSeamTest {
 		// prepare drops the abandoned phase and breaks the history it would otherwise leave.
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
 
-		assertNull(runtime.objectMotion.previous(7))
-		assertNull(runtime.objectMotion.displacement(7))
+		assertNull(runtime.objectMotion.previousPosition(7))
+		assertNull(runtime.objectMotion.objectDisplacement(7))
 	}
 
 	@Test
@@ -167,14 +167,14 @@ class MotionVectorCaptureSeamTest {
 
 		phase.captureEntity(7, 10.0, 64.0, 5.0)
 		renderDlssFrame(phase)
-		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previous(7))
+		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previousPosition(7))
 
 		// setLevel / clearClientLevel: the scene is replaced, so the accumulated poses describe
 		// a world that is gone and a reused entity id must not reproject against it.
 		phase.resetHistory()
 
-		assertNull(runtime.objectMotion.previous(7))
-		assertNull(runtime.objectMotion.displacement(7))
+		assertNull(runtime.objectMotion.previousPosition(7))
+		assertNull(runtime.objectMotion.objectDisplacement(7))
 	}
 
 	@Test
@@ -184,14 +184,14 @@ class MotionVectorCaptureSeamTest {
 
 		phase.captureEntity(7, 10.0, 64.0, 5.0)
 		renderDlssFrame(phase)
-		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previous(7))
+		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previousPosition(7))
 
 		// Switching DLSS off releases the held targets and breaks the history: the frames that
 		// come back are not continuous with the ones that stopped.
-		runtime.setEnabled(false)
+		runtime.setDlssEnabled(false)
 
-		assertNull(runtime.objectMotion.previous(7), "a released runtime must not retain the object history")
-		assertNull(runtime.objectMotion.displacement(7))
+		assertNull(runtime.objectMotion.previousPosition(7), "a released runtime must not retain the object history")
+		assertNull(runtime.objectMotion.objectDisplacement(7))
 	}
 
 	@Test
@@ -201,12 +201,12 @@ class MotionVectorCaptureSeamTest {
 
 		phase.captureEntity(7, 10.0, 64.0, 5.0)
 		renderDlssFrame(phase)
-		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previous(7))
+		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previousPosition(7))
 
 		phase.close()
 
-		assertNull(runtime.objectMotion.previous(7), "a closed runtime must not retain the object history")
-		assertNull(runtime.objectMotion.displacement(7))
+		assertNull(runtime.objectMotion.previousPosition(7), "a closed runtime must not retain the object history")
+		assertNull(runtime.objectMotion.objectDisplacement(7))
 	}
 
 	@Test
@@ -219,8 +219,8 @@ class MotionVectorCaptureSeamTest {
 
 		renderDlssFrame(phase)
 
-		assertNull(runtime.objectMotion.previous(7))
-		assertNull(runtime.objectMotion.displacement(7))
+		assertNull(runtime.objectMotion.previousPosition(7))
+		assertNull(runtime.objectMotion.objectDisplacement(7))
 	}
 
 	private fun worldPhase(runtime: RenderRuntime, evaluate: () -> Boolean = { true }) = WorldPhase(

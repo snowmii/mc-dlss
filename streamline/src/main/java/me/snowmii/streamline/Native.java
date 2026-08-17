@@ -250,7 +250,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private static final VarHandle FG_TAG_UI_IMAGE = field(FG_TAG_LAYOUT, "ui", "image");
 	private static final VarHandle FG_TAG_UI_FORMAT = field(FG_TAG_LAYOUT, "ui", "format");
 
-	private final Arena arena;
+	private final Arena nativeArena;
 	private final MethodHandle bootstrapStreamline;
 	private final MethodHandle activateVulkanProxies;
 	private final MethodHandle queryInstanceExtension;
@@ -272,7 +272,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle queryFgImages;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
-	private final MethodHandle configure;
+	private final MethodHandle configureSuperResolution;
 	private final MethodHandle configureFg;
 	private final MethodHandle setFgMode;
 	private final MethodHandle setFgMultiplier;
@@ -281,10 +281,10 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle releaseImages;
 	private final MethodHandle waitDeviceIdle;
 	private final MethodHandle queryFrameTimings;
-	/** Per-frame reprojection staging, owned by {@link #arena} so no call allocates one. */
+	/** Per-frame reprojection staging, owned by {@link #nativeArena} so no call allocates one. */
 	private final MemorySegment reprojectionScratch;
 	/**
-	 * Per-frame request staging, owned by {@link #arena} for the same reason as the
+	 * Per-frame request staging, owned by {@link #nativeArena} for the same reason as the
 	 * reprojection: these are written and read once per frame on the render thread, so the
 	 * struct lives in one segment rather than a confined Arena allocated per call.
 	 */
@@ -297,7 +297,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private final MethodHandle writeMotion;
 	private final MethodHandle fillVelocity;
 	private final MethodHandle presentOutput;
-	private final MethodHandle evaluate;
+	private final MethodHandle evaluateSuperResolution;
 	private final MethodHandle tagSrResources;
 	private final MethodHandle tagFgResources;
 	private final MethodHandle presentHandoff;
@@ -310,7 +310,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	private boolean closed;
 
 	private Native(final Arena arena, final SymbolLookup lookup) {
-		this.arena = arena;
+		this.nativeArena = arena;
 		this.bootstrapStreamline = bindOptional(
 			lookup,
 			"mc_dlss_bootstrap_streamline",
@@ -379,7 +379,7 @@ public final class Native implements AutoCloseable, NativeApi {
 			)
 		);
 		// Optional like queryPresentMarkers: the ABI-probe DLL does not export the PCL window
-		// hook or M-12 marker entries, while real builds carry them.
+		// hook or marker entries, while real builds carry them.
 		this.installPclWindow = bindOptional(
 			lookup,
 			"mc_dlss_install_pcl_window",
@@ -415,7 +415,7 @@ public final class Native implements AutoCloseable, NativeApi {
 			"mc_dlss_query_optimal_dimensions",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
-		this.configure = bind(
+		this.configureSuperResolution = bind(
 			lookup,
 			"mc_dlss_configure",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT)
@@ -487,7 +487,7 @@ public final class Native implements AutoCloseable, NativeApi {
 			"mc_dlss_present_output",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssPresentInfo*
 		);
-		this.evaluate = bind(
+		this.evaluateSuperResolution = bind(
 			lookup,
 			"mc_dlss_evaluate",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssEvaluateInfo*
@@ -924,7 +924,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
-	public int configure(
+	public int configureSuperResolution(
 		final int outputWidth,
 		final int outputHeight,
 		final int renderWidth,
@@ -933,7 +933,7 @@ public final class Native implements AutoCloseable, NativeApi {
 		final int renderPreset
 	) {
 		try {
-			return (int)this.configure.invokeExact(
+			return (int)this.configureSuperResolution.invokeExact(
 				outputWidth,
 				outputHeight,
 				renderWidth,
@@ -1152,7 +1152,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
-	public int evaluate(final EvaluationRequest request) {
+	public int evaluateSuperResolution(final EvaluationRequest request) {
 		final Dimensions render = requireDimensions(request.renderDimensions(), "evaluate");
 		// The camera's six arrays are fixed-length fields of the ABI struct: an array of any
 		// other length would either read past its field or leave the field's tail holding the
@@ -1203,7 +1203,7 @@ public final class Native implements AutoCloseable, NativeApi {
 				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("fov_radians"), camera.fovRadians());
 				info.set(JAVA_FLOAT, evaluateCameraScalarOffset("aspect_ratio"), camera.aspectRatio());
 			}
-			return (int)this.evaluate.invokeExact(info);
+			return (int)this.evaluateSuperResolution.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("evaluate", error);
 		}
@@ -1234,7 +1234,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
-	public int tagFgResources(final FgTagRequest request) {
+	public int tagFrameGenerationResources(final FgTagRequest request) {
 		if (tagFgResources == null) throw new NativeException("tag-fg-resources", new IllegalStateException("Native bridge lacks FG tag"));
 		try {
 			final MemorySegment info = this.fgTagScratch;
@@ -1262,7 +1262,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
-	public int presentHandoff() {
+	public int recordPresentHandoff() {
 		if (presentHandoff == null) throw new NativeException("present-handoff", new IllegalStateException("Native bridge lacks present handoff"));
 		try {
 			return (int)this.presentHandoff.invokeExact();
@@ -1316,8 +1316,8 @@ public final class Native implements AutoCloseable, NativeApi {
 			return new FgState(
 				status.get(JAVA_INT, 0),
 				numFramesPresented.get(JAVA_INT, 0),
-				(long)fenceValue.get(JAVA_LONG, 0),
-				(long)fence.get(JAVA_LONG, 0)
+				fenceValue.get(JAVA_LONG, 0),
+				fence.get(JAVA_LONG, 0)
 			);
 		} catch (NativeException error) {
 			throw error;
@@ -1430,7 +1430,7 @@ public final class Native implements AutoCloseable, NativeApi {
 		return values;
 	}
 
-	public int reset() {
+	public int resetSuperResolutionHistory() {
 		try {
 			return (int)this.reset.invokeExact();
 		} catch (Throwable error) {
@@ -1451,7 +1451,7 @@ public final class Native implements AutoCloseable, NativeApi {
 				throw new NativeException("close", result);
 			}
 			this.closed = true;
-			this.arena.close();
+			this.nativeArena.close();
 		} catch (NativeException error) {
 			throw error;
 		} catch (Throwable error) {

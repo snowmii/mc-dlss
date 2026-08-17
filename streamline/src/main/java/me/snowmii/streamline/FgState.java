@@ -4,7 +4,7 @@ package me.snowmii.streamline;
  * One snapshot of Streamline's live DLSS-G state, read through {@code slDLSSGGetState} by
  * {@code mc_dlss_query_fg_state}.
  *
- * <p>The present-generation proof reads this to observe the interposed
+ * <p>The present-generation integration reads this to observe the interposed
  * {@code vkQueuePresentKHR} path working: {@code status} is the raw {@code DLSSGStatus} word
  * (zero is {@code eDLSSGStatusOk}, every failure is its own bit), {@code numFramesPresented}
  * is the number of actual presentations per app frame ({@code 2} means one real plus one

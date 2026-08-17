@@ -1,12 +1,12 @@
 package me.snowmii.dlss.bridge
-import me.snowmii.streamline.CameraConstants;
-import me.snowmii.streamline.Dimensions;
-import me.snowmii.streamline.EvaluationImages;
-import me.snowmii.streamline.EvaluationRequest;
-import me.snowmii.streamline.FillVelocityRequest;
-import me.snowmii.streamline.ImageBinding;
-import me.snowmii.streamline.MotionRequest;
-import me.snowmii.streamline.PresentTarget;
+import me.snowmii.streamline.CameraConstants
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.EvaluationImages
+import me.snowmii.streamline.EvaluationRequest
+import me.snowmii.streamline.FillVelocityRequest
+import me.snowmii.streamline.ImageBinding
+import me.snowmii.streamline.MotionRequest
+import me.snowmii.streamline.PresentTarget
 
 import me.snowmii.streamline.Vec2
 import me.snowmii.streamline.Native
@@ -69,18 +69,18 @@ class DlssResourceAbiTest {
 		// padding declaration, a transposed pair, a field of the wrong width - reads back as a
 		// value the probe rejects rather than as a silently wrong frame.
 		Native.open(compileAbiProbe()).use { native ->
-			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluate(request))
+			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluateSuperResolution(request))
 			// The camera's six arrays are fixed-length ABI fields: a malformed array is a
 			// caller bug the boundary must refuse before any byte of the reused scratch is
 			// written - a shorter array would leave the field's tail holding the previous
 			// frame's floats, and a longer one would write past the field.
 			malformedCameras().forEach { malformed ->
 				assertThrows(IllegalArgumentException::class.java) {
-					native.evaluate(request().renderDimensions(Dimensions(1280, 720)).camera(malformed).build())
+					native.evaluateSuperResolution(request().renderDimensions(Dimensions(1280, 720)).camera(malformed).build())
 				}
 			}
 			// The refusals left the scratch intact: a valid camera still crosses unchanged.
-			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluate(request))
+			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluateSuperResolution(request))
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				native.writeMotion(
@@ -249,8 +249,11 @@ class DlssResourceAbiTest {
 			}
 		""".trimIndent())
 
+		val programFiles = requireNotNull(System.getenv("ProgramFiles(x86)")) {
+			"ProgramFiles(x86) environment variable is required"
+		}
 		val vsDevCmd = Path.of(
-			System.getenv("ProgramFiles(x86)") ?: "C:\\Program Files (x86)",
+			programFiles,
 			"Microsoft Visual Studio", "2022", "BuildTools", "Common7", "Tools", "VsDevCmd.bat",
 		)
 		assertTrue(Files.isRegularFile(vsDevCmd), "Visual Studio Build Tools missing: $vsDevCmd")

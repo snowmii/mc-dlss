@@ -361,7 +361,7 @@ int32_t create_dispatch_pass(DlssMotionPass& pass, const uint32_t* spirv, const 
 
 void destroy_motion_pass() noexcept {
     // One shutdown stall covers both live passes before either is destroyed: each pass has
-    // been dispatched from, and the slice boundary admits no second device-idle wait. A
+    // been dispatched from, and the shutdown path admits no second device-idle wait. A
     // half-built pass never reaches here - the create path cleans it up itself - but the
     // pipeline checks keep a session that never built one of the two from stalling for it.
     if (g_state.device != VK_NULL_HANDLE &&

@@ -1,4 +1,5 @@
 package me.snowmii.dlss.session
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.Dimensions
@@ -171,7 +172,7 @@ class DlssSessionTest {
 		private val evaluateResult: Int = 1,
 		private val acquireImagesResult: Int? = null,
 		private val releaseImagesResult: Int = 1,
-	) : NativeApi {
+	) : NativeApiTestDouble() {
 		var initializeCalls = 0
 		var queryCalls = 0
 		var configureCalls = 0
@@ -202,7 +203,7 @@ class DlssSessionTest {
 			return Dimensions(1280, 720)
 		}
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -244,7 +245,7 @@ class DlssSessionTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun evaluate(request: EvaluationRequest): Int {
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			evaluateCalls++
 			lastEvaluation = request
 			return evaluateResult

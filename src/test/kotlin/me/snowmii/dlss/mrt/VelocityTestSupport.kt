@@ -48,7 +48,7 @@ internal fun velocityShaderSource(name: String): String =
 internal val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 internal val RENDER_DIMENSIONS = Dimensions(1707, 960)
 
-internal fun fakeMainTarget(): FakeTarget = FakeTarget(OUTPUT_DIMENSIONS.width, OUTPUT_DIMENSIONS.height)
+internal fun fakeMainTarget(): HeadlessRenderTarget = HeadlessRenderTarget(OUTPUT_DIMENSIONS.width, OUTPUT_DIMENSIONS.height)
 
 internal fun startupConfig(enabled: Boolean = true) = DlssStartupConfig(
 	enabled = enabled,
@@ -85,10 +85,10 @@ internal fun velocityRuntime(withVelocity: Boolean = true, enabled: Boolean = tr
 	return RenderRuntime(
 		session = session,
 		sceneTarget = SceneTarget(
-			allocate = { width, height -> FakeTarget(width, height) },
-			release = { (it as FakeTarget).releases++ },
+			allocate = { width, height -> HeadlessRenderTarget(width, height) },
+			release = { (it as HeadlessRenderTarget).releases++ },
 			allocateVelocity = if (withVelocity) {
-				{ width, height -> FakeTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) }
+				{ width, height -> HeadlessRenderTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) }
 			} else {
 				{ _, _ -> null }
 			},
@@ -97,7 +97,7 @@ internal fun velocityRuntime(withVelocity: Boolean = true, enabled: Boolean = tr
 	)
 }
 
-internal fun worldPhase(runtime: RenderRuntime, evaluate: Boolean = true) = WorldPhase(
+internal fun velocityWorldPhase(runtime: RenderRuntime, evaluate: Boolean = true) = WorldPhase(
 	runtime = runtime,
 	present = { _, _ -> },
 	onWorldTargetChanged = {},
@@ -113,12 +113,12 @@ internal fun renderFrame(phase: WorldPhase, target: RenderTarget) {
 
 /** The DLSS motion-vector payload target: unblended RG16_FLOAT with every channel writable. */
 internal fun assertVelocityTarget(target: ColorTargetState) {
-	assertTrue(target.blendFunction().isEmpty(), "the velocity payload is never blended")
+	assertTrue(target.blendFunction().isEmpty, "the velocity payload is never blended")
 	assertEquals(GpuFormat.RG16_FLOAT, target.format())
 	assertEquals(ColorTargetState.WRITE_ALL, target.writeMask())
 }
 
-internal class FakeTarget(
+internal class HeadlessRenderTarget(
 	width: Int,
 	height: Int,
 	format: GpuFormat = GpuFormat.RGBA8_UNORM,

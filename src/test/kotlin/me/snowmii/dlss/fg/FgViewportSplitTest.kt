@@ -21,23 +21,25 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.joml.Matrix4f
 import org.lwjgl.vulkan.VK10
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
- * M-11.5 FG viewport split rung: every FG-side options, state, tag, and constants record
+ * Verifies that every FG-side options, state, tag, and constants record
  * names one FG-only Streamline viewport while SR records stay on viewport 0, and a composed
  * frame's FG constants are observable independently of the SR record under the shared frame
  * token.
  *
- * The split is the required precursor to the y-orientation fix: only after the FG side owns
- * a viewport of its own can a later slice flip its images/matrices without touching what SR
- * reads. This rung proves the split through behavior: the FG constants oracle answers only
+ * The FG side needs its own viewport so image and matrix orientation changes cannot affect SR.
+ * This test proves the split through behavior: the FG constants oracle answers only
  * for composed frames - an SR-only evaluation establishes the SR record and never the FG
  * one - and the composed frame's two constants records keep the retained frame token the
  * tags obtained, which the handoff acceptance and the SR/FG tag index equality make
  * observable.
  *
- * Like the other live FG rungs the scenario runs in ONE test method (one test fork): the
- * close-path slShutdown is what makes the fork's exit clean.
+ * The device-backed scenario stays in one test method so shutdown runs while the fixture
+ * device is alive and the fork exits cleanly.
  */
 @NativeBridge
 class FgViewportSplitTest {
@@ -108,7 +110,7 @@ class FgViewportSplitTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -195,7 +197,7 @@ class FgViewportSplitTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.evaluate(
+					bridge.evaluateSuperResolution(
 						EvaluationRequest.builder()
 							.commandBuffer(srOnlyFrame.address())
 							.color(ImageBinding(
@@ -231,7 +233,7 @@ class FgViewportSplitTest {
 				val composedFrame = fixture.allocateAndBeginCommandBuffer()
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							composedFrame.address(),
 							ImageBinding(
@@ -274,7 +276,7 @@ class FgViewportSplitTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.evaluate(
+					bridge.evaluateSuperResolution(
 						EvaluationRequest.builder()
 							.commandBuffer(composedFrame.address())
 							.color(ImageBinding(
@@ -352,13 +354,13 @@ class FgViewportSplitTest {
 				// index, and the token survives the constants records into the handoff.
 				val indexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					indexes.srFrameIndex,
-					indexes.fgFrameIndex,
+					indexes.lastSrTagFrameIndex,
+					indexes.lastFgTagFrameIndex,
 					"the FG constants record must keep the frame token the tags share",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the handoff must still find the retained token after both constants records",
 				)
 				assertEquals(
@@ -417,7 +419,7 @@ class FgViewportSplitTest {
 
 	/**
 	 * Reads the SR constants oracle through the ABI, answering null for the
-	 * FAIL_NotInitialized refusal - the state every pre-evaluation checkpoint asserts.
+	 * FAIL_NotInitialized refusal - the state every pre-evaluation state asserts.
 	 */
 	private fun Native.srCameraConstantsOrNull(): CameraConstants? = try {
 		queryCameraConstants()
@@ -550,7 +552,7 @@ class FgViewportSplitTest {
 		for (r in 0 until 4) {
 			for (c in 0 until 4) {
 				val expected = if (r == c) 1f else 0f
-				if (Math.abs(this[r * 4 + c] - expected) > 1e-3f) {
+				if (abs(this[r * 4 + c] - expected) > 1e-3f) {
 					return false
 				}
 			}
@@ -588,8 +590,8 @@ class FgViewportSplitTest {
 		val TEST_CAMERA: CameraConstants = run {
 			val yaw = Math.toRadians(37.0)
 			val pitch = Math.toRadians(12.0)
-			val (sinY, cosY) = Math.sin(yaw) to Math.cos(yaw)
-			val (sinP, cosP) = Math.sin(pitch) to Math.cos(pitch)
+			val (sinY, cosY) = sin(yaw) to cos(yaw)
+			val (sinP, cosP) = sin(pitch) to cos(pitch)
 			val fwd = floatArrayOf(
 				(-sinY * cosP).toFloat(),
 				(-sinP).toFloat(),

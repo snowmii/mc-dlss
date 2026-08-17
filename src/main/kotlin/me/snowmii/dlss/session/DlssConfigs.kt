@@ -39,9 +39,8 @@ data class DlssStartupConfig(
  *
  * NGX picks a preset for every mode whether or not one is asked for, and which one it picks moves
  * with the DLL and with driver-side overrides. A session that never names a preset therefore
- * cannot say afterwards which model produced its frames, which is exactly what the acceptance
- * record has to state. So the preset is always written, and the mode's documented default is what
- * it is written to unless the reviewer asks for another.
+ * cannot report which model produced its frames. The preset is always written, using the mode's
+ * documented default unless the user selects another.
  *
  * Only the presets SDK 310.7.0 documents as usable are here. A through D were removed from the
  * SDK, E and F are deprecated, and G through I and N and O revert to default behaviour, so none of

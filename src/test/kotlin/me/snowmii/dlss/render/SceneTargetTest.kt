@@ -18,21 +18,21 @@ class SceneTargetTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1707, 960)
 
-	private val allocated = mutableListOf<FakeTarget>()
-	private val released = mutableListOf<FakeTarget>()
+	private val allocated = mutableListOf<HeadlessRenderTarget>()
+	private val released = mutableListOf<HeadlessRenderTarget>()
 
 	private fun sceneTarget() = SceneTarget(
-		allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
-		release = { released += it as FakeTarget },
+		allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
+		release = { released += it as HeadlessRenderTarget },
 	)
 
 	private fun sceneTargetWithVelocity() = SceneTarget(
-		allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
-		release = { released += it as FakeTarget },
-		allocateVelocity = { width, height -> FakeTarget(width, height).also(velocityAllocated::add) },
+		allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
+		release = { released += it as HeadlessRenderTarget },
+		allocateVelocity = { width, height -> HeadlessRenderTarget(width, height).also(velocityAllocated::add) },
 	)
 
-	private val velocityAllocated = mutableListOf<FakeTarget>()
+	private val velocityAllocated = mutableListOf<HeadlessRenderTarget>()
 
 	@Test
 	fun `changed render dimensions release the old target before allocating the new one`() {
@@ -127,8 +127,8 @@ class SceneTargetTest {
 	@Test
 	fun `velocity allocation failure releases the scene target exactly once and leaves nothing held`() {
 		val scene = SceneTarget(
-			allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
-			release = { released += it as FakeTarget },
+			allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
+			release = { released += it as HeadlessRenderTarget },
 			allocateVelocity = { _, _ -> error("velocity allocation failed") },
 		)
 
@@ -146,13 +146,13 @@ class SceneTargetTest {
 	fun `a failed velocity allocation publishes no partial state for the next acquire`() {
 		var failVelocity = true
 		val scene = SceneTarget(
-			allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
-			release = { released += it as FakeTarget },
+			allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
+			release = { released += it as HeadlessRenderTarget },
 			allocateVelocity = { width, height ->
 				if (failVelocity) {
 					error("velocity allocation failed")
 				}
-				FakeTarget(width, height).also(velocityAllocated::add)
+				HeadlessRenderTarget(width, height).also(velocityAllocated::add)
 			},
 		)
 		assertThrows(IllegalStateException::class.java) { scene.acquire(dlssRoute()) }
@@ -170,7 +170,7 @@ class SceneTargetTest {
 
 	@Test
 	fun `vanilla main target is never resized or released by scene routing`() {
-		val mainTarget = FakeTarget(output.width, output.height)
+		val mainTarget = HeadlessRenderTarget(output.width, output.height)
 		val scene = sceneTarget()
 
 		scene.acquire(dlssRoute())
@@ -196,8 +196,7 @@ class SceneTargetTest {
 		mainTargetDimensions = output,
 	)
 
-	/** Render target with no GPU buffers, so scene-target lifetime is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height

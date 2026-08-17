@@ -1,93 +1,37 @@
 package me.snowmii.dlss.fg
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
-import java.nio.file.Path
-import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.EvaluationImages
-import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.ExtensionBootstrap
-import me.snowmii.streamline.FgState
-import me.snowmii.streamline.FgTagRequest
-import me.snowmii.streamline.FillVelocityRequest
-import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.Native
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.PresentTarget
-import me.snowmii.streamline.SrTagRequest
-import me.snowmii.streamline.VulkanContext
-import me.snowmii.dlss.client.RuntimeControls
-import me.snowmii.dlss.mrt.MotionVectorRoute
-import me.snowmii.dlss.render.DlssCameraSample
-import me.snowmii.dlss.render.DlssFrameMotion
-import me.snowmii.dlss.render.DlssJitter
-import me.snowmii.dlss.render.DlssJitterOffset
-import me.snowmii.dlss.render.FgFrameInputs
-import me.snowmii.dlss.render.FrameEvaluation
-import me.snowmii.dlss.render.RenderRuntime
-import me.snowmii.dlss.render.SceneResources
-import me.snowmii.dlss.render.SceneTarget
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssSessionState
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.LifecycleAdapter
-import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.sl.SrLiveSession
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.dlss.NativeBridge
+import me.snowmii.dlss.bridge.HeadlessVulkanFixture
+import me.snowmii.dlss.client.RuntimeControls
+import me.snowmii.dlss.mrt.MotionVectorRoute
+import me.snowmii.dlss.render.*
+import me.snowmii.dlss.session.*
+import me.snowmii.dlss.sl.SrLiveSession
+import me.snowmii.streamline.*
 import org.joml.Matrix4f
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VkCommandBuffer
+import java.nio.file.Path
 
 /**
- * M-13 rung: the status-driven FG-off suspension, the user-toggle disable path, and the
- * frame-support suspension.
+ * Verifies status-driven FG suspension, user toggles, and frame-support gating.
  *
- * While FG is active, any status other than eDLSSGStatusOk (word zero) in the live
- * `slDLSSGGetState` read suspends composition: the surface policy's frame-support axis turns
- * the effective mode off, the DLSS-G options are re-recorded in the eOff mode with retained
- * resources, the SR session stays READY - the fallback is SR-only, not vanilla - and one exact
- * diagnostic names the status word. The suspension is reversible by construction: the status
- * word is a bitmask about one frame, so the first healthy frame resumes and announces it.
- *
- * The user toggle rides the same seams: switching FG off through the controls restores the
- * policy reads and records the retained eOff options exactly once on the transition, leaves SR
- * READY and the split active, and stays re-armable.
- *
- * Frame support suspends the effective mode through the same retained eOff record without
- * touching the user's mode: FG composes only on supported in-world frames, an unsupported
- * frame (pause, loading, menu, panorama, resize, fullscreen transition) suspends exactly once
- * per transition, the frames in between compose SR-only, a supported frame resumes, and a
- * user-off policy stays off through the whole cycle.
- *
- * A level-change discontinuity resets the shared history: the first supported composed frame
- * afterwards records resetHistory through the shared evaluation seam and the next frame
- * accumulates normally, while FG stays on and the suspension and user-off precedence stay
- * intact.
- *
- * The M-11 and M-12 rungs already proved the native seams live (present handoff, input
- * wait, markers); this rung proves the wiring off the render thread through the production
- * seams: the runtime's per-frame poll, the policy's suspension and resume, the adapter's
- * non-latching eOff record, and the SR-only frame that follows - plus the native mode
- * record's live gates and eOff acceptance against the real Streamline session, the same live
- * proof shape as the M-9 options rung.
+ * An unhealthy `slDLSSGGetState` status switches composition to SR-only, records retained
+ * eOff options, and resumes on the first healthy frame. User-off mode remains reversible,
+ * unsupported client frames do not recreate the swapchain, and level changes reset shared history.
+ * The test drives the production seams off the render thread against a native double and a live
+ * Streamline session where required.
  */
 @NativeBridge
 class FgEnablementFallbackTest {
 
 	@Test
 	fun `the unsupported frame auto suspends FG and a supported frame resumes it`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val policy = FgSurfacePolicy()
 		var supported = true
 		val harness = harness(calls, policy, fgFrameSupported = { _, _ -> supported })
@@ -96,7 +40,7 @@ class FgEnablementFallbackTest {
 
 		// Arm FG through the controls and prove one supported frame composes it.
 		controls.toggleFrameGeneration()
-		assertTrue(policy.active, "the supported session starts with FG effective")
+		assertTrue(policy.effective, "the supported session starts with FG effective")
 		assertTrue(
 			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
 			"a supported frame must compose FG",
@@ -111,7 +55,7 @@ class FgEnablementFallbackTest {
 			"the suspended frame still routes to the scene target: SR stays on",
 		)
 		harness.runtime.endWorldPhase()
-		assertFalse(policy.active, "an unsupported frame suspends effective FG")
+		assertFalse(policy.effective, "an unsupported frame suspends effective FG")
 		assertEquals(1, calls.fgModeOffRecords, "the suspension records the retained eOff mode exactly once")
 		assertEquals(0, harness.probe.diagnostics.size, "a suspension is not a latch: no diagnostic")
 
@@ -147,7 +91,7 @@ class FgEnablementFallbackTest {
 		supported = true
 		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		harness.runtime.endWorldPhase()
-		assertTrue(policy.active, "a supported frame resumes effective FG")
+		assertTrue(policy.effective, "a supported frame resumes effective FG")
 		assertEquals(1, calls.fgModeOffRecords, "the resume records no mode")
 		assertTrue(
 			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
@@ -159,7 +103,7 @@ class FgEnablementFallbackTest {
 
 	@Test
 	fun `switching SR off suspends FG before the images its tags name are released`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
 		val announced = mutableListOf<String>()
@@ -176,7 +120,7 @@ class FgEnablementFallbackTest {
 		// so the mode has to be off before the release, not after it. Releasing with the mode
 		// still eOn is the VK_ERROR_DEVICE_LOST this ordering exists to prevent.
 		controls.toggleEnabled()
-		assertFalse(policy.active, "SR off suspends effective FG")
+		assertFalse(policy.effective, "SR off suspends effective FG")
 		assertEquals(1, calls.fgModeOffRecords, "the release records the retained eOff mode exactly once")
 		assertTrue(
 			calls.order.indexOf("setFgModeOff") < calls.order.indexOf("releaseImages"),
@@ -190,7 +134,7 @@ class FgEnablementFallbackTest {
 			"an SR-off frame routes vanilla",
 		)
 		harness.runtime.endWorldPhase()
-		assertFalse(policy.active, "an SR-off frame must not resume FG")
+		assertFalse(policy.effective, "an SR-off frame must not resume FG")
 		assertEquals(1, calls.fgModeOffRecords, "a suspension already in effect records nothing")
 
 		// SR back on: the user's FG mode was never touched, so the first supported frame
@@ -201,13 +145,13 @@ class FgEnablementFallbackTest {
 			"SR back on routes to the scene target again",
 		)
 		harness.runtime.endWorldPhase()
-		assertTrue(policy.active, "the first supported frame after SR returns resumes FG")
+		assertTrue(policy.effective, "the first supported frame after SR returns resumes FG")
 		assertEquals(1, calls.fgModeOffRecords, "the resume records no mode")
 	}
 
 	@Test
 	fun `the frame after a level change discontinuity composes FG with the shared reset flag recorded`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
 		val announced = mutableListOf<String>()
@@ -216,7 +160,7 @@ class FgEnablementFallbackTest {
 		// Arm FG through the controls and compose one supported frame, so the history starts
 		// fresh and the next one accumulates against it.
 		controls.toggleFrameGeneration()
-		assertTrue(policy.active, "the session starts with FG active")
+		assertTrue(policy.effective, "the session starts with FG active")
 		composeSupportedFrame(harness, stillCamera())
 		assertTrue(calls.evaluations[0].resetHistory, "the first frame of a session restarts history")
 
@@ -244,7 +188,7 @@ class FgEnablementFallbackTest {
 
 		// The discontinuity leaves every other precedence intact: FG stays on, nothing suspends
 		// or latches, nothing re-records the eOff mode, and the SR session stays READY.
-		assertTrue(policy.active, "a discontinuity is not a suspension: FG stays on")
+		assertTrue(policy.effective, "a discontinuity is not a suspension: FG stays on")
 		assertEquals(0, calls.fgModeOffRecords, "a discontinuity records no eOff mode")
 		assertEquals(0, harness.probe.diagnostics.size, "a discontinuity emits no diagnostic")
 		assertEquals(DlssSessionState.READY, harness.session.state, "the SR session stays READY")
@@ -292,7 +236,7 @@ class FgEnablementFallbackTest {
 	fun `unsupported frames never overturn a user-off policy and no condition is permanent`() {
 		// User-off precedence: with FG off, a suspension cycle records no mode and a resume
 		// does not re-arm.
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val policy = FgSurfacePolicy()
 		var supported = true
 		val harness = harness(calls, policy, fgFrameSupported = { _, _ -> supported })
@@ -303,13 +247,13 @@ class FgEnablementFallbackTest {
 		supported = true
 		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		harness.runtime.endWorldPhase()
-		assertFalse(policy.active, "a user-off policy stays off through suspend and resume")
+		assertFalse(policy.effective, "a user-off policy stays off through suspend and resume")
 		assertEquals(0, calls.fgModeOffRecords, "a suspended user-off policy records no mode")
 
 		// An unhealthy status suspends composition and nothing more: the status word reports
 		// conditions of the frame, and the policy's user mode and the swapchain it implies must
 		// survive them.
-		val unhealthyCalls = RecordingNative()
+		val unhealthyCalls = RecordingNativeApi()
 		val unhealthyPolicy = FgSurfacePolicy()
 		var unhealthySupported = true
 		val unhealthyHarness =
@@ -318,8 +262,8 @@ class FgEnablementFallbackTest {
 		unhealthyCalls.status = FgState(2, 1, 0L, 0L)
 		unhealthyHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		unhealthyHarness.runtime.endWorldPhase()
-		assertFalse(unhealthyPolicy.active, "an unhealthy status suspends composition")
-		assertTrue(unhealthyPolicy.armed, "the user's mode - and so the swapchain policy - survives it")
+		assertFalse(unhealthyPolicy.effective, "an unhealthy status suspends composition")
+		assertTrue(unhealthyPolicy.userEnabled, "the user's mode - and so the swapchain policy - survives it")
 		assertEquals(1, unhealthyCalls.fgModeOffRecords, "the suspension records the eOff mode once")
 
 		// Held: the status is still unhealthy, so nothing changes and nothing is recorded again.
@@ -334,7 +278,7 @@ class FgEnablementFallbackTest {
 		unhealthyCalls.status = FgState(0, 1, 0L, 0L)
 		unhealthyHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		unhealthyHarness.runtime.endWorldPhase()
-		assertTrue(unhealthyPolicy.active, "a healthy status resumes composition")
+		assertTrue(unhealthyPolicy.effective, "a healthy status resumes composition")
 		assertEquals(2, unhealthyHarness.probe.diagnostics.size, "the resume is reported once")
 
 		// A frame-support suspension still composes nothing while the status stays healthy, and
@@ -342,11 +286,11 @@ class FgEnablementFallbackTest {
 		unhealthySupported = false
 		unhealthyHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		unhealthyHarness.runtime.endWorldPhase()
-		assertFalse(unhealthyPolicy.active, "an unsupported frame suspends as it always did")
+		assertFalse(unhealthyPolicy.effective, "an unsupported frame suspends as it always did")
 		unhealthySupported = true
 		unhealthyHarness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		unhealthyHarness.runtime.endWorldPhase()
-		assertTrue(unhealthyPolicy.active, "and resumes")
+		assertTrue(unhealthyPolicy.effective, "and resumes")
 	}
 
 	@Test
@@ -432,7 +376,7 @@ class FgEnablementFallbackTest {
 
 	@Test
 	fun `a non-OK status suspends FG once with one exact diagnostic, keeps SR READY, and resumes`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
 
@@ -448,7 +392,7 @@ class FgEnablementFallbackTest {
 			"an OK-status FG frame must route to the scene target",
 		)
 		harness.runtime.endWorldPhase()
-		assertTrue(policy.active, "an OK status must not suspend FG")
+		assertTrue(policy.effective, "an OK status must not suspend FG")
 		assertEquals(0, harness.probe.diagnostics.size, "an OK status must emit no diagnostic")
 		assertEquals(0, calls.fgModeOffRecords, "an OK status must record no eOff options")
 
@@ -462,8 +406,8 @@ class FgEnablementFallbackTest {
 		)
 		harness.runtime.endWorldPhase()
 
-		assertFalse(policy.active, "a non-OK status must stop FG composing")
-		assertTrue(policy.armed, "the user's mode must survive it, and with it the swapchain policy")
+		assertFalse(policy.effective, "a non-OK status must stop FG composing")
+		assertTrue(policy.userEnabled, "the user's mode must survive it, and with it the swapchain policy")
 		assertEquals(1, calls.fgModeOffRecords, "the suspension must re-record the DLSS-G options in the eOff mode exactly once")
 		assertEquals(
 			listOf(
@@ -496,13 +440,13 @@ class FgEnablementFallbackTest {
 		calls.status = FgState(0, 1, 0L, 0L)
 		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		harness.runtime.endWorldPhase()
-		assertTrue(policy.active, "the first healthy frame must resume composition")
+		assertTrue(policy.effective, "the first healthy frame must resume composition")
 		assertEquals(2, harness.probe.diagnostics.size, "the resume must be announced exactly once")
 	}
 
 	@Test
 	fun `during a status suspension the frame records SR only with no FG calls and the session stays READY`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
 
@@ -510,7 +454,7 @@ class FgEnablementFallbackTest {
 		calls.status = FgState(2, 1, 0L, 0L)
 		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		harness.runtime.endWorldPhase()
-		assertFalse(policy.active, "the frame must suspend before its recording")
+		assertFalse(policy.effective, "the frame must suspend before its recording")
 
 		// The frame that follows the suspension records the SR-only composition: motion, SR tag,
 		// evaluation, present - no FG options, no FG tags, no handoff - and still succeeds,
@@ -536,7 +480,7 @@ class FgEnablementFallbackTest {
 
 	@Test
 	fun `the user toggle records the retained eOff options exactly once and re-arms with the SR session untouched`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
 		val announced = mutableListOf<String>()
@@ -544,7 +488,7 @@ class FgEnablementFallbackTest {
 
 		// Arm through the controls: the reviewer's key press is the public boundary.
 		controls.toggleFrameGeneration()
-		assertTrue(policy.active, "the controls switch FG on")
+		assertTrue(policy.effective, "the controls switch FG on")
 		assertEquals(0, calls.fgModeOffRecords, "arming records no mode")
 		assertTrue(announced.last().contains("fg on"), "the readout names the mode in effect: ${announced.last()}")
 
@@ -558,7 +502,7 @@ class FgEnablementFallbackTest {
 		// The user toggle off: the policy restores its reads, one retained eOff record runs,
 		// and nothing about the SR session changes.
 		controls.toggleFrameGeneration()
-		assertFalse(policy.active, "the controls switch FG off")
+		assertFalse(policy.effective, "the controls switch FG off")
 		assertEquals(1, calls.fgModeOffRecords, "the off transition records the eOff mode exactly once")
 		assertEquals(listOf(0), calls.fgModeValues, "the eOff record passes mode zero to the bridge")
 		assertTrue(policy.effectiveVsyncEnabled(true), "the reconfigure read is the stored vsync again")
@@ -586,7 +530,7 @@ class FgEnablementFallbackTest {
 		// Re-arm through the controls: a user-off policy is re-armable, and the first FG
 		// frame re-records the eOn options through the per-frame options record.
 		controls.toggleFrameGeneration()
-		assertTrue(policy.active, "a user-off policy re-arms")
+		assertTrue(policy.effective, "a user-off policy re-arms")
 		assertEquals(1, calls.fgModeOffRecords, "re-arming records no mode")
 		assertTrue(
 			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
@@ -596,7 +540,7 @@ class FgEnablementFallbackTest {
 
 		// And off again records once more: exactly once per off transition, never per frame.
 		controls.toggleFrameGeneration()
-		assertFalse(policy.active)
+		assertFalse(policy.effective)
 		assertEquals(2, calls.fgModeOffRecords, "each off transition records exactly once")
 		assertEquals(listOf(0, 0), calls.fgModeValues, "each eOff record passes mode zero")
 		assertEquals(
@@ -608,38 +552,38 @@ class FgEnablementFallbackTest {
 
 	@Test
 	fun `a status suspension leaves the user's FG mode theirs to switch off and back on`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
 		val announced = mutableListOf<String>()
 		val controls = RuntimeControls(harness.runtime, announced::add)
 
 		controls.toggleFrameGeneration()
-		assertTrue(policy.active, "the session starts with FG active")
+		assertTrue(policy.effective, "the session starts with FG active")
 		calls.status = FgState(2, 1, 0L, 0L)
 		assertNotNull(
 			harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS),
 			"the suspended frame must still route to the scene target: SR stays READY",
 		)
 		harness.runtime.endWorldPhase()
-		assertFalse(policy.active, "the bad status must suspend composition")
+		assertFalse(policy.effective, "the bad status must suspend composition")
 		assertEquals(1, calls.fgModeOffRecords, "the suspension records the eOff mode")
 		assertEquals(1, harness.probe.diagnostics.size, "the suspension emits its one exact diagnostic")
 
 		// The user's mode is still theirs. Switching off is a real transition of the armed mode,
 		// which is what restores the vanilla swapchain policy - the status never did that.
 		controls.toggleFrameGeneration()
-		assertFalse(policy.armed, "the user's off must disarm")
+		assertFalse(policy.userEnabled, "the user's off must disarm")
 		assertTrue(announced.last().contains("fg off"), "the readout reports the state actually in effect: ${announced.last()}")
 
 		// And switching back on re-arms rather than being refused, so the swapchain returns to the
 		// FG policy and a healthy frame composes again.
 		controls.toggleFrameGeneration()
-		assertTrue(policy.armed, "the user's on must re-arm: no verdict stands in the way")
+		assertTrue(policy.userEnabled, "the user's on must re-arm: no verdict stands in the way")
 		calls.status = FgState(0, 1, 0L, 0L)
 		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
 		harness.runtime.endWorldPhase()
-		assertTrue(policy.active, "a healthy frame on a re-armed policy composes")
+		assertTrue(policy.effective, "a healthy frame on a re-armed policy composes")
 	}
 
 	@Test
@@ -659,17 +603,17 @@ class FgEnablementFallbackTest {
 		val adapter = LifecycleAdapter(session, native)
 
 		// Not ready yet: the eOff record must not reach the bridge.
-		assertFalse(adapter.recordFgModeOff(), "a session that is not READY must not record the eOff mode")
+		assertFalse(adapter.recordFrameGenerationOff(), "a session that is not READY must not record the eOff mode")
 		assertEquals(0, native.setFgModeValues.size)
 
 		assertTrue(adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) != null)
-		assertTrue(adapter.recordFgModeOff(), "a READY session must record the eOff mode")
+		assertTrue(adapter.recordFrameGenerationOff(), "a READY session must record the eOff mode")
 		assertEquals(listOf(0), native.setFgModeValues, "the eOff record must pass mode zero to the bridge")
 
 		// A refused eOff record is invisible to the session: the status latch leaves SR READY
 		// by design, so the record failure must not send the session to FALLBACK_LATCHED.
 		native.setFgModeResult = NativeApi.SUCCESS_RESULT + 1
-		assertFalse(adapter.recordFgModeOff(), "a refused eOff record must answer false")
+		assertFalse(adapter.recordFrameGenerationOff(), "a refused eOff record must answer false")
 		assertEquals(DlssSessionState.READY, session.state, "the refused eOff record must not latch the SR session")
 	}
 
@@ -734,7 +678,7 @@ class FgEnablementFallbackTest {
 				val dimensions = bridge.queryOptimalDimensions(outputWidth, outputHeight, 2)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -753,7 +697,7 @@ class FgEnablementFallbackTest {
 				// The eOff record: same stored record, mode switched, retained resources.
 				// slDLSSGSetOptions answers eOk only when it accepts the record, so the
 				// success result is the seam's observable contract, exactly as for the eOn
-				// record of the M-9 rung.
+				// record.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.setFgMode(0),
@@ -775,7 +719,7 @@ class FgEnablementFallbackTest {
 
 	/** Builds the production seams over a recording fake and a READY session. */
 	private fun harness(
-		calls: RecordingNative,
+		calls: RecordingNativeApi,
 		policy: FgSurfacePolicy,
 		fgFrameSupported: (Boolean, Dimensions) -> Boolean = { normalInWorldFrame, outputDimensions ->
 			normalInWorldFrame && outputDimensions == OUTPUT_DIMENSIONS
@@ -804,11 +748,11 @@ class FgEnablementFallbackTest {
 			0,
 			0,
 			0,
-			Supplier {
+			{
 				counters.buffers++
 				fakeCommandBuffer()
 			},
-			Consumer { counters.submits++ },
+			{ counters.submits++ },
 		)
 		val evaluation = FrameEvaluation(
 			adapter,
@@ -820,7 +764,7 @@ class FgEnablementFallbackTest {
 		val runtime = RenderRuntime(
 			session = session,
 			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
+				allocate = { width, height -> HeadlessRenderTarget(width, height) },
 				release = {},
 			),
 			startup = { RENDER_DIMENSIONS },
@@ -896,7 +840,7 @@ class FgEnablementFallbackTest {
 	 * Answers the live status the poll reads and records every per-frame native call in
 	 * submission order; everything else is the lifecycle [LifecycleAdapter] drives to READY.
 	 */
-	private class RecordingNative : NativeApi {
+	private class RecordingNativeApi : NativeApiTestDouble() {
 		var status: FgState = FgState(0, 1, 0L, 0L)
 		val order = mutableListOf<String>()
 		val fgTags = mutableListOf<FgTagRequest>()
@@ -917,7 +861,7 @@ class FgEnablementFallbackTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			RENDER_DIMENSIONS
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -960,13 +904,13 @@ class FgEnablementFallbackTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun tagFgResources(request: FgTagRequest): Int {
+		override fun tagFrameGenerationResources(request: FgTagRequest): Int {
 			fgTags += request
 			order += "fgTag"
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun presentHandoff(): Int {
+		override fun recordPresentHandoff(): Int {
 			handoffs++
 			order += "handoff"
 			return NativeApi.SUCCESS_RESULT
@@ -992,7 +936,7 @@ class FgEnablementFallbackTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun evaluate(request: EvaluationRequest): Int {
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			evaluations += request
 			order += "evaluate"
 			return NativeApi.SUCCESS_RESULT
@@ -1000,7 +944,7 @@ class FgEnablementFallbackTest {
 	}
 
 	/** Records the eOff-mode seam and answers the three calls [LifecycleAdapter.initialize] drives. */
-	private class FakeNative : NativeApi {
+	private class FakeNative : NativeApiTestDouble() {
 		var setFgModeResult = NativeApi.SUCCESS_RESULT
 		val setFgModeValues = mutableListOf<Int>()
 
@@ -1020,7 +964,7 @@ class FgEnablementFallbackTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -1032,14 +976,13 @@ class FgEnablementFallbackTest {
 		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
-		override fun evaluate(request: EvaluationRequest): Int = error("unexpected evaluate")
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = error("unexpected evaluate")
 	}
 
-	/** Render target with no GPU buffers, so the runtime is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height

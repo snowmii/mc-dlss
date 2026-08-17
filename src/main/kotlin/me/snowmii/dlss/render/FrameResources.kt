@@ -26,7 +26,7 @@ class FrameResources(
 	/**
 	 * Records this frame's DLSS work, or null for a runtime that only routes targets.
 	 */
-	val evaluation: FrameEvaluation?,
+	val frameEvaluation: FrameEvaluation?,
 	/**
 	 * Blocks until the device has finished every frame already submitted, or does nothing for a
 	 * runtime with no device behind it.
@@ -40,7 +40,7 @@ class FrameResources(
 	 * null here means there is no scene-sized velocity attachment this frame - and terrain
 	 * passes must stay vanilla.
 	 */
-	val currentVelocityView: GpuTextureView?
+	val currentSceneVelocityView: GpuTextureView?
 		get() = sceneTarget.currentVelocity?.colorTextureView
 
 	/**
@@ -66,11 +66,11 @@ class FrameResources(
 	 * gain - and true whenever the configuration stops applying (toggle, reconfiguration, close).
 	 */
 	fun release(releaseImages: Boolean) {
-		if (sceneTarget.current != null || (releaseImages && evaluation?.evaluationImages != null)) {
+		if (sceneTarget.current != null || (releaseImages && frameEvaluation?.evaluationImages != null)) {
 			quiesce()
 		}
 		if (releaseImages) {
-			evaluation?.close()
+			frameEvaluation?.close()
 		}
 		sceneTarget.close()
 	}

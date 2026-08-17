@@ -11,11 +11,8 @@ import org.slf4j.LoggerFactory
 /**
  * The reviewer's hands on the running DLSS session.
  *
- * Every acceptance criterion in this effort is closed by a human watching one client, and two of
- * them - "toggling DLSS changes internal scene resolution while output stays fixed" and "disabling
- * restores native full-resolution rendering" - are comparisons. Until this class existed the only
- * way to make that comparison was to quit, edit a JVM property, and start a second session, which
- * compares two clients rather than one switch.
+ * These controls let one live session compare internal-resolution rendering with full-resolution
+ * fallback without restarting the client.
  *
  * The controls are deliberately three keys and a chat line. Nothing here persists, because the
  * startup properties remain the source of what a session begins as, and nothing here has a screen,
@@ -31,7 +28,7 @@ import org.slf4j.LoggerFactory
  */
 class RuntimeControls(
 	private val runtime: RenderRuntime,
-	private val announce: (String) -> Unit,
+	private val emitStatus: (String) -> Unit,
 ) {
 	/**
 	 * The FG surface policy Minecraft's swapchain seams read, owned by the runtime so the
@@ -54,7 +51,7 @@ class RuntimeControls(
 		// menu, an unhealthy plugin status - the effective mode reads off, and toggling against it
 		// would ask for the mode the policy is already in and change nothing. Pressing the key
 		// during a suspension has to switch the mode the user set, which is the armed one.
-		val before = surfacePolicy.armed
+		val before = surfacePolicy.userEnabled
 		val changed = runtime.setFrameGenerationEnabled(!before)
 		// DIAGNOSTIC: the readout reports the FG mode but not whether the key reached this method,
 		// and those two failures look identical from chat - a keypress that never arrives leaves
@@ -63,13 +60,13 @@ class RuntimeControls(
 		LOGGER.info(
 			"DLSS fg toggle: armed {} -> {} (requested={} changed={} active={} multiplier={})",
 			before,
-			surfacePolicy.armed,
+			surfacePolicy.userEnabled,
 			!before,
 			changed,
-			surfacePolicy.active,
+			surfacePolicy.effective,
 			runtime.fgMultiplier,
 		)
-		announce(readout())
+		emitStatus(readout())
 	}
 
 	/**
@@ -83,13 +80,13 @@ class RuntimeControls(
 	 */
 	fun cycleFgMultiplier() {
 		runtime.cycleFgMultiplier()
-		announce(readout())
+		emitStatus(readout())
 	}
 
 	/** Switches DLSS off or back on, then reports what the frames after this one will be. */
 	fun toggleEnabled() {
-		runtime.setEnabled(!runtime.runtimeEnabled)
-		announce(readout())
+		runtime.setDlssEnabled(!runtime.dlssEnabled)
+		emitStatus(readout())
 	}
 
 	/** Moves to the next quality mode, sharpest to fastest, wrapping at the end. */
@@ -104,32 +101,31 @@ class RuntimeControls(
 		} else {
 			runtime.renderPreset
 		}
-		apply(next, preset)
+		applyConfiguration(next, preset)
 	}
 
 	/** Moves to the next preset, leaving the quality mode alone. */
 	fun cyclePreset() {
 		val presets = SRModelPreset.entries
 		val next = presets[(presets.indexOf(runtime.renderPreset) + 1) % presets.size]
-		apply(runtime.qualityMode, next)
+		applyConfiguration(runtime.qualityMode, next)
 	}
 
 	/**
-	 * One line naming everything the reviewer cannot read off the screen.
+	 * One line naming the runtime state and dimensions that are not visible in the frame.
 	 *
-	 * The internal resolution is the field AC-2 is decided by and the one nothing else reports:
-	 * NGX chooses it, no setting shows it, and at output resolution the frame looks the same
-	 * either way.
+	 * NGX chooses internal resolution; no setting exposes it, and output-resolution frames look
+	 * the same whether this route or native rendering produced them.
 	 */
 	fun readout(): String {
 		val state = when {
 			!runtime.config.enabled -> "disabled by ${ModConfig.ENABLED_PROPERTY}"
-			!runtime.runtimeEnabled -> "off"
+			!runtime.dlssEnabled -> "off"
 			else -> runtime.sessionState.name.lowercase().replace('_', '-')
 		}
-		val internal = runtime.renderDimensions?.toString() ?: "not chosen yet"
+		val internal = runtime.dlssRenderDimensions?.toString() ?: "not chosen yet"
 		return "DLSS $state" +
-			" | fg ${fgState()} at ${runtime.fgMultiplier + 1}x" +
+			" | fg ${frameGenerationStatus()} at ${runtime.fgMultiplier + 1}x" +
 			" | mode ${runtime.qualityMode.propertyValue}" +
 			" | preset ${runtime.renderPreset.propertyValue}" +
 			" | internal $internal" +
@@ -148,9 +144,9 @@ class RuntimeControls(
 	 *
 	 * "off" is now reserved for the mode the user actually set, and a suspension says so.
 	 */
-	private fun fgState(): String = when {
-		!surfacePolicy.armed -> "off"
-		surfacePolicy.active -> "on"
+	private fun frameGenerationStatus(): String = when {
+		!surfacePolicy.userEnabled -> "off"
+		surfacePolicy.effective -> "on"
 		else -> "on (suspended)"
 	}
 
@@ -158,14 +154,14 @@ class RuntimeControls(
 		private val LOGGER = LoggerFactory.getLogger(McDlss.MOD_ID)
 	}
 
-	private fun apply(mode: SRMode, preset: SRModelPreset) {
+	private fun applyConfiguration(mode: SRMode, preset: SRModelPreset) {
 		val applied = runtime.applyConfiguration(mode, preset)
 		if (applied) {
-			announce(readout())
+			emitStatus(readout())
 		} else {
 			// Naming the refusal matters more than naming the request: the session kept rendering,
 			// and the reviewer needs to know the frames in front of them did not change.
-			announce(
+			emitStatus(
 				"DLSS kept ${runtime.qualityMode.propertyValue}/${runtime.renderPreset.propertyValue}; " +
 					"${mode.propertyValue}/${preset.propertyValue} was refused. ${readout()}",
 			)

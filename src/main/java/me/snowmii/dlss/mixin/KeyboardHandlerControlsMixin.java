@@ -7,6 +7,7 @@ import me.snowmii.dlss.pass.StressRuntime;
 import net.minecraft.client.KeyboardHandler;
 import net.minecraft.client.input.KeyEvent;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -19,10 +20,8 @@ import org.slf4j.LoggerFactory;
  * generation, recreating the swapchain on every transition, and F12 cycles the FG
  * multiplier 2x through the device ceiling and back.
  *
- * Every acceptance criterion here is closed by a human watching one client, and two of them are
- * comparisons between DLSS on and DLSS off. Without a key, making that comparison means quitting,
- * editing a JVM property, and starting a second client, which compares two sessions rather than
- * one switch.
+ * The controls let one client compare DLSS and fallback without restarting or editing JVM
+ * properties.
  *
  * The keys are fixed rather than registered as key mappings: the contract excludes keybinding
  * configuration and a settings GUI, and F6 through F8 plus F10 and F12 are unbound in vanilla.
@@ -35,14 +34,22 @@ import org.slf4j.LoggerFactory;
  */
 @Mixin(KeyboardHandler.class)
 public class KeyboardHandlerControlsMixin {
+	@Unique
 	private static final Logger LOGGER = LoggerFactory.getLogger("mc-dlss");
 	/** GLFW_PRESS; a repeat or a release must not cycle a second time. */
+	@Unique
 	private static final int MC_DLSS_PRESS = 1;
+	@Unique
 	private static final int MC_DLSS_KEY_TOGGLE = 295; // GLFW_KEY_F6
+	@Unique
 	private static final int MC_DLSS_KEY_MODE = 296; // GLFW_KEY_F7
+	@Unique
 	private static final int MC_DLSS_KEY_PRESET = 297; // GLFW_KEY_F8
+	@Unique
 	private static final int MC_DLSS_KEY_STRESS = 298; // GLFW_KEY_F9
+	@Unique
 	private static final int MC_DLSS_KEY_FG = 299; // GLFW_KEY_F10
+	@Unique
 	private static final int MC_DLSS_KEY_FG_MULTIPLIER = 301; // GLFW_KEY_F12
 
 	@Inject(method = "keyPress", at = @At("HEAD"))

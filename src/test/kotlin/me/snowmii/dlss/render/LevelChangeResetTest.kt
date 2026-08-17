@@ -26,7 +26,7 @@ class LevelChangeResetTest {
 	private val render = Dimensions(1280, 720)
 	private val tolerance = 1e-4f
 
-	private val mainTarget = FakeTarget(output.width, output.height)
+	private val mainTarget = HeadlessRenderTarget(output.width, output.height)
 
 	@Test
 	fun `a level change breaks the history the next frame would reproject against`() {
@@ -135,7 +135,7 @@ class LevelChangeResetTest {
 		return RenderRuntime(
 			session = session,
 			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
+				allocate = { width, height -> HeadlessRenderTarget(width, height) },
 				release = {},
 			),
 			startup = {
@@ -149,8 +149,7 @@ class LevelChangeResetTest {
 		)
 	}
 
-	/** Render target with no GPU buffers, so the phase is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height

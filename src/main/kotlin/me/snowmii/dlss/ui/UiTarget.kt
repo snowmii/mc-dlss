@@ -11,9 +11,8 @@ import org.joml.Vector4f
  *
  * The permanent UI split renders every overlay - hand/item, chat, hotbar, tooltips, debug
  * screen, vignette - into this target and composites it over the HUD-less world afterwards.
- * Nothing here routes a draw or redirects a target: this is the substrate the routing slices
- * build on, exactly as [me.snowmii.dlss.render.SceneTarget] was the substrate for world-target
- * routing.
+ * Nothing here routes a draw or redirects a target: routing code owns those decisions, while
+ * this class owns the target and its lifetime.
  *
  * The target is allocated at the output size - UI is drawn at display resolution, never at the
  * DLSS render resolution - in RGBA8_UNORM with depth, so the overlay alpha survives and the
@@ -28,24 +27,23 @@ class UiTarget(
 	private val allocate: (Int, Int) -> RenderTarget,
 	private val release: (RenderTarget) -> Unit,
 ) : AutoCloseable {
-	private var target: RenderTarget? = null
+	private var uiRenderTarget: RenderTarget? = null
 
-	/** The currently held UI target, or null after [close]. */
-	val current: RenderTarget?
-		get() = target
+	val currentUiTarget: RenderTarget?
+		get() = uiRenderTarget
 
 	/**
 	 * Returns the held UI target, allocating at [width]x[height] when nothing is held or the
 	 * dimensions changed. A resize releases the held target before allocating the new one, so
 	 * the mod never owns two UI targets at once.
 	 */
-	fun acquire(width: Int, height: Int): RenderTarget {
-		val existing = target
+	fun acquireUiTarget(width: Int, height: Int): RenderTarget {
+		val existing = uiRenderTarget
 		if (existing != null && existing.width == width && existing.height == height) {
 			return existing
 		}
-		releaseCurrent()
-		return allocate(width, height).also { target = it }
+		releaseUiTarget()
+		return allocate(width, height).also { uiRenderTarget = it }
 	}
 
 	/**
@@ -53,17 +51,17 @@ class UiTarget(
 	 * reversed-Z far plane. A target without a color or depth attachment is left untouched.
 	 */
 	fun clear(encoder: CommandEncoder) {
-		val held = target ?: return
+		val held = uiRenderTarget ?: return
 		val color = held.colorTexture ?: return
 		val depth = held.depthTexture ?: return
 		encoder.clearColorAndDepthTextures(color, TRANSPARENT, depth, FAR_DEPTH)
 	}
 
-	override fun close() = releaseCurrent()
+	override fun close() = releaseUiTarget()
 
-	private fun releaseCurrent() {
-		target?.let(release)
-		target = null
+	private fun releaseUiTarget() {
+		uiRenderTarget?.let(release)
+		uiRenderTarget = null
 	}
 
 	companion object {

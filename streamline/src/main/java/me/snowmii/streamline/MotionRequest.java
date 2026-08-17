@@ -35,11 +35,11 @@ public record MotionRequest(
 	 */
 	@Override
 	public boolean equals(Object other) {
-		return other instanceof MotionRequest request
-			&& request.commandBuffer == commandBuffer
-			&& request.depth.equals(depth)
-			&& Arrays.equals(request.reprojection, reprojection)
-			&& Objects.equals(request.renderDimensions, renderDimensions);
+		return other instanceof MotionRequest(long buffer, ImageBinding depth1, float[] reprojection1, Dimensions dimensions)
+			&& buffer == commandBuffer
+			&& depth1.equals(depth)
+			&& Arrays.equals(reprojection1, reprojection)
+			&& Objects.equals(dimensions, renderDimensions);
 	}
 
 	@Override

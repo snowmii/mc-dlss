@@ -35,8 +35,9 @@ TEST_CASE("reset_state returns every recorded field to its default") {
 	g_state.renderWidth = 960;
 	g_state.renderHeight = 540;
 	g_state.qualityMode = 2;
-	g_state.fgNumBackBuffers = 3;
-	g_state.fgNumFramesToGenerate = 3;
+	g_state.fgOptions.recorded = true;
+	g_state.fgOptions.numBackBuffers = 3;
+	g_state.fgOptions.numFramesToGenerate = 3;
 	g_state.reflexOptionsRecorded = true;
 	g_state.reflexMode = 1;
 	g_state.reflexSetOptionsCalls = 4;
@@ -50,11 +51,12 @@ TEST_CASE("reset_state returns every recorded field to its default") {
 	g_state.presentMarkers.typeCounts[mc_dlss::kPresentMarkerStart] = 2;
 	g_state.reflexMarkers.eventCount = 7;
 	g_state.reflexMarkers.typeCounts[mc_dlss::kReflexMarkerInputSample] = 5;
-	g_state.frameToken = reinterpret_cast<sl::FrameToken*>(std::uintptr_t{1});
-	g_state.presentTokenArmed = true;
-	g_state.presentStartEmitted = true;
-	g_state.lastSrTagFrameIndex = 9;
-	g_state.fgCopiedFrameIndex = 11;
+	g_state.frameEligibility.tokenSlot() = reinterpret_cast<sl::FrameToken*>(std::uintptr_t{1});
+	g_state.frameEligibility.armSr(9);
+	g_state.frameEligibility.armFg(9);
+	g_state.frameEligibility.consumeForHandoff();
+	g_state.frameEligibility.markPresentStartEmitted();
+	g_state.frameEligibility.recordCopies(11);
 	g_state.cameraConstantsRecorded = true;
 	g_state.lastCameraConstants.pos[0] = 0.5f;
 
@@ -70,9 +72,10 @@ TEST_CASE("reset_state returns every recorded field to its default") {
 	CHECK(g_state.renderWidth == defaults.renderWidth);
 	CHECK(g_state.renderHeight == defaults.renderHeight);
 	CHECK(g_state.qualityMode == defaults.qualityMode);
-	CHECK(g_state.fgNumBackBuffers == defaults.fgNumBackBuffers);
+	CHECK(g_state.fgOptions.recorded == defaults.fgOptions.recorded);
+	CHECK(g_state.fgOptions.numBackBuffers == defaults.fgOptions.numBackBuffers);
 	// The FG multiplier resets to the 2x default, not to 0.
-	CHECK(g_state.fgNumFramesToGenerate == 1);
+	CHECK(g_state.fgOptions.numFramesToGenerate == 1);
 	CHECK(g_state.reflexOptionsRecorded == defaults.reflexOptionsRecorded);
 	CHECK(g_state.reflexMode == defaults.reflexMode);
 	CHECK(g_state.reflexSetOptionsCalls == defaults.reflexSetOptionsCalls);
@@ -87,11 +90,13 @@ TEST_CASE("reset_state returns every recorded field to its default") {
 	CHECK(g_state.presentMarkers.typeCounts[mc_dlss::kPresentMarkerStart] == 0);
 	CHECK(g_state.reflexMarkers.eventCount == 0);
 	CHECK(g_state.reflexMarkers.typeCounts[mc_dlss::kReflexMarkerInputSample] == 0);
-	CHECK(g_state.frameToken == nullptr);
-	CHECK(g_state.presentTokenArmed == defaults.presentTokenArmed);
-	CHECK(g_state.presentStartEmitted == defaults.presentStartEmitted);
-	CHECK(g_state.lastSrTagFrameIndex == defaults.lastSrTagFrameIndex);
-	CHECK(g_state.fgCopiedFrameIndex == defaults.fgCopiedFrameIndex);
+	CHECK_FALSE(g_state.frameEligibility.hasToken());
+	CHECK_FALSE(g_state.frameEligibility.presentArmed());
+	CHECK_FALSE(g_state.frameEligibility.presentStartEmitted());
+	CHECK_FALSE(g_state.frameEligibility.srArmed());
+	CHECK_FALSE(g_state.frameEligibility.fgArmed());
+	// The copy record clears with the rest: index 11 is needed again, not skipped.
+	CHECK(g_state.frameEligibility.copiesNeededFor(11));
 	CHECK(g_state.cameraConstantsRecorded == defaults.cameraConstantsRecorded);
 	CHECK(g_state.lastCameraConstants.pos[0] == defaults.lastCameraConstants.pos[0]);
 }

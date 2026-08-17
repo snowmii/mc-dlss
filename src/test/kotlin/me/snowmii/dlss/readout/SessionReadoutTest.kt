@@ -9,7 +9,7 @@ class SessionReadoutTest {
 	 * The DLSS-G monitor suffix is the reviewer's live generation oracle: it must spell the
 	 * plugin's presented count as a rate over the sample window, the status word, and the fence,
 	 * and it must vanish when the plugin reports nothing. A presented rate near twice the app's
-	 * frame rate on the same line is the 2x-generation proof the rung's live claim rests on.
+	 * frame rate on the same line is the 2x-generation signal the live readout must show.
 	 */
 	@Test
 	fun `fg monitor suffix spells presented rate status and fence and vanishes without state`() {

@@ -10,7 +10,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Emits the M-12 input-sample and simulation Reflex/PCL markers at Minecraft's real input and
+ * Emits input-sample and simulation Reflex/PCL markers at Minecraft's real input and
  * simulation seams.
  *
  * <p>The input seam is {@code RenderSystem.pollEvents()} inside {@code Minecraft.run}: the

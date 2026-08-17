@@ -36,7 +36,7 @@ class StreamlinePackagedRuntimeWitnessTest {
 		assertTrue(Regex(".*streamline-.*\\.jar").matches(sdkJar.file), "SDK jar shape: ${sdkJar.file}")
 
 		val loader = URLClassLoader(arrayOf(sdkJar), ClassLoader.getPlatformClassLoader())
-		try {
+		loader.use { loader ->
 			val bootstrap = loader.loadClass(SDK_CLASS_NAME)
 			assertSame(loader, bootstrap.classLoader, "platform parent cannot define the SDK class")
 			val setNativeLibraryPath = bootstrap.getMethod("setNativeLibraryPath", Path::class.java)
@@ -67,8 +67,6 @@ class StreamlinePackagedRuntimeWitnessTest {
 			for (name in flatRuntime) {
 				assertTrue(Files.isRegularFile(runtime.resolve(name)), "extracted dir missing $name")
 			}
-		} finally {
-			loader.close()
 		}
 	}
 

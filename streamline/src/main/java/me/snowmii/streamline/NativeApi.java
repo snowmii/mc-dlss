@@ -1,6 +1,7 @@
 package me.snowmii.streamline;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -64,7 +65,7 @@ public interface NativeApi {
 	 * #acquireImages()} allocates and the sizes the recording calls check their callers
 	 * against.
 	 */
-	int configure(
+	int configureSuperResolution(
 		int outputWidth,
 		int outputHeight,
 		int renderWidth,
@@ -81,20 +82,15 @@ public interface NativeApi {
 	 * extents from the stored configuration, and the five required formats.
 	 *
 	 * <p>Must be called after bootstrap and proxy activation and after a successful {@link
-	 * #configure(int, int, int, int, int, int)}: the record answers {@code FAIL_NotInitialized}
+	 * #configureSuperResolution(int, int, int, int, int, int)}: the record answers {@code FAIL_NotInitialized}
 	 * without a ready Streamline session and {@code FAIL_InvalidParameter} while the stored
 	 * dimensions are still zero.
 	 *
 	 * <p>{@code numBackBuffers} is the swapchain's expected image count, declared as the
 	 * caller knows it; adequacy against Streamline's requirement is verified live later in the
-	 * milestone.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a call they never reach; {@link Native} overrides it.
+	 * live validation.
 	 */
-	default int configureFg(int numBackBuffers) {
-		throw new UnsupportedOperationException("configureFg");
-	}
+	int configureFg(int numBackBuffers);
 
 	/**
 	 * Switches the recorded DLSS-G options' mode through {@code slDLSSGSetOptions}: {@code eOn}
@@ -109,13 +105,8 @@ public interface NativeApi {
 	 * {@code FAIL_InvalidParameter} while no DLSS-G options record is stored - the mode
 	 * record switches an existing record, it never creates one. The re-arm refusal that keeps
 	 * {@code eOn} from coming back for the session is the Kotlin policy's, not this record's.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a call they never reach; {@link Native} overrides it.
 	 */
-	default int setFgMode(int fgEnabled) {
-		throw new UnsupportedOperationException("setFgMode");
-	}
+	int setFgMode(int fgEnabled);
 
 	/**
 	 * Records the DLSS-G frame multiplier through {@code slDLSSGSetOptions}:
@@ -129,13 +120,8 @@ public interface NativeApi {
 	 * Answers {@code FAIL_NotInitialized} without a ready Streamline session and
 	 * {@code FAIL_InvalidParameter} while no DLSS-G options record is stored or the value is
 	 * outside 1..max.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a call they never reach; {@link Native} overrides it.
 	 */
-	default int setFgMultiplier(int numFramesToGenerate) {
-		throw new UnsupportedOperationException("setFgMultiplier");
-	}
+	int setFgMultiplier(int numFramesToGenerate);
 
 	/**
 	 * The multiplier oracle: the {@code numFramesToGenerate} the recorded DLSS-G options
@@ -146,12 +132,8 @@ public interface NativeApi {
 	 * <p>Answers {@code FAIL_NotInitialized} while the Streamline session is not ready and
 	 * {@code FAIL_InvalidParameter} while the DLSS-G options have not recorded, the same
 	 * gates as {@link #queryFgState()}. The read performs no GPU work and never blocks.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #queryFgState()}.
 	 */
-	default FgMultiplier queryFgMultiplier() {
-		throw new UnsupportedOperationException("queryFgMultiplier");
-	}
+	FgMultiplier queryFgMultiplier();
 
 	/**
 	 * Returns the native-owned motion and output images for the configured dimensions,
@@ -187,7 +169,7 @@ public interface NativeApi {
 	 * Records the camera-only motion pass that fills the native motion image from the engine's
 	 * depth image, on the caller's command buffer.
 	 *
-	 * <p>This has to precede {@link #evaluate} on the same buffer: the evaluation reads the image
+	 * <p>This has to precede {@link #evaluateSuperResolution} on the same buffer: the evaluation reads the image
 	 * this pass writes, and the pass ends with the barrier that makes those writes visible.
 	 */
 	int writeMotion(MotionRequest request);
@@ -203,19 +185,14 @@ public interface NativeApi {
 	 * <p>This has to precede {@link #tagSrResources} on the same buffer on the velocity-MRT
 	 * route: the native motion image is the sole Streamline motion source, and the evaluation
 	 * reads it.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a call they never reach; {@link Native} overrides it.
 	 */
-	default int fillVelocity(FillVelocityRequest request) {
-		throw new UnsupportedOperationException("fillVelocity");
-	}
+	int fillVelocity(FillVelocityRequest request);
 
 	/**
 	 * Records the copy of the upscaled output image into an engine target, on the caller's
 	 * command buffer.
 	 *
-	 * <p>This has to follow {@link #evaluate} on the same buffer: it copies the image the
+	 * <p>This has to follow {@link #evaluateSuperResolution} on the same buffer: it copies the image the
 	 * evaluation writes, and the destination is what the rest of the frame composes over.
 	 */
 	int presentOutput(PresentTarget target);
@@ -228,7 +205,7 @@ public interface NativeApi {
 	 * dimensions, so handing them back would be the caller returning handles the bridge already
 	 * holds.
 	 */
-	int evaluate(EvaluationRequest request);
+	int evaluateSuperResolution(EvaluationRequest request);
 
 	/**
 	 * Tags one frame's DLSS SR resources on the caller's command buffer, through Streamline's
@@ -240,13 +217,8 @@ public interface NativeApi {
 	 * crosses on the tag. The bridge's own motion and output images are tagged from native
 	 * state when they have been acquired for the configured dimensions; until then the call
 	 * still succeeds with just the engine's inputs.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a call they never reach; {@link Native} overrides it.
 	 */
-	default int tagSrResources(SrTagRequest request) {
-		throw new UnsupportedOperationException("tagSrResources");
-	}
+	int tagSrResources(SrTagRequest request);
 
 	/**
 	 * Tags one frame's DLSS-G resources on the caller's command buffer, through Streamline's
@@ -266,13 +238,8 @@ public interface NativeApi {
 	 * <p>The frame token this call obtains and retains is shared with {@link #tagSrResources}
 	 * for the same frame: a repeated tag reuses the token rather than advancing the frame, and
 	 * the frame's evaluation consumes it.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a call they never reach; {@link Native} overrides it.
 	 */
-	default int tagFgResources(FgTagRequest request) {
-		throw new UnsupportedOperationException("tagFgResources");
-	}
+	int tagFrameGenerationResources(FgTagRequest request);
 
 	/**
 	 * Records the frame's present-handoff eligibility: re-records the stored DLSS-G 2x
@@ -285,13 +252,8 @@ public interface NativeApi {
 	 * side effects: a refused handoff clears no tag state and re-records no options. The
 	 * call owns no command buffer and records no GPU work - the frame's tagged resources
 	 * stay in the layouts the tags declared until Streamline's present path consumes them.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a call they never reach; {@link Native} overrides it.
 	 */
-	default int presentHandoff() {
-		throw new UnsupportedOperationException("presentHandoff");
-	}
+	int recordPresentHandoff();
 
 	/**
 	 * Emits the PRESENT_START Reflex marker of the armed present bracket under the frame's
@@ -300,18 +262,14 @@ public interface NativeApi {
 	 * without it never generates.
 	 *
 	 * <p>An unarmed present is a no-op success: an SR-only or skipped frame, or any present
-	 * without a successful {@link #presentHandoff()} arming the bracket, has no bracket to
+	 * without a successful {@link #recordPresentHandoff()} arming the bracket, has no bracket to
 	 * open - and the present seam fires on every present, so a refusal would latch the
 	 * session on a frame that simply did not compose. Only a bracket a successful handoff
 	 * armed emits the START, and exactly once: a present that threw between START and END
 	 * leaves the bracket open, and a second START for the same frame is the same no-op.
 	 * Answers {@code FAIL_NotInitialized} while the session is not ready.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #presentHandoff()}.
 	 */
-	default int presentStart() {
-		throw new UnsupportedOperationException("presentStart");
-	}
+	int presentStart();
 
 	/**
 	 * Emits the PRESENT_END Reflex marker of the armed present bracket under the frame's
@@ -326,12 +284,8 @@ public interface NativeApi {
 	 * START - but an armed bracket whose START never emitted is consumed here exactly like
 	 * a successful one, so a failed START cannot leave a stale bracket for a later present
 	 * to open. Answers {@code FAIL_NotInitialized} while the session is not ready.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #presentHandoff()}.
 	 */
-	default int presentEnd() {
-		throw new UnsupportedOperationException("presentEnd");
-	}
+	int presentEnd();
 
 	/**
 	 * The present-marker oracle: how many PRESENT_START and PRESENT_END markers this module
@@ -351,16 +305,11 @@ public interface NativeApi {
 	 * no END rather than as a pair that never happened.
 	 *
 	 * <p>Answers {@code FAIL_NotInitialized} until at least one marker was actually emitted.
-	 * Default-implemented for the same reason as {@link #queryDeviceFeatures12()}.
 	 */
-	default PresentMarkerEvents presentMarkers() {
-		throw new UnsupportedOperationException("presentMarkers");
-	}
+	PresentMarkerEvents presentMarkers();
 
 	/** Installs the Win32 message hook that receives PCL's periodic latency-stat ping. */
-	default int installPclWindow(long hwnd) {
-		throw new UnsupportedOperationException("installPclWindow");
-	}
+	int installPclWindow(long hwnd);
 
 	/**
 	 * Starts the frame's Reflex work at Minecraft's GLFW input poll seam.
@@ -368,9 +317,7 @@ public interface NativeApi {
 	 * {@code ePCLatencyPing} only when the installed window hook received
 	 * {@code PclState::statsWindowMessage}.
 	 */
-	default int reflexInputSample() {
-		throw new UnsupportedOperationException("reflexInputSample");
-	}
+	int reflexInputSample();
 
 	/**
 	 * Emits one Reflex/PCL frame marker under the frame's retained token, as reported by
@@ -388,12 +335,9 @@ public interface NativeApi {
 	 * {@code slReflexSleep} before it emits anything, so it stays {@link #reflexInputSample()}
 	 * rather than becoming a marker value this call could stand in for. Answers
 	 * {@code FAIL_NotInitialized} while the session is not ready or no frame token is retained
-	 * (a frame that never ran its input sample emits no markers). Default-implemented for the
-	 * same reason as {@link #reflexInputSample()}.
+	 * (a frame that never ran its input sample emits no markers).
 	 */
-	default int reflexMarker(ReflexMarkerType type) {
-		throw new UnsupportedOperationException("reflexMarker");
-	}
+	int reflexMarker(ReflexMarkerType type);
 
 	/**
 	 * The reflex-marker oracle: how many of each of the five Reflex/PCL markers this module
@@ -408,14 +352,11 @@ public interface NativeApi {
 	 * equality with {@link #taggedFrameIndexes()} is what proves the marker surface shares
 	 * the retained token identity. The per-type counts advance by exactly one per emitted
 	 * marker and stay unchanged across refused or pre-ready calls, which is what proves the
-	 * "refused sessions emit none" half of the M-12 contract.
+	 * "refused sessions emit none" behavior.
 	 *
 	 * <p>Answers {@code FAIL_NotInitialized} until at least one marker was actually emitted.
-	 * Default-implemented for the same reason as {@link #presentMarkers()}.
 	 */
-	default ReflexMarkerEvents reflexMarkers() {
-		throw new UnsupportedOperationException("reflexMarkers");
-	}
+	ReflexMarkerEvents reflexMarkers();
 
 	/**
 	 * The Reflex registration the READY transition recorded, as reported by
@@ -427,15 +368,12 @@ public interface NativeApi {
 	 * guide says not to repeat it per frame while the options do not change, so the oracle
 	 * answers {@code eLowLatency} and a call count of one after the READY transition, and
 	 * the count stays one across idempotent re-initializes, composed frames, and resets:
-	 * the exactly-once-at-READY proof.
+	 * the exactly-once-at-READY invariant.
 	 *
 	 * <p>Answers {@code FAIL_NotInitialized} while the Streamline session is not ready and
-	 * {@code FAIL_InvalidParameter} while no record exists. Default-implemented for the
-	 * same reason as {@link #reflexMarkers()}.
+	 * {@code FAIL_InvalidParameter} while no record exists.
 	 */
-	default ReflexRegistration queryReflexOptions() {
-		throw new UnsupportedOperationException("queryReflexOptions");
-	}
+	ReflexRegistration queryReflexOptions();
 
 	/**
 	 * Re-records the Reflex options with a frame-rate cap: {@code frameLimitUs} microseconds per
@@ -451,13 +389,8 @@ public interface NativeApi {
 	 * {@code FAIL_InvalidParameter} while the READY transition's Reflex registration never
 	 * recorded. A cap already in effect records nothing and answers success, so the frame seam
 	 * that reads Minecraft's own limit may call this every frame.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not have
-	 * to declare a call they never reach; {@link Native} overrides it.
 	 */
-	default int recordReflexFrameLimit(int frameLimitUs) {
-		throw new UnsupportedOperationException("recordReflexFrameLimit");
-	}
+	int recordReflexFrameLimit(int frameLimitUs);
 
 	/**
 	 * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
@@ -476,33 +409,23 @@ public interface NativeApi {
 	 * {@code FAIL_InvalidParameter} while the DLSS-G options have not recorded for the stored
 	 * configuration; a null semaphore (no input processing in flight, as before the first
 	 * present) is a no-op success. The bridge does not look at the reported DLSS-G status: the
-	 * status-to-off fallback is a later slice's own.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a call they never reach; {@link Native} overrides it.
+	 * frame-support policy owns status-to-off fallback.
 	 */
-	default int waitFgInputsIdle() {
-		throw new UnsupportedOperationException("waitFgInputsIdle");
-	}
+	int waitFgInputsIdle();
 
 	/**
 	 * The wait oracle: performs the same value-aware Vulkan timeline-semaphore wait
 	 * {@link #waitFgInputsIdle()} performs, on explicit device and semaphore handles and an
-	 * explicit value, so the wait's value semantics are provable without a live Streamline
-	 * session. The headless proof creates its own timeline semaphore, waits for a value the
+	 * explicit value, so tests can check value semantics without a live Streamline
+	 * session. The headless test creates its own timeline semaphore, waits for a value the
 	 * semaphore has not reached, and observes the call block until that value is signaled;
 	 * waiting for any lower value (or treating the semaphore as a VkFence) would answer
-	 * immediately and fail the proof.
+	 * immediately and fail the check.
 	 *
 	 * <p>Answers {@code FAIL_InvalidParameter} when either handle is null. Touches no module
 	 * or Streamline state and blocks on the device like the session-driven entry.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a call they never reach; {@link Native} overrides it.
 	 */
-	default int waitFgInputsValue(long vkDevice, long semaphore, long value) {
-		throw new UnsupportedOperationException("waitFgInputsValue");
-	}
+	int waitFgInputsValue(long vkDevice, long semaphore, long value);
 
 	/**
 	 * One snapshot of Streamline's live DLSS-G state, read through {@code slDLSSGGetState}
@@ -512,39 +435,30 @@ public interface NativeApi {
 	 * timeline semaphore last reached for the presented frames'
 	 * inputs, and the semaphore handle itself.
 	 *
-	 * <p>The present-generation proof reads this to observe the interposed {@code vkQueuePresentKHR}
+	 * <p>The present-generation integration reads this to observe the interposed {@code vkQueuePresentKHR}
 	 * path working: the status word after presents, a presentation factor above one, and a
 	 * completion-fence value that advances with every presented
 	 * frame the plugin processed - the same value {@link #waitFgInputsIdle()} waits on, read
 	 * from the same query, so the two always travel together. Answers {@code FAIL_NotInitialized}
 	 * while the Streamline session is not ready and {@code FAIL_InvalidParameter} while the
-	 * DLSS-G options have not recorded, the same gates as {@link #tagFgResources(FgTagRequest)}.
+	 * DLSS-G options have not recorded, the same gates as {@link #tagFrameGenerationResources(FgTagRequest)}.
 	 * The read performs no GPU work and never blocks.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a query they never reach; {@link Native} overrides it.
 	 */
-	default FgState queryFgState() {
-		throw new UnsupportedOperationException("queryFgState");
-	}
+	FgState queryFgState();
 
 	/**
 	 * The camera constants the last successful evaluation recorded into Streamline's common
 	 * constants, as reported by {@code mc_dlss_query_camera_constants}: the jitter-free
 	 * row-major view-to-clip, clip-to-view, and clip-to-prev-clip matrices, the frustum
 	 * scalars, and the camera's world-space position and orthonormal right/up/forward basis,
-	 * exactly as {@link #evaluate(EvaluationRequest)} carried them.
+	 * exactly as {@link #evaluateSuperResolution(EvaluationRequest)} carried them.
 	 *
-	 * <p>The constants oracle proves the caller's camera reached {@code slSetConstants}
+	 * <p>The constants oracle checks that the caller's camera reached {@code slSetConstants}
 	 * unchanged - the constants the DLSS-G plugin interpolates the generated frame's camera
 	 * from. Answers {@code FAIL_NotInitialized} until an evaluation recorded constants at
 	 * least once.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #queryFgState()}.
 	 */
-	default CameraConstants queryCameraConstants() {
-		throw new UnsupportedOperationException("queryCameraConstants");
-	}
+	CameraConstants queryCameraConstants();
 
 	/**
 	 * The camera constants the last composed frame's FG-side record carried into
@@ -562,29 +476,21 @@ public interface NativeApi {
 	 * matching the y-flipped copies the FG tag names - while the SR oracle reports the raw
 	 * record. Answers {@code FAIL_NotInitialized} until a composed frame's FG-side
 	 * record succeeded at least once.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #queryCameraConstants()}.
 	 */
-	default CameraConstants queryFgCameraConstants() {
-		throw new UnsupportedOperationException("queryFgCameraConstants");
-	}
+	CameraConstants queryFgCameraConstants();
 
 	/**
-	 * The module-owned FG orientation copies the {@link #tagFgResources(FgTagRequest)} tag
+	 * The module-owned FG orientation copies the {@link #tagFrameGenerationResources(FgTagRequest)} tag
 	 * names: the backbuffer-oriented flipped depth (render-sized D32_SFLOAT), HUD-less and UI
 	 * colours (output-sized RGBA8_UNORM), and the flipped motion image (render-sized
 	 * R16G16_SFLOAT) whose y component the motion dispatches negate.
 	 *
 	 * <p>Created and released with the SR motion and output images, from the same configured
-	 * dimensions; reported by {@code mc_dlss_query_fg_images} so the orientation rung can read
+	 * dimensions; reported by {@code mc_dlss_query_fg_images} so orientation tests can read
 	 * their content back. Answers {@code FAIL_NotInitialized} before the images were acquired
 	 * for the stored configuration.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #queryCameraConstants()}.
 	 */
-	default FgOrientationImages queryFgImages() {
-		throw new UnsupportedOperationException("queryFgImages");
-	}
+	FgOrientationImages queryFgImages();
 
 	/**
 	 * The four FG orientation copies {@link #queryFgImages()} reports: the flipped depth,
@@ -601,53 +507,36 @@ public interface NativeApi {
 	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features (DLSS, DLSS-G,
 	 * Reflex) require the device to enable, as {@code slGetFeatureRequirements} reports them
 	 * through {@code mc_dlss_query_device_feature_12}.
-	 *
-	 * <p>Default-implemented so the pre-SL test doubles that stand in for the bridge do not
-	 * have to declare a query they never reach; {@link Native} overrides it.
 	 */
-	default List<String> queryDeviceFeatures12() {
-		throw new UnsupportedOperationException("queryDeviceFeatures12");
-	}
+	List<String> queryDeviceFeatures12();
 
 	/**
 	 * The deduplicated Vulkan 1.3 feature names Streamline's loaded features require, as
 	 * {@code slGetFeatureRequirements} reports them through {@code mc_dlss_query_device_feature_13}.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #queryDeviceFeatures12()}.
 	 */
-	default List<String> queryDeviceFeatures13() {
-		throw new UnsupportedOperationException("queryDeviceFeatures13");
-	}
+	List<String> queryDeviceFeatures13();
 
 	/**
-	 * The Streamline frame indices the last {@link #tagSrResources} and {@link #tagFgResources}
+	 * The Streamline frame indices the last {@link #tagSrResources} and {@link #tagFrameGenerationResources}
 	 * calls tagged under, as the runtime numbered them through {@code slGetNewFrameToken} and
 	 * reported by {@code mc_dlss_query_tagged_frame_indexes}.
 	 *
 	 * <p>One frame's SR and FG tags must land under the same index: the FG tag reuses the frame
 	 * token the SR tag obtained and retained rather than calling {@code slGetNewFrameToken}
-	 * again, and equality of the pair is the behavior-level oracle the composed rung asserts. A
+	 * again, and equality of the pair is the behavior-level oracle for composed frames. A
 	 * tag that advanced the frame instead would record a strictly later index under its slot.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #queryDeviceFeatures12()}.
 	 */
-	default TaggedFrameIndexes taggedFrameIndexes() {
-		throw new UnsupportedOperationException("taggedFrameIndexes");
-	}
+	TaggedFrameIndexes taggedFrameIndexes();
 
 	/**
 	 * The extra Vulkan queues Streamline's loaded features require the host to create, summed
 	 * across features as {@code slGetFeatureRequirements} reports them through
 	 * {@code mc_dlss_query_queue_requirements}.
-	 *
-	 * <p>Default-implemented for the same reason as {@link #queryDeviceFeatures12()}.
 	 */
-	default SlQueueRequirements queryQueueRequirements() {
-		throw new UnsupportedOperationException("queryQueueRequirements");
-	}
+	SlQueueRequirements queryQueueRequirements();
 
 	/**
-	 * The five Reflex/PCL frame markers this module emits at the M-12 input, simulation, and
+	 * The five Reflex/PCL frame markers this module emits at the input, simulation, and
 	 * render-submit seams, as the native event log tags each actually-emitted marker with.
 	 */
 	enum ReflexMarkerType {
@@ -683,40 +572,21 @@ public interface NativeApi {
 	 * One reflex-marker event as the native log recorded it: the marker type and the
 	 * Streamline frame index (the retained frame token) the marker was emitted under.
 	 */
-	final class ReflexMarkerEvent {
-		private final ReflexMarkerType type;
-		private final int frameIndex;
+		record ReflexMarkerEvent(ReflexMarkerType type, int frameIndex) {
 
-		public ReflexMarkerEvent(final ReflexMarkerType type, final int frameIndex) {
-			this.type = type;
-			this.frameIndex = frameIndex;
-		}
-
-		public ReflexMarkerType getType() {
-			return type;
-		}
-
-		public int getFrameIndex() {
-			return frameIndex;
-		}
 
 		@Override
-		public boolean equals(final Object other) {
-			return other instanceof ReflexMarkerEvent event
-				&& event.type == type
-				&& event.frameIndex == frameIndex;
-		}
+			public boolean equals(final Object other) {
+				return other instanceof ReflexMarkerEvent event
+					&& event.type == type
+					&& event.frameIndex == frameIndex;
+			}
 
 		@Override
-		public int hashCode() {
-			return 31 * type.hashCode() + frameIndex;
+			public String toString() {
+				return "ReflexMarkerEvent{" + type + " frame=" + frameIndex + "}";
+			}
 		}
-
-		@Override
-		public String toString() {
-			return "ReflexMarkerEvent{" + type + " frame=" + frameIndex + "}";
-		}
-	}
 
 	/**
 	 * The reflex-marker oracle: how many of each of the five Reflex/PCL markers the module
@@ -729,103 +599,104 @@ public interface NativeApi {
 	 * {@link TaggedFrameIndexes} is what proves the marker surface shares the retained token
 	 * identity. The per-type counts must each advance by exactly one per emitted marker and
 	 * stay unchanged across refused or pre-ready calls, which is what proves the "refused
-	 * sessions emit none" half of the M-12 contract.
+	 * sessions emit none" behavior.
 	 */
-	final class ReflexMarkerEvents {
-		/** How many marker types the oracle reports counts for; must match the native enum width. */
-		public static final int TYPE_COUNT = 5;
+		record ReflexMarkerEvents(int[] typeCounts, int eventCount, List<ReflexMarkerEvent> events) {
+			/**
+			 * How many marker types the oracle reports counts for; must match the native enum width.
+			 */
+			public static final int TYPE_COUNT = 5;
 
-		/** The number of events the native log ring retains; the oracle never returns more. */
-		public static final int LOG_CAPACITY = 16;
+			/**
+			 * The number of events the native log ring retains; the oracle never returns more.
+			 */
+			public static final int LOG_CAPACITY = 16;
 
-		private final int[] typeCounts;
-		private final int eventCount;
-		private final List<ReflexMarkerEvent> events;
+			public ReflexMarkerEvents(final int[] typeCounts, final int eventCount, final List<ReflexMarkerEvent> events) {
+				this.typeCounts = typeCounts.clone();
+				this.eventCount = eventCount;
+				this.events = List.copyOf(events);
+			}
 
-		public ReflexMarkerEvents(final int[] typeCounts, final int eventCount, final List<ReflexMarkerEvent> events) {
-			this.typeCounts = typeCounts.clone();
-			this.eventCount = eventCount;
-			this.events = List.copyOf(events);
+			/**
+			 * How many of each marker type the module has actually emitted, in {@link
+			 * ReflexMarkerType} order: INPUT_SAMPLE, SIMULATION_START, SIMULATION_END,
+			 * RENDER_SUBMIT_START, RENDER_SUBMIT_END.
+			 */
+			@Override
+			public int[] typeCounts() {
+				return typeCounts.clone();
+			}
+
+			/**
+			 * How many marker events the module has actually emitted in total.
+			 */
+			@Override
+			public int eventCount() {
+				return eventCount;
+			}
+
+			/**
+			 * The most recent events in emission order, at most {@link #LOG_CAPACITY} of them.
+			 */
+			@Override
+			public List<ReflexMarkerEvent> events() {
+				return events;
+			}
+
+			@Override
+			public boolean equals(final Object other) {
+				return other instanceof ReflexMarkerEvents markers
+					&& markers.eventCount == eventCount
+					&& Arrays.equals(markers.typeCounts, typeCounts)
+					&& markers.events.equals(events);
+			}
+
+			@Override
+			public int hashCode() {
+				return 31 * (31 * Arrays.hashCode(typeCounts) + eventCount) + events.hashCode();
+			}
+
+			@Override
+			public String toString() {
+				return "ReflexMarkerEvents{" + Arrays.toString(typeCounts)
+					+ " total=" + eventCount + " " + events + "}";
+			}
 		}
-
-		/**
-		 * How many of each marker type the module has actually emitted, in {@link
-		 * ReflexMarkerType} order: INPUT_SAMPLE, SIMULATION_START, SIMULATION_END,
-		 * RENDER_SUBMIT_START, RENDER_SUBMIT_END.
-		 */
-		public int[] getTypeCounts() {
-			return typeCounts.clone();
-		}
-
-		/** How many marker events the module has actually emitted in total. */
-		public int getEventCount() {
-			return eventCount;
-		}
-
-		/** The most recent events in emission order, at most {@link #LOG_CAPACITY} of them. */
-		public List<ReflexMarkerEvent> getEvents() {
-			return events;
-		}
-
-		@Override
-		public boolean equals(final Object other) {
-			return other instanceof ReflexMarkerEvents markers
-				&& markers.eventCount == eventCount
-				&& java.util.Arrays.equals(markers.typeCounts, typeCounts)
-				&& markers.events.equals(events);
-		}
-
-		@Override
-		public int hashCode() {
-			return 31 * (31 * java.util.Arrays.hashCode(typeCounts) + eventCount) + events.hashCode();
-		}
-
-		@Override
-		public String toString() {
-			return "ReflexMarkerEvents{" + java.util.Arrays.toString(typeCounts)
-				+ " total=" + eventCount + " " + events + "}";
-		}
-	}
 
 	/**
 	 * The Reflex options registration the READY transition recorded: the {@code sl::ReflexMode}
 	 * value (1 is {@code eLowLatency}) and how many {@code slReflexSetOptions} calls this
 	 * session made.
 	 */
-	final class ReflexRegistration {
-		private final int mode;
-		private final int setOptionsCalls;
+		record ReflexRegistration(int mode, int setOptionsCalls) {
 
-		public ReflexRegistration(final int mode, final int setOptionsCalls) {
-			this.mode = mode;
-			this.setOptionsCalls = setOptionsCalls;
-		}
+		/**
+		 * The recorded {@code sl::ReflexMode} value: 1 is {@code eLowLatency}.
+		 */
+			@Override
+			public int mode() {
+				return mode;
+			}
 
-		/** The recorded {@code sl::ReflexMode} value: 1 is {@code eLowLatency}. */
-		public int getMode() {
-			return mode;
-		}
+			/**
+			 * How many {@code slReflexSetOptions} calls this session made.
+			 */
+			@Override
+			public int setOptionsCalls() {
+				return setOptionsCalls;
+			}
 
-		/** How many {@code slReflexSetOptions} calls this session made. */
-		public int getSetOptionsCalls() {
-			return setOptionsCalls;
-		}
-
-		@Override
-		public boolean equals(final Object other) {
-			return other instanceof ReflexRegistration registration
-				&& registration.mode == mode
-				&& registration.setOptionsCalls == setOptionsCalls;
-		}
-
-		@Override
-		public int hashCode() {
-			return 31 * mode + setOptionsCalls;
-		}
+			@Override
+			public boolean equals(final Object other) {
+				return other instanceof ReflexRegistration registration
+					&& registration.mode == mode
+					&& registration.setOptionsCalls == setOptionsCalls;
+			}
 
 		@Override
-		public String toString() {
-			return "ReflexRegistration{mode=" + mode + " calls=" + setOptionsCalls + "}";
+			public String toString() {
+				return "ReflexRegistration{mode=" + mode + " calls=" + setOptionsCalls + "}";
+			}
 		}
-	}
 }

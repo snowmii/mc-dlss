@@ -13,6 +13,7 @@ import net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import org.joml.Vector4fc;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 
 import java.util.Optional;
@@ -52,6 +53,7 @@ import java.util.function.Supplier;
  */
 @Mixin(ChunkSectionsToRender.class)
 public class VulkanChunkSectionsToRenderMixin {
+	@SuppressWarnings("OptionalUsedAsFieldOrParameterType")
 	@WrapOperation(
 		method = "renderGroup",
 		at = @At(
@@ -69,7 +71,7 @@ public class VulkanChunkSectionsToRenderMixin {
 		final Operation<RenderPass> original,
 		// The enclosing renderGroup argument: the opaque group clears the companion before
 		// any object writer draws; the translucent group loads it.
-		@Local(argsOnly = true) final ChunkSectionLayerGroup group
+		@Local(argsOnly = true, name = "group") final ChunkSectionLayerGroup group
 	) {
 		return TerrainVelocityPass.createPass(
 			encoder,
@@ -79,6 +81,7 @@ public class VulkanChunkSectionsToRenderMixin {
 		);
 	}
 
+	@Unique
 	private static GpuTextureView mcDlssTerrainVelocityView() {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
 		return phase == null ? null : phase.getTerrainVelocityView();

@@ -291,7 +291,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(
  * motion image at render size in R16G16_SFLOAT, and the depth at render size in D32_SFLOAT.
  *
  * `num_back_buffers` is the swapchain's expected image count, declared as the app knows it;
- * adequacy against Streamline's requirement is verified live later in the milestone.
+ * adequacy against Streamline's requirement is verified by live validation.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure_fg(uint32_t num_back_buffers);
 
@@ -801,7 +801,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_start(void);
 
 /*
- * Emits the frame's Reflex/PCL markers at the M-12 input, simulation, and render-submit
+ * Emits the frame's Reflex/PCL markers at the input, simulation, and render-submit
  * seams: mc_dlss_reflex_input_sample at Minecraft's GLFW input poll, and mc_dlss_reflex_marker
  * for the simulation pair around Minecraft's runTick simulation and the render-submit pair
  * around renderFrame's command-encoder submit. Those four emit through slPCLSetMarker under
@@ -968,7 +968,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_present_markers(
  * configuration, the same gates as mc_dlss_tag_fg_resources. A null semaphore - the plugin
  * has not allocated one, as before the first present - is a no-op success: there is no input
  * processing in flight to wait for. The call deliberately does not look at the reported
- * DLSSGStatus; the status-to-off fallback is a later slice's own.
+ * DLSSGStatus; the status policy owns status-to-off fallback.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_wait_fg_inputs_idle(void);
 

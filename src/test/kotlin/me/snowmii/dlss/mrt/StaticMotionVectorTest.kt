@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 
 /**
- * Proves the M-5 still-camera semantics (AC-3): a continuous still camera produces zero NDC
+ * Proves still-camera semantics: a continuous still camera produces zero NDC
  * motion at every depth through the shader's own per-pixel formula, whatever the jitter moved.
  *
  * This is the camera-motion math the whole velocity surface shares: the stress pass derives its
@@ -27,7 +27,7 @@ class StaticMotionVectorTest {
 	 * A continuous still camera produces zero NDC motion at every depth through the shader's
 	 * own formula: the reprojection collapses to the identity, so
 	 * `ndc(Reprojection * clip) - ndc(clip)` is zero and the jitter never leaks into the
-	 * vector. This is the "static motion vectors" the milestone names: static geometry's
+	 * vector. This is the static-motion behavior: static geometry's
 	 * correct velocity is exactly the camera's, and a still camera must read zero everywhere.
 	 */
 	@Test

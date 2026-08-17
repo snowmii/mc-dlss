@@ -82,12 +82,12 @@ class WorldPhase(
 	 */
 	private val readout: SessionReadout = SessionReadout.NOOP,
 ) : AutoCloseable {
-	private var scene: RenderTarget? = null
-	private var mainTarget: RenderTarget? = null
-	private var prepared = false
-	private var lastResolved: RenderTarget? = null
+	private var sceneTarget: RenderTarget? = null
+	private var mainRenderTarget: RenderTarget? = null
+	private var projectionPrepared = false
+	private var lastResolvedTarget: RenderTarget? = null
 	/** The frame's camera as the projection seam sampled it, snapshotted at [prepare] and carried to [end]. */
-	private var camera: DlssCameraSample? = null
+	private var cameraSample: DlssCameraSample? = null
 
 	/** True between [begin] and [end]. */
 	var isOpen: Boolean = false
@@ -98,7 +98,7 @@ class WorldPhase(
 	 * the vanilla main target. Non-null only inside an eligible DLSS world phase.
 	 */
 	val worldTargetOverride: RenderTarget?
-		get() = if (isOpen) scene else null
+		get() = if (isOpen) sceneTarget else null
 
 	/**
 	 * Observes a pipeline whose ownership can change the session's world-motion route.
@@ -134,8 +134,8 @@ class WorldPhase(
 	fun submitStart() = runtime.pacing.begin(FramePacingProbe.Span.RENDER_SUBMIT)
 	fun submitEnd() = runtime.pacing.end(FramePacingProbe.Span.RENDER_SUBMIT)
 
-	// The Reflex/PCL frame markers of the M-12 surface, reached the same way the present
-	// bracket is: the Minecraft run/runTick/renderFrame mixins call the active world phase
+	// The Reflex/PCL frame markers use the same active-world-phase route as the present
+	// bracket: the Minecraft run/runTick/renderFrame mixins call the active world phase
 	// (the render loop's handle to the runtime, null before the DLSS path was built), and this
 	// object passes the call through to the evaluation and its adapter. The marker itself is a
 	// value, so a mixin naming a new seam adds an enum constant rather than a method here.
@@ -216,7 +216,7 @@ class WorldPhase(
 
 	/** Current captured-minus-previous displacement for one entity, or null without a predecessor. */
 	fun objectMotionDisplacement(entityId: Int): Vector3f? =
-		if (entityVelocityActive) runtime.objectMotion.displacement(entityId) else null
+		if (entityVelocityActive) runtime.objectMotion.objectDisplacement(entityId) else null
 
 	/**
 	 * Current captured-minus-previous displacement for one moving block, or null without a
@@ -225,7 +225,7 @@ class WorldPhase(
 	 * and resolved in the moving-block domain of the shared object history.
 	 */
 	fun blockMotionDisplacement(blockId: Long): Vector3f? =
-		if (entityVelocityActive) runtime.objectMotion.displacement(blockId) else null
+		if (entityVelocityActive) runtime.objectMotion.objectDisplacement(blockId) else null
 
 	/**
 	 * The scene-sized RG16_FLOAT velocity view terrain chunk passes must render into, or null
@@ -287,9 +287,9 @@ class WorldPhase(
 		// before WorldPhase.end - skips the close, and a frame that prepared but never rendered
 		// leaves one unconsumed. Both are dropped here rather than thrown on, because a stale
 		// phase must not turn one render failure into a permanent one.
-		discard()
+		discardUnfinishedFrame()
 
-		this.mainTarget = mainTarget
+		this.mainRenderTarget = mainTarget
 		// Minecraft reuses the sample's matrices across frames, so the stored sample must not
 		// reference the seam's live ones: snapshot before storing, and the evaluation reads
 		// this frame's camera no matter what the renderer rewrites before the phase closes.
@@ -302,8 +302,8 @@ class WorldPhase(
 				cameraZ = it.cameraZ,
 			)
 		}
-		this.camera = snapshot
-		scene = if (mainTarget.width > 0 && mainTarget.height > 0) {
+		this.cameraSample = snapshot
+		sceneTarget = if (mainTarget.width > 0 && mainTarget.height > 0) {
 			runtime.beginWorldPhase(
 				normalInWorldFrame,
 				Dimensions(mainTarget.width, mainTarget.height),
@@ -312,8 +312,8 @@ class WorldPhase(
 		} else {
 			null
 		}
-		prepared = true
-		return if (scene != null) runtime.activeJitter else null
+		projectionPrepared = true
+		return if (sceneTarget != null) runtime.activeJitter else null
 	}
 
 	/**
@@ -325,35 +325,35 @@ class WorldPhase(
 	 * projection seam routes once rather than twice.
 	 */
 	fun begin(normalInWorldFrame: Boolean, mainTarget: RenderTarget): RenderTarget {
-		if (!prepared || this.mainTarget !== mainTarget) {
+		if (!projectionPrepared || this.mainRenderTarget !== mainTarget) {
 			prepare(normalInWorldFrame, mainTarget)
 		}
 		isOpen = true
 
-		val resolved = scene ?: mainTarget
-		readout.worldPhase(
+		val resolved = sceneTarget ?: mainTarget
+		readout.reportWorldPhase(
 			mainTarget = mainTarget,
-			scene = scene,
-			frame = runtime.activeRoute?.frame,
+			scene = sceneTarget,
+			frame = runtime.worldTargetRoute?.frame,
 			facts = SessionFacts(
 				enabled = runtime.config.enabled,
 				state = runtime.sessionState,
 				qualityMode = runtime.qualityMode,
 				renderPreset = runtime.renderPreset,
 				outputDimensions = runtime.outputDimensions,
-				renderDimensions = runtime.renderDimensions,
+				renderDimensions = runtime.dlssRenderDimensions,
 			),
 			frameTimings = { runtime.frameEvaluation?.sampleTimings() },
 			pacing = { runtime.pacing.sampleAndReset() },
 			fgState = {
 				// The monitor reads the plugin only while FG is active: with FG off the plugin's
 				// presented count and fence are stale, and the line would report noise as news.
-				if (runtime.frameGeneration.active) runtime.frameEvaluation?.sampleFgState() else null
+				if (runtime.frameGeneration.effective) runtime.frameEvaluation?.sampleFgState() else null
 			},
 		)
-		if (resolved !== lastResolved) {
+		if (resolved !== lastResolvedTarget) {
 			// SkyRenderer caches the target it was built against and reuses it every frame.
-			lastResolved = resolved
+			lastResolvedTarget = resolved
 			onWorldTargetChanged()
 		}
 		return resolved
@@ -368,23 +368,23 @@ class WorldPhase(
 			return
 		}
 
-		val rendered = scene
-		val destination = mainTarget
+		val rendered = sceneTarget
+		val destination = mainRenderTarget
 		// Read before the phase closes: closing drops both, and the evaluation needs the same
 		// jitter and motion the world was actually rendered with.
 		val jitter = runtime.activeJitter
 		val motion = runtime.activeMotion
-		val camera = this.camera
+		val camera = this.cameraSample
 		// The route and the velocity view behind it are captured while the phase is still open:
 		// [terrainVelocityView] is non-null only inside an open velocity-MRT phase, which is
 		// exactly the handoff the evaluation's motion-source gate needs.
 		val route = runtime.motionVectorRoute
 		val velocityView = terrainVelocityView
 		isOpen = false
-		prepared = false
-		scene = null
-		mainTarget = null
-		this.camera = null
+		projectionPrepared = false
+		sceneTarget = null
+		mainRenderTarget = null
+		this.cameraSample = null
 
 		// Evaluation decides whether this frame may become the predecessor for object motion.
 		// Keep the runtime's published phase values alive through evaluation, then disposition
@@ -393,7 +393,7 @@ class WorldPhase(
 		var completedDlssFrame = false
 		try {
 			if (rendered != null && destination != null) {
-				completedDlssFrame = evaluate(rendered, destination, jitter, motion, route, velocityView, camera)
+				completedDlssFrame = evaluateAndCompose(rendered, destination, jitter, motion, route, velocityView, camera)
 			}
 		} finally {
 			runtime.endWorldPhase(completedDlssFrame)
@@ -420,7 +420,7 @@ class WorldPhase(
 	 * through the phase without everything an evaluation needs, and DLSS reading a stale or absent
 	 * input is worse than one frame of the low-resolution present.
 	 */
-	private fun evaluate(
+	private fun evaluateAndCompose(
 		rendered: RenderTarget,
 		destination: RenderTarget,
 		jitter: DlssJitterOffset?,
@@ -445,13 +445,13 @@ class WorldPhase(
 	 * must not be closed against the new one.
 	 */
 	fun resetHistory() {
-		discard()
+		discardUnfinishedFrame()
 		runtime.resetHistory()
 	}
 
 	override fun close() {
-		discard()
-		lastResolved = null
+		discardUnfinishedFrame()
+		lastResolvedTarget = null
 		runtime.close()
 	}
 
@@ -460,16 +460,16 @@ class WorldPhase(
 	 * dropped frame would otherwise have left behind. The scene target itself stays owned by the
 	 * runtime.
 	 */
-	private fun discard() {
-		if (!isOpen && !prepared) {
+	private fun discardUnfinishedFrame() {
+		if (!isOpen && !projectionPrepared) {
 			return
 		}
 
 		isOpen = false
-		prepared = false
-		scene = null
-		mainTarget = null
-		camera = null
+		projectionPrepared = false
+		sceneTarget = null
+		mainRenderTarget = null
+		cameraSample = null
 		runtime.endWorldPhase()
 		// This frame decided a route and moved the motion predecessor forward, but no image was
 		// ever accumulated from it, so the next frame must start its history again.
@@ -531,7 +531,7 @@ class WorldPhase(
 		 * destroy is worse than one frame without FG. Returns null when either target is
 		 * missing, mismatched in size, or not a Vulkan view.
 		 */
-		internal fun resolveFgInputs(): FgFrameInputs? {
+		internal fun resolveFrameGenerationInputs(): FgFrameInputs? {
 			val main = Minecraft.getInstance().gameRenderer.mainRenderTarget()
 			val ui = ClientRuntime.active().activeUiPhase()?.uiTarget ?: return null
 			if (ui.width != main.width || ui.height != main.height) {
@@ -558,7 +558,7 @@ class WorldPhase(
 				depth = ImageBinding(
 					depth.vkImageView(),
 					depth.texture().vkImage(),
-					VulkanConst.toVk(depth.texture().getFormat()),
+					VulkanConst.toVk(depth.texture().format),
 				),
 			)
 		}
@@ -573,7 +573,7 @@ class WorldPhase(
 			return ImageBinding(
 				color.vkImageView(),
 				color.texture().vkImage(),
-				VulkanConst.toVk(color.texture().getFormat()),
+				VulkanConst.toVk(color.texture().format),
 			)
 		}
 
@@ -590,7 +590,7 @@ class WorldPhase(
 			return ImageBinding(
 				vulkan.vkImageView(),
 				vulkan.texture().vkImage(),
-				VulkanConst.toVk(vulkan.texture().getFormat()),
+				VulkanConst.toVk(vulkan.texture().format),
 			)
 		}
 

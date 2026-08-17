@@ -76,7 +76,7 @@ class UiPhase(
 	 * the vanilla main target. Non-null only inside an open hand or GUI window.
 	 */
 	val uiTargetOverride: RenderTarget?
-		get() = if (isOpen) target.current else null
+		get() = if (isOpen) target.currentUiTarget else null
 
 	/**
 	 * The held UI target, or null before the frame's first window allocated it.
@@ -89,7 +89,7 @@ class UiPhase(
 	 * accessor here.
 	 */
 	val uiTarget: RenderTarget?
-		get() = target.current
+		get() = target.currentUiTarget
 
 	/**
 	 * Opens the hand window against the frame's main target: acquires the UI target at its size,
@@ -138,7 +138,7 @@ class UiPhase(
 			return false
 		}
 
-		target.acquire(mainTarget.width, mainTarget.height)
+		target.acquireUiTarget(mainTarget.width, mainTarget.height)
 		if (clear) {
 			target.clear(encoder())
 		}
@@ -180,7 +180,7 @@ class UiPhase(
 			return
 		}
 
-		val ui = target.current ?: return
+		val ui = target.currentUiTarget ?: return
 		composite().render(encoder(), ui, mainTarget, mainTarget)
 	}
 

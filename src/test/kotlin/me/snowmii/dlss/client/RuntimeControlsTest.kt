@@ -1,4 +1,5 @@
 package me.snowmii.dlss.client
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.PresentTarget
@@ -31,22 +32,15 @@ import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
 /**
- * M-14's rung: a running session changes what DLSS is doing, without restarting.
+ * Exercises live DLSS controls without restarting the session.
  *
- * Everything beneath this milestone made DLSS work at whatever the JVM was started with. That is
- * enough to run and not enough to review: AC-2 asks a human to watch the internal resolution change
- * while the window does not, and AC-5 asks them to watch full-resolution rendering come back - both
- * comparisons, and until now both meant quitting and starting a second client with a different
- * property, which compares two sessions rather than one switch.
- *
- * So the rung drives the real production stack - controls, runtime, lifecycle adapter, session, and
- * world phase - off the render thread, with the native side as a double. What it holds is that a
- * change reaches every piece of state sized from the configuration, that a refused change leaves
- * the session exactly as it was, and that what the reviewer is told is what is actually running.
+ * The test drives controls, runtime, lifecycle adapter, session, and world phase with a native
+ * double. It verifies configuration changes reach every dependent resource, refused changes are
+ * atomic, and the readout reports the state actually in use.
  */
 class RuntimeControlsTest {
 	private val output = Dimensions(2560, 1440)
-	private val mainTarget = FakeTarget(output.width, output.height)
+	private val mainTarget = HeadlessRenderTarget(output.width, output.height)
 
 	@Test
 	fun `switching DLSS off returns the world to full resolution and back on resumes it`() {
@@ -127,7 +121,7 @@ class RuntimeControlsTest {
 		fixture.controls.cycleQualityMode()
 		fixture.frame()
 
-		assertEquals(fixture.runtime.renderDimensions, fixture.native.lastConfiguredRender)
+		assertEquals(fixture.runtime.dlssRenderDimensions, fixture.native.lastConfiguredRender)
 		assertTrue(fixture.motion!!.reset, "history cannot carry across a resolution change")
 		assertTrue(fixture.released > 0, "the scene target is released rather than reused at the old size")
 	}
@@ -171,14 +165,14 @@ class RuntimeControlsTest {
 		fixture.frame()
 		val mode = fixture.runtime.qualityMode
 		val preset = fixture.runtime.renderPreset
-		val dimensions = fixture.runtime.renderDimensions
+		val dimensions = fixture.runtime.dlssRenderDimensions
 
 		fixture.native.configureResult = 0xBAD00005.toInt()
 		fixture.controls.cycleQualityMode()
 
 		assertEquals(mode, fixture.runtime.qualityMode)
 		assertEquals(preset, fixture.runtime.renderPreset)
-		assertEquals(dimensions, fixture.runtime.renderDimensions)
+		assertEquals(dimensions, fixture.runtime.dlssRenderDimensions)
 		assertTrue(
 			fixture.announced.last().startsWith("DLSS kept ${mode.propertyValue}/${preset.propertyValue};"),
 			"the reviewer must be told the frames did not change: ${fixture.announced.last()}",
@@ -195,7 +189,7 @@ class RuntimeControlsTest {
 
 		assertTrue(readout.contains("mode ${fixture.runtime.qualityMode.propertyValue}"), readout)
 		assertTrue(readout.contains("preset ${fixture.runtime.renderPreset.propertyValue}"), readout)
-		assertTrue(readout.contains("internal ${fixture.runtime.renderDimensions}"), readout)
+		assertTrue(readout.contains("internal ${fixture.runtime.dlssRenderDimensions}"), readout)
 		assertTrue(readout.contains("output $output"), readout)
 
 		fixture.controls.toggleEnabled()
@@ -232,7 +226,7 @@ class RuntimeControlsTest {
 		val runtime = RenderRuntime(
 			session = session,
 			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
+				allocate = { width, height -> HeadlessRenderTarget(width, height) },
 				release = {
 					released++
 					events.add("release-target")
@@ -273,8 +267,7 @@ class RuntimeControlsTest {
 		)
 	}
 
-	/** Render target with no GPU buffers, so the whole stack is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height
@@ -294,7 +287,7 @@ class RuntimeControlsTest {
 	 * The render size answers per mode the way NGX does, because a mode change that returned the
 	 * same size would let a runtime that rebuilt nothing pass.
 	 */
-	private class FakeNative : NativeApi {
+	private class FakeNative : NativeApiTestDouble() {
 		var initializeCalls = 0
 		var releaseImageCalls = 0
 		var waitDeviceIdleCalls = 0
@@ -330,7 +323,7 @@ class RuntimeControlsTest {
 			qualityMode: Int,
 		): Dimensions = renderFor(SRMode.entries.first { it.sdkValue == qualityMode })
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -369,6 +362,6 @@ class RuntimeControlsTest {
 
 		override fun presentOutput(target: PresentTarget): Int = NativeApi.SUCCESS_RESULT
 
-		override fun evaluate(request: EvaluationRequest): Int = NativeApi.SUCCESS_RESULT
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = NativeApi.SUCCESS_RESULT
 	}
 }

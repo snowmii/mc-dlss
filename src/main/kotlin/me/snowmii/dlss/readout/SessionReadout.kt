@@ -12,14 +12,10 @@ import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.client.Minecraft
 
 /**
- * Formats and emits everything a reviewer reads about one session: the first world-phase line,
- * the world frame-rate line, the acceptance record, and the first-evaluation line.
+ * Formats and emits the session's world-phase, frame-rate, environment, and evaluation lines.
  *
- * The world phase and the evaluation own *when* those events happen - this module owns how they
- * are spelled and where they go. It is fed by events and carries no window or compose logic,
- * which is the whole split: the phase's reporting state (one-shot flags, the sampling window)
- * was orthogonal to the redirect window it sat in, and three of the phase's injected seams
- * existed only to serve it.
+ * The world phase and evaluation own when events happen; this module owns formatting and output.
+ * It carries no target, window, or composition state.
  *
  * The frame-rate sampling counts the world frames themselves, not Minecraft's own FPS counter,
  * so the same number is comparable between a DLSS session and a `mc.dlss.enabled=false`
@@ -27,14 +23,14 @@ import net.minecraft.client.Minecraft
  * being slow.
  */
 class SessionReadout(
-	private val emit: (String) -> Unit,
+	private val emitLine: (String) -> Unit,
 	private val minecraftBuild: () -> String? = { null },
-	private val probeResolvedTarget: (() -> RenderTarget?)? = null,
+	private val resolveReportedTarget: (() -> RenderTarget?)? = null,
 ) {
-	private var reportedFirstPhase = false
+	private var firstPhaseReported = false
 	private var reportedFirstEvaluation = false
 	private var sampleStartedAt = 0L
-	private var sampledFrames = 0
+	private var sampledWorldFrames = 0
 
 	// The temporal-accumulation half of the sample window. A DLSS image that stays aliased while
 	// the camera holds still means the accumulation never converged, and only two inputs can
@@ -42,9 +38,9 @@ class SessionReadout(
 	// same sub-pixel point, so there is no new information to accumulate) or a history reset
 	// arriving every frame (each frame is upscaled alone). Both are invisible in the frame rate
 	// and neither is observable from the image alone, so the sample window counts them.
-	private val sampledJitterIndices = HashSet<Int>()
+	private val sampledJitterPhases = HashSet<Int>()
 	private var sampledJitterFrames = 0
-	private var sampledResets = 0
+	private var sampledHistoryResets = 0
 	private var lastJitterPixelX = 0f
 	private var lastJitterPixelY = 0f
 
@@ -53,10 +49,10 @@ class SessionReadout(
 	 * window. Called per DLSS evaluation; frames that never evaluate contribute nothing.
 	 */
 	fun recordFrameJitter(index: Int, pixelX: Float, pixelY: Float, reset: Boolean) {
-		sampledJitterIndices.add(index)
+		sampledJitterPhases.add(index)
 		sampledJitterFrames++
 		if (reset) {
-			sampledResets++
+			sampledHistoryResets++
 		}
 		lastJitterPixelX = pixelX
 		lastJitterPixelY = pixelY
@@ -73,9 +69,9 @@ class SessionReadout(
 			return ""
 		}
 		return ", accum=phases=%d/%d resets=%d/%d jitter=%.3f,%.3f".format(
-			sampledJitterIndices.size,
+			sampledJitterPhases.size,
 			sampledJitterFrames,
-			sampledResets,
+			sampledHistoryResets,
 			sampledJitterFrames,
 			lastJitterPixelX,
 			lastJitterPixelY,
@@ -92,7 +88,7 @@ class SessionReadout(
 	 * [frameTimings] the GPU-timings read, called only when the frame-rate line is about to
 	 * report, because the answer crosses the ABI.
 	 */
-	fun worldPhase(
+	fun reportWorldPhase(
 		mainTarget: RenderTarget,
 		scene: RenderTarget?,
 		frame: DlssFrameDecision?,
@@ -112,7 +108,7 @@ class SessionReadout(
 	 * outside - the frame renders either way. The line names which stage the frame actually got
 	 * through and the images it wrote into, which is enough to tell them apart from the log alone.
 	 */
-	fun firstEvaluation(
+	fun reportFirstEvaluation(
 		recorded: Boolean,
 		colorImage: Long,
 		depthImage: Long,
@@ -124,7 +120,7 @@ class SessionReadout(
 		}
 
 		reportedFirstEvaluation = true
-		emit(
+		emitLine(
 			"DLSS first evaluation: recorded=$recorded" +
 				" color=0x${colorImage.toString(16)}" +
 				" depth=0x${depthImage.toString(16)}" +
@@ -147,15 +143,15 @@ class SessionReadout(
 		frame: DlssFrameDecision?,
 		facts: SessionFacts,
 	) {
-		if (reportedFirstPhase) {
+		if (firstPhaseReported) {
 			return
 		}
 
-		reportedFirstPhase = true
+		firstPhaseReported = true
 		// What the renderer actually resolves mid-phase. If this is not the scene target, the
 		// route decided correctly but the redirect never reached the frame graph.
-		val resolved = probeResolvedTarget?.invoke()
-		emit(
+		val resolved = resolveReportedTarget?.invoke()
+		emitLine(
 			"DLSS first world phase: main=${mainTarget.width}x${mainTarget.height}" +
 				" route=${frame?.route ?: DlssFrameRoute.VANILLA}" +
 				" reason=${frame?.reason ?: "startup-unavailable"}" +
@@ -183,21 +179,21 @@ class SessionReadout(
 			return
 		}
 
-		sampledFrames++
+		sampledWorldFrames++
 		val elapsed = now - sampleStartedAt
 		if (elapsed < SAMPLE_INTERVAL_NANOS) {
 			return
 		}
 
-		val fps = sampledFrames * 1_000_000_000.0 / elapsed
+		val fps = sampledWorldFrames * 1_000_000_000.0 / elapsed
 		// The GPU cost of the chain belongs on the same line as the frame rate: separately they
 		// are two numbers that move for unrelated reasons, and together they are the comparison -
 		// a frame rate that did not change while the chain costs a millisecond is a client whose
 		// frames are bounded by something other than the GPU.
-		emit(
+		emitLine(
 			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s%s%s".format(
 				fps,
-				sampledFrames,
+				sampledWorldFrames,
 				frame?.route ?: DlssFrameRoute.VANILLA,
 				scene?.let { "${it.width}x${it.height}" } ?: "main-target",
 				frameTimings() ?: "unmeasured",
@@ -207,21 +203,18 @@ class SessionReadout(
 			),
 		)
 		sampleStartedAt = now
-		sampledFrames = 0
-		sampledJitterIndices.clear()
+		sampledWorldFrames = 0
+		sampledJitterPhases.clear()
 		sampledJitterFrames = 0
-		sampledResets = 0
+		sampledHistoryResets = 0
 	}
 
 	/**
-	 * Reports the environment half of the Sprint acceptance record.
-	 *
-	 * Emitted from the first world phase rather than mod init, because the internal resolution is
-	 * the field the reviewer most needs and NGX does not choose it until startup has run, which
-	 * the first frame that asks for a world target is what drives.
+	 * Emits environment and runtime facts after the first world phase, when native startup has
+	 * selected the internal resolution.
 	 */
 	private fun reportAcceptanceRecord(facts: SessionFacts) {
-		emit(
+		emitLine(
 			AcceptanceRecord.render(
 				minecraftBuild = minecraftBuild(),
 				enabled = facts.enabled,
@@ -244,7 +237,7 @@ class SessionReadout(
 		 * The DLSS-G monitor suffix for the frame-rate line: actual presented FPS, status word,
 		 * and input-processing completion fence. Streamline reports the number of real plus
 		 * generated presentations per app frame, so its documented calculation is app FPS times
-		 * that value. A factor of two is the 2x-generation proof; an advancing fence proves the
+		 * that value. A factor of two indicates 2x generation; an advancing fence indicates the
 		 * plugin is reading presented frames' tagged inputs.
 		 */
 		fun fgMonitorSuffix(fg: FgState?, appFps: Double): String = if (fg == null) {
@@ -279,16 +272,15 @@ class SessionReadout(
 		/** Production wiring: the loader build and a real resolution probe behind the lines. */
 		@JvmStatic
 		fun forMinecraft(diagnostics: (String) -> Unit): SessionReadout = SessionReadout(
-			emit = diagnostics,
+			emitLine = diagnostics,
 			minecraftBuild = ::loaderMinecraftBuild,
-			probeResolvedTarget = { Minecraft.getInstance().gameRenderer.mainRenderTarget() },
+			resolveReportedTarget = { Minecraft.getInstance().gameRenderer.mainRenderTarget() },
 		)
 	}
 }
 
 /**
- * Runtime facts the acceptance record names, fed by the phase from the runtime rather than read
- * directly, so the readout stays decoupled from the runtime's module.
+ * Runtime facts supplied by the phase so the readout stays decoupled from the runtime module.
  */
 class SessionFacts(
 	val enabled: Boolean,

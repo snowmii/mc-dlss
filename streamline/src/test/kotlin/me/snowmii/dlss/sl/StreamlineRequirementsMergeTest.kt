@@ -24,7 +24,7 @@ import org.lwjgl.vulkan.VkInstanceCreateInfo
 import org.lwjgl.vulkan.VkPhysicalDevice
 
 /**
- * M-2 rung: the device-requirements merge. Streamline's Vulkan 1.2/1.3 feature names and the
+ * Verifies the device-requirements merge. the device-requirements merge. Streamline's Vulkan 1.2/1.3 feature names and the
  * summed DLSS_G queue counts surface through the bridge, and proxy activation succeeds against
  * a device that actually holds the merged queue layout.
  *

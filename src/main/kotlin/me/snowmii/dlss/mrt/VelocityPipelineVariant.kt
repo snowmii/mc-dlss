@@ -27,9 +27,8 @@ import net.minecraft.resources.Identifier
  * like the source pipeline's own cache entry. Terrain layers are static pipelines, so the same
  * twin instance is what every frame's terrain pass binds.
  *
- * This plain twin keeps the *source* fragment shader — that is the M-4 descriptor contract — so
- * it cannot write the velocity payload itself. A pass that has to write the payload binds a
- * [writerTwin] instead.
+ * This plain twin keeps the *source* fragment shader, so it cannot write the velocity payload
+ * itself. A pass that has to write the payload binds a [writerTwin] instead.
  */
 fun velocityTwin(source: RenderPipeline): RenderPipeline =
 	velocityTwins.computeIfAbsent(source) { plainTwin(it) }

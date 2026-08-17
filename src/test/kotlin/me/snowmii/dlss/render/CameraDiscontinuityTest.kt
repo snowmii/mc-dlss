@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test
  *
  * The threshold is a speed, not a distance, because the same displacement means different things
  * in a 4 ms frame and a 400 ms one. Below it every continuous movement Minecraft can produce must
- * survive untouched, or the accumulation this effort exists for would restart while simply flying.
+ * survive untouched, or accumulation would restart during continuous flight.
  */
 class CameraDiscontinuityTest {
 	private val render = Dimensions(1280, 720)

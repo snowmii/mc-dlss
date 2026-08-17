@@ -40,11 +40,11 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.PointerBuffer
 
 /**
- * The M-6.5 camera-only writer retirement evidence (AC-3): on VELOCITY_MRT the five
+ * Camera-only writer retirement: on VELOCITY_MRT the five
  * camera-motion-only writer families - terrain, static block entity, weather, particle, and
  * breaking block - are gone from the writer surface, the mixin registration, the source tree,
  * and the shader assets, while the retained object-motion writers (entity, moving block,
- * cloud), the post-scene fill, and the terrain pass's sentinel clear stay. The M-6 hand
+ * cloud), the post-scene fill, and the terrain pass's sentinel clear stay. The hand
  * retirement rides the same ratchet: the first-person hand/item velocity writer, its mixin
  * hooks, its shaders, and its suite are absent too, while the vanilla post-DLSS hand route
  * outside the world phase stays untouched.

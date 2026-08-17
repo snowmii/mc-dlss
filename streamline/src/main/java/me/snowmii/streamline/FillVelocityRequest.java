@@ -52,13 +52,15 @@ public record FillVelocityRequest(
 	 */
 	@Override
 	public boolean equals(Object other) {
-		return other instanceof FillVelocityRequest request
-			&& request.commandBuffer == commandBuffer
-			&& request.depth.equals(depth)
-			&& request.velocity.equals(velocity)
-			&& Arrays.equals(request.reprojection, reprojection)
-			&& request.reset == reset
-			&& Objects.equals(request.renderDimensions, renderDimensions);
+		return other instanceof FillVelocityRequest(
+			long buffer, ImageBinding depth1, ImageBinding velocity1, float[] reprojection1, boolean reset1, Dimensions dimensions
+		)
+			&& buffer == commandBuffer
+			&& depth1.equals(depth)
+			&& velocity1.equals(velocity)
+			&& Arrays.equals(reprojection1, reprojection)
+			&& reset1 == reset
+			&& Objects.equals(dimensions, renderDimensions);
 	}
 
 	@Override

@@ -22,11 +22,11 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * M-11 present-marker rung: a successful present handoff emits exactly one PRESENT_START then
+ * Present-marker behavior: a successful present handoff emits exactly one PRESENT_START then
  * PRESENT_END under the same Streamline frame index the frame's SR/FG tags - and its common
  * constants - recorded under, and refused or pre-ready handoffs emit no markers at all.
  *
- * The seam is [NativeApi.presentHandoff]: the DLSS-G guide requires the frame index carried by
+ * The seam is [NativeApi.recordPresentHandoff]: the DLSS-G guide requires the frame index carried by
  * the Reflex present markers to match the frame index carried by the common constants
  * ("Make sure that frame index provided with the common constants is matching the presented
  * frame (i.e. frame index provided with Reflex markers ReflexMarker::ePresentStart and
@@ -55,7 +55,7 @@ import org.lwjgl.vulkan.VK10
  * oracle refuses, which is what makes the refused and pre-ready no-marker halves of the
  * invariant observable.
  *
- * Like the other live FG rungs, the whole scenario runs in ONE test method (and therefore one
+ * Like the other live FG tests, the whole scenario runs in ONE test method (and therefore one
  * test fork): the close-path slShutdown is what makes the fork's exit clean, and a fork that
  * followed an unclean exit comes up with the plugin manager already initialized.
  */
@@ -73,7 +73,7 @@ class FgPresentMarkersTest {
 		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				FAIL_NOT_INITIALIZED,
-				bridge.presentHandoff(),
+				bridge.recordPresentHandoff(),
 				"presentHandoff before bootstrap must answer FAIL_NotInitialized",
 			)
 			// Pre-ready, the present calls stay refusals like the handoff: the no-op contract
@@ -145,7 +145,7 @@ class FgPresentMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -241,7 +241,7 @@ class FgPresentMarkersTest {
 				// oracle must stay as silent as before the refusal.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff before any tag recorded must answer FAIL_InvalidParameter",
 				)
 				assertEquals(
@@ -261,7 +261,7 @@ class FgPresentMarkersTest {
 				// them under the token the markers are emitted under.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -304,10 +304,10 @@ class FgPresentMarkersTest {
 				)
 				val firstIndexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					firstIndexes.srFrameIndex,
-					firstIndexes.fgFrameIndex,
+					firstIndexes.lastSrTagFrameIndex,
+					firstIndexes.lastFgTagFrameIndex,
 					"the SR and FG tags of one frame must record under the same Streamline " +
-						"frame index, got SR=${firstIndexes.srFrameIndex}, FG=${firstIndexes.fgFrameIndex}",
+						"frame index, got SR=${firstIndexes.lastSrTagFrameIndex}, FG=${firstIndexes.lastFgTagFrameIndex}",
 				)
 
 				// Tagging emits nothing either: the marker bracket belongs to the handoff
@@ -326,7 +326,7 @@ class FgPresentMarkersTest {
 				// the same-token claim unexercised.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.evaluate(
+					bridge.evaluateSuperResolution(
 						EvaluationRequest.builder()
 							.commandBuffer(frame.address())
 							.color(ImageBinding(
@@ -354,7 +354,7 @@ class FgPresentMarkersTest {
 				// declarations, exactly like the production frame PresentIntegrationTest pins.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -387,7 +387,7 @@ class FgPresentMarkersTest {
 				// index the tags and the common constants recorded under.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the complete equal-index tag set must arm once",
 				)
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentStart())
@@ -415,8 +415,8 @@ class FgPresentMarkersTest {
 				)
 				assertEquals(
 					listOf(
-						PresentMarkerEvent(PresentMarkerType.PRESENT_START, firstIndexes.srFrameIndex),
-						PresentMarkerEvent(PresentMarkerType.PRESENT_END, firstIndexes.srFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_START, firstIndexes.lastSrTagFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_END, firstIndexes.lastSrTagFrameIndex),
 					),
 					firstMarkers.events,
 					"the first successful handoff must emit PRESENT_START then PRESENT_END, in " +
@@ -428,7 +428,7 @@ class FgPresentMarkersTest {
 				// emit anything - the oracle keeps answering the previous events unchanged.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a second handoff for the same tag set must answer FAIL_InvalidParameter",
 				)
 				assertEquals(
@@ -444,7 +444,7 @@ class FgPresentMarkersTest {
 				// events prove each bracket tracked its own frame.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -487,19 +487,19 @@ class FgPresentMarkersTest {
 				)
 				val secondIndexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					secondIndexes.srFrameIndex,
-					secondIndexes.fgFrameIndex,
+					secondIndexes.lastSrTagFrameIndex,
+					secondIndexes.lastFgTagFrameIndex,
 					"the re-recorded tags must record under one equal fresh frame index, got " +
-						"SR=${secondIndexes.srFrameIndex}, FG=${secondIndexes.fgFrameIndex}",
+						"SR=${secondIndexes.lastSrTagFrameIndex}, FG=${secondIndexes.lastFgTagFrameIndex}",
 				)
 				assertTrue(
-					secondIndexes.srFrameIndex != firstIndexes.srFrameIndex,
+					secondIndexes.lastSrTagFrameIndex != firstIndexes.lastSrTagFrameIndex,
 					"a consumed handoff must drop the retained token so the re-recorded tags " +
-						"advance the frame, got the first index ${firstIndexes.srFrameIndex} again",
+						"advance the frame, got the first index ${firstIndexes.lastSrTagFrameIndex} again",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.evaluate(
+					bridge.evaluateSuperResolution(
 						EvaluationRequest.builder()
 							.commandBuffer(frame.address())
 							.color(ImageBinding(
@@ -523,7 +523,7 @@ class FgPresentMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -547,7 +547,7 @@ class FgPresentMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the re-recorded complete tag set must arm once",
 				)
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.presentStart())
@@ -570,10 +570,10 @@ class FgPresentMarkersTest {
 				)
 				assertEquals(
 					listOf(
-						PresentMarkerEvent(PresentMarkerType.PRESENT_START, firstIndexes.srFrameIndex),
-						PresentMarkerEvent(PresentMarkerType.PRESENT_END, firstIndexes.srFrameIndex),
-						PresentMarkerEvent(PresentMarkerType.PRESENT_START, secondIndexes.srFrameIndex),
-						PresentMarkerEvent(PresentMarkerType.PRESENT_END, secondIndexes.srFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_START, firstIndexes.lastSrTagFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_END, firstIndexes.lastSrTagFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_START, secondIndexes.lastSrTagFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_END, secondIndexes.lastSrTagFrameIndex),
 					),
 					secondMarkers.events,
 					"the second successful handoff must emit exactly one more PRESENT_START then " +
@@ -598,7 +598,7 @@ class FgPresentMarkersTest {
 				// present no-op instead of opening a stale bracket under a stale token.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -641,7 +641,7 @@ class FgPresentMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.evaluate(
+					bridge.evaluateSuperResolution(
 						EvaluationRequest.builder()
 							.commandBuffer(frame.address())
 							.color(ImageBinding(
@@ -665,7 +665,7 @@ class FgPresentMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -689,7 +689,7 @@ class FgPresentMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the third complete tag set must arm once",
 				)
 				assertEquals(
@@ -724,7 +724,7 @@ class FgPresentMarkersTest {
 
 	/**
 	 * Answers the oracle when it has events to report, or null when it refuses with
-	 * FAIL_NotInitialized - the state every pre-handoff and refused-handoff checkpoint
+	 * FAIL_NotInitialized - the state every pre-handoff and refused-handoff state
 	 * asserts.
 	 */
 	private fun Native.presentMarkersOrNull(): PresentMarkerEvents? = try {

@@ -1,5 +1,6 @@
 package me.snowmii.dlss.session
-import me.snowmii.dlss.nativeSource
+import me.snowmii.dlss.readNativeSource
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
@@ -19,17 +20,15 @@ import java.util.Properties
 /**
  * Ultra Performance and DLAA are selectable, and every session runs a preset it named.
  *
- * Until this checkpoint the mod could ask NGX for three of the five modes it implements, and asked
- * for no preset at all - so the model that produced a frame was whichever one the installed DLL
- * happened to default to, which is exactly the fact AC-6's record has to state and no log line
- * could.
+ * The test also guards the model identity: NGX selects a preset for every mode, so the native
+ * configuration and readout must record the chosen preset rather than rely on a DLL default.
  */
 class QualityModePresetTest {
 	private val output = Dimensions(2560, 1440)
 
 	// Newlines are normalized because these assertions match the source text literally, and a
 	// Windows checkout hands the same file back with CRLF.
-	private val nativeSource = nativeSource("internal/ngx.cpp")
+	private val nativeSource = readNativeSource("internal/ngx.cpp")
 
 	@Test
 	fun everyImplementedModeIsSelectableByProperty() {
@@ -117,7 +116,7 @@ class QualityModePresetTest {
 				warnings = emptyList(),
 			),
 		)
-		val native = RecordingNative()
+		val native = RecordingNativeApi()
 
 		assertNotNull(LifecycleAdapter(session, native).initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")))
 		assertEquals(SRMode.ULTRA_PERFORMANCE.sdkValue, native.queriedQualityMode)
@@ -152,7 +151,7 @@ class QualityModePresetTest {
 		// changed), so the module's side of that invariant is that every configure records the
 		// options again - a preset-only change reaches the plugin on the next configure. There
 		// is no direct-NGX branch left to skip the recording.
-		val api = nativeSource("mc_dlss_api.cpp")
+		val api = readNativeSource("mc_dlss_api.cpp")
 		val configure = api.substringAfter("mc_dlss_configure").substringBefore("mc_dlss_acquire_images")
 		assertTrue(
 			configure.contains("record_sr_options()"),
@@ -169,7 +168,7 @@ class QualityModePresetTest {
 		// DLAA is 1:1 by definition, so the SL optimal-settings query (slDLSSGetOptimalSettings)
 		// must not be asked for it: the bridge answers the output dimensions directly, exactly
 		// as the retired NGX callback used to be skipped.
-		val query = nativeSource("internal/sl_dlss.cpp")
+		val query = readNativeSource("internal/sl_dlss.cpp")
 			.substringAfter("int32_t query_optimal_dimensions_sl(")
 			.substringBefore("int32_t record_sr_options(")
 		assertTrue(
@@ -189,7 +188,7 @@ class QualityModePresetTest {
 		// after the mapping (StreamlineSrOptionsTest asserts the seam itself). The plugin
 		// recreates the model when the preset changes, so the mapping is what carries a preset
 		// change into the running model.
-		val slOptions = nativeSource("internal/sl_dlss.cpp")
+		val slOptions = readNativeSource("internal/sl_dlss.cpp")
 		val record = slOptions
 			.substringAfter("int32_t record_sr_options(")
 			.substringBefore("int32_t record_sr_evaluation(")
@@ -216,7 +215,7 @@ class QualityModePresetTest {
 	}
 
 	/** Records what the adapter passed down, and nothing else; every later stage is unreachable. */
-	private class RecordingNative : NativeApi {
+	private class RecordingNativeApi : NativeApiTestDouble() {
 		var queriedQualityMode: Int? = null
 		var configuredQualityMode: Int? = null
 		var configuredRenderPreset: Int? = null
@@ -238,7 +237,7 @@ class QualityModePresetTest {
 			return Dimensions(853, 480)
 		}
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -263,6 +262,6 @@ class QualityModePresetTest {
 
 		override fun presentOutput(target: PresentTarget): Int = throw UnsupportedOperationException()
 
-		override fun evaluate(request: EvaluationRequest): Int = throw UnsupportedOperationException()
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = throw UnsupportedOperationException()
 	}
 }

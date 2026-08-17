@@ -60,15 +60,15 @@ class UiTargetCompositeTest {
 
 	@Test
 	fun `UI target allocates at output size and reuses the target while the size holds`() {
-		val allocated = mutableListOf<FakeTarget>()
-		val released = mutableListOf<FakeTarget>()
+		val allocated = mutableListOf<HeadlessRenderTarget>()
+		val released = mutableListOf<HeadlessRenderTarget>()
 		val uiTarget = UiTarget(
-			allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
-			release = { released += it as FakeTarget },
+			allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
+			release = { released += it as HeadlessRenderTarget },
 		)
 
-		val first = uiTarget.acquire(outputWidth, outputHeight)
-		val second = uiTarget.acquire(outputWidth, outputHeight)
+		val first = uiTarget.acquireUiTarget(outputWidth, outputHeight)
+		val second = uiTarget.acquireUiTarget(outputWidth, outputHeight)
 
 		assertSame(first, second, "the target is reused while the output size holds")
 		assertEquals(1, allocated.size)
@@ -79,15 +79,15 @@ class UiTargetCompositeTest {
 
 	@Test
 	fun `resize releases the old target before allocating at the new size`() {
-		val allocated = mutableListOf<FakeTarget>()
-		val released = mutableListOf<FakeTarget>()
+		val allocated = mutableListOf<HeadlessRenderTarget>()
+		val released = mutableListOf<HeadlessRenderTarget>()
 		val uiTarget = UiTarget(
-			allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
-			release = { released += it as FakeTarget },
+			allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
+			release = { released += it as HeadlessRenderTarget },
 		)
-		val first = uiTarget.acquire(outputWidth, outputHeight)
+		val first = uiTarget.acquireUiTarget(outputWidth, outputHeight)
 
-		val second = uiTarget.acquire(1920, 1080)
+		val second = uiTarget.acquireUiTarget(1920, 1080)
 
 		assertNotSame(first, second)
 		assertEquals(listOf(first), released, "the old target is released before the new allocation")
@@ -98,18 +98,18 @@ class UiTargetCompositeTest {
 
 	@Test
 	fun `close releases the held UI target exactly once`() {
-		val released = mutableListOf<FakeTarget>()
+		val released = mutableListOf<HeadlessRenderTarget>()
 		val uiTarget = UiTarget(
-			allocate = { width, height -> FakeTarget(width, height) },
-			release = { released += it as FakeTarget },
+			allocate = { width, height -> HeadlessRenderTarget(width, height) },
+			release = { released += it as HeadlessRenderTarget },
 		)
-		val held = uiTarget.acquire(outputWidth, outputHeight)
+		val held = uiTarget.acquireUiTarget(outputWidth, outputHeight)
 
 		uiTarget.close()
 		uiTarget.close()
 
 		assertEquals(listOf(held), released)
-		assertNull(uiTarget.current)
+		assertNull(uiTarget.currentUiTarget)
 	}
 
 	@Test
@@ -119,9 +119,9 @@ class UiTargetCompositeTest {
 
 	@Test
 	fun `clear resets the held target to transparent black and the reversed-Z far depth`() {
-		val held = FakeTarget(outputWidth, outputHeight)
+		val held = HeadlessRenderTarget(outputWidth, outputHeight)
 		val uiTarget = UiTarget(allocate = { _, _ -> held }, release = {})
-		uiTarget.acquire(outputWidth, outputHeight)
+		uiTarget.acquireUiTarget(outputWidth, outputHeight)
 
 		val recording = Recording()
 		uiTarget.clear(recording.encoder())
@@ -138,9 +138,9 @@ class UiTargetCompositeTest {
 
 	@Test
 	fun `composite writes the hudless world into the destination then blends the UI over it`() {
-		val ui = FakeTarget(outputWidth, outputHeight)
-		val hudless = FakeTarget(outputWidth, outputHeight)
-		val destination = FakeTarget(outputWidth, outputHeight)
+		val ui = HeadlessRenderTarget(outputWidth, outputHeight)
+		val hudless = HeadlessRenderTarget(outputWidth, outputHeight)
+		val destination = HeadlessRenderTarget(outputWidth, outputHeight)
 		val recording = Recording()
 
 		UiComposite(sampler = { FakeSampler() }).render(recording.encoder(), ui, hudless, destination)
@@ -170,7 +170,7 @@ class UiTargetCompositeTest {
 		assertEquals(ColorTargetState.WRITE_ALL, overlay.writeMask())
 
 		val copy = checkNotNull(UiComposite.HUDLESS_COPY_PIPELINE.colorTargetState)
-		assertTrue(copy.blendFunction().isEmpty(), "the base copy replaces the destination, never blends")
+		assertTrue(copy.blendFunction().isEmpty, "the base copy replaces the destination, never blends")
 		assertEquals(GpuFormat.RGBA8_UNORM, copy.format())
 		assertEquals(ColorTargetState.WRITE_ALL, copy.writeMask())
 	}
@@ -178,16 +178,16 @@ class UiTargetCompositeTest {
 	@Test
 	fun `a missing color view writes no partial composite`() {
 		val recording = Recording()
-		val hudless = FakeTarget(outputWidth, outputHeight)
-		val destination = FakeTarget(outputWidth, outputHeight)
+		val hudless = HeadlessRenderTarget(outputWidth, outputHeight)
+		val destination = HeadlessRenderTarget(outputWidth, outputHeight)
 
-		UiComposite(sampler = { FakeSampler() }).render(recording.encoder(), FakeTarget(outputWidth, outputHeight, withViews = false), hudless, destination)
+		UiComposite(sampler = { FakeSampler() }).render(recording.encoder(), HeadlessRenderTarget(outputWidth, outputHeight, withViews = false), hudless, destination)
 
 		assertTrue(recording.pipelines.isEmpty(), "no pass is recorded when a source has no color view")
 	}
 
 	/** Render target with fake GPU textures and views, so lifetime and passes are testable off the render thread. */
-	private class FakeTarget(
+	private class HeadlessRenderTarget(
 		width: Int,
 		height: Int,
 		withViews: Boolean = true,
@@ -212,7 +212,7 @@ class UiTargetCompositeTest {
 	}
 
 	private class FakeTexture(format: GpuFormat, width: Int, height: Int) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_COPY_DST, "fake", format, width, height, 1, 1) {
+		GpuTexture(USAGE_RENDER_ATTACHMENT or USAGE_COPY_DST, "fake", format, width, height, 1, 1) {
 		override fun close() = Unit
 		override fun isClosed() = false
 	}
@@ -308,7 +308,7 @@ class UiTargetCompositeTest {
 	private class RecordingCommandBackend(private val recording: Recording) : CommandEncoderBackend {
 		override fun submit() = Unit
 		override fun transientMemory(): TransientMemory = throw UnsupportedOperationException("UI tests never allocate transient memory")
-		override fun createRenderPass(descriptor: RenderPassDescriptor): com.mojang.blaze3d.systems.RenderPassBackend =
+		override fun createRenderPass(descriptor: RenderPassDescriptor): RenderPassBackend =
 			throw UnsupportedOperationException("UI tests never create passes through the backend")
 		override fun submitRenderPass() = Unit
 		override fun clearColorTexture(colorTexture: GpuTexture, clearColor: Vector4fc) = Unit
@@ -356,7 +356,7 @@ class UiTargetCompositeTest {
 		)
 
 		override fun createSurface(windowHandle: Long): GpuSurfaceBackend = throw UnsupportedOperationException("UI tests never create surfaces")
-		override fun createCommandEncoder(): com.mojang.blaze3d.systems.CommandEncoderBackend =
+		override fun createCommandEncoder(): CommandEncoderBackend =
 			throw UnsupportedOperationException("UI tests never create encoders")
 		override fun createSampler(addressModeU: AddressMode, addressModeV: AddressMode, minFilter: FilterMode, magFilter: FilterMode, maxAnisotropy: Int, maxLod: OptionalDouble): GpuSampler =
 			throw UnsupportedOperationException("UI tests never create samplers")

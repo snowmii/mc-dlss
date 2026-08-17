@@ -167,8 +167,8 @@ int32_t record_sr_options() noexcept {
 // Vulkan-only eBlockNoClientQueues queue-parallelism mode, which lets DLSS-G run on its own
 // queues instead of blocking the presenting queue. The host's obligation under that mode -
 // waiting on DLSSGState::inputsProcessingCompletionFence before modifying or destroying
-// the tagged inputs of a previously presented frame - is the frame-side discipline the M-11
-// present slice implements. The guide's set-options call validates little of this and the
+// the tagged inputs of a previously presented frame - this is the frame-side discipline the
+// present handoff implements. The guide's set-options call validates little of this and the
 // wrong form of any field records silently, so the record is a dense contract, not a
 // convenience.
 sl::DLSSGOptions make_fg_options(const uint32_t numBackBuffers,
@@ -179,7 +179,7 @@ sl::DLSSGOptions make_fg_options(const uint32_t numBackBuffers,
     // numFramesToGenerateMax after a multiplier cycle. The per-frame handoff and the mode
     // switch re-record the same stored value, so the options can never drift from the
     // configuration the session cycles.
-    options.numFramesToGenerate = g_state.fgNumFramesToGenerate;
+    options.numFramesToGenerate = g_state.fgOptions.numFramesToGenerate;
     options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
     // eBlockPresentingClientQueue, the SDK default, rather than the Vulkan-only
     // eBlockNoClientQueues this recorded first. The parallel mode's gains are documented for
@@ -212,6 +212,15 @@ sl::DLSSGOptions make_fg_options(const uint32_t numBackBuffers,
     return options;
 }
 
+// The re-record: the same shape against the back-buffer count the stored record carries. Every
+// later record - mode switch, multiplier change, per-frame present handoff - goes through here
+// rather than reading the count out of the state itself, so nothing can re-record against a
+// count a successful configure never validated. Only record_fg_options passes a count, because
+// it is the call that establishes one.
+sl::DLSSGOptions make_fg_options(const sl::DLSSGMode mode) noexcept {
+    return make_fg_options(g_state.fgOptions.numBackBuffers, mode);
+}
+
 int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
     if (!sl_session_ready()) {
         return kNotInitialized;
@@ -226,7 +235,7 @@ int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
     // The viewport is the FG-only one, distinct from the SR viewport the DLSS options, SR
     // tags, and evaluation record against: the frame's FG resources tag on the FG viewport
     // and the FG options must name the same viewport they apply to, so the orientation
-    // flips a later slice applies to the FG side can never reach what SR reads.
+    // flips orientation code applies to the FG side can never reach what SR reads.
     const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{kFgViewportId}, make_fg_options(numBackBuffers, sl::DLSSGMode::eOn));
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
@@ -236,8 +245,8 @@ int32_t record_fg_options(const uint32_t numBackBuffers) noexcept {
     // for the per-frame handoff to re-record. reset_state clears both with the rest of the
     // struct, and a later mc_dlss_configure clears the flag when it replaces the
     // configuration those options were recorded against.
-    g_state.fgOptionsRecorded = true;
-    g_state.fgNumBackBuffers = numBackBuffers;
+    g_state.fgOptions.recorded = true;
+    g_state.fgOptions.numBackBuffers = numBackBuffers;
     return kSuccess;
 }
 
@@ -250,7 +259,7 @@ int32_t record_fg_mode(const uint32_t fgEnabled) noexcept {
     // for a session whose options never recorded has no record to switch - the stored
     // back-buffer count is what the switched record reuses, and only a successful
     // mc_dlss_configure_fg stored it.
-    if (!g_state.fgOptionsRecorded || !valid_dimensions(g_state.outputWidth, g_state.outputHeight,
+    if (!g_state.fgOptions.recorded || !valid_dimensions(g_state.outputWidth, g_state.outputHeight,
                                                         g_state.renderWidth, g_state.renderHeight)) {
         return kInvalidParameter;
     }
@@ -262,7 +271,7 @@ int32_t record_fg_mode(const uint32_t fgEnabled) noexcept {
     // ABI's symmetry; the per-frame handoff re-records eOn with the stored count anyway.
     const sl::DLSSGMode mode = fgEnabled != 0 ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
     const sl::Result result = slDLSSGSetOptions(sl::ViewportHandle{kFgViewportId},
-                                                make_fg_options(g_state.fgNumBackBuffers, mode));
+                                                make_fg_options(mode));
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
 
@@ -273,7 +282,7 @@ int32_t record_fg_multiplier(const uint32_t numFramesToGenerate) noexcept {
     // The multiplier record is a field change on an existing options record, so the same
     // gates as the mode record: nothing is recorded for a configuration that never
     // validated its dimensions or whose options never recorded.
-    if (!g_state.fgOptionsRecorded || !valid_dimensions(g_state.outputWidth, g_state.outputHeight,
+    if (!g_state.fgOptions.recorded || !valid_dimensions(g_state.outputWidth, g_state.outputHeight,
                                                         g_state.renderWidth, g_state.renderHeight)) {
         return kInvalidParameter;
     }
@@ -295,12 +304,12 @@ int32_t record_fg_multiplier(const uint32_t numFramesToGenerate) noexcept {
     // changed. The stored value is written before the record so make_fg_options reads it,
     // and restored on failure, so a refused record leaves the stored configuration and the
     // plugin's options exactly as they were.
-    const uint32_t previous = g_state.fgNumFramesToGenerate;
-    g_state.fgNumFramesToGenerate = numFramesToGenerate;
+    const uint32_t previous = g_state.fgOptions.numFramesToGenerate;
+    g_state.fgOptions.numFramesToGenerate = numFramesToGenerate;
     const sl::Result result = slDLSSGSetOptions(
-        sl::ViewportHandle{kFgViewportId}, make_fg_options(g_state.fgNumBackBuffers, sl::DLSSGMode::eOn));
+        sl::ViewportHandle{kFgViewportId}, make_fg_options(sl::DLSSGMode::eOn));
     if (result != sl::Result::eOk) {
-        g_state.fgNumFramesToGenerate = previous;
+        g_state.fgOptions.numFramesToGenerate = previous;
         return static_cast<int32_t>(result);
     }
     return kSuccess;
@@ -312,7 +321,7 @@ int32_t query_fg_multiplier(uint32_t* current, uint32_t* max) noexcept {
     }
     // The stored multiplier is the recorded options', so the same gate as the state read:
     // no options record means no multiplier to report.
-    if (!g_state.fgOptionsRecorded) {
+    if (!g_state.fgOptions.recorded) {
         return kInvalidParameter;
     }
     if (current == nullptr || max == nullptr) {
@@ -323,44 +332,22 @@ int32_t query_fg_multiplier(uint32_t* current, uint32_t* max) noexcept {
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
-    *current = g_state.fgNumFramesToGenerate;
+    *current = g_state.fgOptions.numFramesToGenerate;
     *max = state.numFramesToGenerateMax;
     return kSuccess;
 }
 
-// Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
-// frame token and the SR/FG tag records and indexes. Called wherever the frame those records
-// name can no longer reach a present - configuration replacement, reset, image release, and
-// a failed slSetTagForFrame - so a stale record can never satisfy a later handoff once the
-// configuration it was recorded for was replaced, the frame's resources are gone, or the
-// frame's tag call failed.
-void invalidate_frame_eligibility() noexcept {
-    // The retained token belongs to a frame whose records are being dropped with it: the
-    // next tag must obtain a fresh token rather than advance the frame under a stale one.
-    g_state.frameToken = nullptr;
-    g_state.presentTokenArmed = false;
-    g_state.presentStartEmitted = false;
-    // Both tag records and their indexes clear together: a handoff reads the two sides as
-    // one set, so one side can never outlive the other's invalidation.
-    g_state.srTagFrameIndexRecorded = false;
-    g_state.lastSrTagFrameIndex = 0;
-    g_state.fgTagFrameIndexRecorded = false;
-    g_state.lastFgTagFrameIndex = 0;
-    // The FG orientation copies were recorded under the dropped frame's token, so the gate
-    // drops with them: the next frame's first FG tag must rebuild the copies under its own
-    // token rather than skip them as the stale frame's second call.
-    g_state.fgCopiesRecorded = false;
-    g_state.fgCopiedFrameIndex = 0;
-}
-
 int32_t record_present_handoff() noexcept {
     if (!sl_session_ready()) return kNotInitialized;
-    if (!g_state.fgOptionsRecorded || !images_match_configuration()) return kInvalidParameter;
-    if (!g_state.srTagFrameIndexRecorded || !g_state.fgTagFrameIndexRecorded ||
-        g_state.lastSrTagFrameIndex != g_state.lastFgTagFrameIndex) return kInvalidParameter;
-    if (g_state.frameToken == nullptr) return kNotInitialized;
+    if (!g_state.fgOptions.recorded || !images_match_configuration()) return kInvalidParameter;
+    // The eligibility type states the rule: both sides fresh under equal indexes, with the
+    // token they recorded under still retained. The two halves are asked separately because
+    // the ABI answers them differently - an incomplete tag set is kInvalidParameter, a
+    // missing token kNotInitialized - and the order decides which a call missing both gets.
+    if (!g_state.frameEligibility.tagSetComplete()) return kInvalidParameter;
+    if (!g_state.frameEligibility.hasToken()) return kNotInitialized;
     const sl::Result result = slDLSSGSetOptions(
-        sl::ViewportHandle{kFgViewportId}, make_fg_options(g_state.fgNumBackBuffers, sl::DLSSGMode::eOn));
+        sl::ViewportHandle{kFgViewportId}, make_fg_options(sl::DLSSGMode::eOn));
     if (result != sl::Result::eOk) return static_cast<int32_t>(result);
     // The handoff consumes the tag set's handoff eligibility exactly as the present-time
     // design always did: both sides' records clear, so a second handoff for the same set
@@ -368,11 +355,7 @@ int32_t record_present_handoff() noexcept {
     // design, the retained token survives the handoff: the present bracket's markers are
     // emitted around the actual queue present (PRESENT_START before, PRESENT_END after),
     // so the token must stay alive until present_end consumes it.
-    g_state.srTagFrameIndexRecorded = false;
-    g_state.lastSrTagFrameIndex = 0;
-    g_state.fgTagFrameIndexRecorded = false;
-    g_state.lastFgTagFrameIndex = 0;
-    g_state.presentTokenArmed = true;
+    g_state.frameEligibility.consumeForHandoff();
     return kSuccess;
 }
 
@@ -385,14 +368,13 @@ int32_t present_start() noexcept {
     // present that threw between START and END) is the same no-op: its START already
     // reached the plugin, and a second START for the same frame would corrupt the
     // correlation. The START emits only under a bracket a successful handoff armed.
-    if (!g_state.presentTokenArmed || g_state.presentStartEmitted ||
-        g_state.frameToken == nullptr) {
+    if (!g_state.frameEligibility.presentStartPending()) {
         return kSuccess;
     }
-    const sl::FrameToken* token = g_state.frameToken;
+    const sl::FrameToken* token = g_state.frameEligibility.token();
     const sl::Result result = slPCLSetMarker(sl::PCLMarker::ePresentStart, *token);
     if (result != sl::Result::eOk) return static_cast<int32_t>(result);
-    g_state.presentStartEmitted = true;
+    g_state.frameEligibility.markPresentStartEmitted();
     g_state.presentMarkers.record(kPresentMarkerStart, token);
     return kSuccess;
 }
@@ -400,7 +382,7 @@ int32_t present_start() noexcept {
 int32_t present_end() noexcept {
     if (!sl_session_ready()) return kNotInitialized;
     // An unarmed present has no bracket to close: same no-op success as the START.
-    if (!g_state.presentTokenArmed) {
+    if (!g_state.frameEligibility.presentArmed()) {
         return kSuccess;
     }
     // The END marker closes only a bracket a START actually opened: without a successful
@@ -412,16 +394,12 @@ int32_t present_end() noexcept {
     // token the whole frame recorded under, so the next frame's tags obtain a fresh token
     // under a fresh index.
     sl::Result result = sl::Result::eOk;
-    if (g_state.presentStartEmitted && g_state.frameToken != nullptr) {
-        const sl::FrameToken* token = g_state.frameToken;
+    if (g_state.frameEligibility.presentStartEmitted() && g_state.frameEligibility.hasToken()) {
+        const sl::FrameToken* token = g_state.frameEligibility.token();
         result = slPCLSetMarker(sl::PCLMarker::ePresentEnd, *token);
         if (result == sl::Result::eOk) g_state.presentMarkers.record(kPresentMarkerEnd, token);
     }
-    g_state.presentStartEmitted = false;
-    g_state.presentTokenArmed = false;
-    g_state.srTagFrameIndexRecorded = false;
-    g_state.fgTagFrameIndexRecorded = false;
-    g_state.frameToken = nullptr;
+    g_state.frameEligibility.consumePresent();
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
 
@@ -453,10 +431,10 @@ static int32_t emit_reflex_marker(const ReflexMarkerType type, const sl::PCLMark
     }
     // A frame that never ran its input sample has no token: the input seam is what obtains
     // the frame's token, and a marker emitted without one cannot correlate with the frame.
-    if (g_state.frameToken == nullptr) {
+    if (!g_state.frameEligibility.hasToken()) {
         return kNotInitialized;
     }
-    const sl::FrameToken* token = g_state.frameToken;
+    const sl::FrameToken* token = g_state.frameEligibility.token();
     const sl::Result result = slPCLSetMarker(marker, *token);
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
@@ -495,7 +473,7 @@ int32_t reflex_input_sample() noexcept {
     // stale index. Replacing it advances the frame exactly like the guide's obtain-at-frame-
     // start pattern, and the tag calls below reuse the retained token rather than advancing
     // it again, so one frame still records everything under one index.
-    sl::Result result = slGetNewFrameToken(g_state.frameToken);
+    sl::Result result = slGetNewFrameToken(g_state.frameEligibility.tokenSlot());
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
@@ -505,17 +483,17 @@ int32_t reflex_input_sample() noexcept {
     // sleep in the production path. The tag calls keep their own obtain-and-sleep for
     // callers that never run an input sample, and never sleep twice on one frame because
     // they only sleep when they themselves obtain the token.
-    result = slReflexSleep(*g_state.frameToken);
+    result = slReflexSleep(*g_state.frameEligibility.token());
     if (result != sl::Result::eOk) {
-        invalidate_frame_eligibility();
+        g_state.frameEligibility.invalidate();
         return static_cast<int32_t>(result);
     }
     // PCL sends a private Win32 message periodically. The window procedure records it and
     // this first post-poll seam associates it with the frame that consumes that input.
     if (!g_pclPingPending.exchange(false, std::memory_order_acq_rel)) return kSuccess;
-    result = slPCLSetMarker(sl::PCLMarker::ePCLatencyPing, *g_state.frameToken);
+    result = slPCLSetMarker(sl::PCLMarker::ePCLatencyPing, *g_state.frameEligibility.token());
     if (result != sl::Result::eOk) return static_cast<int32_t>(result);
-    g_state.reflexMarkers.record(kReflexMarkerInputSample, g_state.frameToken);
+    g_state.reflexMarkers.record(kReflexMarkerInputSample, g_state.frameEligibility.token());
     return kSuccess;
 }
 
@@ -674,7 +652,7 @@ int32_t wait_fg_inputs_idle() noexcept {
     // options record is what names those inputs and their back-buffer count; a session whose
     // options never recorded has no presented frame whose input processing this call could
     // wait for. Same gate as the FG tag.
-    if (!g_state.fgOptionsRecorded) {
+    if (!g_state.fgOptions.recorded) {
         return kInvalidParameter;
     }
 
@@ -697,7 +675,7 @@ int32_t wait_fg_inputs_idle() noexcept {
     }
 
     // The wait deliberately does not look at state.status: the status-to-off fallback is the
-    // status-owning slice's job, and gating this wait on it would starve the very frame whose
+    // status policy's job, and gating this wait on it would starve the very frame whose
     // inputs are still being read. The value is the one the plugin reported for the
     // previously presented frame's inputs, read from the same state query that delivered the
     // semaphore, so the two always travel together.
@@ -716,9 +694,9 @@ int32_t query_fg_state(uint32_t* status, uint32_t* numFramesPresented,
     }
     // The state is the DLSS-G plugin's answer for the viewport the recorded options named,
     // so the same gates as the FG tag and the input wait hold: no options record means no
-    // DLSS-G state exists to read. The status-to-off fallback is the status-owning slice's
+    // DLSS-G state exists to read. The status-to-off fallback belongs to the status policy's
     // job, not this read's; the read reports whatever status the plugin holds.
-    if (!g_state.fgOptionsRecorded) {
+    if (!g_state.fgOptions.recorded) {
         return kInvalidParameter;
     }
     // All four outputs are required: the read fills a caller-provided snapshot, and a null
@@ -923,7 +901,7 @@ int32_t query_fg_camera_constants(McDlssCameraConstants* out) noexcept {
 
 int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
                              VkCommandBuffer commandBuffer) noexcept {
-    sl::FrameToken* frameToken = g_state.frameToken;
+    sl::FrameToken* frameToken = g_state.frameEligibility.token();
     if (frameToken == nullptr) {
         // Production always tags the frame's resources before evaluating them; a frame that
         // never tagged has no token for the evaluation to record against.
@@ -964,7 +942,7 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // The plugin interpolates the generated frame's camera from these, and its auto
     // scene-change detection verifies the basis is orthonormal before it runs - all-zero
     // matrices fail that check and leave the plugin without a camera to interpolate across,
-    // which is the fence-stuck symptom the human probe traced to zero constants. The matrices
+    // which leaves the input-processing fence stalled when constants are zero. The matrices
     // are row-major on both sides of the ABI, so the floats copy straight into sl::float4x4.
     write_matrix(constants.cameraViewToClip, info.camera.view_to_clip);
     write_matrix(constants.clipToCameraView, info.camera.clip_to_view);
@@ -986,8 +964,8 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
         // consumes its token here. The composed frame keeps it instead: its FG tag
         // re-declares the shared inputs in the engine-resting layout after the evaluation,
         // and the present handoff consumes the token when it accepts the frame.
-        if (!g_state.fgTagFrameIndexRecorded) {
-            g_state.frameToken = nullptr;
+        if (!g_state.frameEligibility.fgArmed()) {
+            g_state.frameEligibility.releaseToken();
         }
         // The evaluation never recorded, but the caller's transitions above still moved the
         // motion image into the read state before this call; the image goes back to the
@@ -1028,7 +1006,7 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // give constants to. A failed FG record aborts the evaluation before it runs, exactly
     // like a failed SR record, and the FG oracle stays unrecorded - the plugin received no
     // FG constants.
-    if (g_state.fgTagFrameIndexRecorded) {
+    if (g_state.frameEligibility.fgArmed()) {
         sl::Constants fgConstants = constants;
         fgConstants.jitterOffset = sl::float2(info.jitter.x, -info.jitter.y);
         write_matrix_flipped_y(fgConstants.cameraViewToClip, info.camera.view_to_clip,
@@ -1073,8 +1051,8 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // depth and motion slots in the engine-resting layout after the evaluation (the
     // declaration the present path reads), and the present handoff consumes the token when
     // it accepts the frame.
-    if (!g_state.fgTagFrameIndexRecorded) {
-        g_state.frameToken = nullptr;
+    if (!g_state.frameEligibility.fgArmed()) {
+        g_state.frameEligibility.releaseToken();
     }
     // The motion image returns to the engine-resting layout it lives in between frames, on
     // the success path exactly as on the constants-failure path above.
@@ -1095,19 +1073,19 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // consume, so a repeated tag for the same frame reuses the token instead of advancing the
     // frame the tags belong to.
     sl::Result result = sl::Result::eOk;
-    if (g_state.frameToken == nullptr) {
-        result = slGetNewFrameToken(g_state.frameToken);
+    if (!g_state.frameEligibility.hasToken()) {
+        result = slGetNewFrameToken(g_state.frameEligibility.tokenSlot());
         if (result != sl::Result::eOk) {
             return static_cast<int32_t>(result);
         }
         // Reflex sleep is mandatory every frame even with low-latency mode off.
-        result = slReflexSleep(*g_state.frameToken);
+        result = slReflexSleep(*g_state.frameEligibility.token());
         if (result != sl::Result::eOk) {
-            invalidate_frame_eligibility();
+            g_state.frameEligibility.invalidate();
             return static_cast<int32_t>(result);
         }
     }
-    sl::FrameToken* frameToken = g_state.frameToken;
+    sl::FrameToken* frameToken = g_state.frameEligibility.token();
 
     // The engine's colour and depth are the frame's inputs, so they tag from the first frame
     // on. The motion source is always the module's own motion image - filled by the compute
@@ -1212,16 +1190,15 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
         // used is not a token any later record may be reused under: the whole in-flight set
         // drops with the token, so neither this call's half-records nor the counterpart
         // tag's records can satisfy a later handoff against a fresh token.
-        invalidate_frame_eligibility();
+        g_state.frameEligibility.invalidate();
         return static_cast<int32_t>(result);
     }
-    // The frame index this call tagged under, recorded for the composed-rung oracle
+    // The frame index this call tagged under, recorded for the composed-frame oracle
     // (mc_dlss_query_tagged_frame_indexes): the test asserts the SR and FG tags of one frame
     // landed under the same index. Recorded only after the tag succeeded, so a failed tag
     // claims nothing; the index is read from the token itself, so a second tag of the same
     // frame re-records the same index.
-    g_state.srTagFrameIndexRecorded = true;
-    g_state.lastSrTagFrameIndex = static_cast<uint32_t>(*frameToken);
+    g_state.frameEligibility.armSr(static_cast<uint32_t>(*frameToken));
     // The record marks only the SR side of the tag set fresh: a set a handoff consumed stays
     // consumed until the FG side also records, so repeating only this tag can never revive
     // eligibility whose counterpart is still stale. In production every frame re-tags both
@@ -1256,7 +1233,7 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     // the motion source before mc_dlss_acquire_images). Both are fixed before the first
     // frame can be tagged; either missing is a caller out of order, not a frame to skip, so
     // the call refuses instead of submitting a partial tag set.
-    if (!g_state.fgOptionsRecorded || !images_match_configuration()) {
+    if (!g_state.fgOptions.recorded || !images_match_configuration()) {
         return kInvalidParameter;
     }
 
@@ -1267,19 +1244,19 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     // composed frame's second FG call after the evaluation reuses the retained token the same
     // way, so its re-declaration lands on the same frame index too.
     sl::Result result = sl::Result::eOk;
-    if (g_state.frameToken == nullptr) {
-        result = slGetNewFrameToken(g_state.frameToken);
+    if (!g_state.frameEligibility.hasToken()) {
+        result = slGetNewFrameToken(g_state.frameEligibility.tokenSlot());
         if (result != sl::Result::eOk) {
             return static_cast<int32_t>(result);
         }
         // Reflex sleep is mandatory every frame even with low-latency mode off.
-        result = slReflexSleep(*g_state.frameToken);
+        result = slReflexSleep(*g_state.frameEligibility.token());
         if (result != sl::Result::eOk) {
-            invalidate_frame_eligibility();
+            g_state.frameEligibility.invalidate();
             return static_cast<int32_t>(result);
         }
     }
-    sl::FrameToken* frameToken = g_state.frameToken;
+    sl::FrameToken* frameToken = g_state.frameEligibility.token();
 
     const uint32_t renderWidth = g_state.renderWidth;
     const uint32_t renderHeight = g_state.renderHeight;
@@ -1307,19 +1284,17 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     // The two calls are told apart by the SR side of this frame's record: the SR tag sits
     // between them, so its index matches the retained token only from the post-evaluation call
     // onward. The token index itself advances between frames and never within one, so the
-    // fgCopiedFrameIndex guard still holds the blits to once per frame.
+    // copy record's index guard still holds the blits to once per frame.
     const uint32_t frameIndex = static_cast<uint32_t>(*frameToken);
-    const bool afterSrTag =
-        g_state.srTagFrameIndexRecorded && g_state.lastSrTagFrameIndex == frameIndex;
-    if (afterSrTag && (!g_state.fgCopiesRecorded || g_state.fgCopiedFrameIndex != frameIndex)) {
+    const bool afterSrTag = g_state.frameEligibility.srArmedAt(frameIndex);
+    if (afterSrTag && g_state.frameEligibility.copiesNeededFor(frameIndex)) {
         record_flip_blit(commandBuffer, info.depth.image, g_state.fgDepthImage,
                          renderWidth, renderHeight, true);
         record_flip_blit(commandBuffer, info.hudless.image, g_state.fgHudlessImage,
                          outputWidth, outputHeight, false);
         record_flip_blit(commandBuffer, info.ui.image, g_state.fgUiImage,
                          outputWidth, outputHeight, false);
-        g_state.fgCopiesRecorded = true;
-        g_state.fgCopiedFrameIndex = frameIndex;
+        g_state.frameEligibility.recordCopies(frameIndex);
     }
 
     // The declared state is the layout the copies rest in when the frame is tagged: the
@@ -1418,17 +1393,16 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
         // frame this call is the post-evaluation re-declaration too, whose failure must drop
         // the SR record and token it re-recorded against exactly as any other tag failure
         // does.
-        invalidate_frame_eligibility();
+        g_state.frameEligibility.invalidate();
         return static_cast<int32_t>(result);
     }
-    // The frame index this call tagged under, recorded for the composed-rung oracle
+    // The frame index this call tagged under, recorded for the composed-frame oracle
     // (mc_dlss_query_tagged_frame_indexes): the test asserts the SR and FG tags of one frame
     // landed under the same index, which is exactly the token-reuse behaviour this function
     // documents. Recorded only after the tag succeeded, so a failed tag claims nothing; the
     // index is read from the token itself, so when the SR tag retained the token this call
     // re-records the same index instead of a later one.
-    g_state.fgTagFrameIndexRecorded = true;
-    g_state.lastFgTagFrameIndex = static_cast<uint32_t>(*frameToken);
+    g_state.frameEligibility.armFg(static_cast<uint32_t>(*frameToken));
     // Same per-side freshness as the SR tag: the record marks only the FG side fresh, and a
     // set a handoff consumed stays consumed until the SR side also records.
     return kSuccess;

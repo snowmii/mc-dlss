@@ -1,17 +1,58 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
 	id("net.fabricmc.fabric-loom")
-	id("mc-dlss.jvm-conventions")
+	id("org.jetbrains.kotlin.jvm")
 }
 
 version = providers.gradleProperty("mod_version").get()
 group = providers.gradleProperty("maven_group").get()
 
-// `:streamline` owns the rest of the toolchain (Vulkan, Streamline, MSVC); the mod needs the
-// DLSS SDK path only to hand the dev client its `mc.dlss.sdk-path` compatibility input.
-val ngxSdkRoot = toolchainRoot(
-	"mc.dlss.ngx-sdk", "NGX_SDK",
-	"C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0"
-)
+// `:streamline` provisions the pinned SDKs. Machine-local configuration remains an override.
+val provisionedDlssSdk = providers.provider {
+	val version = providers.gradleProperty("dlss_sdk_version").get()
+	val commit = providers.gradleProperty("dlss_sdk_commit").get()
+	File(gradle.gradleUserHomeDir, "caches/mc-dlss/vendor-sdks/dlss-$version/DLSS-$commit")
+}
+val ngxSdkRoot = providers.gradleProperty("mc.dlss.ngx-sdk")
+	.orElse(providers.environmentVariable("NGX_SDK"))
+	.map(::file)
+	.orElse(provisionedDlssSdk)
+
+java {
+	withSourcesJar()
+}
+
+tasks.withType<JavaCompile>().configureEach {
+	options.release = 25
+}
+
+kotlin {
+	compilerOptions {
+		jvmTarget = JvmTarget.JVM_25
+	}
+}
+
+// A crashing JVM writes hs_err/replay dumps to its working directory, which for a Gradle worker
+// is the project directory. The bridge can fault inside NVIDIA's own libraries, and
+// `forkEvery = 1` turns one bad run into one dump per test class, so every forked JVM is pointed
+// at build/jvm-crash instead of littering the repository.
+
+tasks.withType<Test>().configureEach {
+	// The bridge is loaded with System::load and called through FFM downcalls, both restricted
+	// methods the JVM warns about today and blocks in a future release.
+	jvmArgs("--enable-native-access=ALL-UNNAMED")
+}
+
+// Only the classes that load the bridge need a process of their own - Streamline's runtime
+// accepts one Vulkan device per process - and a fork costs a fresh JVM plus classpath loading.
+// Everything else shares one worker in `test`. The tag mirrors the @NativeBridge annotation the
+// test sources carry.
+val nativeBridgeTag = "native-bridge"
+
+tasks.test {
+	useJUnitPlatform { excludeTags(nativeBridgeTag) }
+}
 
 repositories {
 	// Loom supplies the Minecraft/Fabric repositories; this one carries the ordinary Maven
@@ -62,13 +103,16 @@ dependencies {
 	runtimeMod("devauth_version") { "me.djtheredstoner:DevAuth-fabric:$it" }
 }
 
-// The suite split itself is a convention (see buildSrc). What only the mod's copy carries:
-// reproducing the StreamlineVulkanProvider redirect inside a test worker. Production points LWJGL
-// at the staged sl.interposer.dll; the live FG rungs never did, which is the one process-level
-// difference between a session where DLSS-G's swapchain hook fires and a game session where it
-// does not. Off by default so the rungs keep their known-good shape:
-// -Pmc.dlss.vulkan-libname=<abs path to sl.interposer.dll> turns it on.
-val nativeBridgeTest = tasks.named<Test>("nativeBridgeTest") {
+// The optional bridge-loading test path reproduces the StreamlineVulkanProvider redirect in a
+// dedicated worker. Production uses manual proxy calls; pass
+// -Pmc.dlss.vulkan-libname=<abs path to sl.interposer.dll> only when testing the interposer path.
+val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
+	group = "verification"
+	description = "Runs the @NativeBridge test classes, one JVM per class."
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	useJUnitPlatform { includeTags(nativeBridgeTag) }
+	forkEvery = 1
 	providers.gradleProperty("mc.dlss.vulkan-libname").orNull
 		?.let { systemProperty("org.lwjgl.vulkan.libname", it) }
 }
@@ -80,10 +124,11 @@ val nativeBridgeTest = tasks.named<Test>("nativeBridgeTest") {
 val ffmSymbol = Regex("\\b(java\\.lang\\.foreign|MemorySegment|SymbolLookup|MemoryLayout|ValueLayout|FunctionDescriptor|Arena)\\b")
 // NVIDIA's own vocabulary: the NGX names, and Streamline's `sl`-prefixed C entry points. The
 // SDK's Java types are deliberately not matched - `SlVulkanFeatures` is how the mod is supposed
-// to reach the native stack, and naming it is not the same as speaking NGX.
-val nativeVocabulary = Regex("\\b(NVSDK\\w*|NGX\\w*|ngx[A-Z]\\w*|sl(Init|Shutdown|SetTag|SetConstants|Evaluate\\w*|Allocate\\w*|Free\\w*|Get\\w+|Is\\w+|Upgrade\\w*))\\b")
-// Comments are stripped before the vocabulary match: AC-1 asks for no NGX *symbol* in the mod,
-// and a comment explaining what NGX does to the next reader is documentation, not a dependency.
+// to reach the native stack, and naming it is different from speaking NGX.
+val nativeVocabulary =
+	Regex("\\b(NVSDK\\w*|NGX\\w*|ngx[A-Z]\\w*|sl(Init|Shutdown|SetTag|SetConstants|Evaluate\\w*|Allocate\\w*|Free\\w*|Get\\w+|Is\\w+|Upgrade\\w*))\\b")
+// Comments are stripped before the vocabulary match: prose may explain native terminology
+// without creating a dependency.
 val commentOrString = Regex("/\\*[\\s\\S]*?\\*/|//[^\\n]*")
 
 val checkLayering = tasks.register("checkLayering") {
@@ -143,7 +188,7 @@ tasks.processResources {
 // launch.cfg, so the DLSS startup properties are set on the run task's JVM directly. Every
 // value is overridable, e.g. `./gradlew.bat runClient -Pmc.dlss.mode=performance`.
 tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configureEach {
-	redirectJvmCrashDumps()
+	dependsOn(":streamline:provisionDlssSdk")
 	// Same restricted-method warning as the test task: System::load plus FFM downcalls.
 	jvmArgs("--enable-native-access=ALL-UNNAMED")
 
@@ -153,7 +198,7 @@ tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configur
 
 	// sdk-path is a compatibility input: the retired direct-NGX path searched it for its
 	// feature DLL, and initialize now validates it and records only the Vulkan tuple.
-	val sdkPath = ngxSdkRoot.resolve("lib/Windows_x86_64/rel")
+	val sdkPath = ngxSdkRoot.map { it.resolve("lib/Windows_x86_64/rel").absolutePath }
 	val dlssData = layout.buildDirectory.dir("dlss-data").get().asFile
 
 	doFirst {
@@ -163,7 +208,7 @@ tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configur
 		dlssData.mkdirs()
 	}
 
-	systemProperty("mc.dlss.sdk-path", providers.gradleProperty("mc.dlss.sdk-path").getOrElse(sdkPath.absolutePath))
+	systemProperty("mc.dlss.sdk-path", providers.gradleProperty("mc.dlss.sdk-path").orElse(sdkPath))
 	systemProperty("mc.dlss.data-path", providers.gradleProperty("mc.dlss.data-path").getOrElse(dlssData.absolutePath))
 	// Performance mode by default: the widest render/output gap, so a routing change is easiest
 	// to see. Quality and balanced remain a -Pmc.dlss.mode away.
@@ -173,15 +218,15 @@ tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configur
 	}
 }
 
-// Static analysis over every Kotlin source in the repository, both projects at once. detekt.yml
-// is a delta over detekt's defaults, so each relaxation in it records a deliberate repo choice
-// and the findings that remain are defects rather than disagreements about shape.
-//
-// The CLI rather than the Gradle plugin, because detekt 1.23 (the newest release) predates JDK
-// 25 and dies parsing a "25.0.4" version string in whatever JVM it runs in. As a JavaExec it
-// runs on the workstation's JDK 21 while the rest of the build stays on 25. Revisit when detekt
-// 2 ships: the plugin is the nicer wiring once it can run on the daemon's JDK.
-val detektCli: Configuration by configurations.creating
+/** Static analysis over every Kotlin source in the repository, both projects at once. detekt.yml
+is a delta over detekt's defaults, so each relaxation in it records a deliberate repo choice
+and the findings that remain are defects rather than disagreements about shape.
+
+The CLI rather than the Gradle plugin, because detekt 1.23 (the newest release) predates JDK
+25 and dies parsing a "25.0.4" version string in whatever JVM it runs in. As a JavaExec it
+runs on the workstation's JDK 21 while the rest of the build stays on 25. Revisit when detekt
+2 ships: the plugin is the nicer wiring once it can run on the daemon's JDK. **/
+val detektCli = configurations.create("detektCli")
 
 dependencies {
 	detektCli("io.gitlab.arturbosch.detekt:detekt-cli:1.23.8")
@@ -212,16 +257,6 @@ val detekt = tasks.register<JavaExec>("detekt") {
 }
 
 tasks.check { dependsOn(detekt) }
-
-java {
-	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
-	// if it is present.
-	// If you remove this line, sources will not be generated.
-	withSourcesJar()
-
-	sourceCompatibility = JavaVersion.VERSION_25
-	targetCompatibility = JavaVersion.VERSION_25
-}
 
 tasks.jar {
 	val projectName = project.name

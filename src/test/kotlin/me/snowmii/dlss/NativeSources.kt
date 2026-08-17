@@ -13,12 +13,12 @@ import java.nio.file.Path
  * before the parameters it belongs to. Calling the ABI cannot distinguish those from their
  * broken forms; only the source can.
  *
- * Each caller names the file it means rather than searching a concatenation of all of them. That
- * keeps a slice between two anchors from silently spanning a file boundary - and it makes the
- * test say where the behaviour it is asserting about actually lives.
+ * Each caller names the file it means rather than searching a concatenation of all of them. A
+ * range between two anchors therefore cannot silently span a file boundary, and each test says
+ * where the behavior it asserts actually lives.
  *
  * Newlines are normalized because the assertions match the source text literally, and a Windows
  * checkout hands the same file back with CRLF.
  */
-fun nativeSource(relativePath: String): String =
+fun readNativeSource(relativePath: String): String =
 	Files.readString(Path.of("streamline", "native", *relativePath.split("/").toTypedArray())).replace("\r\n", "\n")

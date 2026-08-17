@@ -1,41 +1,25 @@
 package me.snowmii.dlss.render
-import java.util.function.Consumer;
-import java.util.function.Supplier;
-import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.ExtensionBootstrap
-import me.snowmii.streamline.PresentTarget
-import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.EvaluationImages
-import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.Native
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.VulkanContext
-import me.snowmii.streamline.ImageBinding
+
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
-import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.LifecycleAdapter
-
-import java.nio.file.Files
-import java.nio.file.Path
-import me.snowmii.dlss.NativeBridge
+import me.snowmii.dlss.session.SRMode
+import me.snowmii.streamline.*
 import org.joml.Matrix4f
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.Assertions.assertSame
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VkCommandBuffer
+import java.nio.file.Files
+import java.nio.file.Path
 
 /**
- * M-10's rung: the whole native path, driven for one frame by the production seam the renderer
+ * Verifies the complete native path the whole native path, driven for one frame by the production seam the renderer
  * uses, on a command buffer that belongs to the engine's submission.
  *
- * Every piece beneath this had its own rung and no caller. The bridge could allocate its images,
+ * The bridge can allocate its images,
  * fill the motion image, and evaluate DLSS; the renderer could route the world into a
  * low-resolution target with coherent jitter and motion. Nothing joined them, so "DLSS evaluates
  * each displayed world frame" was still entirely unproven.
@@ -178,7 +162,7 @@ class EvaluationSubmissionTest {
 					0,
 					0,
 					0,
-					Supplier {
+					{
 						vulkan.allocateAndBeginCommandBuffer().also { buffer ->
 							taken += buffer
 							// Recorded at the head of the buffer the frame is about to use, so the
@@ -186,7 +170,7 @@ class EvaluationSubmissionTest {
 							vulkan.recordColorClear(buffer, marker.image(), 1f, 1f, 1f, 1f)
 						}
 					},
-					Consumer { buffer ->
+					{ buffer ->
 						submitted += buffer
 						if (defer) deferred += buffer else vulkan.endSubmitAndWait(buffer)
 					},
@@ -295,11 +279,11 @@ class EvaluationSubmissionTest {
 			0,
 			0,
 			0,
-			Supplier {
+			{
 				taken++
 				throw AssertionError("no command buffer may be taken without a ready session")
 			},
-			Consumer { submitted++ },
+			{ submitted++ },
 		)
 		val evaluation = FrameEvaluation(LifecycleAdapter(session, UnusableNative()), { context })
 
@@ -378,7 +362,7 @@ class EvaluationSubmissionTest {
 	}
 
 	/** Fails every call: a session that never reached READY must not reach the native side at all. */
-	private class UnusableNative : NativeApi {
+	private class UnusableNative : NativeApiTestDouble() {
 		override fun initialize(
 			vkInstance: Long,
 			vkPhysicalDevice: Long,
@@ -390,7 +374,7 @@ class EvaluationSubmissionTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			unreachable()
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -412,7 +396,7 @@ class EvaluationSubmissionTest {
 		override fun presentOutput(target: PresentTarget): Int = unreachable()
 
 		@Suppress("LongParameterList")
-		override fun evaluate(request: EvaluationRequest): Int = unreachable()
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = unreachable()
 
 		private fun unreachable(): Nothing = throw AssertionError("native must not be reached")
 	}

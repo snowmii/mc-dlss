@@ -6,7 +6,6 @@ import me.snowmii.dlss.render.SceneTarget
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.session.TestSessionBridge
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -15,13 +14,13 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * M-11's rung: the FG surface policy and the seams that apply it.
+ * FG surface policy: the FG surface policy and the seams that apply it.
  *
  * DLSS-G must run on a swapchain that is recreated on every FG mode transition, presents
  * non-FIFO while FG is active, and has at least the declared back-buffer count. Minecraft owns
  * all of that machinery - the reconfigure happens in `Minecraft.renderFrame` after
  * `invalidateSurfaceConfiguration`, the present mode is chosen from the vsync read, and the
- * swapchain is created by `VulkanGpuSurface.configure` - so what this rung proves is the
+ * swapchain is created by `VulkanGpuSurface.configure` - so what this test proves is the
  * mod-owned policy object those seams delegate to: transitions invalidate exactly once, the
  * reconfigure reads vsync false without touching the stored option, and the minimum image
  * count covers the declared back buffers.
@@ -84,12 +83,12 @@ class FgSwapchainReconfigureTest {
 
 		// One present per generated frame plus one for the rendered frame, plus the headroom that
 		// keeps the presenter from starving - a fixed count paces worse the higher the multiplier.
-		assertEquals(4, policy.declaredBackBuffers, "2x presents two frames per app frame")
+		assertEquals(4, policy.requiredSwapchainImages, "2x presents two frames per app frame")
 		policy.numFramesToGenerate = 2
-		assertEquals(5, policy.declaredBackBuffers, "3x presents three")
+		assertEquals(5, policy.requiredSwapchainImages, "3x presents three")
 		assertEquals(5, policy.minImageCount(3), "and the swapchain must hold them")
 		policy.numFramesToGenerate = 3
-		assertEquals(6, policy.declaredBackBuffers, "4x presents four")
+		assertEquals(6, policy.requiredSwapchainImages, "4x presents four")
 
 		policy.setFrameGenerationActive(false)
 		assertEquals(3, policy.minImageCount(3), "FG off restores Minecraft's count at any multiplier")
@@ -104,7 +103,7 @@ class FgSwapchainReconfigureTest {
 		)
 		assertEquals(
 			FgSurfacePolicy.DEFAULT_DECLARED_BACK_BUFFERS,
-			FgSurfacePolicy().declaredBackBuffers,
+			FgSurfacePolicy().requiredSwapchainImages,
 			"a fresh policy starts at the 2x multiplier's count",
 		)
 	}
@@ -114,13 +113,13 @@ class FgSwapchainReconfigureTest {
 		val runtime = RenderRuntime(
 			session = session(),
 			sceneTarget = SceneTarget(
-				allocate = { _, _ -> FakeTarget() },
+				allocate = { _, _ -> HeadlessRenderTarget() },
 				release = {},
 			),
 			startup = { null },
 		)
 
-		assertFalse(runtime.frameGeneration.active, "FG starts off")
+		assertFalse(runtime.frameGeneration.effective, "FG starts off")
 		assertEquals(true, runtime.frameGeneration.effectiveVsyncEnabled(true), "the reconfigure reads the stored vsync")
 		assertEquals(3, runtime.frameGeneration.minImageCount(3), "the swapchain keeps Minecraft's count")
 	}
@@ -130,7 +129,7 @@ class FgSwapchainReconfigureTest {
 		val runtime = RenderRuntime(
 			session = session(),
 			sceneTarget = SceneTarget(
-				allocate = { _, _ -> FakeTarget() },
+				allocate = { _, _ -> HeadlessRenderTarget() },
 				release = {},
 			),
 			startup = { null },
@@ -139,12 +138,12 @@ class FgSwapchainReconfigureTest {
 		val controls = RuntimeControls(runtime, announced::add)
 
 		controls.toggleFrameGeneration()
-		assertTrue(runtime.frameGeneration.active, "the controls switch FG on")
+		assertTrue(runtime.frameGeneration.effective, "the controls switch FG on")
 		assertEquals(1, invalidations, "one transition invalidates exactly once")
 		assertTrue(announced.last().contains("fg on"), "the readout names the new mode: ${announced.last()}")
 
 		controls.toggleFrameGeneration()
-		assertFalse(runtime.frameGeneration.active, "the controls switch FG back off")
+		assertFalse(runtime.frameGeneration.effective, "the controls switch FG back off")
 		assertEquals(2, invalidations, "a second transition invalidates exactly once more")
 		assertTrue(announced.last().contains("fg off"), "the readout names the restored mode: ${announced.last()}")
 
@@ -170,8 +169,7 @@ class FgSwapchainReconfigureTest {
 		),
 	)
 
-	/** Render target with no GPU buffers, so the runtime is testable off the render thread. */
-	private class FakeTarget : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		override fun createBuffers(width: Int, height: Int) {
 			this.width = width
 			this.height = height

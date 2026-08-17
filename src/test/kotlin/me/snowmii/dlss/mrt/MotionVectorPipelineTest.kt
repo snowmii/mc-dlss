@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Proves the known-world velocity pipeline surface of M-4: every world pipeline the terrain
+ * Proves the known-world velocity pipeline surface: every world pipeline the terrain
  * pass can bind forms a two-target velocity twin through [velocityTwin], that twin agrees with
  * the two-attachment render-pass shape, owned pipelines stay on the velocity-MRT route, and
  * the first foreign shader latches camera-only exactly once without throwing and without
@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test
  * the three [ChunkSectionLayer] pipelines (SOLID, CUTOUT, TRANSLUCENT) plus the WIREFRAME
  * debug override. Every one of them is a descriptor-level proof: [velocityTwin] returns a
  * [RenderPipeline] description and nothing here compiles a pipeline on a device, which is
- * exactly the lazy-compile risk this slice does not claim to discharge — the twin's
+ * exactly the lazy-compile risk this descriptor test does not discharge — the twin's
  * color-target shape is what a two-attachment pass would compile against on its first
  * `RenderPass.setPipeline`.
  *
@@ -39,8 +39,6 @@ import org.junit.jupiter.api.Test
 class MotionVectorPipelineTest {
 	private val mainTarget = fakeMainTarget()
 
-
-	/** The blended translucent first target and the cutout threshold defines survive the twin. */
 
 	/** The real known world descriptors classify owned: Minecraft shaders stay velocity-MRT eligible. */
 	@Test
@@ -81,11 +79,11 @@ class MotionVectorPipelineTest {
 		assertTrue(diagnostic.contains("example:pipeline/waving_terrain"))
 		assertTrue(diagnostic.contains("example:core/waving_terrain"))
 		assertTrue(diagnostic.contains("camera-only"))
-		assertEquals(foreign, compatibility.fallbackPipeline)
+		assertEquals(foreign, compatibility.firstForeignPipeline)
 
 		val throwingSink = MotionVectorCompatibility { error("broken diagnostic sink") }
 		assertDoesNotThrow { throwingSink.observe(foreignTerrainPipeline()) }
-		assertEquals(MotionVectorRoute.CAMERA_ONLY, throwingSink.route)
+		assertEquals(MotionVectorRoute.CAMERA_ONLY, throwingSink.selectedRoute)
 	}
 
 	/**
@@ -117,8 +115,8 @@ class MotionVectorPipelineTest {
 			// The route is still DLSS: the world renders into the low-resolution scene target,
 			// not the vanilla main target, and the session stays READY.
 			assertNotSame(mainTarget, resolved)
-			assertSame(runtime.activeWorldTarget, resolved)
-			assertEquals(DlssFrameRoute.DLSS, runtime.activeRoute?.frame?.route)
+			assertSame(runtime.worldRenderTarget, resolved)
+			assertEquals(DlssFrameRoute.DLSS, runtime.worldTargetRoute?.frame?.route)
 			assertEquals(DlssSessionState.READY, runtime.sessionState)
 
 			// Camera motion is retained on the camera-only route: this frame publishes motion
@@ -142,7 +140,7 @@ class MotionVectorPipelineTest {
 			phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 			val secondMotion = checkNotNull(runtime.activeMotion)
 			assertFalse(secondMotion.reset)
-			assertFalse(secondMotion.reprojection.equals(Matrix4f()), "a moved camera must produce a non-identity reprojection")
+			assertFalse(secondMotion.reprojection == Matrix4f(), "a moved camera must produce a non-identity reprojection")
 			assertNull(phase.terrainVelocityView)
 			phase.end()
 		}

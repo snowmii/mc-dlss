@@ -21,7 +21,7 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * M-3 canonical rung: DLSS Super Resolution runs entirely on the signed Streamline 2.12.0
+ * Canonical live Streamline SR path: DLSS Super Resolution runs entirely on the signed Streamline 2.12.0
  * stack, and the direct-NGX implementation is retired with no fallback.
  *
  * The live frame drives the whole SL path on a headless device: bootstrap, proxy activation,
@@ -36,7 +36,7 @@ import org.lwjgl.vulkan.VK10
  * remains, buildNativeDlss does not link nvsdk_ngx_s.lib, and mc_dlss_initialize only
  * validates and records the Vulkan tuple the mod already activated through slSetVulkanInfo.
  *
- * Methods are ORDERED because the fork is one process and the live session's close shuts the
+ * Methods are ordered because the fork is one process and the live session's close shuts the
  * Streamline runtime down (slShutdown, while the fixture device is still alive - the fix that
  * keeps the fork's JVM exit from crashing in sl.common.dll / nvcuda64.dll). On SL 2.12.0 a
  * bootstrap after that shutdown re-runs slInit but cannot serve the DLSS feature again in the
@@ -69,7 +69,7 @@ class SrOnStreamlineTest {
 			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.configure(
+				bridge.configureSuperResolution(
 					outputWidth,
 					outputHeight,
 					dimensions.width,
@@ -120,13 +120,13 @@ class SrOnStreamlineTest {
 			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.evaluate(
+				bridge.evaluateSuperResolution(
 					SrLiveSession.evaluationRequest(frame.address(), color, depth, dimensions, reset = true),
 				),
 				"the evaluation must record on the tagged frame's buffer",
 			)
 			fixture.endSubmitAndWait(frame)
-			SrLiveSession.assertValidationClean(fixture, color, depth, images!!)
+			SrLiveSession.assertFrameValidationClean(fixture, color, depth, images!!)
 
 			// Frame two: the same images with accumulated history rather than a reset, starting
 			// from the layouts the first frame left behind.
@@ -138,13 +138,13 @@ class SrOnStreamlineTest {
 			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.evaluate(
+				bridge.evaluateSuperResolution(
 					SrLiveSession.evaluationRequest(secondFrame.address(), color, depth, dimensions, reset = false),
 				),
 				"the second frame must evaluate from the layouts the first left behind",
 			)
 			fixture.endSubmitAndWait(secondFrame)
-			SrLiveSession.assertValidationClean(fixture, color, depth, images)
+			SrLiveSession.assertFrameValidationClean(fixture, color, depth, images)
 		}
 	}
 
@@ -169,7 +169,7 @@ class SrOnStreamlineTest {
 			assertTrue(index >= 0, "shutdown_state must contain every teardown stage in order")
 		}
 		assertTrue(
-			timing < motion && motion < images && images < streamline && streamline < reset,
+			motion in (timing + 1)..<images && images < streamline && streamline < reset,
 			"module resources must release before the Streamline shutdown, and reset must come last",
 		)
 

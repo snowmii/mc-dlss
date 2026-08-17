@@ -1,36 +1,25 @@
 package me.snowmii.dlss.render
-import java.util.function.Consumer;
-import java.util.function.Supplier;
-import me.snowmii.streamline.PresentTarget
-import me.snowmii.streamline.Native
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.ExtensionBootstrap
-import me.snowmii.streamline.VulkanContext
-import me.snowmii.streamline.ImageBinding
+
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
-import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.LifecycleAdapter
-
-import java.nio.file.Files
-import java.nio.file.Path
-import me.snowmii.dlss.NativeBridge
+import me.snowmii.dlss.session.SRMode
+import me.snowmii.streamline.*
 import org.joml.Matrix4f
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VkCommandBuffer
+import java.nio.file.Files
+import java.nio.file.Path
 
 /**
- * M-11's rung: the upscaled frame reaches the target the rest of the frame composes over.
+ * Verifies that the upscaled frame reaches the target the rest of the frame composes over.
  *
- * Until this checkpoint DLSS ran and its result went nowhere. The output image is the bridge's own
- * and Minecraft has no handle for it, so the only way an upscaled frame becomes visible is by being
+ * The native evaluation can produce an image without making it visible. The output image is
+ * bridge-owned and Minecraft has no handle for it, so the only way it becomes visible is by being
  * copied into the engine's output-sized target - after which hand and item, screen effects, the 3D
  * crosshair, HUD, and GUI all render on top of it at output resolution, exactly as they already do,
  * because the world phase closed before any of them ran.
@@ -164,8 +153,8 @@ class CompositionOrderTest {
 					0,
 					0,
 					0,
-					Supplier { vulkan.allocateAndBeginCommandBuffer() },
-					Consumer { buffer: VkCommandBuffer -> vulkan.endSubmitAndWait(buffer) },
+					{ vulkan.allocateAndBeginCommandBuffer() },
+					{ buffer: VkCommandBuffer -> vulkan.endSubmitAndWait(buffer) },
 				)
 				val evaluation = FrameEvaluation(adapter, { context })
 				val scene = SceneResources(

@@ -64,7 +64,7 @@ public class RenderTypeFeatureRendererMotionMixin {
 		// bookkeeping owns this group's reorder decision; with neither machine governing this is
 		// exactly the pre-existing entity/vanilla decision.
 		//
-		// ponytail: the operation is not called through - both writers reproduce the vanilla
+		// The operation is not called through - both writers reproduce the vanilla
 		// List.indexOf themselves on their ineligible paths. Thread `original` into
 		// consolidationIndex if another mod ever needs to wrap this JDK call.
 		if (MovingBlockVelocityWriterBindings.isGoverning()) {

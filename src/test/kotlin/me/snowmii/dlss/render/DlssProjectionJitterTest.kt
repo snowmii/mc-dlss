@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
  *
  * The matrix is built the way Minecraft 26.2 builds the world projection: `Projection.getMatrix`
  * passes `near = zFar, far = zNear` into JOML with zero-to-one depth, which is what makes the
- * effort's depth reversed in the first place.
+ * the projection's depth reversed.
  */
 class DlssProjectionJitterTest {
 	private val render = Dimensions(1280, 720)

@@ -16,13 +16,10 @@ import com.mojang.blaze3d.pipeline.RenderTarget
  * the pass for the session rather than throw out of the render loop.
  */
 interface ScenePass : AutoCloseable {
-	/** Whether the pass currently renders. */
 	val enabled: Boolean
 
-	/** Flips the pass on or off and returns the state now in effect. */
 	fun toggle(): Boolean
 
-	/** One line naming the workload, for the same readout the DLSS controls print. */
 	fun readout(): String
 
 	/**

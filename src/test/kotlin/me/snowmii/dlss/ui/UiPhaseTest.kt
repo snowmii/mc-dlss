@@ -51,7 +51,7 @@ class UiPhaseTest {
 	@Test
 	fun `begin opens the GUI window against a full-size transparent UI target`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 
 		harness.phase.begin(mainTarget)
 
@@ -65,7 +65,7 @@ class UiPhaseTest {
 	@Test
 	fun `outside the GUI window the getter answers the vanilla target`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 
 		assertNull(harness.phase.uiTargetOverride)
 		harness.phase.begin(mainTarget)
@@ -79,7 +79,7 @@ class UiPhaseTest {
 	@Test
 	fun `begin clears the held target for the frame`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 		harness.phase.begin(mainTarget)
 
 		val clear = harness.recording.clears.single()
@@ -91,7 +91,7 @@ class UiPhaseTest {
 	@Test
 	fun `the UI target is reused across frames while the window size holds`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 
 		harness.phase.begin(mainTarget)
 		harness.phase.end()
@@ -107,9 +107,9 @@ class UiPhaseTest {
 	fun `a window resize reallocates the UI target at the new window size`() {
 		val harness = Harness()
 
-		harness.phase.begin(FakeTarget(outputWidth, outputHeight))
+		harness.phase.begin(HeadlessRenderTarget(outputWidth, outputHeight))
 		harness.phase.end()
-		harness.phase.begin(FakeTarget(1920, 1080))
+		harness.phase.begin(HeadlessRenderTarget(1920, 1080))
 
 		val held = harness.phase.uiTargetOverride!!
 		assertEquals(1920, held.width)
@@ -122,7 +122,7 @@ class UiPhaseTest {
 	fun `a degenerate main target never opens the window`() {
 		val harness = Harness()
 
-		harness.phase.begin(FakeTarget(0, 0))
+		harness.phase.begin(HeadlessRenderTarget(0, 0))
 
 		assertFalse(harness.phase.isOpen)
 		assertNull(harness.phase.uiTargetOverride)
@@ -133,7 +133,7 @@ class UiPhaseTest {
 	@Test
 	fun `a window abandoned by a failed frame is dropped by the next one`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 		harness.phase.begin(mainTarget)
 		// No end(): GuiRenderer.render threw between head and tail, so the window never closed.
 		harness.phase.begin(mainTarget)
@@ -145,7 +145,7 @@ class UiPhaseTest {
 	@Test
 	fun `close drops the window and releases the UI target`() {
 		val harness = Harness()
-		harness.phase.begin(FakeTarget(outputWidth, outputHeight))
+		harness.phase.begin(HeadlessRenderTarget(outputWidth, outputHeight))
 
 		harness.phase.close()
 
@@ -156,30 +156,30 @@ class UiPhaseTest {
 
 	@Test
 	fun `the world phase override wins over the GUI window and vanilla answers outside both`() {
-		val world = FakeTarget(1280, 720)
-		val ui = FakeTarget(outputWidth, outputHeight)
+		val world = HeadlessRenderTarget(1280, 720)
+		val ui = HeadlessRenderTarget(outputWidth, outputHeight)
 
-		assertSame(world, ClientRuntime.resolveTargetOverride(world, ui), "an open world phase beats the GUI window")
-		assertSame(ui, ClientRuntime.resolveTargetOverride(null, ui), "the GUI window answers when no world phase is open")
-		assertNull(ClientRuntime.resolveTargetOverride(null, null), "outside both windows the vanilla target answers")
+		assertSame(world, ClientRuntime.resolveActiveTarget(world, ui), "an open world phase beats the GUI window")
+		assertSame(ui, ClientRuntime.resolveActiveTarget(null, ui), "the GUI window answers when no world phase is open")
+		assertNull(ClientRuntime.resolveActiveTarget(null, null), "outside both windows the vanilla target answers")
 	}
 
 	/** The phase under test plus every resource it allocates, releases, or clears. */
 	private class Harness {
-		val allocated = mutableListOf<FakeTarget>()
-		val released = mutableListOf<FakeTarget>()
+		val allocated = mutableListOf<HeadlessRenderTarget>()
+		val released = mutableListOf<HeadlessRenderTarget>()
 		val recording = Recording()
 		val phase = UiPhase(
 			target = UiTarget(
-				allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
-				release = { released += it as FakeTarget },
+				allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
+				release = { released += it as HeadlessRenderTarget },
 			),
 			encoder = { recording.encoder() },
 		)
 	}
 
 	/** Render target with fake GPU textures and views, so lifetime and clears are testable off the render thread. */
-	private class FakeTarget(
+	private class HeadlessRenderTarget(
 		width: Int,
 		height: Int,
 	) : RenderTarget("fake-ui", true, GpuFormat.RGBA8_UNORM) {
@@ -201,7 +201,7 @@ class UiPhaseTest {
 	}
 
 	private class FakeTexture(format: GpuFormat, width: Int, height: Int) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_COPY_DST, "fake", format, width, height, 1, 1) {
+		GpuTexture(USAGE_RENDER_ATTACHMENT or USAGE_COPY_DST, "fake", format, width, height, 1, 1) {
 		override fun close() = Unit
 		override fun isClosed() = false
 	}
@@ -281,7 +281,7 @@ class UiPhaseTest {
 		)
 
 		override fun createSurface(windowHandle: Long): GpuSurfaceBackend = throw UnsupportedOperationException("UI tests never create surfaces")
-		override fun createCommandEncoder(): com.mojang.blaze3d.systems.CommandEncoderBackend =
+		override fun createCommandEncoder(): CommandEncoderBackend =
 			throw UnsupportedOperationException("UI tests never create encoders")
 		override fun createSampler(addressModeU: AddressMode, addressModeV: AddressMode, minFilter: FilterMode, magFilter: FilterMode, maxAnisotropy: Int, maxLod: OptionalDouble): GpuSampler =
 			throw UnsupportedOperationException("UI tests never create samplers")

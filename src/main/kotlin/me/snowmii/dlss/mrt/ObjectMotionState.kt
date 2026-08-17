@@ -48,79 +48,79 @@ data class ObjectPosition(
  *
  * The lifecycle is the frame:
  *
- * 1. [capture] records each visible object's position for the frame being captured, before the
+ * 1. [capturePosition] records each visible object's position for the frame being captured, before the
  *    world phase opens.
- * 2. [publish] is the frame boundary. Only here do captures become predecessors - [previous]
- *    and [displacement] are unaffected by mid-frame captures - and only here are ids absent
+ * 2. [publishFrame] is the frame boundary. Only here do captures become predecessors - [previousPosition]
+ *    and [objectDisplacement] are unaffected by mid-frame captures - and only here are ids absent
  *    from the frame evicted. Eviction matters beyond memory: Minecraft reuses entity ids, so
  *    without it a new entity taking over a despawned one's id would inherit the dead object's
  *    position and smear one frame of velocity.
- * 3. Between capture and publish the draw path reads [previous] (last committed frame) and
- *    [displacement] (this frame's capture minus it) for the objects it draws.
+ * 3. Between capture and publish the draw path reads [previousPosition] (last committed frame) and
+ *    [objectDisplacement] (this frame's capture minus it) for the objects it draws.
  *
- * No predecessor is returned on a first observation (nothing committed yet), after [reset], or
+ * No predecessor is returned on a first observation (nothing committed yet), after [resetHistory], or
  * after eviction - every one of which must write the invalid sentinel rather than a fabricated
- * vector. [reset] forgets both frames and is required on any break in the DLSS chain (a vanilla
- * frame, a world change, an abandoned phase), exactly where the camera motion is reset; the
- * capture mixin wiring is a later slice's seam, this class only holds the contract.
+ * vector. [resetHistory] forgets both frames and is required on any break in the DLSS chain (a vanilla
+ * frame, a world change, an abandoned phase), exactly where the camera motion is reset; capture
+ * mixins provide the wiring, while this class owns the history contract.
  *
  * An id captured more than once in one frame keeps the last capture. The state is single
  * writer per frame by construction - one extractor pass - so no synchronization exists.
  */
 class ObjectMotionState {
 	/** Positions captured for the frame in flight, published at the next frame boundary. */
-	private val captures = HashMap<Int, ObjectPosition>()
+	private val currentEntityPositions = HashMap<Int, ObjectPosition>()
 
-	/** The last [publish]ed frame's positions - the predecessors the draw path reads. */
-	private val committed = HashMap<Int, ObjectPosition>()
+	/** The last [publishFrame]ed frame's positions - the predecessors the draw path reads. */
+	private val previousEntityPositions = HashMap<Int, ObjectPosition>()
 
 	/**
 	 * The moving-block domain's in-flight captures, keyed by the packed long block-position
 	 * identity. Separate storage from the entity captures: the two domains can never share a
 	 * history slot, no matter what numeric values the keys carry.
 	 */
-	private val blockCaptures = HashMap<Long, ObjectPosition>()
+	private val currentBlockPositions = HashMap<Long, ObjectPosition>()
 
-	/** The last [publish]ed moving-block frame's positions. */
-	private val blockCommitted = HashMap<Long, ObjectPosition>()
+	/** The last [publishFrame]ed moving-block frame's positions. */
+	private val previousBlockPositions = HashMap<Long, ObjectPosition>()
 
 	/**
-	 * Records [id]'s position this frame. Does not become visible to [previous] until the next
-	 * [publish].
+	 * Records [id]'s position this frame. Does not become visible to [previousPosition] until the next
+	 * [publishFrame].
 	 */
-	fun capture(id: Int, x: Double, y: Double, z: Double) {
-		captures[id] = ObjectPosition(x, y, z)
+	fun capturePosition(id: Int, x: Double, y: Double, z: Double) {
+		currentEntityPositions[id] = ObjectPosition(x, y, z)
 	}
 
 	/**
 	 * Records one moving block's position this frame, in the block domain's own history.
-	 * Does not become visible to [previous] until the next [publish].
+	 * Does not become visible to [previousPosition] until the next [publishFrame].
 	 */
-	fun capture(id: Long, x: Double, y: Double, z: Double) {
-		blockCaptures[id] = ObjectPosition(x, y, z)
+	fun capturePosition(id: Long, x: Double, y: Double, z: Double) {
+		currentBlockPositions[id] = ObjectPosition(x, y, z)
 	}
 
 	/**
-	 * The frame boundary: [capture]d positions become the predecessors of the next frame, and
+	 * The frame boundary: [capturePosition]d positions become the predecessors of the next frame, and
 	 * ids absent from this frame's captures are evicted from history, in both domains.
 	 */
-	fun publish() {
-		committed.clear()
-		committed.putAll(captures)
-		captures.clear()
-		blockCommitted.clear()
-		blockCommitted.putAll(blockCaptures)
-		blockCaptures.clear()
+	fun publishFrame() {
+		previousEntityPositions.clear()
+		previousEntityPositions.putAll(currentEntityPositions)
+		currentEntityPositions.clear()
+		previousBlockPositions.clear()
+		previousBlockPositions.putAll(currentBlockPositions)
+		currentBlockPositions.clear()
 	}
 
 	/**
 	 * The position [id] was captured at in the last published frame, or null when there is no
-	 * predecessor: a first observation, an id evicted at the boundary, or history [reset].
+	 * predecessor: a first observation, an id evicted at the boundary, or history [resetHistory].
 	 */
-	fun previous(id: Int): ObjectPosition? = committed[id]
+	fun previousPosition(id: Int): ObjectPosition? = previousEntityPositions[id]
 
 	/** The moving-block-domain predecessor of [id], from the last published frame. */
-	fun previous(id: Long): ObjectPosition? = blockCommitted[id]
+	fun previousPosition(id: Long): ObjectPosition? = previousBlockPositions[id]
 
 	/**
 	 * This frame's captured position minus the last published one, for an object drawn at its
@@ -130,9 +130,9 @@ class ObjectMotionState {
 	 * or no predecessor (first observation, eviction, reset). A null displacement means the
 	 * object's pixels must write the invalid sentinel, not a vector.
 	 */
-	fun displacement(id: Int): Vector3f? {
-		val previous = committed[id] ?: return null
-		val current = captures[id] ?: return null
+	fun objectDisplacement(id: Int): Vector3f? {
+		val previous = previousEntityPositions[id] ?: return null
+		val current = currentEntityPositions[id] ?: return null
 		return Vector3f(
 			(current.x - previous.x).toFloat(),
 			(current.y - previous.y).toFloat(),
@@ -141,9 +141,9 @@ class ObjectMotionState {
 	}
 
 	/** The moving-block-domain displacement of [id], or null without a current capture and predecessor. */
-	fun displacement(id: Long): Vector3f? {
-		val previous = blockCommitted[id] ?: return null
-		val current = blockCaptures[id] ?: return null
+	fun objectDisplacement(id: Long): Vector3f? {
+		val previous = previousBlockPositions[id] ?: return null
+		val current = currentBlockPositions[id] ?: return null
 		return Vector3f(
 			(current.x - previous.x).toFloat(),
 			(current.y - previous.y).toFloat(),
@@ -158,11 +158,11 @@ class ObjectMotionState {
 	 * dimension change, a frame abandoned by an exception. The next observation of any id is a
 	 * first observation again.
 	 */
-	fun reset() {
-		captures.clear()
-		committed.clear()
-		blockCaptures.clear()
-		blockCommitted.clear()
+	fun resetHistory() {
+		currentEntityPositions.clear()
+		previousEntityPositions.clear()
+		currentBlockPositions.clear()
+		previousBlockPositions.clear()
 	}
 }
 
@@ -197,7 +197,7 @@ class ObjectMotionState {
  * ```
  *
  * [objectDelta] is the object's *current minus previous* world displacement, the convention
- * [ObjectMotionState.displacement] derives. A surface point of the object at camera-relative
+ * [ObjectMotionState.objectDisplacement] derives. A surface point of the object at camera-relative
  * position `x` this frame sat at `x - objectDelta` last frame, which is what the conjugation
  * is shifting by. The invariants fall out: a world-still object (`objectDelta` zero) is
  * `camera.reprojection` itself - returned as a copy, so mutating the result cannot touch the
@@ -209,8 +209,8 @@ class ObjectMotionState {
  * [camera] is the frame's published motion. A [DlssFrameMotion.reset] frame has no predecessor
  * worth pointing at, so the object reprojection is the identity - the same reset semantics the
  * camera reprojection already carries, and the velocity writer's reset flag forces the invalid
- * sentinel on top of it. An object with no predecessor of its own ([ObjectMotionState.previous]
- * or [ObjectMotionState.displacement] null) never reaches this function; the writer writes the
+ * sentinel on top of it. An object with no predecessor of its own ([ObjectMotionState.previousPosition]
+ * or [ObjectMotionState.objectDisplacement] null) never reaches this function; the writer writes the
  * sentinel instead.
  *
  * Nothing here touches `clip.z` or `clip.w` beyond the transforms themselves, so reversed-Z

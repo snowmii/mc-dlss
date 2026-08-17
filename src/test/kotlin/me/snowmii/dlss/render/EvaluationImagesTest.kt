@@ -32,7 +32,7 @@ import org.junit.jupiter.api.io.TempDir
  * feature is created at.
  *
  * The handles are only meaningful against a real device, which is why this runs through the same
- * headless fixture the M-6 rung uses: an image handle allocated against a real driver is either
+ * headless Vulkan fixture: an image handle allocated against a real driver is either
  * genuinely there or the call failed.
  *
  * Teardown order matters: native release must complete before Vulkan destruction, so the native
@@ -83,7 +83,7 @@ class EvaluationImagesTest {
 
 			// Half the render width is still a legal DLSS configuration for this output size,
 			// and it is a different allocation from the one the quality mode produced.
-			val reconfigured = native.configure(
+			val reconfigured = native.configureSuperResolution(
 				output.width,
 				output.height,
 				render.width / 2,

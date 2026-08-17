@@ -6,17 +6,13 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Completeness ratchet over the live acceptance checklist (`docs/sprint-acceptance.md`).
+ * Keeps the live FG checklist complete (`docs/sprint-acceptance.md`).
  *
- * AC-2..AC-6 close by a human reviewer witnessing a live session against this document, so the
- * checklist is the only human-reviewable form of the FG acceptance criteria. A criterion whose
- * coverage is silently dropped from the checklist is a criterion no reviewer can close — a bug
- * invisible to the test suite and to a clean single-machine run, which is exactly what a policy
- * ratchet exists to catch (docs/agents/testing.md).
+ * Each requirement must remain named in the checklist; otherwise no reviewer can close it and
+ * a clean automated run can miss the omission.
  *
- * Each test guards one criterion's coverage, and asserts phrase presence rather than exact
- * prose: the document may be reworded freely as long as the witness procedure keeps naming the
- * requirement. A failure names the missing phrase.
+ * Tests assert phrase presence rather than exact prose, so the procedure can be clarified
+ * without breaking this guard. A failure names the missing phrase.
  */
 class AcceptanceChecklistTest {
 	companion object {
@@ -34,7 +30,7 @@ class AcceptanceChecklistTest {
 
 	@Test
 	fun `checklist covers AC-2 doubling and pacing proof`() {
-		// AC-2: 2x displayed rate at equal spacing, interpolated frame indistinguishable from a
+		// 2x displayed rate at equal spacing, with an interpolated frame indistinguishable from a
 		// rendered frame within fixed artifact limits, no pink overlay, paced by FrameView
 		// MsBetweenDisplayChange.
 		assertCovers(
@@ -45,7 +41,7 @@ class AcceptanceChecklistTest {
 
 	@Test
 	fun `checklist covers AC-3 world motion and static terrain`() {
-		// AC-3: dynamic world objects interpolate without ghosting, terrain and static geometry
+		// Dynamic world objects interpolate without ghosting; terrain and static geometry
 		// stay correct, and the first-person hand/item stays out of the world motion surface.
 		assertCovers(
 			"AC-3",
@@ -55,7 +51,7 @@ class AcceptanceChecklistTest {
 
 	@Test
 	fun `checklist covers AC-4 UI split`() {
-		// AC-4: hand/item, chat, hotbar, tooltips, debug screen, and vignette stay sharp overlays
+		// Hand/item, chat, hotbar, tooltips, debug screen, and vignette stay sharp overlays
 		// while the world interpolates; HUD-less excludes them, UI-alpha includes them, and the
 		// composite is the presentation source.
 		assertCovers(
@@ -66,7 +62,7 @@ class AcceptanceChecklistTest {
 
 	@Test
 	fun `checklist covers AC-5 pacing latency and vsync`() {
-		// AC-5: smooth pacing on a non-FIFO present mode, non-zero PC latency, vsync option gated
+		// Smooth pacing on a non-FIFO present mode, non-zero PC latency, with vsync gated
 		// on support and its stored value surviving an FG cycle unchanged.
 		assertCovers(
 			"AC-5",
@@ -76,7 +72,7 @@ class AcceptanceChecklistTest {
 
 	@Test
 	fun `checklist covers AC-6 disable paths`() {
-		// AC-6: FG off restores SR-only with the split active, FG is off during loading, menus,
+		// FG off restores SR-only with the split active; FG is off during loading, menus,
 		// and fullscreen/windowed transitions and recovers, and whole-mod disable restores
 		// vanilla rendering.
 		assertCovers(
@@ -98,7 +94,7 @@ class AcceptanceChecklistTest {
 
 	@Test
 	fun `checklist names every required acceptance-record field`() {
-		// AC-7: reviewer, candidate commit, Minecraft build, GPU/driver, Streamline version and
+		// Reviewer, candidate commit, Minecraft build, GPU/driver, Streamline version and
 		// plugin set, resolutions, FG multiplier, every checklist result, and the overall result
 		// — the record fields the audit entry must carry.
 		assertCovers(

@@ -4,23 +4,11 @@ import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
 import me.snowmii.dlss.session.DlssSessionState
 /**
- * The environment half of the Sprint acceptance record.
+ * Formats environment and runtime facts for one DLSS session.
  *
- * `docs/sprint-acceptance.md#Required-PR-record` requires the reviewer to record the reviewer's
- * own identity, the candidate commit, the Minecraft build, GPU and driver, the Streamline version
- * and pinned plugin set, internal and output resolutions, the DLSS quality mode, the FG
- * multiplier, every checklist result, and an overall result. Several of
- * those are facts the running process already holds, and a reviewer transcribing them by hand is
- * the step most likely to be wrong: the internal resolution in particular is NGX-chosen, never
- * appears in any setting, and cannot be read off the screen.
- *
- * So the process reports what it knows, in the order the document asks for it, and marks the rest
- * [REVIEWER_SUPPLIED] rather than guessing or omitting the line. A blank the reviewer must fill is
- * visible in the log; a missing line is not.
- *
- * Every field is a parameter because the record is one fact away from being untestable otherwise:
- * the render dimensions live on the runtime, the mode on the startup config, and the Minecraft
- * build behind a loader call that needs a running client.
+ * Values already known to the process are emitted directly. Facts that require a live reviewer
+ * remain [REVIEWER_SUPPLIED], while unavailable process facts use [UNAVAILABLE]; omission would
+ * make the output ambiguous.
  */
 object AcceptanceRecord {
 	/** Stands in for a field only the live reviewer can fill. */
@@ -80,7 +68,7 @@ object AcceptanceRecord {
 		appendField("dlss-enabled", enabled.toString())
 		appendField("dlss-state", state.name)
 		appendField("quality-mode", qualityMode.propertyValue)
-		// The model behind the frames. NGX runs a preset whether or not one is asked for, so a
+		// The model behind the frames. NGX runs a preset whether one is asked for, so a
 		// record naming only the mode names half the configuration that produced the image.
 		appendField("render-preset", renderPreset.propertyValue)
 		appendField("output-resolution", outputDimensions.toString())

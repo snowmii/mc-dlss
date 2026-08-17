@@ -60,7 +60,7 @@ class UiHandOverlayTest {
 	@Test
 	fun `the hand window opens at full resolution and closes back to vanilla`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 
 		harness.phase.beginHand(mainTarget)
 
@@ -80,7 +80,7 @@ class UiHandOverlayTest {
 	@Test
 	fun `the hand window clears the UI target for the frame`() {
 		val harness = Harness()
-		harness.phase.beginHand(FakeTarget(outputWidth, outputHeight))
+		harness.phase.beginHand(HeadlessRenderTarget(outputWidth, outputHeight))
 
 		val clear = harness.recording.clears.single()
 		val held = harness.phase.uiTargetOverride!!
@@ -91,7 +91,7 @@ class UiHandOverlayTest {
 	@Test
 	fun `hand then GUI clears the UI target exactly once per frame`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 
 		harness.phase.beginHand(mainTarget)
 		harness.phase.end()
@@ -105,7 +105,7 @@ class UiHandOverlayTest {
 	@Test
 	fun `the clear-once handoff resets across frames`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 
 		harness.phase.beginHand(mainTarget)
 		harness.phase.end()
@@ -122,7 +122,7 @@ class UiHandOverlayTest {
 	@Test
 	fun `a hand window abandoned by a failed frame is dropped by the next one`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 		harness.phase.beginHand(mainTarget)
 		// No end(): renderItemInHand threw between head and tail, so the window never closed.
 		harness.phase.beginHand(mainTarget)
@@ -135,7 +135,7 @@ class UiHandOverlayTest {
 	@Test
 	fun `an open hand window is dropped when the GUI window opens`() {
 		val harness = Harness()
-		val mainTarget = FakeTarget(outputWidth, outputHeight)
+		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 		harness.phase.beginHand(mainTarget)
 		// No end(): a leaked hand window must not answer the UI target for the GUI or later callers.
 		harness.phase.begin(mainTarget)
@@ -147,20 +147,20 @@ class UiHandOverlayTest {
 
 	/** The phase under test plus every resource it allocates, releases, or clears. */
 	private class Harness {
-		val allocated = mutableListOf<FakeTarget>()
-		val released = mutableListOf<FakeTarget>()
+		val allocated = mutableListOf<HeadlessRenderTarget>()
+		val released = mutableListOf<HeadlessRenderTarget>()
 		val recording = Recording()
 		val phase = UiPhase(
 			target = UiTarget(
-				allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
-				release = { released += it as FakeTarget },
+				allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
+				release = { released += it as HeadlessRenderTarget },
 			),
 			encoder = { recording.encoder() },
 		)
 	}
 
 	/** Render target with fake GPU textures and views, so lifetime and clears are testable off the render thread. */
-	private class FakeTarget(
+	private class HeadlessRenderTarget(
 		width: Int,
 		height: Int,
 	) : RenderTarget("fake-ui", true, GpuFormat.RGBA8_UNORM) {
@@ -182,7 +182,7 @@ class UiHandOverlayTest {
 	}
 
 	private class FakeTexture(format: GpuFormat, width: Int, height: Int) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_COPY_DST, "fake", format, width, height, 1, 1) {
+		GpuTexture(USAGE_RENDER_ATTACHMENT or USAGE_COPY_DST, "fake", format, width, height, 1, 1) {
 		override fun close() = Unit
 		override fun isClosed() = false
 	}
@@ -262,7 +262,7 @@ class UiHandOverlayTest {
 		)
 
 		override fun createSurface(windowHandle: Long): GpuSurfaceBackend = throw UnsupportedOperationException("UI tests never create surfaces")
-		override fun createCommandEncoder(): com.mojang.blaze3d.systems.CommandEncoderBackend =
+		override fun createCommandEncoder(): CommandEncoderBackend =
 			throw UnsupportedOperationException("UI tests never create encoders")
 		override fun createSampler(addressModeU: AddressMode, addressModeV: AddressMode, minFilter: FilterMode, magFilter: FilterMode, maxAnisotropy: Int, maxLod: OptionalDouble): GpuSampler =
 			throw UnsupportedOperationException("UI tests never create samplers")

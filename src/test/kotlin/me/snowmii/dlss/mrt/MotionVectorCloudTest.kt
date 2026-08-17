@@ -50,13 +50,13 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.PointerBuffer
 
 /**
- * Cloud vertical proof for M-6's velocity writer.
+ * Cloud velocity-writer proof.
  *
  * `CloudRenderer.render` is the last bespoke world pass before the protected hand seam: it
  * creates one pass over the clouds target (or the main target without the transparency chain)
  * with `RenderPipelines.CLOUDS` or `RenderPipelines.FLAT_CLOUDS` and draws the CPU-baked cloud
  * cells through the `CloudFaces` texel buffer, `CloudInfo`/`DynamicTransforms` uniforms, and a
- * QUADS index draw. This slice redirects only that pass creation while an open VELOCITY_MRT
+ * QUADS index draw. This test redirects only that pass creation while an open VELOCITY_MRT
  * world phase offers the scene velocity view: the pass gets the scene-sized RG16_FLOAT velocity
  * attachment at color index 1, the pipeline-boundary seam swaps in a cached cloud twin that
  * preserves the source cloud descriptors (translucent blended target zero, no vertex format
@@ -141,18 +141,18 @@ class MotionVectorCloudTest {
 			// The frame state machine through the production seam, on an open velocity-MRT
 			// phase whose camera history is established.
 			val runtime = velocityRuntime()
-			val phase = worldPhase(runtime)
+			val phase = velocityWorldPhase(runtime)
 			renderFrame(phase, mainTarget)
 			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
 
 			// Frame one: no previous clock - the sentinel, not the identity-derived zero.
-			var payload = CloudVelocityRender.cloudPayload(phase, gameTime = 100L, partialTicks = 0.5f, meshRebuilt = false)
+			var payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 100L, partialTicks = 0.5f, meshRebuilt = false)
 			assertTrue(payload.invalid, "the first observation has no predecessor: the sentinel")
 
 			// Frame two: the clock advanced one tick plus a quarter - the valid drift-composed
 			// reprojection, exactly the object reprojection of that 1.25-tick drift.
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 101L, partialTicks = 0.75f, meshRebuilt = false)
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 101L, partialTicks = 0.75f, meshRebuilt = false)
 			assertFalse(payload.invalid, "a continuous clock advance composes the drift")
 			assertEquals(
 				objectReprojection(
@@ -166,26 +166,26 @@ class MotionVectorCloudTest {
 			)
 
 			// Frame three: the mixin observed a mesh rebuild - the sentinel for that frame.
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 102L, partialTicks = 0.25f, meshRebuilt = true)
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 102L, partialTicks = 0.25f, meshRebuilt = true)
 			assertTrue(payload.invalid, "a mesh rebuild resets the frame to the sentinel")
 
 			// Frame four: the drift continues from the rebuild frame's clock - the rebuild
 			// invalidates only its own frame, the state machine keeps measuring.
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 103L, partialTicks = 0.5f, meshRebuilt = false)
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 103L, partialTicks = 0.5f, meshRebuilt = false)
 			assertFalse(payload.invalid, "the rebuild resets only the rebuild frame; the clock delta continues")
 
 			// A clock discontinuity (a world change restarts the game clock): the sentinel.
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 0L, partialTicks = 0f, meshRebuilt = false)
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 0L, partialTicks = 0f, meshRebuilt = false)
 			assertTrue(payload.invalid, "a clock jump beyond the discontinuity bound is the sentinel")
 
 			// A steady frame after the discontinuity measures from the new clock.
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 1L, partialTicks = 0.5f, meshRebuilt = false)
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 1L, partialTicks = 0.5f, meshRebuilt = false)
 			assertFalse(payload.invalid, "the state machine recovers from the discontinuity on the next frame")
 
 			// The bound is generous rather than frame-tight: an advance of several ticks - a
 			// slow frame, not a world change - still composes a drift instead of resetting.
 			val underBound = CloudVelocityRender.MAX_CLOCK_JUMP_TICKS.toLong() - 1L
-			payload = CloudVelocityRender.cloudPayload(
+			payload = CloudVelocityRender.buildCloudVelocityPayload(
 				phase,
 				gameTime = 1L + underBound,
 				partialTicks = 0.5f,
@@ -212,7 +212,7 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass setup executes on a fake command backend and records the full replacement`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		try {
 			renderFrame(phase, mainTarget)
 			phase.prepare(true, mainTarget, cameraSample())
@@ -224,13 +224,13 @@ class MotionVectorCloudTest {
 			CloudVelocityRender.resetState()
 
 			val backend = CloudFakeBackend()
-			CloudVelocityRender.activePhaseOverride = phase
-			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
+			CloudVelocityRender.testPhaseOverride = phase
+			CloudVelocityRender.currentCloudClock = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 			CloudVelocityRender.deviceProvider = { backend.device }
 
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
-			val pass = CloudVelocityRender.createPass(
+			val pass = CloudVelocityRender.createCloudVelocityPass(
 				backend.encoder,
 				{ "Clouds" },
 				colorView,
@@ -247,17 +247,17 @@ class MotionVectorCloudTest {
 			assertEquals(2, attachments.size)
 			assertSame(colorView, attachments[0]!!.textureView())
 			assertSame(velocityView, attachments[1]!!.textureView())
-			assertTrue(attachments[1]!!.clearValue().isEmpty(), "the velocity attachment is never cleared")
+			assertTrue(attachments[1]!!.clearValue().isEmpty, "the velocity attachment is never cleared")
 			assertEquals(RENDER_DIMENSIONS.width, checkNotNull(descriptor.renderArea).width())
 			assertEquals(RENDER_DIMENSIONS.height, checkNotNull(descriptor.renderArea).height())
-			assertEquals(GpuFormat.RG16_FLOAT, attachments[1]!!.textureView().texture().getFormat())
+			assertEquals(GpuFormat.RG16_FLOAT, attachments[1]!!.textureView().texture().format)
 
 			// The payload: this frame's CloudVelocityConfig block was written through the fake
 			// encoder, then bound under the writer's uniform name at pass creation.
 			assertEquals(CloudVelocityRender.UBO_SIZE, backend.payloadBytes, "the payload write carries the full block")
 			assertEquals(listOf(CloudVelocityRender.UNIFORM_NAME), backend.uniforms.map { it.first })
 			assertSame(backend.payloadBuffer, backend.uniforms.single().second.buffer())
-			assertEquals(0L, backend.uniforms.single().second.offset(), "the bound slice is offset-zero, valid for any alignment")
+			assertEquals(0L, backend.uniforms.single().second.offset(), "the bound buffer view starts at offset zero, valid for any alignment")
 
 			// The preflight precompiled both cloud twins on the writer's device, so the bind is
 			// a cache hit on a validated pipeline.
@@ -267,11 +267,11 @@ class MotionVectorCloudTest {
 
 			// The pipeline-boundary swap binds the preflighted twin, and the real
 			// RenderPass.setPipeline validation accepted its two targets against the attachments.
-			CloudVelocityRender.bindPipeline(pass, RenderPipelines.CLOUDS)
+			CloudVelocityRender.bindCloudPipeline(pass, RenderPipelines.CLOUDS)
 			assertSame(writerTwin(RenderPipelines.CLOUDS, VelocityWriter.CLOUD), backend.pipeline)
 
 			// The owned close seam closed the pass exactly once and dropped the latch.
-			CloudVelocityRender.closePass(pass)
+			CloudVelocityRender.closeCloudVelocityPass(pass)
 			assertEquals(1, backend.passCloses)
 			assertFalse(CloudVelocityRender.isLatched(pass), "the close seam drops the latch")
 		} finally {
@@ -293,13 +293,13 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass setup preflights allocation write pass-creation and uniform-bind failures to the exact vanilla pass`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		try {
 			renderFrame(phase, mainTarget)
 			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
-			CloudVelocityRender.activePhaseOverride = phase
-			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
+			CloudVelocityRender.testPhaseOverride = phase
+			CloudVelocityRender.currentCloudClock = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
@@ -317,7 +317,7 @@ class MotionVectorCloudTest {
 				}
 				CloudVelocityRender.deviceProvider = { backend.device }
 
-				val pass = CloudVelocityRender.createPass(
+				val pass = CloudVelocityRender.createCloudVelocityPass(
 					backend.encoder,
 					{ "Clouds" },
 					colorView,
@@ -332,7 +332,7 @@ class MotionVectorCloudTest {
 				assertEquals(1, checkNotNull(backend.renderPassDescriptors.lastOrNull()).colorAttachments().size, "$failurePoint: the fallback pass keeps one attachment")
 				assertFalse(CloudVelocityRender.isLatched(pass), "$failurePoint: the failed eligible path never latches the pass")
 				assertDoesNotThrow {
-					CloudVelocityRender.bindPipeline(pass, RenderPipelines.CLOUDS)
+					CloudVelocityRender.bindCloudPipeline(pass, RenderPipelines.CLOUDS)
 				}
 				assertSame(RenderPipelines.CLOUDS, backend.pipeline, "$failurePoint: the source pipeline binds unchanged on the fallback")
 			}
@@ -351,13 +351,13 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass setup preflights twin compilation and validity failures to the exact vanilla pass`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		try {
 			renderFrame(phase, mainTarget)
 			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
-			CloudVelocityRender.activePhaseOverride = phase
-			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
+			CloudVelocityRender.testPhaseOverride = phase
+			CloudVelocityRender.currentCloudClock = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
@@ -371,7 +371,7 @@ class MotionVectorCloudTest {
 				CloudVelocityRender.deviceProvider = { backend.device }
 
 				assertDoesNotThrow {
-					val pass = CloudVelocityRender.createPass(
+					val pass = CloudVelocityRender.createCloudVelocityPass(
 						backend.encoder,
 						{ "Clouds" },
 						colorView,
@@ -382,7 +382,7 @@ class MotionVectorCloudTest {
 					)
 					assertEquals(1, checkNotNull(backend.renderPassDescriptors.lastOrNull()).colorAttachments().size, "$case: the fallback pass keeps one attachment")
 					assertFalse(CloudVelocityRender.isLatched(pass), "$case: the failed eligible path never latches the pass")
-					CloudVelocityRender.bindPipeline(pass, RenderPipelines.CLOUDS)
+					CloudVelocityRender.bindCloudPipeline(pass, RenderPipelines.CLOUDS)
 					assertSame(RenderPipelines.CLOUDS, backend.pipeline, "$case: the source pipeline binds unchanged")
 				}
 			}
@@ -401,13 +401,13 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass setup rejects a size-mismatched velocity attachment as the exact vanilla fallback`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		try {
 			renderFrame(phase, mainTarget)
 			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
-			CloudVelocityRender.activePhaseOverride = phase
-			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
+			CloudVelocityRender.testPhaseOverride = phase
+			CloudVelocityRender.currentCloudClock = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 
 			val backend = CloudFakeBackend()
 			CloudVelocityRender.deviceProvider = { backend.device }
@@ -418,7 +418,7 @@ class MotionVectorCloudTest {
 			// encoder is touched, answering false without throwing.
 			assertDoesNotThrow {
 				assertFalse(
-					CloudVelocityRender.prepare(backend.encoder, phase, mismatchedVelocity, colorView, meshRebuilt = false),
+					CloudVelocityRender.preflightCloudPass(backend.encoder, phase, mismatchedVelocity, colorView, meshRebuilt = false),
 					"a velocity view whose size differs from the color target is a preflight failure",
 				)
 			}
@@ -427,7 +427,7 @@ class MotionVectorCloudTest {
 			// A matching view passes, so the mismatch alone - not the route - drives the fallback.
 			assertDoesNotThrow {
 				assertTrue(
-					CloudVelocityRender.prepare(backend.encoder, phase, checkNotNull(phase.terrainVelocityView), colorView, meshRebuilt = false),
+					CloudVelocityRender.preflightCloudPass(backend.encoder, phase, checkNotNull(phase.terrainVelocityView), colorView, meshRebuilt = false),
 					"a scene-sized velocity view passes the preflight",
 				)
 			}
@@ -446,13 +446,13 @@ class MotionVectorCloudTest {
 	@Test
 	fun `eligible cloud pass close failure is absorbed and the latch is dropped`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		try {
 			renderFrame(phase, mainTarget)
 			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
-			CloudVelocityRender.activePhaseOverride = phase
-			CloudVelocityRender.cloudClockProvider = { CloudVelocityRender.CloudClock(100L, 0.5f) }
+			CloudVelocityRender.testPhaseOverride = phase
+			CloudVelocityRender.currentCloudClock = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 			CloudVelocityRender.resetState()
 
 			val backend = CloudFakeBackend().also { it.failAt = "passClose" }
@@ -460,7 +460,7 @@ class MotionVectorCloudTest {
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 
-			val pass = CloudVelocityRender.createPass(
+			val pass = CloudVelocityRender.createCloudVelocityPass(
 				backend.encoder,
 				{ "Clouds" },
 				colorView,
@@ -469,11 +469,11 @@ class MotionVectorCloudTest {
 				OptionalDouble.empty(),
 				meshRebuilt = false,
 			)
-			CloudVelocityRender.bindPipeline(pass, RenderPipelines.CLOUDS)
+			CloudVelocityRender.bindCloudPipeline(pass, RenderPipelines.CLOUDS)
 
 			// The close ran (the pass lifecycle completed) but its device-level failure was
 			// absorbed: no throw, and the latch is gone.
-			assertDoesNotThrow { CloudVelocityRender.closePass(pass) }
+			assertDoesNotThrow { CloudVelocityRender.closeCloudVelocityPass(pass) }
 			assertEquals(1, backend.passCloses, "the pass closed exactly once, through the owned seam")
 			assertFalse(CloudVelocityRender.isLatched(pass), "the close seam drops the latch even on a failed close")
 			assertSame(writerTwin(RenderPipelines.CLOUDS, VelocityWriter.CLOUD), backend.pipeline)
@@ -491,13 +491,13 @@ class MotionVectorCloudTest {
 	@Test
 	fun `unexpected eligible preflight throw degrades to the exact vanilla pass`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		try {
 			renderFrame(phase, mainTarget)
 			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
-			CloudVelocityRender.activePhaseOverride = phase
-			CloudVelocityRender.cloudClockProvider = { throw IllegalStateException("injected clock failure") }
+			CloudVelocityRender.testPhaseOverride = phase
+			CloudVelocityRender.currentCloudClock = { throw IllegalStateException("injected clock failure") }
 			CloudVelocityRender.resetState()
 
 			val backend = CloudFakeBackend()
@@ -505,7 +505,7 @@ class MotionVectorCloudTest {
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 
 			assertDoesNotThrow {
-				val pass = CloudVelocityRender.createPass(
+				val pass = CloudVelocityRender.createCloudVelocityPass(
 					backend.encoder,
 					{ "Clouds" },
 					colorView,
@@ -515,7 +515,7 @@ class MotionVectorCloudTest {
 					meshRebuilt = false,
 				)
 				assertEquals(1, checkNotNull(backend.renderPassDescriptors.lastOrNull()).colorAttachments().size)
-				CloudVelocityRender.bindPipeline(pass, RenderPipelines.CLOUDS)
+				CloudVelocityRender.bindCloudPipeline(pass, RenderPipelines.CLOUDS)
 				assertSame(RenderPipelines.CLOUDS, backend.pipeline, "the source pipeline binds unchanged")
 			}
 		} finally {
@@ -525,8 +525,8 @@ class MotionVectorCloudTest {
 	}
 
 	private fun resetSeams() {
-		CloudVelocityRender.activePhaseOverride = null
-		CloudVelocityRender.cloudClockProvider = {
+		CloudVelocityRender.testPhaseOverride = null
+		CloudVelocityRender.currentCloudClock = {
 			// Mirrors production: the read is guarded, so a headless JVM with no client
 			// degrades to a null clock instead of throwing.
 			runCatching {
@@ -604,9 +604,7 @@ class MotionVectorCloudTest {
 		override fun precompilePipeline(pipeline: RenderPipeline, shaderSource: ShaderSource?): CompiledRenderPipeline {
 			backend.failIf("precompilePipeline")
 			backend.precompiledPipelines.add(pipeline)
-			return object : CompiledRenderPipeline {
-				override fun isValid(): Boolean = !backend.precompileInvalid
-			}
+			return CompiledRenderPipeline { !backend.precompileInvalid }
 		}
 	}
 
@@ -780,6 +778,6 @@ class MotionVectorCloudTest {
 	private companion object {
 		private val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 		private val RENDER_DIMENSIONS = Dimensions(1707, 960)
-		private val mainTarget = FakeTarget(OUTPUT_DIMENSIONS.width, OUTPUT_DIMENSIONS.height)
+		private val mainTarget = HeadlessRenderTarget(OUTPUT_DIMENSIONS.width, OUTPUT_DIMENSIONS.height)
 	}
 }

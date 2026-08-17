@@ -16,6 +16,7 @@ import org.lwjgl.vulkan.VkSwapchainCreateInfoKHR;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 
 /**
@@ -41,6 +42,7 @@ import org.spongepowered.asm.mixin.injection.At;
  */
 @Mixin(VulkanGpuSurface.class)
 public class VulkanGpuSurfaceProxyMixin {
+	@Unique
 	private static final Logger LOGGER = LoggerFactory.getLogger("mc-dlss");
 
 	@WrapOperation(
@@ -52,16 +54,16 @@ public class VulkanGpuSurfaceProxyMixin {
 	)
 	private int mcDlssCreateSwapchain(
 		final VkDevice device,
-		final VkSwapchainCreateInfoKHR createInfo,
-		final VkAllocationCallbacks allocator,
-		final LongBuffer swapchain,
+		final VkSwapchainCreateInfoKHR pCreateInfo,
+		final VkAllocationCallbacks pAllocator,
+		final LongBuffer pSwapchain,
 		final Operation<Integer> original
 	) {
 		if (!StreamlineVulkanProxies.available()) {
-			return original.call(device, createInfo, allocator, swapchain);
+			return original.call(device, pCreateInfo, pAllocator, pSwapchain);
 		}
 		return StreamlineVulkanProxies.createSwapchain(
-			device.address(), createInfo.address(), address(allocator), address(swapchain)
+			device.address(), pCreateInfo.address(), address(pAllocator), address(pSwapchain)
 		);
 	}
 
@@ -75,21 +77,21 @@ public class VulkanGpuSurfaceProxyMixin {
 	private int mcDlssGetSwapchainImages(
 		final VkDevice device,
 		final long swapchain,
-		final IntBuffer imageCount,
-		final LongBuffer images,
+		final IntBuffer pSwapchainImageCount,
+		final LongBuffer pSwapchainImages,
 		final Operation<Integer> original
 	) {
 		final int result = StreamlineVulkanProxies.available()
 			? StreamlineVulkanProxies.getSwapchainImages(
-				device.address(), swapchain, address(imageCount), address(images)
+				device.address(), swapchain, address(pSwapchainImageCount), address(pSwapchainImages)
 			)
-			: original.call(device, swapchain, imageCount, images);
+			: original.call(device, swapchain, pSwapchainImageCount, pSwapchainImages);
 		// DIAGNOSTIC: the count query (images == null) answers how many images the driver actually
 		// created, which is the number that decides whether the pacer can hold its generated frames
 		// back or the next acquire blocks instead. The declared back-buffer count is only a request:
 		// the surface capabilities can cap it, and nothing else reports what survived.
-		if (images == null && imageCount != null) {
-			LOGGER.info("DLSS swapchain images: created={}", imageCount.get(0));
+		if (pSwapchainImages == null && pSwapchainImageCount != null) {
+			LOGGER.info("DLSS swapchain images: created={}", pSwapchainImageCount.get(0));
 		}
 		return result;
 	}
@@ -107,14 +109,14 @@ public class VulkanGpuSurfaceProxyMixin {
 		final long timeout,
 		final long semaphore,
 		final long fence,
-		final IntBuffer imageIndex,
+		final IntBuffer pImageIndex,
 		final Operation<Integer> original
 	) {
 		if (!StreamlineVulkanProxies.available()) {
-			return original.call(device, swapchain, timeout, semaphore, fence, imageIndex);
+			return original.call(device, swapchain, timeout, semaphore, fence, pImageIndex);
 		}
 		return StreamlineVulkanProxies.acquireNextImage(
-			device.address(), swapchain, timeout, semaphore, fence, address(imageIndex)
+			device.address(), swapchain, timeout, semaphore, fence, address(pImageIndex)
 		);
 	}
 
@@ -126,12 +128,12 @@ public class VulkanGpuSurfaceProxyMixin {
 		)
 	)
 	private int mcDlssQueuePresent(
-		final VkQueue queue, final VkPresentInfoKHR presentInfo, final Operation<Integer> original
+		final VkQueue queue, final VkPresentInfoKHR pPresentInfo, final Operation<Integer> original
 	) {
 		if (!StreamlineVulkanProxies.available()) {
-			return original.call(queue, presentInfo);
+			return original.call(queue, pPresentInfo);
 		}
-		return StreamlineVulkanProxies.queuePresent(queue.address(), presentInfo.address());
+		return StreamlineVulkanProxies.queuePresent(queue.address(), pPresentInfo.address());
 	}
 
 	@WrapOperation(
@@ -144,27 +146,30 @@ public class VulkanGpuSurfaceProxyMixin {
 	private void mcDlssDestroySwapchain(
 		final VkDevice device,
 		final long swapchain,
-		final VkAllocationCallbacks allocator,
+		final VkAllocationCallbacks pAllocator,
 		final Operation<Void> original
 	) {
 		if (!StreamlineVulkanProxies.available()) {
-			original.call(device, swapchain, allocator);
+			original.call(device, swapchain, pAllocator);
 			return;
 		}
-		StreamlineVulkanProxies.destroySwapchain(device.address(), swapchain, address(allocator));
+		StreamlineVulkanProxies.destroySwapchain(device.address(), swapchain, address(pAllocator));
 	}
 
 	/** Vulkan's null pointer for an absent optional struct, its address otherwise. */
+	@Unique
 	private static long address(final Struct<?> struct) {
 		return struct == null ? 0L : struct.address();
 	}
 
 	/** Vulkan's null pointer for an absent optional out-buffer, its address otherwise. */
+	@Unique
 	private static long address(final IntBuffer buffer) {
 		return buffer == null ? 0L : MemoryUtil.memAddress(buffer);
 	}
 
 	/** Vulkan's null pointer for an absent optional out-buffer, its address otherwise. */
+	@Unique
 	private static long address(final LongBuffer buffer) {
 		return buffer == null ? 0L : MemoryUtil.memAddress(buffer);
 	}

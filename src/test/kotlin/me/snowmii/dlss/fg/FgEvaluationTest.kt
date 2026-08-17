@@ -3,6 +3,7 @@ package me.snowmii.dlss.fg
 import java.nio.file.Files
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
@@ -30,26 +31,26 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * M-10 rung: the per-frame present-handoff eligibility records through the native/Kotlin ABI
+ * Present-handoff eligibility: the per-frame present-handoff eligibility records through the native/Kotlin ABI
  * seam, accepts exactly one complete current-frame SR+FG tag set under equal frame indexes,
  * and rejects missing options, partial tags, and consumed eligibility without side effects.
  *
  * Streamline 2.12.0 rejects slEvaluateFeature(kFeatureDLSS_G) with eErrorMissingOrInvalidAPI,
- * so M-10 cannot evaluate DLSS-G: generation belongs to Streamline's present interception at
- * M-11. What M-10 proves is the handoff state that present consumes - the per-frame
+ * so this test does not evaluate DLSS-G: generation belongs to Streamline's present interception.
+ * It proves the handoff state that present consumes - the per-frame
  * slDLSSGSetOptions re-record the guide requires, and a frame whose SR and FG tags both
  * recorded under one frame index. The handoff records no GPU work: depth and motion keep the
  * GENERAL layout and eValidUntilPresent lifetime the FG tag declared, and the frame submits
  * validation-clean.
  *
- * The rung deliberately does not run the SR evaluation on the tagged frame: the DLSS-G
+ * The test deliberately does not run the SR evaluation on the tagged frame: the DLSS-G
  * plugin processes its tags (transitioning from the declared GENERAL state) when the SR
  * evaluation records on the shared frame token, and the SR evaluate's own transitions move
  * the shared depth and motion inputs to SHADER_READ_ONLY first - a validation conflict that
- * is the present-path composition M-11 owns, not the handoff state this rung proves. M-10's
+ * belongs to present-path composition, not the handoff state this test proves. Its
  * boundary is the handoff frame: complete tags, no GPU work, validation-clean submission.
  *
- * The live scenario drives the seam itself, mirroring the M-9 rungs: a fresh fork's module
+ * The live scenario drives the seam itself, mirroring the earlier tag tests: a fresh fork's module
  * has no Streamline session, so the handoff answers FAIL_NotInitialized before bootstrap; a
  * ready session refuses before the FG options recorded, before the module's images were
  * acquired, before any tag, and with only the SR tag recorded; the complete equal-index set
@@ -77,7 +78,7 @@ class FgEvaluationTest {
 		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				FAIL_NOT_INITIALIZED,
-				bridge.presentHandoff(),
+				bridge.recordPresentHandoff(),
 				"presentHandoff before bootstrap must answer FAIL_NotInitialized",
 			)
 		}
@@ -132,7 +133,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -148,7 +149,7 @@ class FgEvaluationTest {
 				// with and must refuse before anything is re-recorded.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff before the FG options recorded must answer FAIL_InvalidParameter",
 				)
 				assertEquals(
@@ -161,7 +162,7 @@ class FgEvaluationTest {
 				// there is no motion source at the configured size for a present to read.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff before the module's images were acquired must answer " +
 						"FAIL_InvalidParameter",
 				)
@@ -183,7 +184,7 @@ class FgEvaluationTest {
 				// a frame neither tag set recorded for cannot hand off.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff before any tag recorded must answer FAIL_InvalidParameter",
 				)
 
@@ -222,10 +223,10 @@ class FgEvaluationTest {
 
 				// One frame, one buffer, one shared frame token: the SR tag records first and
 				// obtains the retained token, and the FG tag records second under that same
-				// token. The rung proves the handoff frame itself - complete tags, no GPU work -
+				// token. The test proves the handoff frame itself - complete tags, no GPU work -
 				// and leaves the SR evaluation off the frame: the DLSS-G plugin processes its
-				// tags when the evaluation records, which is the present-path composition M-11
-				// owns (see the class comment).
+				// tags when the evaluation records, which belongs to present-path composition
+				// (see the class comment).
 				val frame = fixture.allocateAndBeginCommandBuffer()
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
@@ -251,12 +252,12 @@ class FgEvaluationTest {
 				// consume anything - the completed frame below has to hand off all the same.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff with only the SR tag recorded must answer FAIL_InvalidParameter",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -283,17 +284,17 @@ class FgEvaluationTest {
 				// enough to hand off.
 				val indexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					indexes.srFrameIndex,
-					indexes.fgFrameIndex,
+					indexes.lastSrTagFrameIndex,
+					indexes.lastFgTagFrameIndex,
 					"the SR and FG tags of one frame must record under the same Streamline " +
-						"frame index, got SR=${indexes.srFrameIndex}, FG=${indexes.fgFrameIndex}",
+						"frame index, got SR=${indexes.lastSrTagFrameIndex}, FG=${indexes.lastFgTagFrameIndex}",
 				)
 				// The complete equal-index tag set hands off: the stored 2x options re-record
 				// with the back-buffer count mc_dlss_configure_fg declared, and the frame is
 				// present-eligible.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the complete equal-index tag set must hand off once",
 				)
 				// Consumed: the frame's tag set already handed off, and Streamline's present
@@ -301,7 +302,7 @@ class FgEvaluationTest {
 				// nothing and clears nothing - the fully re-recorded set below hands off again.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a second handoff for the same tag set must answer FAIL_InvalidParameter",
 				)
 				// Each tag record marks only its own side of the tag set fresh: re-recording just
@@ -311,7 +312,7 @@ class FgEvaluationTest {
 				// the frame ended, with nothing consumed but the eligibility itself.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -335,13 +336,13 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"re-recording only the FG tag must not re-arm a consumed handoff while the " +
 						"SR tag is still stale",
 				)
 				// The counterpart records too, and the re-recorded complete set hands off once -
 				// the same retained token and the same frame index, exactly the repeated-tag
-				// behaviour the tag rung proves.
+				// behavior the tag test proves.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.tagSrResources(
@@ -363,7 +364,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the re-recorded complete tag set must hand off once",
 				)
 				// Symmetric per-side freshness: repeating only the SR side now stays refused
@@ -389,13 +390,13 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"re-recording only the SR tag must not re-arm a consumed handoff while the " +
 						"FG tag is still stale",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -419,7 +420,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the fully re-recorded tag set must hand off once",
 				)
 
@@ -451,7 +452,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -475,7 +476,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the re-armed complete set must hand off once under the current images",
 				)
 				// The second fresh set is the one the release invalidates: it is complete and
@@ -502,7 +503,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -526,10 +527,10 @@ class FgEvaluationTest {
 				)
 				val preReleaseIndexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					preReleaseIndexes.srFrameIndex,
-					preReleaseIndexes.fgFrameIndex,
+					preReleaseIndexes.lastSrTagFrameIndex,
+					preReleaseIndexes.lastFgTagFrameIndex,
 					"the pre-release tags must record under one equal frame index, got " +
-						"SR=${preReleaseIndexes.srFrameIndex}, FG=${preReleaseIndexes.fgFrameIndex}",
+						"SR=${preReleaseIndexes.lastSrTagFrameIndex}, FG=${preReleaseIndexes.lastFgTagFrameIndex}",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
@@ -538,7 +539,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff while the images are released must answer FAIL_InvalidParameter",
 				)
 				val reacquiredAfterRelease = bridge.acquireImages()
@@ -548,7 +549,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff after release and re-acquire must stay refused while the tag " +
 						"records are stale",
 				)
@@ -576,13 +577,13 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff must stay refused after the release while only the SR side " +
 						"re-recorded and the FG side is still stale",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -606,19 +607,19 @@ class FgEvaluationTest {
 				)
 				val postReleaseIndexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					postReleaseIndexes.srFrameIndex,
-					postReleaseIndexes.fgFrameIndex,
+					postReleaseIndexes.lastSrTagFrameIndex,
+					postReleaseIndexes.lastFgTagFrameIndex,
 					"the post-release tags must record under one equal frame index, got " +
-						"SR=${postReleaseIndexes.srFrameIndex}, FG=${postReleaseIndexes.fgFrameIndex}",
+						"SR=${postReleaseIndexes.lastSrTagFrameIndex}, FG=${postReleaseIndexes.lastFgTagFrameIndex}",
 				)
 				assertTrue(
-					postReleaseIndexes.srFrameIndex != preReleaseIndexes.srFrameIndex,
+					postReleaseIndexes.lastSrTagFrameIndex != preReleaseIndexes.lastSrTagFrameIndex,
 					"releaseImages must drop the retained token so the post-release tags advance " +
-						"the frame, got the pre-release index ${preReleaseIndexes.srFrameIndex} again",
+						"the frame, got the pre-release index ${preReleaseIndexes.lastSrTagFrameIndex} again",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the post-release complete tag set must hand off once",
 				)
 
@@ -627,7 +628,7 @@ class FgEvaluationTest {
 				// be refused as stale once the configuration that interpreted it is replaced.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -639,7 +640,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff after a configuration replacement must answer FAIL_InvalidParameter " +
 						"while the tag records are stale",
 				)
@@ -652,7 +653,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff for the pre-replacement tag set must stay refused after the FG " +
 						"options re-record",
 				)
@@ -663,12 +664,12 @@ class FgEvaluationTest {
 				// images exist again.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.reset(),
+					bridge.resetSuperResolutionHistory(),
 					"reset must succeed on a ready session",
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff after reset must answer FAIL_InvalidParameter while the tag records " +
 						"are stale",
 				)
@@ -676,7 +677,7 @@ class FgEvaluationTest {
 				assertTrue(reacquired != null, "the module images must re-acquire after reset")
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a handoff after reset and re-acquire must stay refused until both tags " +
 						"re-record",
 				)
@@ -705,7 +706,7 @@ class FgEvaluationTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -729,19 +730,19 @@ class FgEvaluationTest {
 				)
 				val postResetIndexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					postResetIndexes.srFrameIndex,
-					postResetIndexes.fgFrameIndex,
+					postResetIndexes.lastSrTagFrameIndex,
+					postResetIndexes.lastFgTagFrameIndex,
 					"the post-reset tags must record under one equal fresh frame index, got " +
-						"SR=${postResetIndexes.srFrameIndex}, FG=${postResetIndexes.fgFrameIndex}",
+						"SR=${postResetIndexes.lastSrTagFrameIndex}, FG=${postResetIndexes.lastFgTagFrameIndex}",
 				)
 				assertTrue(
-					postResetIndexes.srFrameIndex != indexes.srFrameIndex,
+					postResetIndexes.lastSrTagFrameIndex != indexes.lastSrTagFrameIndex,
 					"reset must drop the retained token so the post-reset tags advance the frame, " +
-						"got the pre-reset index ${indexes.srFrameIndex} again",
+						"got the pre-reset index ${indexes.lastSrTagFrameIndex} again",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the post-reset complete tag set must hand off once",
 				)
 				fixture.endSubmitAndWait(frame)
@@ -775,7 +776,7 @@ class FgEvaluationTest {
 			offenders.isEmpty(),
 			"native code must not call slEvaluateFeature(kFeatureDLSS_G): the pinned " +
 				"Streamline 2.12.0 plugin answers eErrorMissingOrInvalidAPI, and a caller that " +
-				"maps that error to success (as the invalidated fg-evaluate-records slice did) " +
+				"maps that error to success (as the invalidated evaluation path did) " +
 				"records a frame DLSS-G silently never generates - a green suite with nothing " +
 				"generated, visible only at present-time acceptance: $offenders",
 		)
@@ -809,7 +810,7 @@ class FgEvaluationTest {
 	}
 
 	/**
-	 * Asserts the rung's validation oracle was actually running, then that the Khronos
+	 * Asserts that the validation oracle was actually running, then that the Khronos
 	 * validation layer reported no errors naming any of the frame's six tagged images - the
 	 * engine's colour, depth, HUD-less, and UI targets, and the module's motion and output
 	 * images.
@@ -817,7 +818,7 @@ class FgEvaluationTest {
 	 * Validation is the only oracle for image layouts: a handoff that recorded a transition
 	 * or a relabel the images' actual layouts cannot serve is undefined behaviour to the
 	 * driver and silent without it, so a session whose layer could not be enabled has no
-	 * evidence worth asserting on and the rung FAILS rather than silently skipping the clean
+	 * evidence worth asserting on and the test fails rather than silently skipping the clean
 	 * check.
 	 */
 	private fun assertHandoffFrameClean(
@@ -830,7 +831,7 @@ class FgEvaluationTest {
 	) {
 		assertTrue(
 			fixture.validationEnabled(),
-			"the rung needs the Khronos validation layer (VK_LAYER_KHRONOS_validation " +
+			"this test needs the Khronos validation layer (VK_LAYER_KHRONOS_validation " +
 				"plus VK_EXT_debug_utils); without it the clean-frame assertion is worthless",
 		)
 		val errors = fixture.validationErrorsAbout(
@@ -880,11 +881,11 @@ class FgEvaluationTest {
 	 * Records the present-handoff seam and answers the three calls [LifecycleAdapter.initialize]
 	 * drives; everything else is a call this test never makes.
 	 */
-	private class FakeNative : NativeApi {
+	private class FakeNative : NativeApiTestDouble() {
 		var presentHandoffResult = NativeApi.SUCCESS_RESULT
 		var presentHandoffCalls = 0
 
-		override fun presentHandoff(): Int {
+		override fun recordPresentHandoff(): Int {
 			presentHandoffCalls++
 			return presentHandoffResult
 		}
@@ -900,7 +901,7 @@ class FgEvaluationTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -912,10 +913,10 @@ class FgEvaluationTest {
 		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
-		override fun evaluate(request: EvaluationRequest): Int = error("unexpected evaluate")
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = error("unexpected evaluate")
 	}
 
 	private companion object {

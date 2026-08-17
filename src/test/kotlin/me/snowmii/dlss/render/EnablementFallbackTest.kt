@@ -1,4 +1,5 @@
 package me.snowmii.dlss.render
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
@@ -28,14 +29,9 @@ import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
 /**
- * M-12's rung: DLSS engages for supported normal in-world frames and nothing else, every
- * discontinuity resets the accumulated history, a failed native stage restores full-resolution
- * rendering for the rest of the session, and the failure names its exact native stage and result.
- *
- * This is the milestone the candidate rests on, because it is the one that decides what a reviewer
- * sees when something goes wrong. Every other milestone in this effort makes DLSS work; this one
- * makes a session that cannot work stay a playable, full-resolution Minecraft with a log line
- * naming the reason.
+ * Verifies frame eligibility, history resets, and safe native fallback. Supported in-world frames
+ * use DLSS; discontinuities reset history; a failed native stage restores full-resolution rendering
+ * and reports the exact stage and result.
  *
  * Everything below drives the production seams - the world phase, the runtime, the lifecycle
  * adapter, and the session - off the render thread. The native side is a double, and the failure
@@ -46,7 +42,7 @@ class EnablementFallbackTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1280, 720)
 
-	private val mainTarget = FakeTarget(output.width, output.height)
+	private val mainTarget = HeadlessRenderTarget(output.width, output.height)
 
 	@Test
 	fun `a normal in-world frame renders into the low-resolution scene target`() {
@@ -76,7 +72,7 @@ class EnablementFallbackTest {
 	@Test
 	fun `a window the session is not configured against renders full-resolution`() {
 		val fixture = fixture()
-		val resized = FakeTarget(1920, 1080)
+		val resized = HeadlessRenderTarget(1920, 1080)
 
 		val resolved = fixture.frame(normalInWorldFrame = true, target = resized)
 
@@ -93,7 +89,7 @@ class EnablementFallbackTest {
 
 		assertEquals(DlssSessionState.DISABLED, fixture.session.state)
 		assertEquals(0, fixture.native.initializeCalls)
-		assertNull(fixture.runtime.renderDimensions)
+		assertNull(fixture.runtime.dlssRenderDimensions)
 	}
 
 	@Test
@@ -190,7 +186,7 @@ class EnablementFallbackTest {
 		val runtime = RenderRuntime(
 			session = session,
 			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
+				allocate = { width, height -> HeadlessRenderTarget(width, height) },
 				release = { released++ },
 			),
 			startup = { adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) },
@@ -219,7 +215,7 @@ class EnablementFallbackTest {
 			val resolved = phase.begin(normalInWorldFrame, target)
 			// Read inside the phase: closing it drops the route, the jitter, and the motion, which
 			// is exactly the window the renderer itself sees them in.
-			route = runtime.activeRoute
+			route = runtime.worldTargetRoute
 			motion = runtime.activeMotion
 			phase.end()
 			return resolved
@@ -242,8 +238,7 @@ class EnablementFallbackTest {
 		)
 	}
 
-	/** Render target with no GPU buffers, so the whole stack is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height
@@ -258,7 +253,7 @@ class EnablementFallbackTest {
 	}
 
 	/** The native bridge as results, which is all the enablement and fallback paths read of it. */
-	private class FakeNative(private val initializeResult: Int, private val render: Dimensions) : NativeApi {
+	private class FakeNative(private val initializeResult: Int, private val render: Dimensions) : NativeApiTestDouble() {
 		var initializeCalls = 0
 		var evaluateCalls = 0
 		var evaluateResult = NativeApi.SUCCESS_RESULT
@@ -276,7 +271,7 @@ class EnablementFallbackTest {
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) = render
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -301,7 +296,7 @@ class EnablementFallbackTest {
 		override fun presentOutput(target: PresentTarget) = NativeApi.SUCCESS_RESULT
 
 		@Suppress("LongParameterList")
-		override fun evaluate(request: EvaluationRequest): Int {
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			evaluateCalls++
 			return evaluateResult
 		}

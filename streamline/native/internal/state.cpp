@@ -9,6 +9,73 @@ void reset_state() noexcept {
     g_state = DlssState{};
 }
 
+void FrameEligibility::armSr(const uint32_t frameIndex) noexcept {
+    srRecorded_ = true;
+    srIndex_ = frameIndex;
+}
+
+void FrameEligibility::armFg(const uint32_t frameIndex) noexcept {
+    fgRecorded_ = true;
+    fgIndex_ = frameIndex;
+}
+
+bool FrameEligibility::srArmedAt(const uint32_t frameIndex) const noexcept {
+    return srRecorded_ && srIndex_ == frameIndex;
+}
+
+bool FrameEligibility::tagIndexes(uint32_t* srFrameIndex,
+                                  uint32_t* fgFrameIndex) const noexcept {
+    if (!srRecorded_ || !fgRecorded_) {
+        return false;
+    }
+    *srFrameIndex = srIndex_;
+    *fgFrameIndex = fgIndex_;
+    return true;
+}
+
+bool FrameEligibility::tagSetComplete() const noexcept {
+    return srRecorded_ && fgRecorded_ && srIndex_ == fgIndex_;
+}
+
+void FrameEligibility::consumeForHandoff() noexcept {
+    srRecorded_ = false;
+    srIndex_ = 0;
+    fgRecorded_ = false;
+    fgIndex_ = 0;
+    presentArmed_ = true;
+}
+
+bool FrameEligibility::presentStartPending() const noexcept {
+    return presentArmed_ && !presentStartEmitted_ && token_ != nullptr;
+}
+
+void FrameEligibility::consumePresent() noexcept {
+    presentStartEmitted_ = false;
+    presentArmed_ = false;
+    srRecorded_ = false;
+    fgRecorded_ = false;
+    token_ = nullptr;
+}
+
+bool FrameEligibility::copiesNeededFor(const uint32_t frameIndex) const noexcept {
+    return !copiesRecorded_ || copiedIndex_ != frameIndex;
+}
+
+void FrameEligibility::recordCopies(const uint32_t frameIndex) noexcept {
+    copiesRecorded_ = true;
+    copiedIndex_ = frameIndex;
+}
+
+void FrameEligibility::invalidate() noexcept {
+    // The retained token belongs to a frame whose records are being dropped with it: the next
+    // tag must obtain a fresh token rather than advance the frame under a stale one. Both tag
+    // records and their indexes clear together - a handoff reads the two sides as one set, so
+    // one side can never outlive the other's invalidation - and the copy record clears with
+    // the token it was recorded under, so the next frame's first FG tag rebuilds the copies
+    // rather than skipping them as the stale frame's second call.
+    *this = FrameEligibility{};
+}
+
 void MarkerLog::record(const uint32_t type, const sl::FrameToken* frameToken) noexcept {
     // The type indexes the count array, so a value outside the log's vocabulary would write
     // past it. Every caller passes one of its own enum values; the guard is here because

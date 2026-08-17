@@ -25,10 +25,10 @@ import org.junit.jupiter.api.io.TempDir
  * Proves the evaluation records its own layout transitions on the caller's command buffer, and
  * that the resulting recording actually submits and completes on a real graphics queue.
  *
- * Everything below this point in the effort was recorded nowhere: `mc_dlss_evaluate` built NGX
- * resources and called NGX, but nothing had ever put an image into the layout DLSS reads it in,
- * and no command buffer carrying DLSS work had ever been submitted. The two native images the
- * previous checkpoint allocated were still VK_IMAGE_LAYOUT_UNDEFINED.
+ * Before this behavior was wired, the recording was incomplete: `mc_dlss_evaluate` built NGX
+ * resources and called NGX, but nothing had put an image into the layout DLSS reads it in,
+ * and no command buffer carrying DLSS work had been submitted. The native images were still
+ * VK_IMAGE_LAYOUT_UNDEFINED.
  *
  * The 310.7.0 programming guide's Resource States section is the contract being kept: inputs in a
  * read state, output in a storage state, and DLSS restores both afterwards. Minecraft's own side

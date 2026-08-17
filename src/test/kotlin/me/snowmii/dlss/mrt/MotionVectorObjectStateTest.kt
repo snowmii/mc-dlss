@@ -16,11 +16,11 @@ import org.junit.jupiter.api.Test
 import kotlin.math.abs
 
 /**
- * M-6's first capability: the previous-transform double buffer every dynamic world-pass velocity
+ * Object-motion history: the previous-transform double buffer every dynamic world-pass velocity
  * writer consumes, and the object reprojection that extends the camera's with the object's own
  * motion.
  *
- * Terrain velocity (M-5) is a pure function of two frames' cameras, so it collapses into the one
+ * Terrain velocity is a pure function of two frames' cameras, so it collapses into the one
  * reprojection matrix [DlssCameraMotion] publishes. An entity is not: its pixels sit where the
  * entity's *current* pose put them, and last frame they sat somewhere the camera reprojection
  * alone does not know. DLSS still needs, per pixel, where that surface point was in the previous
@@ -73,116 +73,116 @@ class MotionVectorObjectStateTest {
 	fun `captures become predecessors only at the frame boundary`() {
 		val state = ObjectMotionState()
 
-		state.capture(7, 10.0, 64.0, 5.0)
-		assertNull(state.previous(7), "nothing is published before the first frame boundary")
-		assertNull(state.displacement(7))
+		state.capturePosition(7, 10.0, 64.0, 5.0)
+		assertNull(state.previousPosition(7), "nothing is published before the first frame boundary")
+		assertNull(state.objectDisplacement(7))
 
-		state.publish()
-		assertEquals(position(10.0, 64.0, 5.0), state.previous(7))
+		state.publishFrame()
+		assertEquals(position(10.0, 64.0, 5.0), state.previousPosition(7))
 
-		state.capture(7, 10.5, 64.0, 5.0)
+		state.capturePosition(7, 10.5, 64.0, 5.0)
 		assertEquals(
 			position(10.0, 64.0, 5.0),
-			state.previous(7),
+			state.previousPosition(7),
 			"an in-flight capture must not move the predecessor before the boundary",
 		)
-		assertEquals(vec(0.5f, 0f, 0f), state.displacement(7))
+		assertEquals(vec(0.5f, 0f, 0f), state.objectDisplacement(7))
 
-		state.publish()
-		assertEquals(position(10.5, 64.0, 5.0), state.previous(7))
-		assertNull(state.displacement(7), "after the boundary the in-flight set is empty again")
+		state.publishFrame()
+		assertEquals(position(10.5, 64.0, 5.0), state.previousPosition(7))
+		assertNull(state.objectDisplacement(7), "after the boundary the in-flight set is empty again")
 	}
 
 	@Test
 	fun `an object first observed this frame has no predecessor to reproject against`() {
 		val state = ObjectMotionState()
 
-		state.capture(7, 10.0, 64.0, 5.0)
-		assertNull(state.previous(7), "the first observation has no predecessor")
-		assertNull(state.displacement(7))
-		state.publish()
+		state.capturePosition(7, 10.0, 64.0, 5.0)
+		assertNull(state.previousPosition(7), "the first observation has no predecessor")
+		assertNull(state.objectDisplacement(7))
+		state.publishFrame()
 
 		// The second observation has a predecessor: the first frame's published capture.
-		state.capture(7, 10.5, 64.0, 5.0)
-		assertEquals(position(10.0, 64.0, 5.0), state.previous(7))
-		assertEquals(vec(0.5f, 0f, 0f), state.displacement(7))
+		state.capturePosition(7, 10.5, 64.0, 5.0)
+		assertEquals(position(10.0, 64.0, 5.0), state.previousPosition(7))
+		assertEquals(vec(0.5f, 0f, 0f), state.objectDisplacement(7))
 	}
 
 	@Test
 	fun `each object's predecessor is keyed by its own stable id`() {
 		val state = ObjectMotionState()
-		state.capture(1, 10.0, 64.0, 5.0)
-		state.capture(2, 20.0, 70.0, 6.0)
-		state.publish()
-		state.capture(1, 10.5, 64.0, 5.0)
-		state.capture(2, 20.5, 70.0, 6.0)
-		state.publish()
+		state.capturePosition(1, 10.0, 64.0, 5.0)
+		state.capturePosition(2, 20.0, 70.0, 6.0)
+		state.publishFrame()
+		state.capturePosition(1, 10.5, 64.0, 5.0)
+		state.capturePosition(2, 20.5, 70.0, 6.0)
+		state.publishFrame()
 
-		state.capture(1, 11.0, 64.0, 5.0)
-		state.capture(2, 20.0, 70.0, 6.0)
+		state.capturePosition(1, 11.0, 64.0, 5.0)
+		state.capturePosition(2, 20.0, 70.0, 6.0)
 
-		assertEquals(position(10.5, 64.0, 5.0), state.previous(1))
-		assertEquals(position(20.5, 70.0, 6.0), state.previous(2))
-		assertEquals(vec(0.5f, 0f, 0f), state.displacement(1))
-		assertEquals(vec(-0.5f, 0f, 0f), state.displacement(2))
+		assertEquals(position(10.5, 64.0, 5.0), state.previousPosition(1))
+		assertEquals(position(20.5, 70.0, 6.0), state.previousPosition(2))
+		assertEquals(vec(0.5f, 0f, 0f), state.objectDisplacement(1))
+		assertEquals(vec(-0.5f, 0f, 0f), state.objectDisplacement(2))
 	}
 
 	@Test
 	fun `an object absent from a frame loses its predecessor at the boundary`() {
 		val state = ObjectMotionState()
-		state.capture(1, 10.0, 64.0, 5.0)
-		state.publish()
-		state.capture(1, 10.5, 64.0, 5.0)
-		state.publish()
+		state.capturePosition(1, 10.0, 64.0, 5.0)
+		state.publishFrame()
+		state.capturePosition(1, 10.5, 64.0, 5.0)
+		state.publishFrame()
 
 		// Frame 3: object 1 is gone, only object 2 is captured. The writer draws only living
 		// objects, so the absent object's pixels never run; what must hold is that it has no
 		// displacement (no current observation to pair with) and that the boundary evicts it.
-		state.capture(2, 30.0, 64.0, 7.0)
-		assertNull(state.displacement(1), "an absent object has no displacement to compose")
+		state.capturePosition(2, 30.0, 64.0, 7.0)
+		assertNull(state.objectDisplacement(1), "an absent object has no displacement to compose")
 		assertEquals(
 			position(10.5, 64.0, 5.0),
-			state.previous(1),
+			state.previousPosition(1),
 			"the predecessor is evicted at the boundary, not before it",
 		)
 
-		state.publish()
-		assertNull(state.previous(1), "an id absent from the frame is evicted at the boundary")
-		assertEquals(position(30.0, 64.0, 7.0), state.previous(2))
+		state.publishFrame()
+		assertNull(state.previousPosition(1), "an id absent from the frame is evicted at the boundary")
+		assertEquals(position(30.0, 64.0, 7.0), state.previousPosition(2))
 	}
 
 	@Test
 	fun `an id reused after despawn does not inherit the dead object's predecessor`() {
 		val state = ObjectMotionState()
-		state.capture(1, 10.0, 64.0, 5.0)
-		state.publish()
-		state.capture(1, 10.5, 64.0, 5.0)
-		state.publish()
+		state.capturePosition(1, 10.0, 64.0, 5.0)
+		state.publishFrame()
+		state.capturePosition(1, 10.5, 64.0, 5.0)
+		state.publishFrame()
 
 		// Object 1 despawns; the boundary evicts its id while only object 2 is captured.
-		state.capture(2, 30.0, 64.0, 7.0)
-		state.publish()
+		state.capturePosition(2, 30.0, 64.0, 7.0)
+		state.publishFrame()
 
 		// Minecraft reuses entity ids, so a new object may take over id 1 anywhere in the world.
-		state.capture(1, 100.0, 70.0, 3.0)
-		assertNull(state.previous(1), "a reused id must start fresh, not reproject from the despawned object")
-		assertNull(state.displacement(1))
+		state.capturePosition(1, 100.0, 70.0, 3.0)
+		assertNull(state.previousPosition(1), "a reused id must start fresh, not reproject from the despawned object")
+		assertNull(state.objectDisplacement(1))
 	}
 
 	@Test
 	fun `reset forgets every predecessor and the next observation starts fresh`() {
 		val state = ObjectMotionState()
-		state.capture(1, 10.0, 64.0, 5.0)
-		state.publish()
-		state.capture(1, 10.5, 64.0, 5.0)
+		state.capturePosition(1, 10.0, 64.0, 5.0)
+		state.publishFrame()
+		state.capturePosition(1, 10.5, 64.0, 5.0)
 
-		state.reset()
-		assertNull(state.previous(1))
-		assertNull(state.displacement(1))
+		state.resetHistory()
+		assertNull(state.previousPosition(1))
+		assertNull(state.objectDisplacement(1))
 
-		state.capture(1, 11.0, 64.0, 5.0)
-		assertNull(state.previous(1), "after a reset the next observation is a first observation")
-		assertNull(state.displacement(1))
+		state.capturePosition(1, 11.0, 64.0, 5.0)
+		assertNull(state.previousPosition(1), "after a reset the next observation is a first observation")
+		assertNull(state.objectDisplacement(1))
 	}
 
 	@Test
@@ -389,10 +389,10 @@ class MotionVectorObjectStateTest {
 		// The object moves in all three world axes between frames; the exact delta flows
 		// through the state buffer - the production capture seam - not a hand-built fixture.
 		val state = ObjectMotionState()
-		state.capture(7, 100.0, 64.0, 20.0)
-		state.publish()
-		state.capture(7, 102.5, 66.25, 22.75)
-		val objectDelta = requireNotNull(state.displacement(7)) { "the object must have a predecessor and a current capture" }
+		state.capturePosition(7, 100.0, 64.0, 20.0)
+		state.publishFrame()
+		state.capturePosition(7, 102.5, 66.25, 22.75)
+		val objectDelta = requireNotNull(state.objectDisplacement(7)) { "the object must have a predecessor and a current capture" }
 		assertEquals(vec(2.5f, 2.25f, 2.75f), objectDelta)
 
 		val objectMotion = objectReprojection(

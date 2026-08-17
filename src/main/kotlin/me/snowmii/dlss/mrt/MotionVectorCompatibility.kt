@@ -27,18 +27,18 @@ data class MotionVectorPipeline(
  *
  * Minecraft and mc-dlss shader namespaces are the approved compatibility boundary. First foreign
  * owner permanently selects [MotionVectorRoute.CAMERA_ONLY] for this runtime. That route leaves
- * frame generation eligible; later M-4 work uses it to retain the one-target pipeline and existing
+ * frame generation eligible; the fallback retains the one-target pipeline and existing
  * camera-motion writer instead of binding an incompatible velocity variant.
  */
 class MotionVectorCompatibility(
 	private val diagnostics: (String) -> Unit = {},
 ) {
 	@Volatile
-	var route: MotionVectorRoute = MotionVectorRoute.VELOCITY_MRT
+	var selectedRoute: MotionVectorRoute = MotionVectorRoute.VELOCITY_MRT
 		private set
 
 	@Volatile
-	var fallbackPipeline: MotionVectorPipeline? = null
+	var firstForeignPipeline: MotionVectorPipeline? = null
 		private set
 
 	/**
@@ -46,22 +46,22 @@ class MotionVectorCompatibility(
 	 * to keep an unknown custom shader from turning lazy first-draw compilation into a render error.
 	 */
 	fun observe(pipeline: MotionVectorPipeline): MotionVectorRoute {
-		if (route == MotionVectorRoute.CAMERA_ONLY) {
-			return route
+		if (selectedRoute == MotionVectorRoute.CAMERA_ONLY) {
+			return selectedRoute
 		}
 
 		val foreign = pipeline.shaders.filterNot { it.owner in OWNED_SHADER_NAMESPACES }
 		if (foreign.isEmpty()) {
-			return route
+			return selectedRoute
 		}
 
 		synchronized(this) {
-			if (route == MotionVectorRoute.CAMERA_ONLY) {
-				return route
+			if (selectedRoute == MotionVectorRoute.CAMERA_ONLY) {
+				return selectedRoute
 			}
 
-			fallbackPipeline = pipeline
-			route = MotionVectorRoute.CAMERA_ONLY
+			firstForeignPipeline = pipeline
+			selectedRoute = MotionVectorRoute.CAMERA_ONLY
 			val shaderIds = foreign.joinToString { it.id }
 			runCatching {
 				diagnostics(
@@ -71,7 +71,7 @@ class MotionVectorCompatibility(
 				)
 			}
 		}
-		return route
+		return selectedRoute
 	}
 
 	companion object {

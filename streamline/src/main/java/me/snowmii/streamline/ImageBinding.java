@@ -9,10 +9,7 @@ package me.snowmii.streamline;
  * carry all five range fields per image and every producer sent the same values.
  */
 public record ImageBinding(
-	/** The image view handle. */
 	long view,
-	/** The image handle. */
 	long image,
-	/** The raw {@code VkFormat} value. */
 	int format
 ) {}

@@ -2,6 +2,7 @@ package me.snowmii.dlss.fg
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
@@ -26,23 +27,17 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
 /**
- * M-9 slice rung: the DLSS-G per-frame 2x options record through the native/Kotlin ABI seam.
+ * Verifies the DLSS-G per-frame options record through the native/Kotlin ABI seam.
  *
  * The live scenario drives the seam itself: a fresh fork's module has no Streamline session,
  * so [NativeApi.configureFg] must answer FAIL_NotInitialized before bootstrap; after proxy
  * activation but before any configure it must answer FAIL_InvalidParameter (the stored
  * dimensions are still zero); and after a successful configure it must record through
- * slDLSSGSetOptions and answer success. The whole scenario runs in ONE test method (and
- * therefore one test fork) like the M-3 SR rungs: the close-path slShutdown is what makes the
- * fork's exit clean, and a fork that followed an unclean exit comes up with the plugin manager
- * already initialized.
+ * slDLSSGSetOptions and answer success. The device-backed scenario stays in one test method so
+ * Streamline teardown runs while the fixture device is alive and the fork exits cleanly.
  *
- * The recorded CONTENT is not observable through the ABI - slDLSSGSetOptions validates little
- * and stores the rest silently, and Streamline offers no options read-back. The exact field
- * decisions (2x, retained resources, UI recomposition, eBlockNoClientQueues, the declared
- * back-buffer count, and the configured extents/formats) are established by the contract
- * implementation, and the seam's acceptance is live: the call only answers success when
- * slDLSSGSetOptions accepts the record, and the adapter test below pins the ABI's
+ * Streamline does not expose option readback, so field values are not inferred from the ABI.
+ * The live call result proves that Streamline accepted the record; adapter tests cover
  * pass-through and failure latching.
  */
 @NativeBridge
@@ -121,7 +116,7 @@ class FgOptionsContractTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -211,7 +206,7 @@ class FgOptionsContractTest {
 	 * Records the FG-option seam and answers the three calls [LifecycleAdapter.initialize]
 	 * drives; everything else is a call this test never makes.
 	 */
-	private class FakeNative : NativeApi {
+	private class FakeNative : NativeApiTestDouble() {
 		var configureFgResult = NativeApi.SUCCESS_RESULT
 		var configureFgCalls = 0
 		val configureFgValues = mutableListOf<Int>()
@@ -233,7 +228,7 @@ class FgOptionsContractTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -245,10 +240,10 @@ class FgOptionsContractTest {
 		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
-		override fun evaluate(request: EvaluationRequest): Int = error("unexpected evaluate")
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = error("unexpected evaluate")
 	}
 
 	private companion object {

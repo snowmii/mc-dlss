@@ -38,32 +38,17 @@ import org.lwjgl.vulkan.VkMemoryAllocateInfo
 import org.lwjgl.vulkan.VkMemoryRequirements
 import org.lwjgl.vulkan.VkPhysicalDevice
 import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
- * M-11.5 FG buffer orientation rung (AC-2): the composed frame's FG tag names module-owned
- * backbuffer-oriented copies - the engine's depth, HUD-less, and UI content mirrored about
- * the horizontal axis, and the motion field mirrored with its y component negated - while
- * the FG viewport's constants carry the matching flip and the SR viewport stays raw.
+ * Verifies backbuffer orientation for composed FG inputs and constants.
  *
- * DLSS-G interpolates the swapchain image, which Minecraft's present blit mirrors vertically
- * relative to every engine texture, so a tag that names the engine's images describes the
- * frame upside down. This rung proves the fix through the public boundary: the owned copies
- * are read back through mc_dlss_query_fg_images and compared against known asymmetric
- * engine content - a per-row pattern no mirror can leave unchanged - and the two constants
- * oracles are compared against the caller's known camera: the SR oracle raw, the FG oracle
- * with one flip per matrix role - the ABI's matrices are row-vector (v' = v · M), so the
- * viewToClip carries the output-side flip M · F, the clipToView the input-side flip
- * F · M⁻¹ (the pair stays exact inverses), and the reprojection pair the conjugation
- * F · M · F - and the jitter's y negated. A half-fix - flipped matrices without flipped
- * images, or one of the four buffers left in engine space - fails these proofs loudly.
- *
- * Both motion routes are pinned: the camera-only writer fills the flipped motion copy from
- * its depth reconstruction, and the velocity-MRT fill does the same for a field whose every
- * pixel is genuine object motion, so the mirror-and-negate write is proven for the two
- * producers the invariant names.
- *
- * Like the other live FG rungs the scenario runs in ONE test method (one test fork): the
- * close-path slShutdown is what makes the fork's exit clean.
+ * Minecraft's present blit mirrors engine textures vertically, so FG receives owned copies of
+ * depth, HUD-less color, UI color, and motion. The test reads those copies through the public
+ * boundary, checks asymmetric row data, and verifies the matching row-vector matrix flips while
+ * SR constants remain unflipped. It covers both camera-only and velocity-MRT motion producers.
  */
 @NativeBridge
 class FgImageOrientationTest {
@@ -132,7 +117,7 @@ class FgImageOrientationTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -445,7 +430,7 @@ class FgImageOrientationTest {
 	) {
 		assertEquals(
 			NativeApi.SUCCESS_RESULT,
-			bridge.tagFgResources(
+			bridge.tagFrameGenerationResources(
 				FgTagRequest(
 					frame.address(),
 					ImageBinding(
@@ -488,7 +473,7 @@ class FgImageOrientationTest {
 		)
 		assertEquals(
 			NativeApi.SUCCESS_RESULT,
-			bridge.evaluate(
+			bridge.evaluateSuperResolution(
 				EvaluationRequest.builder()
 					.commandBuffer(frame.address())
 					.color(ImageBinding(
@@ -513,7 +498,7 @@ class FgImageOrientationTest {
 		)
 		assertEquals(
 			NativeApi.SUCCESS_RESULT,
-			bridge.tagFgResources(
+			bridge.tagFrameGenerationResources(
 				FgTagRequest(
 					frame.address(),
 					ImageBinding(
@@ -537,7 +522,7 @@ class FgImageOrientationTest {
 		)
 		assertEquals(
 			NativeApi.SUCCESS_RESULT,
-			bridge.presentHandoff(),
+			bridge.recordPresentHandoff(),
 			"the handoff must accept the complete tag set",
 		)
 		assertEquals(
@@ -744,7 +729,7 @@ class FgImageOrientationTest {
 		for (r in 0 until 4) {
 			for (c in 0 until 4) {
 				val expected = if (r == c) 1f else 0f
-				if (Math.abs(this[r * 4 + c] - expected) > 1e-3f) {
+				if (abs(this[r * 4 + c] - expected) > 1e-3f) {
 					return false
 				}
 			}
@@ -765,7 +750,7 @@ class FgImageOrientationTest {
 
 	/**
 	 * Reads the FG constants oracle through the ABI, answering null for the
-	 * FAIL_NotInitialized refusal - the state every pre-evaluation checkpoint asserts.
+	 * FAIL_NotInitialized refusal - the state every pre-evaluation state asserts.
 	 */
 	private fun assertNullFgConstants(bridge: Native) {
 		try {
@@ -1043,8 +1028,8 @@ class FgImageOrientationTest {
 		val TEST_CAMERA: CameraConstants = run {
 			val yaw = Math.toRadians(37.0)
 			val pitch = Math.toRadians(12.0)
-			val (sinY, cosY) = Math.sin(yaw) to Math.cos(yaw)
-			val (sinP, cosP) = Math.sin(pitch) to Math.cos(pitch)
+			val (sinY, cosY) = sin(yaw) to cos(yaw)
+			val (sinP, cosP) = sin(pitch) to cos(pitch)
 			val fwd = floatArrayOf(
 				(-sinY * cosP).toFloat(),
 				(-sinP).toFloat(),

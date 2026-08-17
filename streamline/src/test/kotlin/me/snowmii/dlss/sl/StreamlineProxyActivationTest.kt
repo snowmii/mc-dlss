@@ -20,7 +20,7 @@ import org.lwjgl.vulkan.VkPhysicalDevice
 import org.lwjgl.vulkan.VkQueueFamilyProperties
 
 /**
- * M-2 rung: Streamline's manual-hook Vulkan integration activates against a live device.
+ * Verifies Streamline's manual-hook Vulkan integration Streamline's manual-hook Vulkan integration activates against a live device.
  *
  * Two halves: (1) the real native activation - mc_dlss_activate_vulkan_proxies hands the
  * live instance / physical device / device / graphics queue layout of a real headless Vulkan
@@ -28,7 +28,7 @@ import org.lwjgl.vulkan.VkQueueFamilyProperties
  * (2) the redirect seam - org.lwjgl.vulkan.libname is pointed at the staged sl.interposer.dll,
  * which is how Minecraft's Vulkan loading routes through SL's proxies.
  *
- * The live test arms the bridge's close path before the fixture dies: after the activation
+ * The test arms the bridge's close path before the fixture dies: after the activation
  * assertions it records the already-activated tuple through mc_dlss_initialize, so the close
  * runs the orderly slShutdown while the device is still alive - the fix that keeps the fork's
  * JVM exit from crashing in sl.common.dll / nvcuda64.dll.

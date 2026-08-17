@@ -41,9 +41,9 @@ import kotlin.math.abs
  * with `RenderPipelines.CLOUDS` or `RenderPipelines.FLAT_CLOUDS` and draws the CPU-baked cloud
  * cells through the `CloudFaces` texel buffer with the `CloudInfo`/`DynamicTransforms`
  * uniforms and a single QUADS index draw. The pass-creation redirect asks this object whether
- * the open world phase offers the scene velocity view; when it does, [createPass] builds a
+ * the open world phase offers the scene velocity view; when it does, [createCloudVelocityPass] builds a
  * two-attachment pass - the source cloud color target at index 0 unchanged, the scene-sized
- * RG16_FLOAT velocity view at index 1 - and the pipeline-boundary seam [bindPipeline] binds
+ * RG16_FLOAT velocity view at index 1 - and the pipeline-boundary seam [bindCloudPipeline] binds
  * the cached cloud writer twin, whose fragment shader ([FRAGMENT_SHADER], swapped in for the
  * source's core/rendertype_clouds shader by [writerTwin] for [VelocityWriter.CLOUD])
  * reproduces the vanilla cloud color output (the vertex color with only the fog alpha fade)
@@ -58,16 +58,16 @@ import kotlin.math.abs
  * source render call, which continues to bind uniforms, draw, and close it. A two-attachment
  * pass can never fall back to the source one-target pipeline (`RenderPass.setPipeline`
  * rejects an attachment-count mismatch), so no failure may be allowed to strike after the
- * MRT pass exists. The interception is therefore split into a preflight ([prepare]) that
+ * MRT pass exists. The interception is therefore split into a preflight ([preflightCloudPass]) that
  * performs every fallible writer operation before the pass is constructed, and an owned
- * post-creation region ([createPass]'s guarded body, [bindPipeline], [closePass]) whose
+ * post-creation region ([createCloudVelocityPass]'s guarded body, [bindCloudPipeline], [closeCloudVelocityPass]) whose
  * operations cannot fail after a successful preflight:
  *
  * - The cloud clock read, the payload computation, the payload-buffer allocation, the twin
  *   construction, and the twin's lazy shader compilation (surfaced through
  *   `GpuDevice.precompilePipeline`, which is exactly the compile the first bind would
- *   trigger) all run inside [prepare]'s guarded region. Any failure there - or an attachment
- *   input the pass constructor would reject - answers false, and [createPass] falls through
+ *   trigger) all run inside [preflightCloudPass]'s guarded region. Any failure there - or an attachment
+ *   input the pass constructor would reject - answers false, and [createCloudVelocityPass] falls through
  *   to the exact vanilla one-attachment creation with the source pipeline binding unchanged.
  * - The MRT pass creation and the CloudVelocityConfig uniform bind are one guarded region:
  *   a failure closes the partial pass (if one was created) so the shared encoder can host
@@ -76,12 +76,12 @@ import kotlin.math.abs
  *   pass, so the vanilla fallback always succeeds there; a backend-level failure that
  *   corrupts the shared encoder is a device catastrophe even vanilla's own pass could not
  *   recover from, and the fallback's own exception is the loud end of that frame.
- * - [bindPipeline]'s twin path is no-throw by construction after a successful preflight:
+ * - [bindCloudPipeline]'s twin path is no-throw by construction after a successful preflight:
  *   the twin is the preflighted cache hit (already compiled and validated), the uniform
- *   slice is the pre-allocated buffer's offset-zero slice (always alignment-valid), and the
+ *   binding uses the pre-allocated buffer at offset zero (always alignment-valid), and the
  *   pass attachment count and formats match the twin by construction. The preflight is the
  *   guard; there is no recoverable failure at the bind.
- * - [closePass] is the owned close seam: the source render's try-with-resources closes the
+ * - [closeCloudVelocityPass] is the owned close seam: the source render's try-with-resources closes the
  *   writer's pass, so a device-level close failure is absorbed and logged instead of
  *   throwing, and the pass latch is dropped. The writer never closes a pass it did not
  *   create and never double-closes.
@@ -147,19 +147,19 @@ object CloudVelocityRender {
 	/**
 	 * The cloud pass latch: the two-attachment pass this frame's render call is drawing into.
 	 *
-	 * Set by [createPass] only when the MRT pass was fully set up, cleared by [closePass],
-	 * and consulted by [bindPipeline]. A stale latch is dropped at the head of every
-	 * [createPass], so a render that never closed its pass (a crashed frame) can never
+	 * Set by [createCloudVelocityPass] only when the MRT pass was fully set up, cleared by [closeCloudVelocityPass],
+	 * and consulted by [bindCloudPipeline]. A stale latch is dropped at the head of every
+	 * [createCloudVelocityPass], so a render that never closed its pass (a crashed frame) can never
 	 * misattribute a later render's pass.
 	 */
 	private val CLOUD_VELOCITY_PASS = ThreadLocal<RenderPass>()
 
-	/** The two cloud pipelines the render call can bind, exactly the twins [prepare] preflights. */
+	/** The two cloud pipelines the render call can bind, exactly the twins [preflightCloudPass] preflights. */
 	private val CLOUD_PIPELINES = listOf(RenderPipelines.CLOUDS, RenderPipelines.FLAT_CLOUDS)
 
 	/**
-	 * The twins [prepare] preflighted this frame, keyed by the source cloud pipeline. Only a
-	 * pipeline in this map may take the twin path in [bindPipeline]; anything else (unreachable
+	 * The twins [preflightCloudPass] preflighted this frame, keyed by the source cloud pipeline. Only a
+	 * pipeline in this map may take the twin path in [bindCloudPipeline]; anything else (unreachable
 	 * in the mapped render call) binds the source pipeline and fails loudly.
 	 */
 	private val preflightedTwins = HashMap<RenderPipeline, RenderPipeline>()
@@ -170,7 +170,7 @@ object CloudVelocityRender {
 	 * loop's phase exactly as before.
 	 */
 	@JvmStatic
-	internal var activePhaseOverride: WorldPhase? = null
+	internal var testPhaseOverride: WorldPhase? = null
 
 	/**
 	 * The device the writer allocates the payload buffer on and precompiles the twins on.
@@ -188,7 +188,7 @@ object CloudVelocityRender {
 	 * preflight failure: the vanilla cloud pass is used and the clock state does not advance.
 	 */
 	@JvmStatic
-	internal var cloudClockProvider: () -> CloudClock? = {
+	internal var currentCloudClock: () -> CloudClock? = {
 		runCatching {
 			val minecraft = Minecraft.getInstance()
 			CloudClock(
@@ -218,8 +218,8 @@ object CloudVelocityRender {
 	 * headless test JVM) degrades to the vanilla route instead of throwing.
 	 */
 	@JvmStatic
-	fun activePhase(): WorldPhase? = runCatching {
-		(activePhaseOverride ?: ClientRuntime.active().activeWorldPhase())
+	fun openWorldPhase(): WorldPhase? = runCatching {
+		(testPhaseOverride ?: ClientRuntime.active().activeWorldPhase())
 	}.getOrNull()
 
 	/**
@@ -287,7 +287,7 @@ object CloudVelocityRender {
 	 * this frame's clock.
 	 */
 	@JvmStatic
-	internal fun cloudPayload(phase: WorldPhase, gameTime: Long, partialTicks: Float, meshRebuilt: Boolean): CloudPayload {
+	internal fun buildCloudVelocityPayload(phase: WorldPhase, gameTime: Long, partialTicks: Float, meshRebuilt: Boolean): CloudPayload {
 		val current = CloudClock(gameTime, partialTicks)
 		val previous = previousClock
 		previousClock = current
@@ -326,15 +326,15 @@ object CloudVelocityRender {
 	 * throws.
 	 */
 	@JvmStatic
-	internal fun prepare(
+	internal fun preflightCloudPass(
 		encoder: CommandEncoder,
 		phase: WorldPhase,
 		view: GpuTextureView,
 		colorTexture: GpuTextureView,
 		meshRebuilt: Boolean,
 	): Boolean = try {
-		val clock = cloudClockProvider() ?: return false
-		val payload = cloudPayload(phase, clock.gameTime, clock.partialTicks, meshRebuilt)
+		val clock = currentCloudClock() ?: return false
+		val payload = buildCloudVelocityPayload(phase, clock.gameTime, clock.partialTicks, meshRebuilt)
 		if (!passInputsValid(view, colorTexture)) return false
 		val payloadBuffer = buffer()
 		preflightTwins()
@@ -362,8 +362,9 @@ object CloudVelocityRender {
 	 * catastrophe even the vanilla pass could not recover from, and the fallback's own
 	 * exception is the loud end of that frame. Never throws on any writer failure.
 	 */
+	@Suppress("unused")
 	@JvmStatic
-	fun createPass(
+	fun createCloudVelocityPass(
 		encoder: CommandEncoder,
 		label: Supplier<String>,
 		colorTexture: GpuTextureView,
@@ -375,14 +376,8 @@ object CloudVelocityRender {
 		// A stale latch from a crashed frame must never misattribute this render's pass.
 		CLOUD_VELOCITY_PASS.remove()
 
-		val phase = activePhase() ?: return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
-		val velocity = phase.terrainVelocityView
-		if (velocity == null) {
-			return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
-		}
-		if (!prepare(encoder, phase, velocity, colorTexture, meshRebuilt)) {
-			return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
-		}
+		val phase = openWorldPhase() ?: return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
+		val velocity = phase.terrainVelocityView ?: return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
 
 		var pass: RenderPass? = null
 		try {
@@ -394,10 +389,10 @@ object CloudVelocityRender {
 			}
 			descriptor.withRenderArea(RenderPass.RenderArea(0, 0, colorTexture.getWidth(0), colorTexture.getHeight(0)))
 			pass = encoder.createRenderPass(descriptor)
-			// The payload slice was pre-allocated by prepare and is offset-zero, so this bind
-			// passes the alignment validation; a failure here is still inside the guarded
+			// The payload binding was pre-allocated by prepare and starts at offset zero, so this
+			// bind passes the alignment validation; a failure here is still inside the guarded
 			// region, which recovers by closing the partial pass and falling back to vanilla.
-			pass.setUniform(UNIFORM_NAME, uniformSlice())
+			pass.setUniform(UNIFORM_NAME, cloudUniformSlice())
 		} catch (failure: Throwable) {
 			if (pass != null) {
 				runCatching { pass.close() }.onFailure { closeFailure ->
@@ -419,7 +414,7 @@ object CloudVelocityRender {
 	 * pipeline exactly.
 	 *
 	 * The twin path is no-throw by construction after a successful preflight: the twin is the
-	 * precompiled cache hit from [prepare] (the lazy shader compilation that could fail
+	 * precompiled cache hit from [preflightCloudPass] (the lazy shader compilation that could fail
 	 * already ran there and was validated), and the pass attachment count and formats match
 	 * the twin by construction, so `RenderPass.setPipeline`'s own validation passes. The
 	 * preflight is the only guard - a two-target pass cannot fall back to the source
@@ -427,7 +422,7 @@ object CloudVelocityRender {
 	 * makes that point unreachable instead of catching it.
 	 */
 	@JvmStatic
-	fun bindPipeline(pass: RenderPass, pipeline: RenderPipeline) {
+	fun bindCloudPipeline(pass: RenderPass, pipeline: RenderPipeline) {
 		if (CLOUD_VELOCITY_PASS.get() === pass) {
 			val twin = twinFor(pipeline)
 			if (twin != null) {
@@ -455,7 +450,7 @@ object CloudVelocityRender {
 	 * the source render closes it. Never throws for the latched pass.
 	 */
 	@JvmStatic
-	fun closePass(pass: RenderPass) {
+	fun closeCloudVelocityPass(pass: RenderPass) {
 		if (CLOUD_VELOCITY_PASS.get() === pass) {
 			try {
 				pass.close()
@@ -473,7 +468,7 @@ object CloudVelocityRender {
 	}
 
 	/**
-	 * The preflighted twin for [pipeline], or null when [prepare] did not preflight it (a
+	 * The preflighted twin for [pipeline], or null when [preflightCloudPass] did not preflight it (a
 	 * non-cloud pipeline, or no successful preflight this frame).
 	 */
 	@JvmStatic
@@ -482,24 +477,24 @@ object CloudVelocityRender {
 	/**
 	 * Headless test seam: whether [pass] is the latched MRT pass this frame's render call is
 	 * drawing into. Production never calls this; the evidence uses it to assert the latch
-	 * lifecycle (set only on a fully set-up MRT pass, dropped by [closePass]).
+	 * lifecycle (set only on a fully set-up MRT pass, dropped by [closeCloudVelocityPass]).
 	 */
 	@JvmStatic
 	internal fun isLatched(pass: RenderPass): Boolean = CLOUD_VELOCITY_PASS.get() === pass
 
 	/**
-	 * The shared payload buffer slice the cloud pass binds as `CloudVelocityConfig`.
+	 * The shared payload buffer binding the cloud pass uses as `CloudVelocityConfig`.
 	 *
-	 * [prepare] allocates the buffer before the MRT pass exists, so by the time [createPass]
-	 * binds this slice the allocation is a cached hit and the slice is offset-zero (valid for
-	 * any uniform-offset alignment). Never throws on the eligible path.
+	 * [preflightCloudPass] allocates the buffer before the MRT pass exists, so by the time [createCloudVelocityPass]
+	 * binds it the allocation is a cached hit at offset zero (valid for any uniform-offset
+	 * alignment). Never throws on the eligible path.
 	 */
 	@JvmStatic
-	fun uniformSlice(): GpuBufferSlice = buffer().slice()
+	fun cloudUniformSlice(): GpuBufferSlice = buffer().slice()
 
 	/**
 	 * Headless test seam: drops the writer's cached payload allocation, previous clock, and
-	 * preflighted-twin map so the next [prepare] forces a fresh allocation, a first
+	 * preflighted-twin map so the next [preflightCloudPass] forces a fresh allocation, a first
 	 * observation, and a fresh preflight. Production never calls this.
 	 */
 	@JvmStatic
@@ -526,7 +521,7 @@ object CloudVelocityRender {
 	 * Constructs both cloud writer twins and forces the lazy shader compilation the first
 	 * bind would trigger, on the writer's device, validating the compiled result. A failure
 	 * here (a missing or broken shader, an invalid twin, a device failure) answers false from
-	 * [prepare] before any encoder or pass state exists, so the bind at [bindPipeline] is a
+	 * [preflightCloudPass] before any encoder or pass state exists, so the bind at [bindCloudPipeline] is a
 	 * guaranteed cache hit on a valid pipeline.
 	 */
 	private fun preflightTwins() {
@@ -535,7 +530,7 @@ object CloudVelocityRender {
 		for (source in CLOUD_PIPELINES) {
 			val twin = writerTwin(source, VelocityWriter.CLOUD)
 			val compiled = device.precompilePipeline(twin)
-			check(compiled.isValid()) { "cloud twin ${twin.location} failed to compile" }
+			check(compiled.isValid) { "cloud twin ${twin.location} failed to compile" }
 			twins[source] = twin
 		}
 		preflightedTwins.clear()

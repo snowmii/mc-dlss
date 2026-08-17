@@ -23,7 +23,7 @@ open class TestSessionBridge : SessionBridge {
 
 	override fun queryFgState(): FgState? = null
 
-	override fun recordFgModeOff(): Boolean = false
+	override fun recordFrameGenerationOff(): Boolean = false
 
 	override fun queryFgMultiplier(): FgMultiplier? = null
 

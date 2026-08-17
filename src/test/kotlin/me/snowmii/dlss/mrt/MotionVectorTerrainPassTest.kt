@@ -30,13 +30,13 @@ class MotionVectorTerrainPassTest {
 
 	@Test
 	fun `an eligible phase offers one scene-sized RG16 velocity view for the terrain pass`() {
-		val phase = worldPhase(velocityRuntime())
+		val phase = velocityWorldPhase(velocityRuntime())
 
 		assertNull(phase.terrainVelocityView)
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 
 		val view = checkNotNull(phase.terrainVelocityView)
-		assertEquals(GpuFormat.RG16_FLOAT, view.texture().getFormat())
+		assertEquals(GpuFormat.RG16_FLOAT, view.texture().format)
 		assertEquals(RENDER_DIMENSIONS.width, view.getWidth(0))
 		assertEquals(RENDER_DIMENSIONS.height, view.getHeight(0))
 
@@ -54,7 +54,7 @@ class MotionVectorTerrainPassTest {
 			),
 		)
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, runtime.motionVectorRoute)
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 
 		assertDoesNotThrow {
 			phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
@@ -66,7 +66,7 @@ class MotionVectorTerrainPassTest {
 	@Test
 	fun `a session without DLSS keeps terrain passes vanilla`() {
 		val session = session(enabled = false)
-		val phase = worldPhase(runtime(session) { null })
+		val phase = velocityWorldPhase(runtime(session) { null })
 
 		assertDoesNotThrow {
 			phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
@@ -77,7 +77,7 @@ class MotionVectorTerrainPassTest {
 
 	@Test
 	fun `a phase without a velocity companion keeps terrain passes vanilla`() {
-		val phase = worldPhase(runtime(velocityRuntimeSession(), velocityCompanion = false) { RENDER_DIMENSIONS })
+		val phase = velocityWorldPhase(runtime(velocityRuntimeSession(), velocityCompanion = false) { RENDER_DIMENSIONS })
 
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		assertNull(phase.terrainVelocityView)
@@ -87,7 +87,7 @@ class MotionVectorTerrainPassTest {
 	@Test
 	fun `first foreign terrain pipeline latches camera-only and drops the velocity view`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 
 		// The session's compatibility latch is observed at Vulkan's lazy-compile seam: an owned
@@ -105,10 +105,10 @@ class MotionVectorTerrainPassTest {
 	}
 
 	private fun terrainPipeline(pipeline: RenderPipeline) = MotionVectorPipeline(
-		pipeline.getLocation().toString(),
+		pipeline.location.toString(),
 		listOf(
-			MotionVectorShader(pipeline.getVertexShader().toString(), pipeline.getVertexShader().getNamespace()),
-			MotionVectorShader(pipeline.getFragmentShader().toString(), pipeline.getFragmentShader().getNamespace()),
+			MotionVectorShader(pipeline.vertexShader.toString(), pipeline.vertexShader.namespace),
+			MotionVectorShader(pipeline.fragmentShader.toString(), pipeline.fragmentShader.namespace),
 		),
 	)
 
@@ -126,10 +126,10 @@ class MotionVectorTerrainPassTest {
 	) = RenderRuntime(
 		session = session,
 		sceneTarget = SceneTarget(
-			allocate = { width, height -> FakeTarget(width, height) },
-			release = { (it as FakeTarget).releases++ },
+			allocate = { width, height -> HeadlessRenderTarget(width, height) },
+			release = { (it as HeadlessRenderTarget).releases++ },
 			allocateVelocity = { width, height ->
-				if (velocityCompanion) FakeTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) else null
+				if (velocityCompanion) HeadlessRenderTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) else null
 			},
 		),
 		startup = startup,

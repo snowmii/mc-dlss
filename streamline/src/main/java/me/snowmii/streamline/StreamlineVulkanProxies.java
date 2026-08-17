@@ -23,8 +23,7 @@ import java.nio.file.Path;
  * <p>Calling the driver's functions directly instead is silent: rendering works, and DLSS-G
  * simply never generates. It reports {@code presented=0 status=0 fence=0} while sl.log carries
  * "Streamline presentCommon() was not observed" - the exact in-game symptom this class exists to
- * remove. The mod's own live rungs passed only because the test fixture routed through these
- * wrappers while production did not.
+ * remove. Tests and production both route through these wrappers.
  *
  * <p>The five functions here are the ones {@code sl_hooks.h} lists for Vulkan. Routing is
  * unconditional whenever the staged runtime is present, mirroring the unconditional

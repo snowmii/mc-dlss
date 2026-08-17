@@ -11,15 +11,64 @@ The repository builds two Gradle subprojects:
 - `:mc-dlss` (the root project) — the Kotlin-plus-mixins Fabric mod that implements the shipped
   DLSS features through that binding.
 
-## Build
+## Development setup
 
-```bash
-./gradlew.bat build     # Windows only: the native build shells out to MSVC
-./gradlew.bat runClient
+Builds and dev-client runs require Windows. Install these first:
+
+1. [JDK 25](https://adoptium.net/temurin/releases/?version=25). Set `JAVA_HOME` to its root.
+2. [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/). In Visual
+   Studio Installer, select **Desktop development with C++** and its Windows SDK component.
+3. [LunarG Vulkan SDK 1.4.357.0](https://vulkan.lunarg.com/sdk/home#windows). Install the SDK,
+   including `glslc`; its installer normally sets `VULKAN_SDK`.
+
+No system-wide Visual Studio IDE is required. Build Tools supplies `cl.exe`, linker, libraries,
+and `VsDevCmd.bat` used by Gradle.
+
+Gradle downloads pinned DLSS and Streamline SDK archives on first build, verifies their SHA-256
+digests, and extracts them under the Gradle user cache. Versions, source commit, and digests live
+in `gradle.properties`; upgrading an SDK means updating those properties together. `NGX_SDK` and
+`STREAMLINE_SDK` remain optional overrides for local SDK copies.
+
+Set `VSDEVCMD` and verify installer-created `VULKAN_SDK`. Values must be absolute paths:
+
+| Variable | Required | Path must point to | File used to validate it |
+| --- | --- | --- | --- |
+| `VSDEVCMD` | Yes | Visual Studio developer-command batch file | `VsDevCmd.bat` |
+| `VULKAN_SDK` | Yes | Vulkan SDK root | `Include/vulkan/vulkan.h` |
+| `NGX_SDK` | No | Extracted DLSS SDK root override | `include/nvsdk_ngx.h` |
+| `STREAMLINE_SDK` | No | Extracted Streamline SDK root override | `include/sl.h` |
+
+Example PowerShell session; replace placeholders with local paths:
+
+```powershell
+$env:JAVA_HOME = '<JDK 25 root>'
+$env:VSDEVCMD = '<Visual Studio root>\Common7\Tools\VsDevCmd.bat'
+$env:VULKAN_SDK = '<Vulkan SDK root>'
+.\gradlew.bat build
+.\gradlew.bat runClient
 ```
 
-`docs/agents/` holds the working conventions, `docs/` the domain notes, and `.rolling/` the
-execution records of each effort.
+Gradle properties override environment variables when one invocation needs different tools or
+local SDK copies:
+
+```powershell
+.\gradlew.bat build `
+  -Pmc.dlss.vs-dev-cmd='<path to VsDevCmd.bat>' `
+  -Pmc.dlss.vulkan-sdk='<Vulkan SDK root>'
+```
+
+Do not commit machine paths to `gradle.properties`. For persistent local Gradle properties, put
+these keys in `%USERPROFILE%\.gradle\gradle.properties` instead.
+
+## Build
+
+```powershell
+.\gradlew.bat build
+.\gradlew.bat runClient
+```
+
+`docs/agents/` holds working conventions, `docs/` domain notes, and `.rolling/` execution records
+of each effort.
 
 ## License
 

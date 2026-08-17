@@ -61,7 +61,7 @@ class UiCompositeFrameWiringTest {
 	@Test
 	fun `GUI completion closes the window and overlays the UI over the world already in the main target`() {
 		val harness = Harness()
-		val main = FakeTarget(outputWidth, outputHeight)
+		val main = HeadlessRenderTarget(outputWidth, outputHeight)
 		harness.phase.begin(main)
 
 		harness.phase.endFrame()
@@ -91,9 +91,9 @@ class UiCompositeFrameWiringTest {
 	@Test
 	fun `distinct HUD-less and destination targets keep both composite passes`() {
 		val harness = Harness()
-		val ui = FakeTarget(outputWidth, outputHeight)
-		val hudless = FakeTarget(outputWidth, outputHeight)
-		val destination = FakeTarget(outputWidth, outputHeight)
+		val ui = HeadlessRenderTarget(outputWidth, outputHeight)
+		val hudless = HeadlessRenderTarget(outputWidth, outputHeight)
+		val destination = HeadlessRenderTarget(outputWidth, outputHeight)
 
 		UiComposite(sampler = { FakeSampler() }).render(harness.recording.encoder(), ui, hudless, destination)
 
@@ -116,7 +116,7 @@ class UiCompositeFrameWiringTest {
 	@Test
 	fun `the window closes before the composite runs`() {
 		val harness = Harness()
-		harness.phase.begin(FakeTarget(outputWidth, outputHeight))
+		harness.phase.begin(HeadlessRenderTarget(outputWidth, outputHeight))
 
 		harness.phase.endFrame()
 
@@ -136,7 +136,7 @@ class UiCompositeFrameWiringTest {
 	@Test
 	fun `a frame whose window failed to open composites nothing`() {
 		val harness = Harness()
-		harness.phase.begin(FakeTarget(0, 0))
+		harness.phase.begin(HeadlessRenderTarget(0, 0))
 
 		harness.phase.endFrame()
 
@@ -146,8 +146,8 @@ class UiCompositeFrameWiringTest {
 
 	/** The phase under test plus every target, pass, and composite invocation the frame drives. */
 	private class Harness {
-		val allocated = mutableListOf<FakeTarget>()
-		val released = mutableListOf<FakeTarget>()
+		val allocated = mutableListOf<HeadlessRenderTarget>()
+		val released = mutableListOf<HeadlessRenderTarget>()
 		val recording = Recording()
 		private val frameComposite = UiComposite(sampler = { FakeSampler() })
 		val phaseOpenAtComposite = mutableListOf<Boolean>()
@@ -157,8 +157,8 @@ class UiCompositeFrameWiringTest {
 		init {
 			phase = UiPhase(
 				target = UiTarget(
-					allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
-					release = { released += it as FakeTarget },
+					allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
+					release = { released += it as HeadlessRenderTarget },
 				),
 				encoder = { recording.encoder() },
 				composite = {
@@ -170,7 +170,7 @@ class UiCompositeFrameWiringTest {
 	}
 
 	/** Render target with fake GPU textures and views, so lifetime and passes are testable off the render thread. */
-	private class FakeTarget(
+	private class HeadlessRenderTarget(
 		width: Int,
 		height: Int,
 	) : RenderTarget("fake-ui", true, GpuFormat.RGBA8_UNORM) {
@@ -192,7 +192,7 @@ class UiCompositeFrameWiringTest {
 	}
 
 	private class FakeTexture(format: GpuFormat, width: Int, height: Int) :
-		GpuTexture(GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_COPY_DST, "fake", format, width, height, 1, 1) {
+		GpuTexture(USAGE_RENDER_ATTACHMENT or USAGE_COPY_DST, "fake", format, width, height, 1, 1) {
 		override fun close() = Unit
 		override fun isClosed() = false
 	}

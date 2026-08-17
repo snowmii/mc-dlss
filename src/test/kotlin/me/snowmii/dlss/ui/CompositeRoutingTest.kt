@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * M-8 consumer routing — the mod-side source evidence for the invariant that every final-frame
+ * Consumer routing — the mod-side source evidence for the invariant that every final-frame
  * consumer reads the vanilla main target and never the transparent UI target.
  *
  * The consumers are vanilla 26.2 and run only inside a live client — GLFW window, GPU device,
@@ -47,7 +47,7 @@ import org.junit.jupiter.api.Test
  * HUD-less or pre-composite content, or the empty transparent UI target — while the on-screen
  * presentation stays correct. That is invisible to the green suite (no test can run a consumer
  * mixin) and to a clean single-machine run (only captured outputs differ, and nobody
- * screenshots every frame) — exactly the failure M-8's risk names.
+ * screenshots every frame) — exactly the failure this source check protects.
  *
  * A consumer is reachable from either side: by targeting the consumer class itself
  * (`Screenshot`, `TracyFrameCapture`) or by owning the caller seam that feeds it -

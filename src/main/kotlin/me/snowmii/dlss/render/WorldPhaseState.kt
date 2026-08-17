@@ -77,7 +77,7 @@ class WorldPhaseState {
 			jitter?.reset()
 			// A vanilla frame renders no DLSS image and the object poses extracted for it were
 			// never drawn into one, so they must not become anyone's predecessor.
-			objectMotion.reset()
+			objectMotion.resetHistory()
 			null
 		}
 		activeJitter = offset
@@ -100,9 +100,9 @@ class WorldPhaseState {
 		activeJitter = null
 		activeMotion = null
 		if (completedDlssFrame) {
-			objectMotion.publish()
+			objectMotion.publishFrame()
 		} else {
-			objectMotion.reset()
+			objectMotion.resetHistory()
 		}
 	}
 
@@ -116,7 +116,7 @@ class WorldPhaseState {
 	 */
 	fun resetMotion() {
 		motion?.reset()
-		objectMotion.reset()
+		objectMotion.resetHistory()
 	}
 
 	/**
@@ -130,13 +130,13 @@ class WorldPhaseState {
 	fun reset() {
 		jitter?.reset()
 		motion?.reset()
-		objectMotion.reset()
+		objectMotion.resetHistory()
 	}
 
 	/** Drops the sequences entirely, for a runtime that is shutting down. */
 	fun discard() {
 		jitter = null
 		motion = null
-		objectMotion.reset()
+		objectMotion.resetHistory()
 	}
 }

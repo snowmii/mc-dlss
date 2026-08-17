@@ -37,27 +37,27 @@ public abstract class VulkanBackendExtensionMixin {
 		)
 	)
 	private VkDevice mcDlssCreateDeviceWithExtensions(
-		Collection<String> extensions,
+		Collection<String> deviceExtensions,
 		VulkanPhysicalDevice physicalDevice,
-		Set<VulkanFeature> features,
+		Set<VulkanFeature> vulkanFeatures,
 		Operation<VkDevice> original
 	) {
 		VkPhysicalDevice vkPhysicalDevice = physicalDevice.vkPhysicalDevice();
 		ExtensionBootstrap.addDeviceExtensions(
-			extensions,
+			deviceExtensions,
 			vkPhysicalDevice.getInstance().address(),
 			vkPhysicalDevice.address()
 		);
 		// The feature names Streamline requires, mapped onto Minecraft's VulkanFeature records.
 		// Names Minecraft already enables are skipped, so the set only grows by what the mod adds.
-		features.addAll(StreamlineFeatureMapping.requiredFeatures(
+		vulkanFeatures.addAll(StreamlineFeatureMapping.requiredFeatures(
 			ExtensionBootstrap.queryDeviceFeatures12(),
 			ExtensionBootstrap.queryDeviceFeatures13()
 		));
 		// The wrapped createDevice declares BackendCreationException. Operation.call does not, so
 		// the checked exception passes through undeclared - legal in bytecode, and the enclosing
 		// createDevice still declares it, so the backend's own handling is unchanged.
-		return original.call(extensions, physicalDevice, features);
+		return original.call(deviceExtensions, physicalDevice, vulkanFeatures);
 	}
 
 	/**

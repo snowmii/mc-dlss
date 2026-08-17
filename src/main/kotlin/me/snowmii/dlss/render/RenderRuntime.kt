@@ -46,8 +46,7 @@ data class WorldTargetRoute(
  * Startup is attempted exactly once. Streamline-backed startup needs a live Vulkan device, so it
  * cannot happen at mod-init time; the first frame that asks for a world target drives it.
  * A failed or skipped startup is never retried — the session latches vanilla fallback and
- * every later frame routes full-resolution, which is what the effort contract requires of
- * a failed native stage.
+ * every later frame routes full-resolution.
  *
  * What it does *not* own is deliberate. The GPU objects a configuration holds, and the device
  * stall that makes freeing them safe, belong to [FrameResources]; the jitter, motion, and
@@ -106,10 +105,10 @@ class RenderRuntime(
 	/** Emits diagnostics; the FG status latch reports its one exact line through this. */
 	private val diagnostics: (String) -> Unit = {},
 ) : AutoCloseable {
-	private val resources = FrameResources(sceneTarget, frameEvaluation) { bridge?.waitDeviceIdle() }
-	private val phase = WorldPhaseState()
-	private val entityIds = IdentityHashMap<EntityRenderState, Int>()
-	private var currentViewProjectionState: Matrix4f? = null
+	private val frameResources = FrameResources(sceneTarget, frameEvaluation) { bridge?.waitDeviceIdle() }
+	private val worldPhaseState = WorldPhaseState()
+	private val entityIdsByRenderState = IdentityHashMap<EntityRenderState, Int>()
+	private var currentWorldViewProjection: Matrix4f? = null
 	private var startupAttempted = false
 
 	/** Last main-target size a world frame reported, which the next one has to match to be adopted. */
@@ -137,18 +136,23 @@ class RenderRuntime(
 	 * Whether DLSS is switched on right now, independent of whether the session could ever use it.
 	 *
 	 * The configuration's own `enabled` decides whether the session has DLSS at all; this decides
-	 * whether the reviewer currently wants it, which is the switch AC-2 and AC-5 are witnessed by.
+	 * whether the user currently wants the route.
 	 */
-	var runtimeEnabled: Boolean = true
+	var dlssEnabled: Boolean = true
 		private set
 
 	/**
 	 * The FG multiplier in effect, in `numFramesToGenerate` units: 1 = 2x, 2 = 3x, and so on.
 	 * Starts at the 2x default and moves only when [setFgMultiplier]'s native record succeeds,
 	 * so it always names the multiplier the recorded options carry.
+	 *
+	 * Read straight off [FgSurfacePolicy] rather than mirrored here: the policy already had to
+	 * carry it to size the swapchain's back buffers, and two copies of one multiplier are one
+	 * missed assignment away from a swapchain sized for a multiplier the plugin is not
+	 * generating at.
 	 */
-	var fgMultiplier: Int = 1
-		private set
+	val fgMultiplier: Int
+		get() = frameGeneration.numFramesToGenerate
 
 	/**
 	 * Where each app frame's wall time goes, sampled by the seams that can stall one and reported
@@ -161,11 +165,11 @@ class RenderRuntime(
 	 * full-resolution into Minecraft's main target.
 	 */
 	@Volatile
-	var activeWorldTarget: RenderTarget? = null
+	var worldRenderTarget: RenderTarget? = null
 		private set
 
 	/** Route chosen for the current world phase, or null outside one. */
-	var activeRoute: WorldTargetRoute? = null
+	var worldTargetRoute: WorldTargetRoute? = null
 		private set
 
 	/**
@@ -175,17 +179,17 @@ class RenderRuntime(
 	 * route; on a vanilla route or a fallback session nothing is held and the answer is null.
 	 */
 	val activeVelocityView: GpuTextureView?
-		get() = resources.currentVelocityView
+		get() = frameResources.currentSceneVelocityView
 
 	/** Streamline-queried render dimensions, or null until a successful startup. */
-	var renderDimensions: Dimensions? = null
+	var dlssRenderDimensions: Dimensions? = null
 		private set
 
 	/** Startup configuration this runtime's session resolved. */
 	val config: DlssStartupConfig
 		get() = session.config
 
-	/** Session state as of now, which the acceptance record reports. */
+	/** Current session state, also used by the session readout. */
 	val sessionState: DlssSessionState
 		get() = session.state
 
@@ -197,22 +201,22 @@ class RenderRuntime(
 	 * both of them read.
 	 */
 	val activeJitter: DlssJitterOffset?
-		get() = phase.activeJitter
+		get() = worldPhaseState.activeJitter
 
 	/** Unjittered current view-projection captured with the world camera sample. */
 	val currentViewProjection: Matrix4f?
-		get() = currentViewProjectionState
+		get() = currentWorldViewProjection
 
 	/**
 	 * Camera-only motion for the current world phase, or null outside an eligible DLSS phase and
 	 * for an eligible phase that was routed without a camera sample.
 	 */
 	val activeMotion: DlssFrameMotion?
-		get() = phase.activeMotion
+		get() = worldPhaseState.activeMotion
 
 	/** Motion-vector path selected for this session after observing world shader ownership. */
 	val motionVectorRoute: MotionVectorRoute
-		get() = motionVectors.route
+		get() = motionVectors.selectedRoute
 
 	/**
 	 * Set when the compatibility latch flips, consumed at the next phase start.
@@ -232,9 +236,17 @@ class RenderRuntime(
 	 */
 	private var fgStatusHealthy = true
 
+	init {
+		// The policy owns every FG-off transition; this pairs it with the session whose options
+		// those transitions record. The runtime is the only thing that holds both, and binding it
+		// here is what keeps the record from being three `if (transition) record()` pairs at the
+		// call sites - the shape where a fourth transition silently skips the record.
+		frameGeneration.recordFrameGenerationOff = { bridge?.recordFrameGenerationOff() }
+	}
+
 	/** Records one pipeline seen at the Vulkan lazy-compile seam while the world phase is open. */
 	internal fun observeWorldPipeline(pipeline: MotionVectorPipeline): MotionVectorRoute {
-		val previous = motionVectors.route
+		val previous = motionVectors.selectedRoute
 		val route = motionVectors.observe(pipeline)
 		if (route != previous) {
 			motionRouteChanged = true
@@ -250,10 +262,10 @@ class RenderRuntime(
 	 * sequences; this is the read seam the draw path and the lifecycle use.
 	 */
 	internal val objectMotion: ObjectMotionState
-		get() = phase.objectMotion
+		get() = worldPhaseState.objectMotion
 
 	/** Resolves the stable id retained for an extracted entity render state. */
-	fun entityId(state: EntityRenderState): Int? = entityIds[state]
+	fun entityId(state: EntityRenderState): Int? = entityIdsByRenderState[state]
 
 	/**
 	 * Records one visible entity's interpolated render position for the frame in flight.
@@ -263,12 +275,12 @@ class RenderRuntime(
 	 * vanilla, abandoned, replaced-world, released, and closed paths reset the history.
 	 */
 	internal fun captureEntity(id: Int, x: Double, y: Double, z: Double) {
-		phase.objectMotion.capture(id, x, y, z)
+		worldPhaseState.objectMotion.capturePosition(id, x, y, z)
 	}
 
 	internal fun captureEntity(state: EntityRenderState, id: Int, x: Double, y: Double, z: Double) {
-		entityIds[state] = id
-		phase.objectMotion.capture(id, x, y, z)
+		entityIdsByRenderState[state] = id
+		worldPhaseState.objectMotion.capturePosition(id, x, y, z)
 	}
 
 	/**
@@ -278,7 +290,7 @@ class RenderRuntime(
 	 * it, while the vanilla, abandoned, replaced-world, released, and closed paths reset it.
 	 */
 	internal fun captureBlock(id: Long, x: Double, y: Double, z: Double) {
-		phase.objectMotion.capture(id, x, y, z)
+		worldPhaseState.objectMotion.capturePosition(id, x, y, z)
 	}
 
 	/**
@@ -296,7 +308,7 @@ class RenderRuntime(
 	): RenderTarget? {
 		// Switched off takes effect before startup is ever attempted, so a session that begins
 		// switched off never initializes the bridge at all.
-		val started = if (runtimeEnabled) ensureStarted() else false
+		val started = if (dlssEnabled) startDlssOnce() else false
 
 		// The client's main target is the authority on the output size, so a frame at a size the
 		// session is not configured against reconfigures it rather than routing vanilla forever.
@@ -319,9 +331,9 @@ class RenderRuntime(
 		// Polled on the user's mode rather than the effective one: an unhealthy status suspends
 		// composition, and gating the poll on composition would stop the polling that observes the
 		// status becoming healthy again - the suspension would never lift.
-		if (frameGeneration.armed) {
+		if (frameGeneration.userEnabled) {
 			pacing.begin(FramePacingProbe.Span.FG_STATUS_POLL)
-			pollFrameGenerationStatus()
+			updateFrameGenerationHealth()
 			pacing.end(FramePacingProbe.Span.FG_STATUS_POLL)
 		}
 
@@ -340,9 +352,7 @@ class RenderRuntime(
 		// VK_ERROR_DEVICE_LOST.
 		val frameSupported =
 			started && fgStatusHealthy && fgFrameSupported(normalInWorldFrame, outputDimensions)
-		if (frameGeneration.setFrameSupported(frameSupported) && !frameSupported) {
-			bridge?.recordFgModeOff()
-		}
+		frameGeneration.setCompositionSupported(frameSupported)
 
 		if (!started) {
 			// No DLSS this session: release any target held from an earlier eligible frame. The
@@ -363,19 +373,19 @@ class RenderRuntime(
 			resetHistory()
 		}
 
-		val route = routeFrame(normalInWorldFrame, outputDimensions)
-		val target = resources.acquire(route)
-		activeRoute = route
-		activeWorldTarget = target
+		val route = chooseWorldTargetRoute(normalInWorldFrame, outputDimensions)
+		val target = frameResources.acquire(route)
+		worldTargetRoute = route
+		worldRenderTarget = target
 		if (target == null) {
-			entityIds.clear()
+			entityIdsByRenderState.clear()
 		}
-		currentViewProjectionState = if (target != null && camera != null) {
+		currentWorldViewProjection = if (target != null && camera != null) {
 			Matrix4f(camera.projection).mul(camera.viewRotation)
 		} else {
 			null
 		}
-		phase.open(target, camera, clock())
+		worldPhaseState.open(target, camera, clock())
 		return target
 	}
 
@@ -388,11 +398,11 @@ class RenderRuntime(
 	 * callers that are not completing an evaluated frame.
 	 */
 	fun endWorldPhase(completedDlssFrame: Boolean = false) {
-		activeRoute = null
-		activeWorldTarget = null
-		phase.finish(completedDlssFrame)
-		currentViewProjectionState = null
-		entityIds.clear()
+		worldTargetRoute = null
+		worldRenderTarget = null
+		worldPhaseState.finish(completedDlssFrame)
+		currentWorldViewProjection = null
+		entityIdsByRenderState.clear()
 	}
 
 	/**
@@ -403,9 +413,9 @@ class RenderRuntime(
 	 * camera no image was ever produced for.
 	 */
 	fun resetMotionHistory() {
-		phase.resetMotion()
-		currentViewProjectionState = null
-		entityIds.clear()
+		worldPhaseState.resetMotion()
+		currentWorldViewProjection = null
+		entityIdsByRenderState.clear()
 	}
 
 	/**
@@ -415,9 +425,9 @@ class RenderRuntime(
 	 * Used when the scene itself is replaced rather than when one frame was lost.
 	 */
 	fun resetHistory() {
-		phase.reset()
-		currentViewProjectionState = null
-		entityIds.clear()
+		worldPhaseState.reset()
+		currentWorldViewProjection = null
+		entityIdsByRenderState.clear()
 	}
 
 	/**
@@ -428,12 +438,12 @@ class RenderRuntime(
 	 * accumulated history is dropped, because the frames that come back are not continuous with
 	 * the ones that stopped.
 	 */
-	fun setEnabled(enabled: Boolean): Boolean {
-		if (enabled == runtimeEnabled) {
+	fun setDlssEnabled(enabled: Boolean): Boolean {
+		if (enabled == dlssEnabled) {
 			return false
 		}
 
-		runtimeEnabled = enabled
+		dlssEnabled = enabled
 		releaseFrameState(releaseImages = true)
 		return true
 	}
@@ -441,27 +451,17 @@ class RenderRuntime(
 	/**
 	 * Switches FG on or off for the frames that follow, and reports whether anything changed.
 	 *
-	 * The user-toggle half of the M-13 disable path, one seam above the policy so the toggle
-	 * and its side effect cannot be separated: the mode transition runs through
-	 * [FgSurfacePolicy.setFrameGenerationActive] - invalidating the surface configuration
-	 * exactly once when the mode actually changes and restoring the vsync and image-count
-	 * reads on the way off - and a transition to off re-records the DLSS-G options in the
-	 * eOff mode with retained resources exactly once, through the same non-latching adapter
-	 * path the status latch uses. The SR session stays READY and the UI split stays active
-	 * either way: switching off degrades nothing, and a user-off policy re-arms on the next
-	 * on transition (the first FG frame re-records the eOn options per frame). A re-arm of a
-	 * status-latched policy answers false: the user toggle cannot overturn the plugin's own
-	 * failure verdict, and the latch's one exact diagnostic stays the only one.
+	 * [FgSurfacePolicy] owns the whole transition - invalidating the surface configuration exactly
+	 * once when the mode actually
+	 * changes, restoring the vsync and image-count reads on the way off, and re-recording the
+	 * DLSS-G options in the eOff mode with retained resources - so the toggle and its side
+	 * effects cannot be separated by the caller that drives it. The SR session stays READY and
+	 * the UI split stays active either way: switching off degrades nothing, and a user-off
+	 * policy re-arms on the next on transition (the first FG frame re-records the eOn options
+	 * per frame).
 	 */
-	fun setFrameGenerationEnabled(enabled: Boolean): Boolean {
-		if (!frameGeneration.setFrameGenerationActive(enabled)) {
-			return false
-		}
-		if (!enabled) {
-			bridge?.recordFgModeOff()
-		}
-		return true
-	}
+	fun setFrameGenerationEnabled(enabled: Boolean): Boolean =
+		frameGeneration.setFrameGenerationActive(enabled)
 
 	/**
 	 * Records a new FG multiplier and reports whether it took.
@@ -480,12 +480,11 @@ class RenderRuntime(
 		if (bridge?.setFgMultiplier(numFramesToGenerate) != true) {
 			return false
 		}
-		fgMultiplier = numFramesToGenerate
-		AcceptanceRecord.activeFgMultiplier = numFramesToGenerate
-		// The swapchain policy's back-buffer count is derived from the multiplier, so it moves
-		// before the invalidation that recreates the swapchain: a higher multiplier presents more
-		// frames per app frame and needs the images to hold them (see FgSurfacePolicy).
+		// The policy is the multiplier's one owner, and its back-buffer count is derived from it,
+		// so it moves before the invalidation that recreates the swapchain: a higher multiplier
+		// presents more frames per app frame and needs the images to hold them.
 		frameGeneration.numFramesToGenerate = numFramesToGenerate
+		AcceptanceRecord.activeFgMultiplier = numFramesToGenerate
 		invalidateSurfaceConfiguration()
 		return true
 	}
@@ -525,7 +524,7 @@ class RenderRuntime(
 
 		// Nothing has started yet, so there is no native configuration to change - the first
 		// frame will start against whatever is chosen here.
-		if (renderDimensions == null) {
+		if (dlssRenderDimensions == null) {
 			qualityMode = mode
 			renderPreset = preset
 			return true
@@ -534,7 +533,7 @@ class RenderRuntime(
 		val dimensions = bridge?.reconfigure(mode, preset) ?: return false
 		qualityMode = mode
 		renderPreset = preset
-		rebuildFrom(dimensions)
+		rebuildForRenderDimensions(dimensions)
 		releaseFrameState(releaseImages = true)
 		return true
 	}
@@ -542,13 +541,13 @@ class RenderRuntime(
 	override fun close() {
 		// Unconditional teardown wait first, then the guarded release: see FrameResources.close.
 		endWorldPhase()
-		resources.close()
-		phase.reset()
+		frameResources.close()
+		worldPhaseState.reset()
 		// Before the session closes: releasing the native images needs a session still READY.
-		phase.discard()
-		renderDimensions = null
-		currentViewProjectionState = null
-		entityIds.clear()
+		worldPhaseState.discard()
+		dlssRenderDimensions = null
+		currentWorldViewProjection = null
+		entityIdsByRenderState.clear()
 		session.close()
 	}
 
@@ -569,20 +568,18 @@ class RenderRuntime(
 			// FG was on. Suspending through the frame-support seam rather than the user's mode
 			// keeps this reversible: the mode itself is untouched, so the first supported frame
 			// after the images come back resumes FG without the reviewer re-arming anything.
-			if (frameGeneration.setFrameSupported(false)) {
-				bridge?.recordFgModeOff()
-			}
+			frameGeneration.setCompositionSupported(false)
 		}
 		endWorldPhase()
-		resources.release(releaseImages)
-		phase.reset()
+		frameResources.release(releaseImages)
+		worldPhaseState.reset()
 	}
 
 	/**
 	 * Runs native startup at most once and returns whether DLSS is available for this session.
 	 */
-	private fun ensureStarted(): Boolean {
-		if (renderDimensions != null) {
+	private fun startDlssOnce(): Boolean {
+		if (dlssRenderDimensions != null) {
 			return true
 		}
 		if (startupAttempted) {
@@ -608,7 +605,7 @@ class RenderRuntime(
 			}
 		}
 
-		rebuildFrom(dimensions)
+		rebuildForRenderDimensions(dimensions)
 		return true
 	}
 
@@ -651,7 +648,7 @@ class RenderRuntime(
 			return false
 		}
 
-		rebuildFrom(reconfigured)
+		rebuildForRenderDimensions(reconfigured)
 		releaseFrameState(releaseImages = true)
 		diagnostics("DLSS output resolution: $previous -> $dimensions render=$reconfigured")
 		return true
@@ -662,9 +659,9 @@ class RenderRuntime(
 	 * the phase accumulates, and the render dimensions themselves, which are the routing
 	 * decision's one source of truth.
 	 */
-	private fun rebuildFrom(dimensions: Dimensions) {
-		renderDimensions = dimensions
-		phase.rebuild(dimensions, session.outputDimensions)
+	private fun rebuildForRenderDimensions(dimensions: Dimensions) {
+		dlssRenderDimensions = dimensions
+		worldPhaseState.rebuild(dimensions, session.outputDimensions)
 	}
 
 	/**
@@ -674,12 +671,12 @@ class RenderRuntime(
 	 * renders at the output size. The render dimensions are this runtime's own field, so there is
 	 * exactly one copy of them for the whole route path.
 	 */
-	private fun routeFrame(normalInWorldFrame: Boolean, outputDimensions: Dimensions): WorldTargetRoute {
+	private fun chooseWorldTargetRoute(normalInWorldFrame: Boolean, outputDimensions: Dimensions): WorldTargetRoute {
 		val frame = session.beginFrame(normalInWorldFrame, outputDimensions)
 		// A DLSS route is only possible once startup set the render dimensions; a route that is
 		// somehow DLSS without them degrades to the output size rather than a null target.
 		val worldDimensions = if (frame.route == DlssFrameRoute.DLSS) {
-			renderDimensions ?: outputDimensions
+			dlssRenderDimensions ?: outputDimensions
 		} else {
 			outputDimensions
 		}
@@ -708,7 +705,7 @@ class RenderRuntime(
 	 * attaches to the transition exactly as it does for a pause or a menu, the swapchain policy
 	 * deliberately does not move (see [FgSurfacePolicy]), and the first healthy frame resumes.
 	 */
-	private fun pollFrameGenerationStatus() {
+	private fun updateFrameGenerationHealth() {
 		val state = bridge?.queryFgState() ?: return
 		val healthy = state.status == FG_STATUS_OK
 		if (healthy == fgStatusHealthy) {
@@ -786,7 +783,7 @@ class RenderRuntime(
 				// The frame's DLSS-G inputs resolve at recording time from the production
 				// targets: the main target as the HUD-less colour and the UI phase's held
 				// target as the UI colour+alpha, both output-sized (see WorldPhase).
-				fgInputs = { WorldPhase.resolveFgInputs() },
+				fgInputs = { WorldPhase.resolveFrameGenerationInputs() },
 			),
 			// Every native call a frame makes - the reconfigure, the device stall, the FG input
 			// wait, the status poll, the eOff record, and the multiplier pair - goes through the

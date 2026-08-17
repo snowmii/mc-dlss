@@ -73,7 +73,7 @@ interface SessionBridge {
 	 * it, each recording exactly once on its own transition. The SR session stays READY, so
 	 * this is deliberately not a session-latching call.
 	 */
-	fun recordFgModeOff(): Boolean
+	fun recordFrameGenerationOff(): Boolean
 
 	/**
 	 * Reads the stored FG multiplier and the device's numFramesToGenerateMax, or null when the

@@ -1,74 +1,36 @@
 package me.snowmii.dlss.mrt
-import java.util.function.Consumer;
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.buffers.GpuBuffer
 import com.mojang.blaze3d.buffers.GpuBufferSlice
 import com.mojang.blaze3d.pipeline.RenderPipeline
 import com.mojang.blaze3d.shaders.ShaderSource
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.CommandEncoderBackend
-import com.mojang.blaze3d.systems.DeviceFeatures
-import com.mojang.blaze3d.systems.DeviceInfo
-import com.mojang.blaze3d.systems.DeviceLimits
-import com.mojang.blaze3d.systems.DeviceType
-import com.mojang.blaze3d.systems.GpuDeviceBackend
-import com.mojang.blaze3d.systems.GpuQueryPool
-import com.mojang.blaze3d.systems.GpuSurfaceBackend
-import com.mojang.blaze3d.systems.HintsAndWorkarounds
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.systems.RenderPassBackend
-import com.mojang.blaze3d.systems.RenderPassDescriptor
-import com.mojang.blaze3d.systems.TransientMemory
-import com.mojang.blaze3d.textures.AddressMode
-import com.mojang.blaze3d.textures.FilterMode
-import com.mojang.blaze3d.textures.GpuSampler
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
-import java.nio.ByteBuffer
-import java.nio.file.Path
-import java.util.OptionalDouble
-import java.util.function.Supplier
-import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.EvaluationImages
-import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.FillVelocityRequest
-import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.PresentTarget
-import me.snowmii.streamline.SrTagRequest
-import me.snowmii.streamline.VulkanContext
-import me.snowmii.dlss.render.DlssFrameMotion
-import me.snowmii.dlss.render.DlssJitter
-import me.snowmii.dlss.render.DlssJitterOffset
-import me.snowmii.dlss.render.FrameEvaluation
-import me.snowmii.dlss.render.SceneResources
-import me.snowmii.dlss.render.WorldPhase
+import com.mojang.blaze3d.systems.*
+import com.mojang.blaze3d.textures.*
+import me.snowmii.dlss.render.*
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.LifecycleAdapter
+import me.snowmii.streamline.*
 import net.minecraft.client.renderer.entity.state.EntityRenderState
 import org.joml.Matrix4f
 import org.joml.Vector3f
 import org.joml.Vector4fc
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertSame
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.lwjgl.vulkan.VkCommandBuffer
+import java.nio.ByteBuffer
+import java.nio.file.Path
+import java.util.*
+import java.util.function.Supplier
 
 /**
- * The composed M-6 rung: one public-boundary suite proves entity, moving-block, and cloud
- * vectors survive the M-6.5 world while sentinel pixels receive camera motion.
+ * The composed motion-vector suite proves entity, moving-block, and cloud vectors survive
+ * the velocity-MRT world path while sentinel pixels receive camera motion.
  *
  * Each retained object writer is proven through its mod-owned public seam - the entity
  * render-state boundary and [EntityVelocityUniforms.writeFrame] payload, the
  * [MovingBlockVelocityRender] offset-delta reprojection and payload, and the
- * [CloudVelocityRender] drift state machine - and the M-6.5 fill is proven through the
+ * [CloudVelocityRender] drift state machine - and the velocity-route fill is proven through the
  * [FrameEvaluation] VELOCITY_MRT boundary that hands the sentinel-merge its camera motion.
  * One wiring proof then drives all four seams through a single real world phase: the entity
  * and moving-block histories and the cloud clock advance on the same open VELOCITY_MRT phase
@@ -77,7 +39,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  *
  * The test JVM applies no Fabric transformation and owns no live device, so the payload
  * writes are recorded on a fake command encoder and the fill is recorded on a fake native ABI;
- * the live merged-pixel semantics of the fill are the M-6.5 rung's own evidence and are not
+ * the live merged-pixel semantics of the fill are covered by its dedicated evidence and are not
  * re-proven here.
  */
 class MotionVectorMrtTest {
@@ -86,7 +48,7 @@ class MotionVectorMrtTest {
 	@Test
 	fun `entity vectors survive the render-state boundary and the payload write`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		val view = FakeView(FakeTexture(GpuFormat.RG16_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 		try {
 			// Frame one publishes the first observation: no predecessor for the next frame's read.
@@ -133,7 +95,7 @@ class MotionVectorMrtTest {
 	@Test
 	fun `moving block vectors survive through the offset-delta reprojection and payload write`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		val id = MovingBlockVelocityWriterBindings.blockId(100, 64, -200)
 		val view = FakeView(FakeTexture(GpuFormat.RG16_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 		try {
@@ -217,19 +179,19 @@ class MotionVectorMrtTest {
 			assertEquals(0f, displacement.z, 1e-6f)
 
 			val runtime = velocityRuntime()
-			phase = worldPhase(runtime)
+			phase = velocityWorldPhase(runtime)
 			renderFrame(phase, mainTarget)
 			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
 
 			// First observation: no previous clock - the sentinel, and the state machine starts.
-			var payload = CloudVelocityRender.cloudPayload(phase, gameTime = 100L, partialTicks = 0.5f, meshRebuilt = false)
+			var payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 100L, partialTicks = 0.5f, meshRebuilt = false)
 			assertTrue(payload.invalid, "the first observation has no predecessor: the sentinel")
 
 			// A continuous clock advance composes the drift-composed reprojection - exactly the
 			// object reprojection of the 1.25-tick drift, surviving on the same open phase the
-			// M-6.5 fill samples at close.
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 101L, partialTicks = 0.75f, meshRebuilt = false)
+			// The velocity-route fill samples at close.
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 101L, partialTicks = 0.75f, meshRebuilt = false)
 			assertFalse(payload.invalid, "a continuous clock advance composes the drift")
 			assertMatrixEquals(
 				objectReprojection(
@@ -243,16 +205,16 @@ class MotionVectorMrtTest {
 			)
 
 			// A mesh rebuild resets only its own frame; the drift continues from its clock.
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 102L, partialTicks = 0.25f, meshRebuilt = true)
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 102L, partialTicks = 0.25f, meshRebuilt = true)
 			assertTrue(payload.invalid, "a mesh rebuild writes the sentinel for that frame")
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 103L, partialTicks = 0.5f, meshRebuilt = false)
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 103L, partialTicks = 0.5f, meshRebuilt = false)
 			assertFalse(payload.invalid, "the rebuild resets only the rebuild frame; the drift continues")
 
 			// A clock discontinuity (a world change restarts the game clock) writes the
 			// sentinel, and the state machine recovers from the new clock.
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 0L, partialTicks = 0f, meshRebuilt = false)
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 0L, partialTicks = 0f, meshRebuilt = false)
 			assertTrue(payload.invalid, "a clock jump beyond the discontinuity bound is the sentinel")
-			payload = CloudVelocityRender.cloudPayload(phase, gameTime = 1L, partialTicks = 0.5f, meshRebuilt = false)
+			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 1L, partialTicks = 0.5f, meshRebuilt = false)
 			assertFalse(payload.invalid, "the state machine recovers from the discontinuity on the next frame")
 		} finally {
 			CloudVelocityRender.resetState()
@@ -262,7 +224,7 @@ class MotionVectorMrtTest {
 
 	@Test
 	fun `M-6-5 sentinel pixels receive camera motion through the velocity-route fill`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 		val velocity = ImageBinding(11L, 12L, 124)
 
@@ -299,7 +261,7 @@ class MotionVectorMrtTest {
 
 		// A reset frame has no valid predecessor: the fill carries the reset flag, so the
 		// native merge blanks every pixel to the sentinel instead of reconstructing camera motion.
-		val resetCalls = RecordingNative(RENDER_DIMENSIONS)
+		val resetCalls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val resetEvaluation = evaluation(resetCalls)
 		assertTrue(
 			resetEvaluation.evaluateFrame(
@@ -313,7 +275,7 @@ class MotionVectorMrtTest {
 		assertTrue(resetCalls.fills.single().reset, "a reset frame must carry the reset flag to the fill")
 
 		// The camera-only route keeps the compute writer and never fills.
-		val cameraCalls = RecordingNative(RENDER_DIMENSIONS)
+		val cameraCalls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val cameraEvaluation = evaluation(cameraCalls)
 		assertTrue(cameraEvaluation.evaluateFrame(scene(), jitter(), motion()))
 		assertTrue(cameraCalls.fills.isEmpty(), "the camera-only route must record no fill")
@@ -342,7 +304,7 @@ class MotionVectorMrtTest {
 			// to the evaluation (the fill's input); the cloud clock takes its first observation.
 			phase.prepare(true, mainTarget, cameraSample())
 			phase.begin(true, mainTarget)
-			assertTrue(CloudVelocityRender.cloudPayload(phase, gameTime = 100L, partialTicks = 0.5f, meshRebuilt = false).invalid)
+			assertTrue(CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 100L, partialTicks = 0.5f, meshRebuilt = false).invalid)
 			phase.end()
 			assertEquals(MotionVectorRoute.VELOCITY_MRT, records.single().route, "every composed frame closes on the velocity route")
 			assertNotNull(records.single().velocityView, "the composed frame hands the scene velocity companion to the fill")
@@ -363,7 +325,7 @@ class MotionVectorMrtTest {
 			phase.captureBlock(blockId, 100.25, 64.0, -200.0)
 			assertEquals(Vector3f(0.5f, 0f, 0f), checkNotNull(phase.objectMotionDisplacement(42)))
 			assertEquals(0.25f, checkNotNull(phase.blockMotionDisplacement(blockId)).x, 1e-6f)
-			val cloud = CloudVelocityRender.cloudPayload(phase, gameTime = 101L, partialTicks = 0.75f, meshRebuilt = false)
+			val cloud = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 101L, partialTicks = 0.75f, meshRebuilt = false)
 			assertFalse(cloud.invalid, "the cloud vector survives on the open phase")
 			assertMatrixEquals(
 				objectReprojection(
@@ -430,7 +392,7 @@ class MotionVectorMrtTest {
 	private fun payloadEncoder() = PayloadRecordingEncoder(PayloadBackend())
 
 	/** The payload buffer the writers write through: the same usage and size they own in production. */
-	private class PayloadFakeBuffer : GpuBuffer(GpuBuffer.USAGE_COPY_DST, EntityVelocityUniforms.UBO_SIZE.toLong()) {
+	private class PayloadFakeBuffer : GpuBuffer(USAGE_COPY_DST, EntityVelocityUniforms.UBO_SIZE.toLong()) {
 		override fun isClosed() = false
 		override fun close() = Unit
 		override fun map(offset: Long, length: Long, read: Boolean, write: Boolean): GpuBufferSlice.MappedView =
@@ -539,7 +501,7 @@ class MotionVectorMrtTest {
 		override fun getDeviceInfo(): DeviceInfo = info
 	}
 
-	private fun evaluation(calls: RecordingNative): FrameEvaluation {
+	private fun evaluation(calls: RecordingNativeApi): FrameEvaluation {
 		val session = DlssSession(startupConfig())
 		val adapter = LifecycleAdapter(session, calls)
 		adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data"))
@@ -552,8 +514,8 @@ class MotionVectorMrtTest {
 			0,
 			0,
 			0,
-			Supplier { fakeCommandBuffer() },
-			Consumer { },
+			{ fakeCommandBuffer() },
+			{ },
 		)
 		return FrameEvaluation(adapter, { context })
 	}
@@ -577,9 +539,9 @@ class MotionVectorMrtTest {
 		DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, reset)
 
 	/** Records every per-frame native call so the fill boundary is assertable off the render thread. */
-	private class RecordingNative(
+	private class RecordingNativeApi(
 		private val renderDimensions: Dimensions,
-	) : NativeApi {
+	) : NativeApiTestDouble() {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
 		val tags = mutableListOf<SrTagRequest>()
@@ -598,7 +560,7 @@ class MotionVectorMrtTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			Dimensions(renderDimensions.width, renderDimensions.height)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -641,7 +603,7 @@ class MotionVectorMrtTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun evaluate(request: EvaluationRequest): Int {
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			evaluations += request
 			order += "evaluate"
 			return NativeApi.SUCCESS_RESULT

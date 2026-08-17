@@ -45,7 +45,7 @@ public class MovingBlockFeatureRendererMotionMixin {
 		final FeatureFrameContext context,
 		final List<MovingBlockFeatureRenderer.Submit> submits,
 		final CallbackInfo info,
-		@Local final MovingBlockRenderState movingBlockRenderState
+		@Local(name = "movingBlockRenderState") final MovingBlockRenderState movingBlockRenderState
 	) {
 		final Long id = MovingBlockVelocityWriterBindings.movingBlockId(movingBlockRenderState);
 		if (id == null) {

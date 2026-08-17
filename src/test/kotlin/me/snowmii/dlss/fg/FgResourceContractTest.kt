@@ -1,5 +1,4 @@
 package me.snowmii.dlss.fg
-import me.snowmii.streamline.EvaluationImages;
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
@@ -17,12 +16,10 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * M-9 composed rung: one live session tags the SR frame's resources and the DLSS-G frame's
- * resources on the SAME command buffer under ONE shared frame token, and the frame submits
- * validation-clean.
+ * Verifies one composed frame tags SR and DLSS-G resources on the same command buffer under
+ * one shared frame token, and submits validation-clean.
  *
- * The two tag rungs proved each feature's tags alone against a live session; this rung
- * composes them, which is the milestone's M-9 / AC-2 contract: a frame that reaches the
+ * The frame composes both tag sets under one shared token: a frame that reaches the
  * present-time DLSS-G evaluation carries the SR tags (scaling input colour, depth, motion
  * vectors, scaling output colour) and the DLSS-G tags (depth, motion vectors, HUD-less
  * colour, UI colour+alpha) recorded against the same frame index. The SR tag records first
@@ -30,16 +27,15 @@ import org.lwjgl.vulkan.VK10
  * records second and reuses that retained token rather than advancing the frame - the
  * retained token is what the frame's evaluation consumes, so every tag of the frame must land
  * under one frame index. The identity is not observable through the tag calls themselves (the
- * token never crosses the ABI), so the rung queries the frame index each call tagged under
+ * token never crosses the ABI), so the test queries the frame index each call tagged under
  * (mc_dlss_query_tagged_frame_indexes) and asserts the two are equal. Both calls must
  * succeed on the caller's shared recording, and the single buffer must submit clean under
  * the Khronos validation layer: the two tag sets share the engine's render-sized depth image
  * and the module's motion image, and a tag that recorded a transition the images' actual
  * layouts cannot serve would fail exactly there.
  *
- * The whole scenario runs in ONE test method (and therefore one test fork) like every other
- * live rung: the close-path slShutdown is what makes the fork's exit clean, and a fork that
- * followed an unclean exit comes up with the plugin manager already initialized.
+ * The device-backed scenario stays in one test method so shutdown runs while the fixture
+ * device is alive and the fork exits cleanly.
  */
 @NativeBridge
 class FgResourceContractTest {
@@ -87,7 +83,7 @@ class FgResourceContractTest {
 				)
 
 				// The stored SR configuration: the queried render dimensions and the quality
-				// mode/preset the SR options record, exactly as the SR rungs drive them.
+				// mode/preset the SR options record, exactly as the SR tests drive them.
 				val outputWidth = 2560
 				val outputHeight = 1440
 				// MaxQuality = 2 (NVSDK_NGX_PerfQuality_Value), which the bridge maps onto
@@ -100,7 +96,7 @@ class FgResourceContractTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -199,7 +195,7 @@ class FgResourceContractTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -221,7 +217,7 @@ class FgResourceContractTest {
 					),
 					"the FG tag must record on the same buffer under the SR tag's retained frame token",
 				)
-				// The composed rung's identity oracle: the frame index Streamline numbered the SR
+				// The composed-frame identity oracle: the frame index Streamline numbered the SR
 				// tag under and the one it numbered the FG tag under must be the same. The FG tag
 				// reused the SR tag's retained token rather than advancing the frame, so a fresh
 				// slGetNewFrameToken would have produced a strictly later index under the FG
@@ -229,10 +225,10 @@ class FgResourceContractTest {
 				// on one frame index.
 				val indexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					indexes.srFrameIndex,
-					indexes.fgFrameIndex,
+					indexes.lastSrTagFrameIndex,
+					indexes.lastFgTagFrameIndex,
 					"the SR and FG tags of one frame must record under the same Streamline frame " +
-						"index, got SR=${indexes.srFrameIndex}, FG=${indexes.fgFrameIndex}",
+						"index, got SR=${indexes.lastSrTagFrameIndex}, FG=${indexes.lastFgTagFrameIndex}",
 				)
 				fixture.endSubmitAndWait(frame)
 				assertComposedTagFrameClean(fixture, color, depth, hudless, ui, images!!)
@@ -241,7 +237,7 @@ class FgResourceContractTest {
 	}
 
 	/**
-	 * Asserts the rung's validation oracle was actually running, then that the Khronos
+	 * Asserts that the validation oracle was actually running, then that the Khronos
 	 * validation layer reported no errors naming any of the frame's six tagged images - the
 	 * engine's colour, depth, HUD-less, and UI targets, and the module's motion and output
 	 * images.
@@ -249,7 +245,7 @@ class FgResourceContractTest {
 	 * Validation is the only oracle for image layouts: a tag that recorded a transition the
 	 * images' actual layouts cannot serve is undefined behaviour to the driver and silent
 	 * without it, so a session whose layer could not be enabled has no evidence worth
-	 * asserting on and the rung FAILS rather than silently skipping the clean check.
+	 * asserting on and the test fails rather than silently skipping the clean check.
 	 */
 	private fun assertComposedTagFrameClean(
 		fixture: HeadlessVulkanFixture,
@@ -261,7 +257,7 @@ class FgResourceContractTest {
 	) {
 		assertTrue(
 			fixture.validationEnabled(),
-			"the rung needs the Khronos validation layer (VK_LAYER_KHRONOS_validation " +
+			"this test needs the Khronos validation layer (VK_LAYER_KHRONOS_validation " +
 				"plus VK_EXT_debug_utils); without it the clean-frame assertion is worthless",
 		)
 		val errors = fixture.validationErrorsAbout(

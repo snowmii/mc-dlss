@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Entity-model vertical proof for M-6's first dynamic writer.
+ * Entity-model motion-vector coverage.
  *
  * Descriptor tests exercise every supported core/entity pipeline family. Behavior tests drive the
  * CPU identity/batch state and safe no-identity draw fallback directly; reflection checks bind the
@@ -35,7 +35,7 @@ class EntityMotionVectorTest {
 	@Test
 	fun `returned render state keeps stable id and displacement through active velocity phase`() {
 		val runtime = velocityRuntime(withVelocity = true)
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		val first = EntityRenderState()
 		phase.captureEntity(first, 42, 10.0, 64.0, 5.0)
 		renderFrame(phase, mainTarget)
@@ -46,7 +46,7 @@ class EntityMotionVectorTest {
 		phase.begin(true, mainTarget)
 		assertTrue(phase.entityVelocityActive)
 		assertEquals(42, phase.entityId(second))
-		assertEquals(org.joml.Vector3f(0.5f, 0f, 0f), runtime.objectMotion.displacement(42))
+		assertEquals(org.joml.Vector3f(0.5f, 0f, 0f), runtime.objectMotion.objectDisplacement(42))
 		assertNotNull(phase.activeJitter)
 		assertNotNull(phase.currentViewProjection)
 		phase.end()
@@ -56,7 +56,7 @@ class EntityMotionVectorTest {
 	@Test
 	fun `entity identity is not assigned by position and missing state falls back to sentinel`() {
 		val runtime = velocityRuntime(withVelocity = true)
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		val state = EntityRenderState()
 		phase.captureEntity(state, 7, 10.0, 64.0, 5.0)
 		renderFrame(phase, mainTarget)
@@ -64,7 +64,7 @@ class EntityMotionVectorTest {
 		phase.prepare(true, mainTarget, cameraSample())
 		phase.begin(true, mainTarget)
 		assertEquals(null, phase.entityId(EntityRenderState()), "unpaired state cannot borrow another entity id")
-		assertEquals(null, runtime.objectMotion.displacement(7), "first predecessor is invalid")
+		assertEquals(null, runtime.objectMotion.objectDisplacement(7), "first predecessor is invalid")
 		phase.end()
 	}
 
@@ -87,7 +87,7 @@ class EntityMotionVectorTest {
 	@Test
 	fun `draw control accepts a mapped entity identity before any GPU operation`() {
 		val runtime = velocityRuntime(withVelocity = true)
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		phase.prepare(true, mainTarget, cameraSample())
 		phase.begin(true, mainTarget)
 		val staged = StagedVertexBuffer({ "entity-control-test" }, 256)

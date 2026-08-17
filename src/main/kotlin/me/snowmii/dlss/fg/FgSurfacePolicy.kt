@@ -20,7 +20,7 @@ package me.snowmii.dlss.fg
  *
  * A second axis, frame support, suspends the *effective* mode without touching the user's
  * mode: unsupported frames (pause, loading, menu, panorama, resize, fullscreen transition, and
- * an unhealthy DLSS-G status) flip [active] off through [setFrameSupported], the composition
+ * an unhealthy DLSS-G status) flip [effective] off through [setCompositionSupported], the composition
  * seam then records SR-only frames, and the first supported frame flips it back on - a
  * user-off policy stays off through the whole cycle. The swapchain reads
  * ([effectiveVsyncEnabled], [minImageCount]) deliberately follow the user's mode, not the
@@ -45,6 +45,23 @@ class FgSurfacePolicy(
 	private var frameSupported = true
 
 	/**
+	 * Re-records the DLSS-G options in the eOff mode, run by this policy on every transition that
+	 * takes [effective] from true to false - the user toggle, the status suspension, and the
+	 * image-release suspension alike.
+	 *
+	 * The record used to sit at the three call sites that drove those transitions, each pairing a
+	 * mutator call with its own `if (...) recordFgModeOff()`. A fourth transition added anywhere
+	 * else silently skipped the record, and the plugin kept interpolating on released images -
+	 * the failure the release path is annotated for. The transitions all run through this class,
+	 * so the record belongs to them rather than to their callers.
+	 *
+	 * Bound by [me.snowmii.dlss.render.RenderRuntime] to its session bridge, which is what pairs
+	 * a policy with the session whose options it records; a policy nothing has wired reads as the
+	 * same "no session to record against" the null bridge always gave.
+	 */
+	var recordFrameGenerationOff: () -> Unit = {}
+
+	/**
 	 * The DLSS-G multiplier in effect in `numFramesToGenerate` units: 1 = 2x, 2 = 3x, and so on.
 	 *
 	 * Written by [me.snowmii.dlss.render.RenderRuntime.setFgMultiplier] on a successful native
@@ -60,7 +77,7 @@ class FgSurfacePolicy(
 	 * The back-buffer count this multiplier needs, in both the recorded `DLSSGOptions` and the
 	 * swapchain: [backBuffersFor] of [numFramesToGenerate].
 	 */
-	val declaredBackBuffers: Int
+	val requiredSwapchainImages: Int
 		get() = backBuffersFor(numFramesToGenerate)
 
 	/**
@@ -70,17 +87,17 @@ class FgSurfacePolicy(
 	 * so a supported frame resumes exactly what the user's mode says - and a user-off policy
 	 * reads false through the whole cycle.
 	 */
-	val active: Boolean
+	val effective: Boolean
 		get() = frameGenerationActive && frameSupported
 
 	/**
 	 * The user's FG mode, regardless of whether this frame may compose on it.
 	 *
 	 * What the swapchain policy follows, and what a caller polling the plugin has to gate on:
-	 * gating a poll on [active] means a suspension stops the polling that would end it, so the
+	 * gating a poll on [effective] means a suspension stops the polling that would end it, so the
 	 * suspension never lifts.
 	 */
-	val armed: Boolean
+	val userEnabled: Boolean
 		get() = frameGenerationActive
 
 	/**
@@ -88,7 +105,9 @@ class FgSurfacePolicy(
 	 *
 	 * A real transition invalidates Minecraft's surface configuration exactly once, so the next
 	 * frame recreates the swapchain under the new policy; a call that leaves the mode where it
-	 * was is a no-op that invalidates nothing.
+	 * was is a no-op that invalidates nothing. A transition to off also runs [recordFrameGenerationOff],
+	 * after the invalidation, so the options the plugin holds match the mode the swapchain was
+	 * just recreated under.
 	 */
 	fun setFrameGenerationActive(active: Boolean): Boolean {
 		if (active == frameGenerationActive) {
@@ -96,6 +115,9 @@ class FgSurfacePolicy(
 		}
 		frameGenerationActive = active
 		invalidateSurfaceConfiguration()
+		if (!active) {
+			recordFrameGenerationOff()
+		}
 		return true
 	}
 
@@ -103,20 +125,27 @@ class FgSurfacePolicy(
 	 * Marks whether the current frame may compose FG, and reports whether the effective mode
 	 * changed.
 	 *
-	 * A supported-to-unsupported flip suspends [active] off while the user's mode stays
-	 * untouched, so the caller can attach its one eOff options record to exactly this
-	 * transition; the frames in between change nothing, and a supported frame resumes. The
-	 * return answers true only when the user's mode is on - suspending an already-off policy
-	 * changes nothing, and so does resuming a user-off one, which is the user-off precedence.
+	 * A supported-to-unsupported flip suspends [effective] off while the user's mode stays
+	 * untouched and runs [recordFrameGenerationOff] on exactly that transition; the frames in between
+	 * change nothing, and a supported frame resumes without a record - the next FG frame's
+	 * per-frame options record re-records eOn. The return answers true only when the user's mode
+	 * is on - suspending an already-off policy changes nothing, and so does resuming a user-off
+	 * one, which is the user-off precedence, and it is the same condition the record is under.
 	 * Deliberately no surface invalidation: see the class comment, the swapchain policy follows
 	 * the user's mode across a suspension.
 	 */
-	fun setFrameSupported(supported: Boolean): Boolean {
+	fun setCompositionSupported(supported: Boolean): Boolean {
 		if (supported == frameSupported) {
 			return false
 		}
 		frameSupported = supported
-		return frameGenerationActive
+		if (!frameGenerationActive) {
+			return false
+		}
+		if (!supported) {
+			recordFrameGenerationOff()
+		}
+		return true
 	}
 
 	/**
@@ -136,7 +165,7 @@ class FgSurfacePolicy(
 	 * lowers the count below what Minecraft would create.
 	 */
 	fun minImageCount(vanilla: Int): Int =
-		if (frameGenerationActive) maxOf(vanilla, declaredBackBuffers) else vanilla
+		if (frameGenerationActive) maxOf(vanilla, requiredSwapchainImages) else vanilla
 
 	companion object {
 		/**

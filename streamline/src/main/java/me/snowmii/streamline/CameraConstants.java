@@ -31,7 +31,7 @@ import java.util.Objects;
  *
  * <p>{@link #pos} is the camera position in world space; {@link #right}, {@link #up}, and
  * {@link #fwd} are the camera's orthonormal world-space basis vectors (the directions of
- * view-space +X, +Y, and -Z, i.e. the direction the camera looks), extracted from the view
+ * view-space +X, +Y, and -Z, i.e., the direction the camera looks), extracted from the view
  * rotation. The plugin's auto scene-change detection verifies the basis is orthonormal before
  * it runs.
  */

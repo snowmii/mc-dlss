@@ -20,17 +20,17 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.joml.Matrix4f
 import org.lwjgl.vulkan.VK10
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
- * M-11 camera-constants rung: the evaluation's single `slSetConstants` carries the real
+ * Camera constants: the evaluation's single `slSetConstants` carries the real
  * camera matrices and orthonormal basis the caller handed through the ABI, unchanged, and
  * the native oracle `mc_dlss_query_camera_constants` reads exactly those constants back.
  *
- * The human probe isolated the missing camera constants as the last cause of a stuck
- * input-processing fence: identity constants advanced the fence while zero constants left it
- * at zero, which means the DLSS-G plugin needs the frame's real camera to interpolate the
- * generated frame across. The present-generation rung observes the plugin accepting those
- * constants (fence advance, presentation factor); this rung proves the *values*: the exact
+ * The DLSS-G plugin uses these constants to interpolate generated frames. The
+ * present-generation test observes acceptance through fence advance and presentation factor;
+ * this test checks the *values*: the exact
  * 44 floats the frame recorded reach the plugin, and the basis they form is orthonormal -
  * the property the plugin's auto scene-change detection verifies before it runs, and the
  * reason a zero-filled or degenerate basis leaves generation disabled.
@@ -44,7 +44,7 @@ import org.lwjgl.vulkan.VK10
  * the FG tag records first and obtains the retained frame token, the SR tag records second
  * under that same token, and the SR evaluation records third - the common-constants path,
  * where the camera lands under the token - with no handoff or present needed for the oracle
- * to answer. Like the other live FG rungs, the whole scenario runs in ONE test method (and
+ * to answer. Like the other live FG tests, the whole scenario runs in ONE test method (and
  * therefore one test fork): the close-path slShutdown is what makes the fork's exit clean.
  */
 @NativeBridge
@@ -77,7 +77,7 @@ class FgCameraConstantsTest {
 
 	@Test
 	fun `a perspective projection keeps its w term at the index Streamline reads it from`() {
-		// The regression this whole slice exists for: under Streamline's row-vector convention
+		// The regression this whole test exists for: under Streamline's row-vector convention
 		// the perspective w = -z term lives at flat index 11, exactly where JOML's
 		// column-vector column-major array already puts it. The old transpose moved it to
 		// index 14 - the translation slot - which is why the identity fixture generated frames
@@ -87,7 +87,7 @@ class FgCameraConstantsTest {
 		val payload = CameraConstants.rowMajorOf(projection)
 		assertEquals(-1f, payload[11], "the perspective w term must sit at flat index 11")
 		// Index 14 carries the depth translation term. The old transpose swapped 11 and 14, so
-		// finding the w term here is the exact shape of the bug this rung fixes.
+		// finding the w term here is the exact shape of the bug this test fixes.
 		assertTrue(payload[14] != -1f, "index 14 must carry depth translation, not the w term")
 	}
 
@@ -155,7 +155,7 @@ class FgCameraConstantsTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -234,7 +234,7 @@ class FgCameraConstantsTest {
 				// token the tags recorded under.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -277,7 +277,7 @@ class FgCameraConstantsTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.evaluate(
+					bridge.evaluateSuperResolution(
 						EvaluationRequest.builder()
 							.commandBuffer(frame.address())
 							.color(ImageBinding(
@@ -386,7 +386,7 @@ class FgCameraConstantsTest {
 
 	/**
 	 * Reads the oracle through the ABI, answering null for the FAIL_NotInitialized refusal -
-	 * the state every pre-evaluation checkpoint asserts.
+	 * the state asserted before every evaluation.
 	 */
 	private fun Native.cameraConstantsOrNull(): CameraConstants? = try {
 		queryCameraConstants()
@@ -427,8 +427,8 @@ class FgCameraConstantsTest {
 		val TEST_CAMERA: CameraConstants = run {
 			val yaw = Math.toRadians(37.0)
 			val pitch = Math.toRadians(12.0)
-			val (sinY, cosY) = Math.sin(yaw) to Math.cos(yaw)
-			val (sinP, cosP) = Math.sin(pitch) to Math.cos(pitch)
+			val (sinY, cosY) = sin(yaw) to cos(yaw)
+			val (sinP, cosP) = sin(pitch) to cos(pitch)
 			val fwd = floatArrayOf(
 				(-sinY * cosP).toFloat(),
 				(-sinP).toFloat(),

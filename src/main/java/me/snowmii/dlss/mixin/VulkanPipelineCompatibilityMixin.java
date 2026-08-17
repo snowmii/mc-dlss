@@ -19,8 +19,8 @@ import java.util.List;
  * deliberately ignored.
  *
  * Observation runs at HEAD, before compilation and binding can expose an attachment mismatch.
- * This slice only establishes the session compatibility latch; the velocity-variant capability
- * consumes that route when it chooses the pipeline and world-pass attachment shape.
+ * This observer establishes the session compatibility latch; velocity variants consume that
+ * route when choosing the pipeline and world-pass attachment shape.
  */
 @Mixin(VulkanDevice.class)
 public class VulkanPipelineCompatibilityMixin {

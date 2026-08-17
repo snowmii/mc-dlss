@@ -1,8 +1,8 @@
 package me.snowmii.dlss.bridge
 import me.snowmii.streamline.ExtensionBootstrap
-import me.snowmii.streamline.Dimensions;
-import me.snowmii.streamline.Native;
-import me.snowmii.streamline.NativeApi;
+import me.snowmii.streamline.Dimensions
+import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeApi
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
 /**
- * Live ABI rung: production Java FFM and the compiled bridge on a real Vulkan device, with the
+ * Live ABI coverage: production Java FFM and the compiled bridge on a real Vulkan device, with the
  * Streamline-required extensions injected before instance and device creation.
  *
  * This is the pre-creation injection the contract authorizes: query the exact extensions from

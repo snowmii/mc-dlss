@@ -130,8 +130,7 @@ class ModConfig(
 		}
 
 		private fun readMode(properties: Properties, warnings: MutableList<String>): SRMode {
-			val modeValue = properties.getProperty(MODE_PROPERTY)?.trim()?.lowercase(Locale.ROOT)
-			return when (modeValue) {
+			return when (val modeValue = properties.getProperty(MODE_PROPERTY)?.trim()?.lowercase(Locale.ROOT)) {
 				null, "" -> SRMode.QUALITY
 				"quality", "max-quality" -> SRMode.QUALITY
 				"balanced" -> SRMode.BALANCED

@@ -1,44 +1,25 @@
 package me.snowmii.dlss.mrt
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
-import java.nio.file.Path
-import kotlin.math.abs
-import kotlin.math.max
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.EvaluationImages
-import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.FillVelocityRequest
-import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.PresentTarget
-import me.snowmii.streamline.SrTagRequest
-import me.snowmii.streamline.VulkanContext
-import me.snowmii.dlss.render.DlssFrameMotion
-import me.snowmii.dlss.render.DlssJitter
-import me.snowmii.dlss.render.DlssJitterOffset
-import me.snowmii.dlss.render.FrameEvaluation
-import me.snowmii.dlss.render.SceneResources
+import me.snowmii.dlss.render.*
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.sl.SrLiveSession
+import me.snowmii.streamline.*
 import org.joml.Matrix4f
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VkCommandBuffer
+import java.nio.file.Path
+import kotlin.math.abs
+import kotlin.math.max
 
 /**
- * The M-6.5 sentinel-fill gate: on the velocity-MRT route one post-scene compute dispatch
+ * The sentinel-fill gate: on the velocity-MRT route one post-scene compute dispatch
  * samples the scene depth and Minecraft's sparse RG16_FLOAT velocity companion, copies every
  * non-sentinel object vector unchanged into the module's native motion image, reconstructs
  * jitter-stripped camera motion for every sentinel pixel, and writes the invalid sentinel
@@ -46,7 +27,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  * motion image is the sole Streamline motion source (direct companion tagging is retired),
  * and the route's motion timing stage is a real measured stage, never a skipped one.
  *
- * The frame-routing half is pure JVM like the other M-4/M-5 route tests: the frame path runs
+ * The frame-routing half is pure JVM like the other route tests: the frame path runs
  * against a recording [NativeApi] fake. The native half is one live headless Vulkan session on
  * the shared SL test seam: real fills record on real command buffers under the Khronos
  * validation layer, and the module's motion image is read back through a staging buffer so the
@@ -59,7 +40,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
 class MotionVectorSentinelFillTest {
 	@Test
 	fun `the velocity route fills the native motion image from the sampled companion before tagging`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 		val velocity = ImageBinding(11L, 12L, 124)
 
@@ -98,7 +79,7 @@ class MotionVectorSentinelFillTest {
 
 	@Test
 	fun `the fill carries the reset flag of the frame's motion`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		// A reset frame has no valid predecessor: the native fill must write the invalid
@@ -118,7 +99,7 @@ class MotionVectorSentinelFillTest {
 
 	@Test
 	fun `the camera-only route records no fill`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		assertTrue(evaluation.evaluateFrame(scene(), jitter(), motion()))
@@ -128,7 +109,7 @@ class MotionVectorSentinelFillTest {
 
 	@Test
 	fun `a velocity route without a companion records nothing`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		assertFalse(evaluation.evaluateFrame(scene(), jitter(), motion(), route = MotionVectorRoute.VELOCITY_MRT))
@@ -139,7 +120,7 @@ class MotionVectorSentinelFillTest {
 
 	@Test
 	fun `the adapter stamps the configured render dimensions onto the fill`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		assertTrue(
@@ -179,7 +160,7 @@ class MotionVectorSentinelFillTest {
 
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.configure(outputWidth, outputHeight, renderWidth, renderHeight, 2, 11),
+				bridge.configureSuperResolution(outputWidth, outputHeight, renderWidth, renderHeight, 2, 11),
 				"configure must record the render size the fill frames are recorded for",
 			)
 
@@ -354,7 +335,7 @@ class MotionVectorSentinelFillTest {
 			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.evaluate(
+				bridge.evaluateSuperResolution(
 					SrLiveSession.evaluationRequest(frame.address(), color, depth, renderDimensions, reset = true),
 				),
 				"the evaluation must consume the merged motion image",
@@ -388,7 +369,7 @@ class MotionVectorSentinelFillTest {
 			// in GENERAL, the depth came back where the engine rests it, the motion image left
 			// the fill in the layout the tag and evaluation declare, and nothing submitted
 			// behind the caller's back.
-			SrLiveSession.assertValidationClean(fixture, color, depth, images)
+			SrLiveSession.assertFrameValidationClean(fixture, color, depth, images)
 			val companionErrors =
 				fixture.validationErrorsAbout(velocity.image(), presentTarget.image())
 			assertTrue(
@@ -407,7 +388,7 @@ class MotionVectorSentinelFillTest {
 		}
 	}
 
-	private fun evaluation(calls: RecordingNative): FrameEvaluation {
+	private fun evaluation(calls: RecordingNativeApi): FrameEvaluation {
 		val session = DlssSession(startupConfig())
 		val adapter = LifecycleAdapter(session, calls)
 		adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data"))
@@ -420,8 +401,8 @@ class MotionVectorSentinelFillTest {
 			0,
 			0,
 			0,
-			Supplier { fakeCommandBuffer() },
-			Consumer { },
+			{ fakeCommandBuffer() },
+			{ },
 		)
 		return FrameEvaluation(adapter, { context })
 	}
@@ -450,9 +431,9 @@ class MotionVectorSentinelFillTest {
 		DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, reset)
 
 	/** Records every per-frame native call so the fill gate is assertable off the render thread. */
-	private class RecordingNative(
+	private class RecordingNativeApi(
 		private val renderDimensions: Dimensions,
-	) : NativeApi {
+	) : NativeApiTestDouble() {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
 		val tags = mutableListOf<SrTagRequest>()
@@ -471,7 +452,7 @@ class MotionVectorSentinelFillTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			Dimensions(renderDimensions.width, renderDimensions.height)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -514,7 +495,7 @@ class MotionVectorSentinelFillTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun evaluate(request: EvaluationRequest): Int {
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			evaluations += request
 			order += "evaluate"
 			return NativeApi.SUCCESS_RESULT

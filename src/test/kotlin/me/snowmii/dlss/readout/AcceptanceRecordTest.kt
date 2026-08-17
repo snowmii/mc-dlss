@@ -8,8 +8,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * The acceptance record is what a reviewer copies into the delivery record for AC-6, so what it
- * says matters more than that it was emitted: a wrong internal resolution is worse than none.
+ * The record must distinguish unavailable internal resolution from a value that was not emitted;
+ * a wrong resolution is worse than none.
  */
 class AcceptanceRecordTest {
 	@Test
@@ -77,7 +77,7 @@ class AcceptanceRecordTest {
 			renderDimensions = Dimensions(1706, 960),
 		)
 
-		// AC-7 names reviewer, candidate commit, Minecraft build, GPU/driver, Streamline version
+		// Required fields include reviewer, candidate commit, Minecraft build, GPU/driver, Streamline version
 		// and plugin set, internal/output resolutions, FG multiplier, every checklist result, and
 		// overall result: every field named, none left for the reviewer to guess at.
 		assertTrue(record.contains("reviewer=<reviewer>"), record)

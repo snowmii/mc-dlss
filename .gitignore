@@ -63,8 +63,9 @@ replay_*.log
 *.hprof
 *.jfr
 
-# pi subagent run artifacts
-.pi-subagents/
-
 # runtime logs
 logs/
+
+/docs/
+AGENTS.md
+CONTEXT.md

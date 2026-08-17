@@ -19,10 +19,6 @@ max_line_length = 200
 indent_style = space
 indent_size = 2
 
-[*.{gradle.kts,properties}]
-indent_style = tab
-indent_size = 4
-
 [{*.md,*.glsl,*.vsh,*.fsh}]
 trim_trailing_whitespace = false
 

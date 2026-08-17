@@ -1,16 +1,92 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.OutputStream
+import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.DigestInputStream
+import java.security.MessageDigest
+
 plugins {
 	`java-library`
 	`java-test-fixtures`
-	id("mc-dlss.jvm-conventions")
+	// Main sources are Java; the tests and fixtures are Kotlin. Version pinned in settings.
+	id("org.jetbrains.kotlin.jvm")
 }
 
 version = providers.gradleProperty("mod_version").get()
 
-// The toolchain roots this project's MSVC tasks resolve, each overridable by Gradle property
-// first and environment variable second (see buildSrc's toolchainRoot). The defaults are the
-// paths the bridge was developed against.
-val DEFAULT_NGX_SDK = "C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0"
-val DEFAULT_STREAMLINE_SDK = "C:/Users/miuki/Development/NVIDIA/mc-dlss/streamline-sdk-v2.12.0"
+tasks.withType<JavaCompile>().configureEach {
+	options.release = 25
+}
+
+kotlin {
+	compilerOptions {
+		jvmTarget = JvmTarget.JVM_25
+	}
+}
+
+val vendorSdkCache = File(gradle.gradleUserHomeDir, "caches/mc-dlss/vendor-sdks")
+
+fun File.sha256(): String {
+	val digest = MessageDigest.getInstance("SHA-256")
+	inputStream().use { DigestInputStream(it, digest).use { stream -> stream.copyTo(OutputStream.nullOutputStream()) } }
+	return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
+fun registerVendorSdk(taskName: String, directory: String, url: String, sha256: String): TaskProvider<Sync> {
+	val archive = vendorSdkCache.resolve("downloads/$directory.zip")
+	val destination = vendorSdkCache.resolve(directory)
+	val download = tasks.register("download${taskName}Sdk") {
+		outputs.file(archive)
+		doLast {
+			archive.parentFile.mkdirs()
+			val valid = archive.isFile && archive.sha256() == sha256
+			if (!valid) {
+				val temporary = archive.resolveSibling("${archive.name}.tmp")
+				URI(url).toURL().openStream().use { input -> temporary.outputStream().use(input::copyTo) }
+				val actual = temporary.sha256()
+				check(actual == sha256) { "SHA-256 mismatch for $url: expected $sha256, got $actual" }
+				Files.move(temporary.toPath(), archive.toPath(), StandardCopyOption.REPLACE_EXISTING)
+			}
+		}
+	}
+	return tasks.register<Sync>("provision${taskName}Sdk") {
+		dependsOn(download)
+		from({ zipTree(archive) })
+		into(destination)
+	}
+}
+
+val dlssSdkVersion = providers.gradleProperty("dlss_sdk_version").get()
+val dlssSdkCommit = providers.gradleProperty("dlss_sdk_commit").get()
+val streamlineSdkVersion = providers.gradleProperty("streamline_sdk_version").get()
+val provisionDlssSdk = registerVendorSdk(
+	"Dlss", "dlss-$dlssSdkVersion",
+	"https://github.com/NVIDIA/DLSS/archive/$dlssSdkCommit.zip",
+	providers.gradleProperty("dlss_sdk_sha256").get(),
+)
+val provisionStreamlineSdk = registerVendorSdk(
+	"Streamline", "streamline-$streamlineSdkVersion",
+	"https://github.com/NVIDIA-RTX/Streamline/releases/download/v$streamlineSdkVersion/streamline-sdk-v$streamlineSdkVersion.zip",
+	providers.gradleProperty("streamline_sdk_sha256").get(),
+)
+val provisionedDlssSdk = providers.provider {
+	vendorSdkCache.resolve("dlss-$dlssSdkVersion/DLSS-$dlssSdkCommit")
+}
+val provisionedStreamlineSdk = providers.provider {
+	vendorSdkCache.resolve("streamline-$streamlineSdkVersion")
+}
+
+fun toolchainRoot(property: String, environment: String, fallback: Provider<File>? = null) =
+	providers.gradleProperty(property)
+		.orElse(providers.environmentVariable(environment))
+		.map(::file)
+		.let { configured -> fallback?.let(configured::orElse) ?: configured }
+		.orElse(providers.provider {
+			throw GradleException(
+				"Missing toolchain path: set -P$property=<path> or $environment; see README.md"
+			)
+		})
 
 repositories {
 	mavenCentral()
@@ -26,9 +102,9 @@ dependencies {
 	implementation("org.lwjgl:lwjgl-vulkan:3.4.1")
 
 	// The relocated SDK-subject JVM suite: JUnit 5 for the Kotlin/Java test sources, and the
-	// test-fixtures jar (SrLiveSession + HeadlessVulkanFixture) the shared live rungs and the
-	// root suite compile against. fastutil is the fixture's internal Int2IntMap usage; junit is
-	// there because SrLiveSession asserts through JUnit itself.
+	// test-fixtures jar (SrLiveSession + HeadlessVulkanFixture) used by the live Streamline tests
+	// and the root suite. fastutil is the fixture's internal Int2IntMap usage; junit is there
+	// because SrLiveSession asserts through JUnit itself.
 	testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.4")
 	// The fixture drives real LWJGL Vulkan calls (MemoryStack, VK* structs) at runtime; the root
@@ -45,6 +121,7 @@ dependencies {
 
 val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 	group = "build"
+	dependsOn(provisionDlssSdk, provisionStreamlineSdk)
 	description = "Builds the workstation-local DLSS native bridge with MSVC."
 
 	val nativeDirectory = layout.projectDirectory.dir("native")
@@ -63,16 +140,15 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 	outputs.file(outputDirectory.map { it.file("mc_dlss.dll") })
 
 	doFirst {
-		val vsDevCmd = toolchainRoot(
-			"mc.dlss.vs-dev-cmd", "VSDEVCMD",
-			"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/Tools/VsDevCmd.bat"
-		)
-		val vulkanSdk = toolchainRoot("mc.dlss.vulkan-sdk", "VULKAN_SDK", "C:/VulkanSDK/1.4.357.0")
-		val ngxSdk = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
-		val streamlineSdk = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", DEFAULT_STREAMLINE_SDK)
+		val vsDevCmd = toolchainRoot("mc.dlss.vs-dev-cmd", "VSDEVCMD").get()
+		val vulkanSdk = toolchainRoot("mc.dlss.vulkan-sdk", "VULKAN_SDK").get()
+		val ngxSdk = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", provisionedDlssSdk).get()
+		val streamlineSdk = toolchainRoot(
+			"mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk
+		).get()
 		val vulkanHeader = vulkanSdk.resolve("Include/vulkan/vulkan.h")
 		val vulkanLibrary = vulkanSdk.resolve("Lib/vulkan-1.lib")
-		// The DLSS 310.7.0 SDK is reference-only: its headers carry the quality-mode, preset, and
+		// DLSS SDK is reference-only: its headers carry the quality-mode, preset, and
 		// result vocabulary the public ABI keeps, but the SDK's static library is never linked
 		// and no NGX runtime function is called.
 		val ngxHeader = ngxSdk.resolve("include/nvsdk_ngx.h")
@@ -81,12 +157,12 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 		val glslc = vulkanSdk.resolve("Bin/glslc.exe")
 
 		check(vsDevCmd.isFile) { "Visual Studio 2022 Build Tools missing: $vsDevCmd" }
-		check(glslc.isFile) { "Vulkan SDK 1.4.357.0 shader compiler missing: $glslc" }
-		check(vulkanHeader.isFile) { "Vulkan SDK 1.4.357.0 header missing: $vulkanHeader (set VULKAN_SDK or install at C:/VulkanSDK/1.4.357.0)" }
-		check(vulkanLibrary.isFile) { "Vulkan SDK 1.4.357.0 loader library missing: $vulkanLibrary" }
-		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 header (reference vocabulary only) missing: $ngxHeader" }
-		check(streamlineHeader.isFile) { "Pinned Streamline 2.12.0 header missing: $streamlineHeader" }
-		check(streamlineLibrary.isFile) { "Pinned Streamline 2.12.0 interposer library missing: $streamlineLibrary" }
+		check(glslc.isFile) { "Vulkan SDK shader compiler missing: $glslc" }
+		check(vulkanHeader.isFile) { "Vulkan SDK header missing: $vulkanHeader" }
+		check(vulkanLibrary.isFile) { "Vulkan SDK loader library missing: $vulkanLibrary" }
+		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK $dlssSdkVersion header (reference vocabulary only) missing: $ngxHeader" }
+		check(streamlineHeader.isFile) { "Pinned Streamline $streamlineSdkVersion header missing: $streamlineHeader" }
+		check(streamlineLibrary.isFile) { "Pinned Streamline $streamlineSdkVersion interposer library missing: $streamlineLibrary" }
 
 		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
 		val output = outputDir.resolve("mc_dlss.dll")
@@ -135,13 +211,12 @@ tasks.named("build") {
 	dependsOn(buildNativeDlss)
 }
 
-// M-5 rung: the device-free native logic proven in C++, in-process, on a machine with no
-// device, no Streamline session, and no sl.interposer.lib. state.cpp/timing.cpp/common.cpp
-// compile beside the doctest harness under native/test/ and link vulkan-1.lib only - the
-// vk* entry points those units reference - so the whole rung exercises exactly the logic
-// the device-bound live tests assert through their own frame fences, twice under one seam.
+// Device-free native tests compile state.cpp, timing.cpp, and common.cpp beside the doctest
+// harness without a device, Streamline session, or sl.interposer.lib. They link only the Vulkan
+// loader and exercise the same state and timing logic used by the device-backed tests.
 val nativeTestCompile = tasks.register<Exec>("nativeTestCompile") {
 	group = "verification"
+	dependsOn(provisionDlssSdk, provisionStreamlineSdk)
 	description = "Compiles the device-free native doctest harness with MSVC."
 
 	val nativeDirectory = layout.projectDirectory.dir("native")
@@ -159,13 +234,12 @@ val nativeTestCompile = tasks.register<Exec>("nativeTestCompile") {
 	outputs.file(outputDirectory.map { it.file("native_tests.exe") })
 
 	doFirst {
-		val vsDevCmd = toolchainRoot(
-			"mc.dlss.vs-dev-cmd", "VSDEVCMD",
-			"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/Tools/VsDevCmd.bat"
-		)
-		val vulkanSdk = toolchainRoot("mc.dlss.vulkan-sdk", "VULKAN_SDK", "C:/VulkanSDK/1.4.357.0")
-		val ngxSdk = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
-		val streamlineSdk = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", DEFAULT_STREAMLINE_SDK)
+		val vsDevCmd = toolchainRoot("mc.dlss.vs-dev-cmd", "VSDEVCMD").get()
+		val vulkanSdk = toolchainRoot("mc.dlss.vulkan-sdk", "VULKAN_SDK").get()
+		val ngxSdk = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", provisionedDlssSdk).get()
+		val streamlineSdk = toolchainRoot(
+			"mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk
+		).get()
 		val vulkanHeader = vulkanSdk.resolve("Include/vulkan/vulkan.h")
 		val vulkanLibrary = vulkanSdk.resolve("Lib/vulkan-1.lib")
 		// The NGX and Streamline headers are needed for compilation (common.h includes
@@ -175,10 +249,10 @@ val nativeTestCompile = tasks.register<Exec>("nativeTestCompile") {
 		val streamlineHeader = streamlineSdk.resolve("include/sl.h")
 
 		check(vsDevCmd.isFile) { "Visual Studio 2022 Build Tools missing: $vsDevCmd" }
-		check(vulkanHeader.isFile) { "Vulkan SDK 1.4.357.0 header missing: $vulkanHeader (set VULKAN_SDK or install at C:/VulkanSDK/1.4.357.0)" }
-		check(vulkanLibrary.isFile) { "Vulkan SDK 1.4.357.0 loader library missing: $vulkanLibrary" }
-		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 header (reference vocabulary only) missing: $ngxHeader" }
-		check(streamlineHeader.isFile) { "Pinned Streamline 2.12.0 header missing: $streamlineHeader" }
+		check(vulkanHeader.isFile) { "Vulkan SDK header missing: $vulkanHeader" }
+		check(vulkanLibrary.isFile) { "Vulkan SDK loader library missing: $vulkanLibrary" }
+		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK $dlssSdkVersion header (reference vocabulary only) missing: $ngxHeader" }
+		check(streamlineHeader.isFile) { "Pinned Streamline $streamlineSdkVersion header missing: $streamlineHeader" }
 
 		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
 		val output = outputDir.resolve("native_tests.exe")
@@ -214,7 +288,7 @@ val nativeTest = tasks.register<Exec>("nativeTest") {
 	group = "verification"
 	description = "Runs the device-free native doctest harness."
 	dependsOn(nativeTestCompile)
-	// No outputs on purpose: the binary is cheap, and an up-to-date skip must never hide a
+	// No outputs on purpose: the binary is inexpensive, and an up-to-date skip must never hide a
 	// failed run - a doctest failure is a failing task, every time.
 	commandLine(layout.buildDirectory.dir("native-test").get().asFile.resolve("native_tests.exe").absolutePath)
 }
@@ -241,18 +315,55 @@ val checkEngineFreeClasspath = tasks.register("checkEngineFreeClasspath") {
 	}
 }
 
-// The suite split (test vs nativeBridgeTest, one JVM per bridge-loading class because
-// Streamline's runtime accepts one Vulkan device per process) is a convention; see buildSrc.
+// A crashing JVM writes hs_err/replay dumps to its working directory, which for a Gradle test
+// worker is the project directory. The bridge can fault inside NVIDIA's own libraries, and
+// `forkEvery = 1` turns one bad run into one dump per test class, so every forked JVM is pointed
+// at build/jvm-crash instead of littering the repository.
+val jvmCrashDirectory = layout.buildDirectory.dir("jvm-crash").get().asFile
+
+tasks.withType<Test>().configureEach {
+	// %p expands to the pid, keeping concurrent workers from overwriting each other.
+	jvmArgs(
+		"-XX:ErrorFile=${jvmCrashDirectory.resolve("hs_err_pid%p.log")}",
+		"-XX:ReplayDataFile=${jvmCrashDirectory.resolve("replay_pid%p.log")}",
+	)
+	// The JVM silently falls back to the working directory if the target is unwritable.
+	doFirst { jvmCrashDirectory.mkdirs() }
+	// The bridge is loaded with System::load and called through FFM downcalls, both restricted
+	// methods the JVM warns about today and blocks in a future release.
+	jvmArgs("--enable-native-access=ALL-UNNAMED")
+}
+
+// Only the classes that load the bridge need a process of their own - Streamline's runtime
+// accepts one Vulkan device per process - and a fork costs a fresh JVM plus classpath loading.
+// Everything else shares one worker in `test`. The tag mirrors the @NativeBridge annotation the
+// test sources carry.
+val nativeBridgeTag = "native-bridge"
+
+tasks.test {
+	useJUnitPlatform { excludeTags(nativeBridgeTag) }
+}
+
+val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
+	group = "verification"
+	description = "Runs the @NativeBridge test classes, one JVM per class."
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	useJUnitPlatform { includeTags(nativeBridgeTag) }
+	forkEvery = 1
+}
+
 tasks.named("check") {
-	dependsOn(nativeTest, tasks.named("nativeBridgeTest"), checkEngineFreeClasspath)
+	dependsOn(nativeTest, nativeBridgeTest, checkEngineFreeClasspath)
 }
 
 // The SDK owns its native assets: the bridge and the nine Streamline/NGX runtime dlls are
 // staged under the SDK's own resource namespace, so they ride the nested SDK jar into the
 // produced mod jar's META-INF/jars. The dev client's working directory is `run/`, which is
 // why a repository-relative path cannot be used.
-val streamlineRuntime = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", DEFAULT_STREAMLINE_SDK)
-	.resolve("bin/x64")
+val streamlineRuntime = toolchainRoot(
+	"mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk
+).map { it.resolve("bin/x64") }
 val streamlineRuntimeFiles = listOf(
 	"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
 	"sl.pcl.dll",
@@ -260,6 +371,7 @@ val streamlineRuntimeFiles = listOf(
 )
 
 tasks.processResources {
+	dependsOn(provisionStreamlineSdk)
 	// The Fabric library-mod identity is ${version}-expanded here so the nested jar's
 	// fabric.mod.json declares the real version (1.0.0) instead of leaving ${version} literal.
 	val version = version
@@ -271,12 +383,12 @@ tasks.processResources {
 	from(buildNativeDlss) {
 		into("assets/streamline-api/native")
 	}
-	from(streamlineRuntimeFiles.map(streamlineRuntime::resolve)) {
+	from(streamlineRuntimeFiles.map { name -> streamlineRuntime.map { it.resolve(name) } }) {
 		into("assets/streamline-api/native/streamline")
 	}
 	// Windows resolves mc_dlss.dll dependencies beside the bridge before bootstrap can provide
 	// the plugin search path. Keep a colocated generated copy; proprietary binaries remain external.
-	from(streamlineRuntimeFiles.map(streamlineRuntime::resolve)) {
+	from(streamlineRuntimeFiles.map { name -> streamlineRuntime.map { it.resolve(name) } }) {
 		into("assets/streamline-api/native")
 	}
 }

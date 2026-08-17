@@ -13,6 +13,7 @@ import net.minecraft.client.renderer.MappableRingBuffer;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector4fc;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -65,6 +66,7 @@ import java.util.function.Supplier;
  */
 @Mixin(CloudRenderer.class)
 public class CloudRendererMotionMixin {
+	@Unique
 	private static final ThreadLocal<Boolean> CLOUD_MESH_REBUILT = ThreadLocal.withInitial(() -> false);
 
 	/**
@@ -106,11 +108,11 @@ public class CloudRendererMotionMixin {
 	 * two-attachment pass exists and answers the exact vanilla one-attachment pass on any
 	 * failure, so an eligible failure never throws and never leaves the source render with a
 	 * pass the source pipeline cannot bind.
-	 *
-	 * ponytail: the writer owns the vanilla fallback, so this handler does not call the operation
+	 * The writer owns the vanilla fallback, so this handler does not call the operation
 	 * through. Give CloudVelocityRender's three seams an Operation (or a fallback lambda) if
 	 * another mod ever needs to wrap these calls inside CloudRenderer.render.
 	 */
+	@SuppressWarnings("OptionalUsedAsFieldOrParameterType")
 	@WrapOperation(
 		method = "render",
 		at = @At(
@@ -127,7 +129,7 @@ public class CloudRendererMotionMixin {
 		final OptionalDouble clearDepth,
 		final Operation<RenderPass> original
 	) {
-		return CloudVelocityRender.createPass(
+		return CloudVelocityRender.createCloudVelocityPass(
 			encoder, label, colorTexture, clearColor, depthTexture, clearDepth, CLOUD_MESH_REBUILT.get()
 		);
 	}
@@ -152,7 +154,7 @@ public class CloudRendererMotionMixin {
 		final RenderPipeline pipeline,
 		final Operation<Void> original
 	) {
-		CloudVelocityRender.bindPipeline(pass, pipeline);
+		CloudVelocityRender.bindCloudPipeline(pass, pipeline);
 	}
 
 	/**
@@ -166,6 +168,6 @@ public class CloudRendererMotionMixin {
 		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderPass;close()V")
 	)
 	private void mcDlssCloudClose(final RenderPass pass, final Operation<Void> original) {
-		CloudVelocityRender.closePass(pass);
+		CloudVelocityRender.closeCloudVelocityPass(pass);
 	}
 }

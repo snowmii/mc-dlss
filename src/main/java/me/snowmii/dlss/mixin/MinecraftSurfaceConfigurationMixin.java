@@ -17,7 +17,7 @@ import org.spongepowered.asm.mixin.injection.At;
  * only reads it through the active controls and passes the stored value through untouched when
  * there are none - the policy answers false while FG is active, so the block selects a non-FIFO
  * mode ({@code IMMEDIATE}/{@code MAILBOX} first), and because the stored option itself is never
- * written its value survives an FG on/off cycle unchanged, which is what AC-5 witnesses.
+ * written its value survives an FG on/off cycle unchanged, so the stored option survives an FG on/off cycle unchanged.
  *
  * The read is modified in place rather than the stored option set so no other reader of the
  * option can observe a mutated value, and the whole reconfigure path stays Minecraft's own.

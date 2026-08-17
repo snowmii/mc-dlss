@@ -2,6 +2,7 @@ package me.snowmii.streamline;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.foreign.Arena;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
@@ -226,7 +227,7 @@ public final class ExtensionBootstrap {
 
 	/**
 	 * Resolves the packaged resource to a real filesystem path, because
-	 * {@link java.lang.foreign.SymbolLookup#libraryLookup} cannot load from inside a jar.
+	 * {@link java.lang.foreign.SymbolLookup#libraryLookup(Path, Arena)} cannot load from inside a jar.
 	 * A loose file on the classpath is loaded in place; a packaged resource is extracted, once,
 	 * as part of the whole colocated flat directory.
 	 */

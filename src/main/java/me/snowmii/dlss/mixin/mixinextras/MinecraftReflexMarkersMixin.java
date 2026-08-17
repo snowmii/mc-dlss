@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
 /**
- * Emits the M-12 render-submit Reflex/PCL markers around Minecraft's real render submission:
+ * Emits Reflex/PCL render-submit markers around Minecraft's real render submission:
  * the {@code CommandEncoder.submit()} call at the tail of {@code Minecraft.renderFrame}.
  *
  * <p>The bracket wraps the {@code submit()} invocation itself rather than injecting before and

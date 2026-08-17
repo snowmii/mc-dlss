@@ -2,6 +2,7 @@ package me.snowmii.dlss.fg
 import me.snowmii.dlss.session.TestSessionBridge
 
 import java.nio.file.Path
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
@@ -31,24 +32,11 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * M-14.5 rung: the in-game FG multiplier cycle.
+ * Verifies the in-game FG multiplier cycle through controls, runtime, adapter, and readout.
  *
- * F12 cycles the FG multiplier from the 2x default up through the device's
- * `numFramesToGenerateMax` and wraps back to 2x. The cycle is proven through the public
- * boundaries: the controls key action, the runtime's cycle and set seams, the adapter's
- * non-latching native record, and the acceptance record's multiplier field - against a
- * fake bridge that answers the multiplier query and records the native set calls. The mixin
- * that maps F12 is a thin handler by design and is not unit tested; what is proven here is
- * the mod-owned object it delegates to, exactly like the F10 toggle rung.
- *
- * The invariant each test protects:
- *
- * - the cycle walks 2x..ceiling and wraps, offering nothing outside the device's max;
- * - each real change records the corresponding numFramesToGenerate exactly once and
- *   invalidates the surface reconfigure path exactly once;
- * - a refused record (or a session that cannot answer) changes nothing: the multiplier,
- *   the reconfigure count, and the readout all stay on the value in effect;
- * - the readout and the acceptance record report the active multiplier, not a fixed 2x.
+ * The cycle walks from 2x to the device ceiling and wraps. Each accepted change records one
+ * native multiplier and invalidates the surface once; refusals leave multiplier, reconfigure
+ * count, and readout unchanged.
  */
 class FgMultiplierToggleTest {
 
@@ -128,7 +116,7 @@ class FgMultiplierToggleTest {
 		val runtime = RenderRuntime(
 			session = session(),
 			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
+				allocate = { width, height -> HeadlessRenderTarget(width, height) },
 				release = {},
 			),
 			startup = { null },
@@ -197,7 +185,7 @@ class FgMultiplierToggleTest {
 		val runtime = RenderRuntime(
 			session = session(),
 			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
+				allocate = { width, height -> HeadlessRenderTarget(width, height) },
 				release = {},
 			),
 			startup = { null },
@@ -275,7 +263,7 @@ class FgMultiplierToggleTest {
 		private var current: Int = 1,
 		private val max: Int = 3,
 		var setResult: Int = NativeApi.SUCCESS_RESULT,
-	) : NativeApi {
+	) : NativeApiTestDouble() {
 		val setValues = mutableListOf<Int>()
 
 		fun multiplier(): FgMultiplier = FgMultiplier(current, max)
@@ -303,7 +291,7 @@ class FgMultiplierToggleTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			error("unexpected queryOptimalDimensions")
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -315,16 +303,16 @@ class FgMultiplierToggleTest {
 		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun fillVelocity(request: FillVelocityRequest): Int = error("unexpected fillVelocity")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
-		override fun evaluate(request: EvaluationRequest): Int = error("unexpected evaluate")
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = error("unexpected evaluate")
 		override fun tagSrResources(request: SrTagRequest): Int = error("unexpected tagSrResources")
 	}
 
 	/** Records the multiplier seams and answers the three calls [LifecycleAdapter.initialize] drives. */
-	private class AdapterNative : NativeApi {
+	private class AdapterNative : NativeApiTestDouble() {
 		var setResult = NativeApi.SUCCESS_RESULT
 		val setValues = mutableListOf<Int>()
 
@@ -346,7 +334,7 @@ class FgMultiplierToggleTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -358,16 +346,15 @@ class FgMultiplierToggleTest {
 		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun fillVelocity(request: FillVelocityRequest): Int = error("unexpected fillVelocity")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
-		override fun evaluate(request: EvaluationRequest): Int = error("unexpected evaluate")
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = error("unexpected evaluate")
 		override fun tagSrResources(request: SrTagRequest): Int = error("unexpected tagSrResources")
 	}
 
-	/** Render target with no GPU buffers, so the runtime is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height

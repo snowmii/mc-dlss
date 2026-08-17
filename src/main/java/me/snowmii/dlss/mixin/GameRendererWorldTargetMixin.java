@@ -39,7 +39,7 @@ public class GameRendererWorldTargetMixin {
 		final ActiveView active = ClientRuntime.active();
 		final WorldPhase worldPhase = active.activeWorldPhase();
 		final UiPhase uiPhase = active.activeUiPhase();
-		final RenderTarget override = ClientRuntime.resolveTargetOverride(
+		final RenderTarget override = ClientRuntime.resolveActiveTarget(
 			worldPhase == null ? null : worldPhase.getWorldTargetOverride(),
 			uiPhase == null ? null : uiPhase.getUiTargetOverride()
 		);

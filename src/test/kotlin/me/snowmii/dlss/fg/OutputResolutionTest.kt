@@ -12,6 +12,7 @@ import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.TestSessionBridge
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
@@ -32,7 +33,7 @@ import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
 /**
- * M-15's rung: the output size follows the client's main render target.
+ * Output-size adoption: the output size follows the client's main render target.
  *
  * The session used to be pinned at startup to `mc.dlss.output-width/height`, so every frame at
  * any other size routed vanilla with reason `unsupported-output-size` and FG suspended for the
@@ -53,7 +54,7 @@ class OutputResolutionTest {
 	fun `the first world frame adopts the client's own main-target size`() {
 		val fixture = fixture()
 
-		val resolved = fixture.frame(FakeTarget(windowed))
+		val resolved = fixture.frame(HeadlessRenderTarget(windowed))
 
 		assertEquals(DlssFrameRoute.DLSS, fixture.route?.frame?.route, "the client's size must not route vanilla")
 		assertEquals(windowed, fixture.runtime.outputDimensions, "the session must run at the client's size")
@@ -65,7 +66,7 @@ class OutputResolutionTest {
 	fun `an explicitly configured size pins the session and refuses every other size`() {
 		val fixture = fixture(outputPinned = true)
 
-		val target = FakeTarget(windowed)
+		val target = HeadlessRenderTarget(windowed)
 		val resolved = fixture.frame(target)
 
 		assertSame(target, resolved, "a pinned session renders full-resolution at the client's size")
@@ -77,10 +78,10 @@ class OutputResolutionTest {
 	@Test
 	fun `a live resize reconfigures on the first stable frame at the new size`() {
 		val fixture = fixture()
-		fixture.frame(FakeTarget(windowed))
+		fixture.frame(HeadlessRenderTarget(windowed))
 		val configuresBefore = fixture.native.configureCalls
 
-		val duringChange = fixture.frame(FakeTarget(configured))
+		val duringChange = fixture.frame(HeadlessRenderTarget(configured))
 		assertEquals(
 			"unsupported-output-size",
 			fixture.route?.frame?.reason,
@@ -89,28 +90,28 @@ class OutputResolutionTest {
 		assertEquals(configured.width, duringChange.width)
 		assertEquals(configuresBefore, fixture.native.configureCalls, "one frame is not a settled size")
 
-		fixture.frame(FakeTarget(configured))
+		fixture.frame(HeadlessRenderTarget(configured))
 		assertEquals(DlssFrameRoute.DLSS, fixture.route?.frame?.route, "the settled size resumes DLSS")
 		assertEquals(configured, fixture.runtime.outputDimensions)
-		assertEquals(Dimensions(1280, 720), fixture.runtime.renderDimensions, "the render size follows the new output")
+		assertEquals(Dimensions(1280, 720), fixture.runtime.dlssRenderDimensions, "the render size follows the new output")
 		assertEquals(configuresBefore + 1, fixture.native.configureCalls, "a settled change costs exactly one reconfigure")
 	}
 
 	@Test
 	fun `a drag-resize spends no reconfigure on the sizes it passes through`() {
 		val fixture = fixture()
-		fixture.frame(FakeTarget(windowed))
+		fixture.frame(HeadlessRenderTarget(windowed))
 		val configuresBefore = fixture.native.configureCalls
 
 		// Every frame of a drag reports a size the one before it did not.
 		listOf(1930, 1940, 1950, 1960).forEach { width ->
-			fixture.frame(FakeTarget(Dimensions(width, 1080)))
+			fixture.frame(HeadlessRenderTarget(Dimensions(width, 1080)))
 			assertEquals("unsupported-output-size", fixture.route?.frame?.reason)
 		}
 
 		assertEquals(configuresBefore, fixture.native.configureCalls, "an unsettled drag must not reconfigure")
 
-		fixture.frame(FakeTarget(Dimensions(1960, 1080)))
+		fixture.frame(HeadlessRenderTarget(Dimensions(1960, 1080)))
 		assertEquals(
 			configuresBefore + 1,
 			fixture.native.configureCalls,
@@ -122,18 +123,18 @@ class OutputResolutionTest {
 	@Test
 	fun `frame generation suspends across the change and resumes at the new size`() {
 		val fixture = fixture()
-		fixture.frame(FakeTarget(windowed))
+		fixture.frame(HeadlessRenderTarget(windowed))
 		fixture.runtime.frameGeneration.setFrameGenerationActive(true)
-		fixture.frame(FakeTarget(windowed))
-		assertTrue(fixture.runtime.frameGeneration.active, "FG composes at the settled size")
+		fixture.frame(HeadlessRenderTarget(windowed))
+		assertTrue(fixture.runtime.frameGeneration.effective, "FG composes at the settled size")
 
-		fixture.frame(FakeTarget(configured))
-		assertFalse(fixture.runtime.frameGeneration.active, "the frame that reports a new size must not compose FG")
-		assertTrue(fixture.runtime.frameGeneration.armed, "and the user's FG mode must survive the suspension")
+		fixture.frame(HeadlessRenderTarget(configured))
+		assertFalse(fixture.runtime.frameGeneration.effective, "the frame that reports a new size must not compose FG")
+		assertTrue(fixture.runtime.frameGeneration.userEnabled, "and the user's FG mode must survive the suspension")
 
-		fixture.frame(FakeTarget(configured))
-		fixture.frame(FakeTarget(configured))
-		assertTrue(fixture.runtime.frameGeneration.active, "FG resumes once the session runs at the new size")
+		fixture.frame(HeadlessRenderTarget(configured))
+		fixture.frame(HeadlessRenderTarget(configured))
+		assertTrue(fixture.runtime.frameGeneration.effective, "FG resumes once the session runs at the new size")
 	}
 
 	@Test
@@ -142,8 +143,8 @@ class OutputResolutionTest {
 		// session must not claim one.
 		val fixture = fixture(bridge = TestSessionBridge())
 
-		fixture.frame(FakeTarget(windowed))
-		fixture.frame(FakeTarget(windowed))
+		fixture.frame(HeadlessRenderTarget(windowed))
+		fixture.frame(HeadlessRenderTarget(windowed))
 
 		assertEquals(configured, fixture.runtime.outputDimensions, "a refused reconfigure changes nothing")
 		assertEquals("unsupported-output-size", fixture.route?.frame?.reason)
@@ -179,7 +180,7 @@ class OutputResolutionTest {
 		val runtime = RenderRuntime(
 			session = session,
 			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(Dimensions(width, height)) },
+				allocate = { width, height -> HeadlessRenderTarget(Dimensions(width, height)) },
 				release = {},
 			),
 			startup = { adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) },
@@ -204,7 +205,7 @@ class OutputResolutionTest {
 		fun frame(target: RenderTarget): RenderTarget {
 			phase.prepare(true, target, camera())
 			val resolved = phase.begin(true, target)
-			route = runtime.activeRoute
+			route = runtime.worldTargetRoute
 			phase.end()
 			return resolved
 		}
@@ -218,8 +219,7 @@ class OutputResolutionTest {
 		)
 	}
 
-	/** Render target with no GPU buffers, so the whole stack runs off the render thread. */
-	private class FakeTarget(dimensions: Dimensions) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(dimensions: Dimensions) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = dimensions.width
 			this.height = dimensions.height
@@ -238,7 +238,7 @@ class OutputResolutionTest {
 	 * ratio and is exactly why it is used - a render size that moved can only have come from the
 	 * output size the reconfigure was given.
 	 */
-	private class FakeNative : NativeApi {
+	private class FakeNative : NativeApiTestDouble() {
 		var configureCalls = 0
 		var configuredOutput: Dimensions? = null
 
@@ -253,7 +253,7 @@ class OutputResolutionTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(outputWidth / 2, outputHeight / 2)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -281,7 +281,7 @@ class OutputResolutionTest {
 
 		override fun presentOutput(target: PresentTarget) = NativeApi.SUCCESS_RESULT
 
-		override fun evaluate(request: EvaluationRequest) = NativeApi.SUCCESS_RESULT
+		override fun evaluateSuperResolution(request: EvaluationRequest) = NativeApi.SUCCESS_RESULT
 
 		/** Healthy status, so the FG status latch never suspends composition for its own reason. */
 		override fun queryFgState() = FgState(0, 2, 0L, 0L)

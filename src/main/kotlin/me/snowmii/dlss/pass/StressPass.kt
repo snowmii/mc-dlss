@@ -96,10 +96,10 @@ class StressPass(
 	private val config: StressConfig,
 	private val diagnostics: (String) -> Unit = {},
 ) : ScenePass {
-	private var scratch: RenderTarget? = null
-	private var uniformBuffer: GpuBuffer? = null
+	private var scratchTarget: RenderTarget? = null
+	private var stressUniformBuffer: GpuBuffer? = null
 	private var startedAtNanos = 0L
-	private var failed = false
+	private var disabledAfterFailure = false
 
 	private val viewProjection = Matrix4f()
 	private val inverseViewProjection = Matrix4f()
@@ -114,13 +114,13 @@ class StressPass(
 
 	/** Flips the effect on or off and returns the state now in effect. */
 	override fun toggle(): Boolean {
-		enabled = !enabled && !failed
+		enabled = !enabled && !disabledAfterFailure
 		return enabled
 	}
 
 	/** One line naming the workload, for the same readout the DLSS controls print. */
 	override fun readout(): String = when {
-		failed -> "stress off (shader failed)"
+		disabledAfterFailure -> "stress off (shader failed)"
 		!enabled -> "stress off"
 		else -> "stress on | ${config.steps} steps | ${config.octaves} octaves | ${config.godrayTaps} godray taps"
 	}
@@ -145,7 +145,7 @@ class StressPass(
 	 * the render thread; it must never be the reason a frame does not finish.
 	 */
 	override fun render(target: RenderTarget, camera: DlssCameraSample, velocity: VelocityContext?) {
-		if (!enabled || failed) {
+		if (!enabled || disabledAfterFailure) {
 			return
 		}
 
@@ -158,7 +158,7 @@ class StressPass(
 		try {
 			val scratchTarget = scratchFor(target.width, target.height)
 			val scratchColor = scratchTarget.colorTextureView ?: return
-			val uniforms = writeUniforms(camera, target.width, target.height, velocity)
+			val uniforms = writeStressUniforms(camera, target.width, target.height, velocity)
 			val samplers = RenderSystem.getSamplerCache()
 			val encoder = RenderSystem.getDevice().createCommandEncoder()
 
@@ -177,7 +177,7 @@ class StressPass(
 				)
 			}
 			pass.use { renderPass ->
-				renderPass.setPipeline(pipelineFor(velocity))
+				renderPass.setPipeline(pipelineForVelocityRoute(velocity))
 				renderPass.setUniform("StressConfig", uniforms)
 				renderPass.bindTexture("InSampler", color, samplers.getClampToEdge(FilterMode.LINEAR))
 				renderPass.bindTexture("InDepthSampler", depth, samplers.getClampToEdge(FilterMode.NEAREST))
@@ -191,7 +191,7 @@ class StressPass(
 				pass.draw(3, 1, 0, 0)
 			}
 		} catch (failure: Throwable) {
-			failed = true
+			disabledAfterFailure = true
 			enabled = false
 			releaseScratch()
 			diagnostics("DLSS stress pass disabled after failure: $failure")
@@ -200,34 +200,34 @@ class StressPass(
 
 	override fun close() {
 		releaseScratch()
-		uniformBuffer?.close()
-		uniformBuffer = null
+		stressUniformBuffer?.close()
+		stressUniformBuffer = null
 	}
 
 	private fun scratchFor(width: Int, height: Int): RenderTarget {
-		val existing = scratch
+		val existing = scratchTarget
 		if (existing != null && existing.width == width && existing.height == height) {
 			return existing
 		}
 
 		releaseScratch()
 		// No depth: the pass reads the world's depth as a texture and writes colour only.
-		return TextureTarget(SCRATCH_LABEL, width, height, false, GpuFormat.RGBA8_UNORM).also { scratch = it }
+		return TextureTarget(SCRATCH_LABEL, width, height, false, GpuFormat.RGBA8_UNORM).also { scratchTarget = it }
 	}
 
 	private fun releaseScratch() {
-		scratch?.destroyBuffers()
-		scratch = null
+		scratchTarget?.destroyBuffers()
+		scratchTarget = null
 	}
 
 	/**
-	 * Fills this frame's uniform block and returns the slice bound to the pass.
+	 * Fills this frame's uniform block and returns its buffer binding.
 	 *
 	 * The sun is a fixed world direction rather than the world's own sun: the effect is a
 	 * measurement load, and a light that moves with the day cycle would make two runs of the same
 	 * benchmark cost visibly different amounts.
 	 */
-	private fun writeUniforms(
+	private fun writeStressUniforms(
 		camera: DlssCameraSample,
 		width: Int,
 		height: Int,
@@ -258,9 +258,9 @@ class StressPass(
 		val reprojection = velocity?.reprojection ?: identityReprojection
 		val invalid = velocity?.reset == true
 
-		val buffer = uniformBuffer ?: RenderSystem.getDevice()
+		val buffer = stressUniformBuffer ?: RenderSystem.getDevice()
 			.createBuffer({ "DLSS Stress Config" }, GpuBuffer.USAGE_UNIFORM or GpuBuffer.USAGE_COPY_DST, UBO_SIZE.toLong())
-			.also { uniformBuffer = it }
+			.also { stressUniformBuffer = it }
 
 		MemoryStack.stackPush().use { stack ->
 			val data = Std140Builder.onStack(stack, UBO_SIZE)
@@ -281,7 +281,7 @@ class StressPass(
 	companion object {
 		private const val SCRATCH_LABEL = "DLSS Stress"
 
-		/** Fixed world-space sun direction; see [writeUniforms]. */
+		/** Fixed world-space sun direction; see [writeStressUniforms]. */
 		private const val SUN_X = 0.34f
 		private const val SUN_Y = 0.52f
 		private const val SUN_Z = -0.78f
@@ -329,7 +329,7 @@ class StressPass(
 		 * shader source compiles for both shapes and the extra fragment output is simply discarded
 		 * on the one-target route.
 		 */
-		internal fun pipelineFor(velocity: VelocityContext?): RenderPipeline =
+		internal fun pipelineForVelocityRoute(velocity: VelocityContext?): RenderPipeline =
 			if (velocity == null) STRESS_PIPELINE else velocityTwin(STRESS_PIPELINE)
 
 		/** Production wiring: the configuration this session started with. */

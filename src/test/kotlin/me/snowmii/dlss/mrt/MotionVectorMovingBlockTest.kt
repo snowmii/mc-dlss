@@ -35,14 +35,14 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Piston moving-block vertical proof for M-6's velocity writer.
+ * Piston moving-block velocity-writer proof.
  *
  * `PistonHeadRenderer` renders a moving piston block by submitting one or two
  * `MovingBlockRenderState`s (the moving block and the retracting piston base) into
  * `MovingBlockFeatureRenderer`, which tesselates each submit's block model into the
  * `solidMovingBlock` / `cutoutMovingBlock` / `translucentMovingBlock` render types - the
  * block-shaped `SOLID_BLOCK` / `CUTOUT_BLOCK` / `TRANSLUCENT_BLOCK` pipelines - and draws them
- * through the same `PreparedRenderType.drawFromBuffer` seam the entity writer uses. This slice
+ * through the same `PreparedRenderType.drawFromBuffer` seam the entity writer uses. This test
  * binds each submitted render state to the collision-free packed long identity of its baked
  * block position at the block-entity dispatcher seam, captures its absolute render position (baked position plus the
  * piston's current interpolated offset) into the shared object-motion history, isolates one
@@ -151,7 +151,7 @@ class MotionVectorMovingBlockTest {
 	@Test
 	fun `entity and moving-block domains stay disjoint even when ids share a numeric value`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		// The block at (0, 7, 0) packs to exactly 7 - the same numeric value as entity id 7 -
 		// so any shared-slot implementation would smear the two histories into one.
 		val collidingBlockId = MovingBlockVelocityWriterBindings.blockId(0, 7, 0)
@@ -389,7 +389,7 @@ class MotionVectorMovingBlockTest {
 	@Test
 	fun `capture seam records block position plus piston offset and the retracting base stands still`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		val blockPos = BlockPos(100, 64, -200)
 		val basePos = BlockPos(99, 64, -200)
 		val blockId = MovingBlockVelocityWriterBindings.blockId(blockPos.x, blockPos.y, blockPos.z)
@@ -436,7 +436,7 @@ class MotionVectorMovingBlockTest {
 		phase.begin(true, mainTarget)
 		phase.captureBlock(blockId, blockPos.x + 0.75, blockPos.y.toDouble(), blockPos.z.toDouble())
 		phase.end()
-		val abandoned = worldPhase(runtime, evaluate = false)
+		val abandoned = velocityWorldPhase(runtime, evaluate = false)
 		renderFrame(abandoned, mainTarget)
 		phase.prepare(true, mainTarget, cameraSample())
 		phase.begin(true, mainTarget)
@@ -464,7 +464,7 @@ class MotionVectorMovingBlockTest {
 	@Test
 	fun `eligible open velocity-mrt phase admits the writer control seam and ineligible routes fall through`() {
 		val runtime = velocityRuntime()
-		val phase = worldPhase(runtime)
+		val phase = velocityWorldPhase(runtime)
 		val staged = StagedVertexBuffer({ "moving-block-control-test" }, 256)
 		try {
 			val id = MovingBlockVelocityWriterBindings.blockId(10, 64, -5)
@@ -529,7 +529,7 @@ class MotionVectorMovingBlockTest {
 			),
 		)
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, cameraOnly.motionVectorRoute)
-		val cameraOnlyPhase = worldPhase(cameraOnly)
+		val cameraOnlyPhase = velocityWorldPhase(cameraOnly)
 		val info = emptyExecuteInfo()
 		assertFalse(
 			MovingBlockVelocityRender.canDraw(
@@ -553,12 +553,12 @@ class MotionVectorMovingBlockTest {
 				warnings = emptyList(),
 			),
 		)
-		val vanillaPhase = worldPhase(
+		val vanillaPhase = velocityWorldPhase(
 			RenderRuntime(
 				session = vanillaSession,
 				sceneTarget = SceneTarget(
-					allocate = { width, height -> FakeTarget(width, height) },
-					release = { (it as FakeTarget).releases++ },
+					allocate = { width, height -> HeadlessRenderTarget(width, height) },
+					release = { (it as HeadlessRenderTarget).releases++ },
 					allocateVelocity = { _, _ -> null },
 				),
 				startup = { null },

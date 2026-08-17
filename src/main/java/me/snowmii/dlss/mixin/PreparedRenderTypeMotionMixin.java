@@ -17,6 +17,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(PreparedRenderType.class)
 public class PreparedRenderTypeMotionMixin {
+	@SuppressWarnings("ConstantConditions")
 	@Inject(
 		method = "drawFromBuffer(Lnet/minecraft/client/renderer/StagedVertexBuffer$ExecuteInfo;)V",
 		at = @At("HEAD"),

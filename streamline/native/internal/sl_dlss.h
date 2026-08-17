@@ -56,13 +56,6 @@ int32_t record_fg_options(uint32_t numBackBuffers) noexcept;
 // this record's.
 int32_t record_fg_mode(uint32_t fgEnabled) noexcept;
 
-// Drops the present-handoff eligibility of any in-flight frame: the retained Streamline
-// frame token and the SR/FG tag records and indexes. Called wherever the frame those records
-// name can no longer reach a present - configuration replacement, reset, and image release -
-// so a stale record can never satisfy a later handoff once the configuration it was recorded
-// for was replaced or the frame's resources are gone.
-void invalidate_frame_eligibility() noexcept;
-
 // Records the frame's present-handoff eligibility: re-records the stored DLSS-G 2x options
 // through slDLSSGSetOptions with the back-buffer count the last successful
 // mc_dlss_configure_fg declared, accepting exactly one complete current-frame SR+FG tag set
@@ -84,7 +77,7 @@ int32_t record_present_handoff() noexcept;
 int32_t present_start() noexcept;
 int32_t present_end() noexcept;
 
-// Emits the frame's Reflex/PCL markers at the M-12 input, simulation, and render-submit
+// Emits the frame's Reflex/PCL markers at the input, simulation, and render-submit
 // seams, all under the retained Streamline frame token. The input-sample seam obtains the
 // token for the frame (slGetNewFrameToken is called again even when a token is retained,
 // because a retained token at frame start belongs to a previous frame that never reached
@@ -216,13 +209,13 @@ int32_t query_fg_camera_constants(McDlssCameraConstants* out) noexcept;
 // semaphore - the plugin has not allocated one, as before the first present - is a no-op
 // success. Requires the ready session (kNotInitialized) and the recorded DLSS-G options
 // (kInvalidParameter) like the FG tag; the wait deliberately does not look at
-// DLSSGState::status, whose fallback is the status-owning slice's to drive.
+// DLSSGState::status, whose fallback belongs to the status policy.
 int32_t wait_fg_inputs_idle() noexcept;
 
 // The wait oracle: performs the same value-aware timeline-semaphore wait the session-driven
 // entry above performs, on explicit Vulkan device and semaphore handles and an explicit
-// value. Exposed across the ABI so the value-aware wait is provable without a live
-// Streamline session - the headless proof creates its own timeline semaphore, waits for a
+// value. Exposed across the ABI so tests can check value semantics without a live
+// Streamline session - the headless test creates its own timeline semaphore, waits for a
 // value the semaphore has not reached, and observes the wait block until the value is
 // signaled. Requires non-null device and semaphore handles (kInvalidParameter) and touches
 // no module or Streamline state.
@@ -236,7 +229,7 @@ int32_t wait_fg_inputs_value(uint64_t vkDevice, uint64_t semaphore, uint64_t val
 // session whose options never recorded has no DLSS-G state to read. All four outputs are
 // required - a null output is a caller that did not fill the call (kInvalidParameter).
 // The call itself performs no GPU work and never blocks: the fence value is what the
-// present-generation rung polls to observe the interposed present path processing frames.
+// present-generation test polls to observe the interposed present path processing frames.
 int32_t query_fg_state(uint32_t* status, uint32_t* numFramesPresented,
                        uint64_t* lastPresentInputsProcessingFenceValue,
                        uint64_t* inputsProcessingCompletionFence) noexcept;

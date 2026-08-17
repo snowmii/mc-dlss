@@ -71,8 +71,8 @@ data class DlssFrameMotion(
  * Tracks the camera across DLSS frames and derives each frame's camera-only motion.
  *
  * DLSS needs to know, for every pixel, where that surface point was in the previous frame. With
- * camera-only motion - no object motion, which this effort excludes - that is a pure function of
- * two frames' view-projection transforms and the distance the camera travelled between them, so
+ * camera-only motion - no object motion in this implementation - is a pure function of two
+ * frames' view-projection transforms and the distance the camera travelled between them, so
  * it collapses into a single matrix rather than a per-object pass.
  *
  * The one subtlety is jitter. The rendered frame is jittered, so a pixel's clip position carries

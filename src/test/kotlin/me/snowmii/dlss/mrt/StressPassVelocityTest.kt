@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Proves the stress pass is the first production writer of the velocity MRT (M-5, AC-3): while
+ * Proves the stress pass writes the velocity MRT: while
  * an open VELOCITY_MRT world phase offers its RG16_FLOAT velocity view, the stress pass binds a
  * two-target twin of its own pipeline and writes jitter-free NDC camera motion derived from the
  * published reprojection and the reversed-Z depth; on vanilla or camera-only frames it keeps the
@@ -41,15 +41,15 @@ class StressPassVelocityTest {
 	 */
 	@Test
 	fun `vanilla and camera-only stress rendering keeps the one-target pipeline`() {
-		val pipeline = StressPass.pipelineFor(null)
+		val pipeline = StressPass.pipelineForVelocityRoute(null)
 
 		assertEquals(Identifier.fromNamespaceAndPath("mc-dlss", "pipeline/dlss_stress"), pipeline.location)
 		assertEquals(1, pipeline.colorTargetStates.size)
 		assertEquals(GpuFormat.RGBA8_UNORM, pipeline.colorTargetStates[0]!!.format())
-		assertSame(pipeline, StressPass.pipelineFor(null), "the one-target pipeline is never rebuilt or mutated")
+		assertSame(pipeline, StressPass.pipelineForVelocityRoute(null), "the one-target pipeline is never rebuilt or mutated")
 
 		// The exact one-attachment shape the pass binds on the vanilla route.
-		val descriptor = RenderPassDescriptor.create({ "DLSS stress" })
+		val descriptor = RenderPassDescriptor.create { "DLSS stress" }
 			.withColorAttachment(FakeView(FakeTexture(GpuFormat.RGBA8_UNORM)))
 		assertEquals(1, descriptor.colorAttachments().size)
 		assertEquals(1, pipeline.colorTargetStates.size)
@@ -63,11 +63,11 @@ class StressPassVelocityTest {
 	@Test
 	fun `the velocity route binds a two-target twin with the unblended RG16 velocity target`() {
 		val context = VelocityContext(FakeView(FakeTexture(GpuFormat.RG16_FLOAT)), Matrix4f(), reset = false)
-		val vanilla = StressPass.pipelineFor(null)
-		val twin = StressPass.pipelineFor(context)
+		val vanilla = StressPass.pipelineForVelocityRoute(null)
+		val twin = StressPass.pipelineForVelocityRoute(context)
 
 		assertNotSame(vanilla, twin)
-		assertSame(vanilla, StressPass.pipelineFor(null), "selecting a twin must not replace the one-target pipeline")
+		assertSame(vanilla, StressPass.pipelineForVelocityRoute(null), "selecting a twin must not replace the one-target pipeline")
 		assertEquals(Identifier.fromNamespaceAndPath("mc-dlss", "velocity/pipeline/dlss_stress"), twin.location)
 
 		assertSame(vanilla.vertexShader, twin.vertexShader)
@@ -80,7 +80,7 @@ class StressPassVelocityTest {
 
 		// One cached twin per source pipeline, so the first velocity frame pays the compile
 		// once and every later frame hits the lazy-compile cache.
-		assertSame(twin, StressPass.pipelineFor(context))
+		assertSame(twin, StressPass.pipelineForVelocityRoute(context))
 	}
 
 	/**
@@ -93,13 +93,13 @@ class StressPassVelocityTest {
 		val scene = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM))
 		val velocity = FakeView(FakeTexture(GpuFormat.RG16_FLOAT))
 
-		val oneTarget = RenderPassDescriptor.create({ "DLSS stress" }).withColorAttachment(scene)
-		val twoTarget = RenderPassDescriptor.create({ "DLSS stress velocity" })
+		val oneTarget = RenderPassDescriptor.create { "DLSS stress" }.withColorAttachment(scene)
+		val twoTarget = RenderPassDescriptor.create { "DLSS stress velocity" }
 			.withColorAttachment(scene)
 			.withColorAttachment(velocity, Optional.empty())
 
-		val vanillaPipeline = StressPass.pipelineFor(null)
-		val twin = StressPass.pipelineFor(VelocityContext(velocity, Matrix4f(), reset = false))
+		val vanillaPipeline = StressPass.pipelineForVelocityRoute(null)
+		val twin = StressPass.pipelineForVelocityRoute(VelocityContext(velocity, Matrix4f(), reset = false))
 
 		assertEquals(1, oneTarget.colorAttachments().size)
 		assertEquals(vanillaPipeline.colorTargetStates.size, oneTarget.colorAttachments().size)
@@ -109,9 +109,9 @@ class StressPassVelocityTest {
 		assertEquals(twin.colorTargetStates.size, attachments.size)
 		assertSame(scene, attachments[0]!!.textureView())
 		assertSame(velocity, attachments[1]!!.textureView())
-		assertTrue(attachments[1]!!.clearValue().isEmpty(), "the velocity attachment is never cleared")
-		assertEquals(GpuFormat.RG16_FLOAT, attachments[1]!!.textureView().texture().getFormat())
-		assertEquals(twin.colorTargetStates[1]!!.format(), attachments[1]!!.textureView().texture().getFormat())
+		assertTrue(attachments[1]!!.clearValue().isEmpty, "the velocity attachment is never cleared")
+		assertEquals(GpuFormat.RG16_FLOAT, attachments[1]!!.textureView().texture().format)
+		assertEquals(twin.colorTargetStates[1]!!.format(), attachments[1]!!.textureView().texture().format)
 	}
 
 	/**

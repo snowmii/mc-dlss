@@ -29,24 +29,11 @@ object McDlss : ModInitializer {
 			startupConfig.outputDimensions,
 			startupConfig.nativeLibraryPath ?: "external",
 		)
-		// LWJGL's Vulkan loading is deliberately NOT redirected to sl.interposer.dll.
-		//
-		// Pointing org.lwjgl.vulkan.libname at the interposer is the automatic-hooking style of
-		// integration, and it contradicts the eUseManualHooking flag this mod initializes SL
-		// with. Measured on the live FG rung: with the redirect, DLSS-G's
-		// slHookVkCreateSwapchainKHR never fires and slSetVulkanInfo fails outright; without
-		// it, the hook fires and presentCommon reaches "interpolation enabled". The redirect is
-		// also the one process-level difference between the passing rung and the in-game
-		// session that reported presented=0 status=0 fence=0, where sl.log carried
-		// "Streamline presentCommon() was not observed".
-		//
-		// SL still reaches Vulkan without the redirect: ExtensionBootstrap loads sl.common.dll
-		// and sl.interposer.dll into the process before any Vulkan class is touched, and
-		// mc_dlss_activate_vulkan_proxies hands SL the live instance/device/queue layout
-		// through slSetVulkanInfo.
-		//
-		// Toggle it back with -Pmc.dlss.vulkan-libname=<path> on the test task if this needs
-		// re-measuring; StreamlineVulkanProvider is retained for that experiment.
+		// LWJGL's Vulkan loading is intentionally not redirected to sl.interposer.dll. The mod uses
+		// Streamline manual hooking: ExtensionBootstrap loads the runtime before Vulkan classes are
+		// touched, then mc_dlss_activate_vulkan_proxies supplies the live instance, device, and
+		// queue layout. StreamlineVulkanProvider remains an optional test-only interposer path,
+		// enabled with -Pmc.dlss.vulkan-libname=<path>.
 	}
 
 	fun id(path: String): Identifier

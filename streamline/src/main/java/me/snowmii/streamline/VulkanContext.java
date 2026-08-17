@@ -17,9 +17,9 @@ import java.util.function.Supplier;
  * factory that reads Minecraft's live {@code VulkanDevice} is mod-side: the mixin builds a
  * context from raw handles through {@link #fromNativeHandles} and hands it to the registry.
  *
- * <p>This object owns no queue submission of its own. {@link #recordCommandBuffer()} produces
+ * <p>This object owns no queue submission of its own. {@link #allocateRecordingCommandBuffer()} produces
  * a fresh, non-zero recording command buffer through the injected shared-encoder source, and
- * {@link #submitCommandBuffer} hands it back to that same encoder, which carries it out with
+ * {@link #enqueueOnEngineEncoder} hands it back to that same encoder, which carries it out with
  * the frame the game was already going to submit. Nothing here waits on a fence or idles the
  * device: the encoder's own timeline is what orders this work.
  */
@@ -36,8 +36,8 @@ public final class VulkanContext {
 	private final int computeQueueFamily;
 	/** Index at which Streamline's own compute queues start: the number of queues the host created in {@link #computeQueueFamily}. */
 	private final int computeQueueIndex;
-	private final Supplier<VkCommandBuffer> commandBufferSource;
-	private final Consumer<VkCommandBuffer> commandBufferSink;
+	private final Supplier<VkCommandBuffer> recordingCommandBufferSource;
+	private final Consumer<VkCommandBuffer> submittedCommandBufferSink;
 
 	private VulkanContext(
 		final long instanceHandle,
@@ -73,26 +73,22 @@ public final class VulkanContext {
 		this.graphicsQueueIndex = graphicsQueueIndex;
 		this.computeQueueFamily = computeQueueFamily;
 		this.computeQueueIndex = computeQueueIndex;
-		this.commandBufferSource = commandBufferSource;
-		this.commandBufferSink = commandBufferSink;
+		this.recordingCommandBufferSource = commandBufferSource;
+		this.submittedCommandBufferSink = commandBufferSink;
 	}
 
-	/** The captured Vulkan instance handle. */
 	public long getInstanceHandle() {
 		return instanceHandle;
 	}
 
-	/** The captured Vulkan physical device handle. */
 	public long getPhysicalDeviceHandle() {
 		return physicalDeviceHandle;
 	}
 
-	/** The captured Vulkan device handle. */
 	public long getDeviceHandle() {
 		return deviceHandle;
 	}
 
-	/** The captured Vulkan graphics queue handle. */
 	public long getGraphicsQueueHandle() {
 		return graphicsQueueHandle;
 	}
@@ -118,8 +114,8 @@ public final class VulkanContext {
 	}
 
 	/** Records a fresh command buffer from the injected source, returning its non-zero handle wrapper. */
-	public VkCommandBuffer recordCommandBuffer() {
-		return commandBufferSource.get();
+	public VkCommandBuffer allocateRecordingCommandBuffer() {
+		return recordingCommandBufferSource.get();
 	}
 
 	/**
@@ -128,8 +124,8 @@ public final class VulkanContext {
 	 * <p>The buffer runs after everything the encoder recorded before this call, which is what
 	 * puts DLSS work behind the world render it consumes without a submission of its own.
 	 */
-	public void submitCommandBuffer(final VkCommandBuffer commandBuffer) {
-		commandBufferSink.accept(commandBuffer);
+	public void enqueueOnEngineEncoder(final VkCommandBuffer commandBuffer) {
+		submittedCommandBufferSink.accept(commandBuffer);
 	}
 
 	/**

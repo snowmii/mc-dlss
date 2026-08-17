@@ -50,7 +50,7 @@ class MotionVectorCompatibilityTest {
 		assertTrue(diagnostics.single().contains("example:pipeline/waving_terrain"))
 		assertTrue(diagnostics.single().contains("example:core/waving_terrain"))
 		assertTrue(diagnostics.single().contains("camera-only"))
-		assertEquals(foreign, compatibility.fallbackPipeline)
+		assertEquals(foreign, compatibility.firstForeignPipeline)
 	}
 
 	@Test
@@ -66,7 +66,7 @@ class MotionVectorCompatibilityTest {
 				),
 			)
 		}
-		assertEquals(MotionVectorRoute.CAMERA_ONLY, compatibility.route)
+		assertEquals(MotionVectorRoute.CAMERA_ONLY, compatibility.selectedRoute)
 	}
 
 	private fun pipeline(id: String, vararg shaders: MotionVectorShader) =

@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test
 class WorldPhaseTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1707, 960)
-	private val mainTarget = FakeTarget(output.width, output.height)
+	private val mainTarget = HeadlessRenderTarget(output.width, output.height)
 
 	private val presented = mutableListOf<Pair<RenderTarget, RenderTarget>>()
 	private val evaluated = mutableListOf<Triple<RenderTarget, DlssJitterOffset, DlssFrameMotion>>()
@@ -113,7 +113,7 @@ class WorldPhaseTest {
 	@Test
 	fun `a degenerate main target is never measured as output dimensions`() {
 		val phase = phase(readyRuntime())
-		val unsized = FakeTarget(0, 0)
+		val unsized = HeadlessRenderTarget(0, 0)
 
 		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = unsized)
 		phase.end()
@@ -321,8 +321,8 @@ class WorldPhaseTest {
 	private fun runtime(session: DlssSession, startup: () -> Dimensions?) = RenderRuntime(
 		session = session,
 		sceneTarget = SceneTarget(
-			allocate = { width, height -> FakeTarget(width, height) },
-			release = { (it as FakeTarget).releases++ },
+			allocate = { width, height -> HeadlessRenderTarget(width, height) },
+			release = { (it as HeadlessRenderTarget).releases++ },
 		),
 		startup = startup,
 	)
@@ -339,8 +339,7 @@ class WorldPhaseTest {
 		),
 	)
 
-	/** Render target with no GPU buffers, so the phase is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		var releases = 0
 
 		init {

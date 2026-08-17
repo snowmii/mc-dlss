@@ -1,64 +1,29 @@
 package me.snowmii.dlss.fg
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
-import java.nio.file.Path
-import java.util.concurrent.atomic.AtomicInteger
-import kotlin.concurrent.thread
-import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.EvaluationImages
-import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.ExtensionBootstrap
-import me.snowmii.streamline.FgTagRequest
-import me.snowmii.streamline.FillVelocityRequest
+import com.mojang.blaze3d.GpuFormat
+import com.mojang.blaze3d.pipeline.RenderTarget
+import me.snowmii.dlss.NativeBridge
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.Native
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.PresentTarget
-import me.snowmii.streamline.SrTagRequest
-import me.snowmii.streamline.VulkanContext
 import me.snowmii.dlss.mrt.MotionVectorRoute
-import me.snowmii.dlss.render.DlssFrameMotion
-import me.snowmii.dlss.render.DlssJitter
-import me.snowmii.dlss.render.DlssJitterOffset
-import me.snowmii.dlss.render.FgFrameInputs
-import me.snowmii.dlss.render.FrameEvaluation
-import me.snowmii.dlss.render.RenderRuntime
-import me.snowmii.dlss.render.SceneResources
-import me.snowmii.dlss.render.SceneTarget
+import me.snowmii.dlss.render.*
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.session.SRMode
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.pipeline.RenderTarget
-import me.snowmii.dlss.NativeBridge
+import me.snowmii.streamline.*
 import org.joml.Matrix4f
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.lwjgl.system.MemoryStack
-import org.lwjgl.vulkan.VK10
-import org.lwjgl.vulkan.VK12
-import org.lwjgl.vulkan.VkApplicationInfo
-import org.lwjgl.vulkan.VkCommandBuffer
-import org.lwjgl.vulkan.VkDevice
-import org.lwjgl.vulkan.VkDeviceCreateInfo
-import org.lwjgl.vulkan.VkInstance
-import org.lwjgl.vulkan.VkInstanceCreateInfo
-import org.lwjgl.vulkan.VkPhysicalDevice
-import org.lwjgl.vulkan.VkSemaphoreCreateInfo
-import org.lwjgl.vulkan.VkSemaphoreSignalInfo
-import org.lwjgl.vulkan.VkSemaphoreTypeCreateInfo
+import org.lwjgl.vulkan.*
+import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 
 /**
- * M-11 present-lifetime rung, as it stands after the MFG latency fix: production no longer
- * waits on `DLSSGState::inputsProcessingCompletionFence` at the frame's start, so no frame -
- * FG-active or not - makes that wait, and the recorded call order proves it.
+ * Present-lifetime behavior after the MFG latency change: production no longer waits on
+ * `DLSSGState::inputsProcessingCompletionFence` at the frame's start, so neither FG-active nor
+ * FG-off frames make that wait. The recorded call order checks the wiring.
  *
  * The wait was removed at [RenderRuntime.beginWorldPhase] because it cost 10-11ms of every
  * 13ms FG frame; it is required only under `eBlockNoClientQueues`, and the recorded options
@@ -66,18 +31,16 @@ import org.lwjgl.vulkan.VkSemaphoreTypeCreateInfo
  * required for a single-queue application. That reasoning lives at the production seam.
  *
  * The wait entry stays on the ABI - the mode is one options field away - so what this class
- * proves now is the ABI contract rather than the production wiring: the native entry refuses
- * before any Streamline session exists, and the wait's value semantics hold against a real
- * timeline semaphore, so a regression that treated the semaphore as a VkFence or ignored the
- * value fails the proof. The three tests that asserted the production wait were retired with
- * the wait itself; restoring the wait means restoring them.
+ * covers the ABI contract rather than production wiring: the native entry refuses before any
+ * Streamline session exists, and a real timeline semaphore checks value-aware waiting. Treating
+ * the semaphore as a VkFence or ignoring its value fails the test.
  */
 @NativeBridge
 class FgPresentLifetimeTest {
 
 	@Test
 	fun `an FG-active frame makes no input-processing wait`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val policy = FgSurfacePolicy()
 		val harness = harness(calls, policy)
 
@@ -103,7 +66,7 @@ class FgPresentLifetimeTest {
 
 	@Test
 	fun `an FG-off frame makes no input-processing wait`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val harness = harness(calls, FgSurfacePolicy())
 
 		harness.runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = OUTPUT_DIMENSIONS)
@@ -137,14 +100,14 @@ class FgPresentLifetimeTest {
 
 	@Test
 	fun `the input-processing wait blocks until the semaphore reaches the reported value`() {
-		// The wait's value semantics are native behaviour no mock can reach, so the proof runs
+		// The wait's value semantics are native behavior no mock can reach, so the test runs
 		// the real bridge against a real headless Vulkan device and a real timeline semaphore:
 		// the wait is asked for a value the semaphore has not reached, and must stay blocked
 		// while the semaphore is below it - including after a lower signal - and complete only
 		// once the semaphore reaches the reported value. A wait that ignored the reported
 		// value (waiting for zero, say) or treated the semaphore as a VkFence - which
 		// vkWaitForFences cannot wait on - would answer the first probe immediately and fail
-		// the proof.
+		// the test.
 		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			HeadlessVulkanFixture().use { fixture ->
 				val device = fixture.deviceAddress()
@@ -205,7 +168,7 @@ class FgPresentLifetimeTest {
 	 * evaluation over the same adapter.
 	 */
 	private fun harness(
-		calls: RecordingNative,
+		calls: RecordingNativeApi,
 		policy: FgSurfacePolicy,
 	): Harness {
 		val session = DlssSession(
@@ -231,11 +194,11 @@ class FgPresentLifetimeTest {
 			0,
 			0,
 			0,
-			Supplier {
+			{
 				counters.buffers++
 				fakeCommandBuffer()
 			},
-			Consumer { counters.submits++ },
+			{ counters.submits++ },
 		)
 		val evaluation = FrameEvaluation(
 			adapter,
@@ -246,7 +209,7 @@ class FgPresentLifetimeTest {
 		val runtime = RenderRuntime(
 			session = session,
 			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
+				allocate = { width, height -> HeadlessRenderTarget(width, height) },
 				release = {},
 			),
 			startup = { RENDER_DIMENSIONS },
@@ -358,9 +321,9 @@ class FgPresentLifetimeTest {
 	 * assertable off the render thread; everything else is the lifecycle [LifecycleAdapter]
 	 * drives to READY.
 	 */
-	private class RecordingNative(
+	private class RecordingNativeApi(
 		private val waitResult: Int = NativeApi.SUCCESS_RESULT,
-	) : NativeApi {
+	) : NativeApiTestDouble() {
 		val order = mutableListOf<String>()
 		var waits = 0
 
@@ -375,7 +338,7 @@ class FgPresentLifetimeTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			RENDER_DIMENSIONS
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -406,12 +369,12 @@ class FgPresentLifetimeTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun tagFgResources(request: FgTagRequest): Int {
+		override fun tagFrameGenerationResources(request: FgTagRequest): Int {
 			order += "fgTag"
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun presentHandoff(): Int {
+		override fun recordPresentHandoff(): Int {
 			order += "handoff"
 			return NativeApi.SUCCESS_RESULT
 		}
@@ -436,14 +399,13 @@ class FgPresentLifetimeTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun evaluate(request: EvaluationRequest): Int {
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			order += "evaluate"
 			return NativeApi.SUCCESS_RESULT
 		}
 	}
 
-	/** Render target with no GPU buffers, so the runtime is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height

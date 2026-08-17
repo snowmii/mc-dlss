@@ -2,6 +2,7 @@ package me.snowmii.dlss.fg
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
@@ -28,11 +29,11 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * M-9 slice rung: the DLSS-G frame resources tag through the native/Kotlin ABI seam, the
+ * Verifies DLSS-G frame-resource tagging through the native/Kotlin ABI seam, the
  * adapter gates them on READY, and failures latch.
  *
- * The live scenario drives the seam itself, mirroring the SR tag rung: a fresh fork's module
- * has no Streamline session, so [NativeApi.tagFgResources] must answer FAIL_NotInitialized
+ * The live scenario drives the seam itself, mirroring the SR tag test: a fresh fork's module
+ * has no Streamline session, so [NativeApi.tagFrameGenerationResources] must answer FAIL_NotInitialized
  * before bootstrap; a ready session refuses malformed inputs with FAIL_InvalidParameter; and
  * once the session is ready, dimensions/options are stored, the FG options have recorded, and
  * the module's images are acquired, the call records the frame's four DLSS-G tags - depth,
@@ -40,16 +41,14 @@ import org.lwjgl.vulkan.VK10
  * retained frame token, and that buffer must submit clean under the Khronos validation layer.
  * A second tag on the same frame reuses the retained token and must also succeed.
  *
- * The refused-input cases pin the rung's lifecycle order, not just its shape: a fully-formed
+ * The refused-input cases pin lifecycle order, not just shape: a fully-formed
  * request before the FG options recorded, and again before the module's images were
  * acquired, must both answer FAIL_InvalidParameter (the call refuses a partial tag set rather
  * than submitting one), and each image's format is checked against the formats the FG options
  * recorded - depth must be D32_SFLOAT, HUD-less and UI R8G8B8A8_UNORM.
  *
- * The whole scenario runs in ONE test method (and therefore one test fork) like the M-3 SR
- * rungs and the M-9 options rung: the close-path slShutdown is what makes the fork's exit
- * clean, and a fork that followed an unclean exit comes up with the plugin manager already
- * initialized.
+ * The device-backed scenario stays in one test method so shutdown runs while the fixture
+ * device is alive and the fork exits cleanly.
  */
 @NativeBridge
 class FgResourceTaggingTest {
@@ -64,7 +63,7 @@ class FgResourceTaggingTest {
 		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				FAIL_NOT_INITIALIZED,
-				bridge.tagFgResources(FgTagRequest(
+				bridge.tagFrameGenerationResources(FgTagRequest(
 					0,
 					ImageBinding(0, 0, 0),
 					ImageBinding(0, 0, 0),
@@ -117,7 +116,7 @@ class FgResourceTaggingTest {
 				// is recorded.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.tagFgResources(FgTagRequest(
+					bridge.tagFrameGenerationResources(FgTagRequest(
 						0,
 						ImageBinding(0, 0, 0),
 						ImageBinding(0, 0, 0),
@@ -127,7 +126,7 @@ class FgResourceTaggingTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							1L,
 							ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
@@ -142,7 +141,7 @@ class FgResourceTaggingTest {
 				// frame's four tags never submit as a partial set.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.tagFgResources(validTagRequest()),
+					bridge.tagFrameGenerationResources(validTagRequest()),
 					"a tag before the FG options recorded must answer FAIL_InvalidParameter",
 				)
 
@@ -158,7 +157,7 @@ class FgResourceTaggingTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -180,7 +179,7 @@ class FgResourceTaggingTest {
 				// at the configured size, so the four-tag set still cannot submit.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.tagFgResources(validTagRequest()),
+					bridge.tagFrameGenerationResources(validTagRequest()),
 					"a tag before the module's images were acquired must answer FAIL_InvalidParameter",
 				)
 				// initialize records the activated tuple (arming the bridge's close path to
@@ -207,7 +206,7 @@ class FgResourceTaggingTest {
 				// valid handles and a valid lifecycle.
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							1L,
 							ImageBinding(301L, 302L, VK10.VK_FORMAT_R8G8B8A8_UNORM),
@@ -220,7 +219,7 @@ class FgResourceTaggingTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							1L,
 							ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
@@ -233,7 +232,7 @@ class FgResourceTaggingTest {
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							1L,
 							ImageBinding(301L, 302L, VK10.VK_FORMAT_D32_SFLOAT),
@@ -284,12 +283,12 @@ class FgResourceTaggingTest {
 				val frame = fixture.allocateAndBeginCommandBuffer()
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(FgTagRequest(frame.address(), tagRequest.depth, tagRequest.hudless, tagRequest.ui)),
+					bridge.tagFrameGenerationResources(FgTagRequest(frame.address(), tagRequest.depth, tagRequest.hudless, tagRequest.ui)),
 					"the frame's DLSS-G resources must tag on the caller's command buffer",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(FgTagRequest(frame.address(), tagRequest.depth, tagRequest.hudless, tagRequest.ui)),
+					bridge.tagFrameGenerationResources(FgTagRequest(frame.address(), tagRequest.depth, tagRequest.hudless, tagRequest.ui)),
 					"a repeated tag for the same frame must reuse the retained frame token",
 				)
 				fixture.endSubmitAndWait(frame)
@@ -332,13 +331,13 @@ class FgResourceTaggingTest {
 	}
 
 	/**
-	 * Asserts the rung's validation oracle was actually running, then that the Khronos
+	 * Asserts that the validation oracle was actually running, then that the Khronos
 	 * validation layer reported no errors naming any of the frame's four tagged images.
 	 *
 	 * Validation is the only oracle for image layouts: a declared state that disagreed with
 	 * the images' actual layout is undefined behaviour to the driver and silent without it,
 	 * so a session whose layer could not be enabled has no evidence worth asserting on and
-	 * the rung FAILS rather than silently skipping the clean check.
+	 * the test fails rather than silently skipping the clean check.
 	 */
 	private fun assertFgTagValidationClean(
 		fixture: HeadlessVulkanFixture,
@@ -349,7 +348,7 @@ class FgResourceTaggingTest {
 	) {
 		assertTrue(
 			fixture.validationEnabled(),
-			"the rung needs the Khronos validation layer (VK_LAYER_KHRONOS_validation " +
+			"this test needs the Khronos validation layer (VK_LAYER_KHRONOS_validation " +
 				"plus VK_EXT_debug_utils); without it the clean-frame assertion is worthless",
 		)
 		val errors = fixture.validationErrorsAbout(
@@ -410,12 +409,12 @@ class FgResourceTaggingTest {
 	 * Records the FG-tag seam and answers the three calls [LifecycleAdapter.initialize]
 	 * drives; everything else is a call this test never makes.
 	 */
-	private class FakeNative : NativeApi {
+	private class FakeNative : NativeApiTestDouble() {
 		var tagFgResourcesResult = NativeApi.SUCCESS_RESULT
 		var tagFgResourcesCalls = 0
 		val tagFgResourcesRequests = mutableListOf<FgTagRequest>()
 
-		override fun tagFgResources(request: FgTagRequest): Int {
+		override fun tagFrameGenerationResources(request: FgTagRequest): Int {
 			tagFgResourcesCalls++
 			tagFgResourcesRequests += request
 			return tagFgResourcesResult
@@ -432,7 +431,7 @@ class FgResourceTaggingTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -444,10 +443,10 @@ class FgResourceTaggingTest {
 		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
-		override fun frameTimings(): FrameTimings? = error("unexpected frameTimings")
+		override fun frameTimings(): FrameTimings = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
-		override fun evaluate(request: EvaluationRequest): Int = error("unexpected evaluate")
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = error("unexpected evaluate")
 	}
 
 	private companion object {

@@ -1,8 +1,8 @@
 package me.snowmii.dlss.bridge
-import java.util.function.Consumer;
-import java.util.function.Supplier;
-import me.snowmii.streamline.VulkanContext;
-import me.snowmii.streamline.VulkanContextRegistry;
+import java.util.function.Consumer
+import java.util.function.Supplier
+import me.snowmii.streamline.VulkanContext
+import me.snowmii.streamline.VulkanContextRegistry
 
 import me.snowmii.dlss.NativeBridge
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -12,12 +12,12 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * M-7 rung: proves [VulkanContext] captures a real, non-zero Vulkan instance,
+ * Proves [VulkanContext] captures a real, non-zero Vulkan instance,
  * device, and graphics-queue from live handles and produces a non-zero recording
  * [org.lwjgl.vulkan.VkCommandBuffer] through its injected command-buffer source.
  *
  * The test drives the exact production seams ([VulkanContext.fromNativeHandles],
- * [VulkanContext.recordCommandBuffer], [VulkanContextRegistry]) against a headless
+ * [VulkanContext.allocateRecordingCommandBuffer], [VulkanContextRegistry]) against a headless
  * Vulkan context it builds itself - no Minecraft instance, device, or window needed.
  */
 @NativeBridge
@@ -35,8 +35,8 @@ class VulkanContextAccessTest {
 				0,
 				0,
 				0,
-				Supplier { fixture.allocateAndBeginCommandBuffer() },
-				Consumer { },
+				{ fixture.allocateAndBeginCommandBuffer() },
+				{ },
 			)
 
 			// Handles present and are the real headless context's handles.
@@ -50,11 +50,11 @@ class VulkanContextAccessTest {
 			assertEquals(fixture.queueAddress(), context.graphicsQueueHandle)
 
 			// The recording command buffer is a real, non-zero VkCommandBuffer.
-			val first = context.recordCommandBuffer()
+			val first = context.allocateRecordingCommandBuffer()
 			assertTrue(first.address() != 0L, "recorded command buffer must be non-zero")
 
 			// A second recording also succeeds and yields a distinct buffer.
-			val second = context.recordCommandBuffer()
+			val second = context.allocateRecordingCommandBuffer()
 			assertTrue(second.address() != 0L, "second recorded command buffer must be non-zero")
 			assertNotEquals(first.address(), second.address(), "each recording must be a fresh command buffer")
 

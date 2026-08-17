@@ -1,6 +1,7 @@
 package me.snowmii.dlss.fg
 
 import java.nio.file.Path
+import me.snowmii.streamline.NativeApiTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
@@ -38,7 +39,7 @@ import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.dlss.NativeBridge
 
 /**
- * M-12 Reflex-marker rung: each READY frame emits ordered simulation and render-submit
+ * Reflex-marker behavior: each READY frame emits ordered simulation and render-submit
  * markers through one retained Streamline frame token shared with the frame's SR/FG tags,
  * common constants, and present markers; the input seam obtains that token and runs the
  * unconditional slReflexSleep; refused sessions emit none.
@@ -60,7 +61,7 @@ import me.snowmii.dlss.NativeBridge
  * `ePCLatencyPing` is deliberately absent: the PCL guide requires it only in response to
  * `PclState::statsWindowMessage`. Emitting one every frame corrupts PC-latency statistics.
  *
- * Like the other live FG rungs, the whole live scenario runs in ONE test method (and
+ * Like the other live FG tests, the whole live scenario runs in ONE test method (and
  * therefore one test fork): the close-path slShutdown is what makes the fork's exit clean,
  * and a fork that followed an unclean exit comes up with the plugin manager already
  * initialized.
@@ -159,7 +160,7 @@ class ReflexMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(outputWidth, outputHeight, dimensions.width, dimensions.height, 2, 11),
+					bridge.configureSuperResolution(outputWidth, outputHeight, dimensions.width, dimensions.height, 2, 11),
 					"configure must record the SR options for the stored configuration",
 				)
 				assertEquals(
@@ -287,7 +288,7 @@ class ReflexMarkersTest {
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END))
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
@@ -310,13 +311,13 @@ class ReflexMarkersTest {
 				)
 				val firstIndexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					firstIndexes.srFrameIndex,
-					firstIndexes.fgFrameIndex,
+					firstIndexes.lastSrTagFrameIndex,
+					firstIndexes.lastFgTagFrameIndex,
 					"the SR and FG tags of one frame must record under the same Streamline frame index",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.evaluate(
+					bridge.evaluateSuperResolution(
 						EvaluationRequest.builder()
 							.commandBuffer(frame.address())
 							.color(ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM))
@@ -332,7 +333,7 @@ class ReflexMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
@@ -344,7 +345,7 @@ class ReflexMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the complete equal-index tag set must arm the present bracket once",
 				)
 				// The render-submit bracket fires around the actual command submission,
@@ -360,29 +361,29 @@ class ReflexMarkersTest {
 				val firstMarkers = bridge.reflexMarkers()
 				assertArrayEquals(
 					intArrayOf(0, 1, 1, 1, 1),
-					firstMarkers.typeCounts,
+					firstMarkers.typeCounts(),
 					"the first READY frame must emit frame markers but no unsolicited latency ping",
 				)
-				assertEquals(4, firstMarkers.eventCount, "one frame must emit exactly four reflex marker events")
+				assertEquals(4, firstMarkers.eventCount(), "one frame must emit exactly four reflex marker events")
 				assertEquals(
 					listOf(
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_START, firstIndexes.srFrameIndex),
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_END, firstIndexes.srFrameIndex),
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START, firstIndexes.srFrameIndex),
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END, firstIndexes.srFrameIndex),
+						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_START, firstIndexes.lastSrTagFrameIndex),
+						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_END, firstIndexes.lastSrTagFrameIndex),
+						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START, firstIndexes.lastSrTagFrameIndex),
+						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END, firstIndexes.lastSrTagFrameIndex),
 					),
-					firstMarkers.events,
+					firstMarkers.events(),
 					"one frame must emit SIMULATION_START then SIMULATION_END then " +
 						"RENDER_SUBMIT_START then RENDER_SUBMIT_END under the frame's index",
 				)
 				// The present bracket of the same frame shares the same retained token: the
-				// M-11 oracle proves the frame's present markers correlate with the tags and
+				// The present-marker oracle proves the frame's present markers correlate with the tags and
 				// constants, and their index must equal the reflex markers' index - the whole
 				// marker surface runs on one frame identity.
 				assertEquals(
 					listOf(
-						PresentMarkerEvent(PresentMarkerType.PRESENT_START, firstIndexes.srFrameIndex),
-						PresentMarkerEvent(PresentMarkerType.PRESENT_END, firstIndexes.srFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_START, firstIndexes.lastSrTagFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_END, firstIndexes.lastSrTagFrameIndex),
 					),
 					bridge.presentMarkers().events,
 					"the frame's present markers must close under the same frame index as its reflex markers",
@@ -414,7 +415,7 @@ class ReflexMarkersTest {
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END))
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
@@ -437,13 +438,13 @@ class ReflexMarkersTest {
 				)
 				val secondIndexes = bridge.taggedFrameIndexes()
 				assertTrue(
-					secondIndexes.srFrameIndex != firstIndexes.srFrameIndex,
+					secondIndexes.lastSrTagFrameIndex != firstIndexes.lastSrTagFrameIndex,
 					"each frame's input sample must advance the frame identity, got " +
-						"${firstIndexes.srFrameIndex} again",
+						"${firstIndexes.lastSrTagFrameIndex} again",
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.evaluate(
+					bridge.evaluateSuperResolution(
 						EvaluationRequest.builder()
 							.commandBuffer(frame.address())
 							.color(ImageBinding(color.view(), color.image(), VK10.VK_FORMAT_R8G8B8A8_UNORM))
@@ -459,7 +460,7 @@ class ReflexMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
@@ -471,7 +472,7 @@ class ReflexMarkersTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the second frame's complete tag set must arm once",
 				)
 				assertEquals(NativeApi.SUCCESS_RESULT, bridge.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START))
@@ -482,24 +483,24 @@ class ReflexMarkersTest {
 				val secondMarkers = bridge.reflexMarkers()
 				assertArrayEquals(
 					intArrayOf(0, 2, 2, 2, 2),
-					secondMarkers.typeCounts,
+					secondMarkers.typeCounts(),
 					"the second READY frame must emit one more frame marker pair without a latency ping",
 				)
-				assertEquals(8, secondMarkers.eventCount, "two frames must emit exactly eight reflex marker events")
+				assertEquals(8, secondMarkers.eventCount(), "two frames must emit exactly eight reflex marker events")
 				assertEquals(
-					firstMarkers.events + listOf(
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_START, secondIndexes.srFrameIndex),
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_END, secondIndexes.srFrameIndex),
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START, secondIndexes.srFrameIndex),
-						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END, secondIndexes.srFrameIndex),
+					firstMarkers.events() + listOf(
+						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_START, secondIndexes.lastSrTagFrameIndex),
+						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.SIMULATION_END, secondIndexes.lastSrTagFrameIndex),
+						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START, secondIndexes.lastSrTagFrameIndex),
+						NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END, secondIndexes.lastSrTagFrameIndex),
 					),
-					secondMarkers.events,
+					secondMarkers.events(),
 					"each frame's four markers must bracket under their own frame index, in order",
 				)
 				assertEquals(
 					listOf(
-						PresentMarkerEvent(PresentMarkerType.PRESENT_START, secondIndexes.srFrameIndex),
-						PresentMarkerEvent(PresentMarkerType.PRESENT_END, secondIndexes.srFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_START, secondIndexes.lastSrTagFrameIndex),
+						PresentMarkerEvent(PresentMarkerType.PRESENT_END, secondIndexes.lastSrTagFrameIndex),
 					),
 					bridge.presentMarkers().events.takeLast(2),
 					"the second frame's present markers must close under its own frame index",
@@ -513,7 +514,7 @@ class ReflexMarkersTest {
 				// must keep answering exactly the events that reached the plugin.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.reset(),
+					bridge.resetSuperResolutionHistory(),
 					"reset must drop the module's per-frame records",
 				)
 				assertEquals(
@@ -532,7 +533,7 @@ class ReflexMarkersTest {
 
 	@Test
 	fun `the adapter gates the marker surface on READY and never latches a failed marker call`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val session = session()
 		val adapter = LifecycleAdapter(session, calls)
 		// Not READY yet: every marker is refused before it reaches the native side.
@@ -573,7 +574,7 @@ class ReflexMarkersTest {
 
 	@Test
 	fun `the world phase delegates the marker surface through the evaluation to the adapter in production order`() {
-		val calls = RecordingNative()
+		val calls = RecordingNativeApi()
 		val session = session()
 		val adapter = LifecycleAdapter(session, calls)
 		adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data"))
@@ -585,7 +586,7 @@ class ReflexMarkersTest {
 			runtime = me.snowmii.dlss.render.RenderRuntime(
 				session = session,
 				sceneTarget = me.snowmii.dlss.render.SceneTarget(
-					allocate = { width, height -> FakeTarget(width, height) },
+					allocate = { width, height -> HeadlessRenderTarget(width, height) },
 					release = {},
 				),
 				startup = { render },
@@ -609,7 +610,7 @@ class ReflexMarkersTest {
 
 	/**
 	 * Answers the oracle when it has events to report, or null when it refuses with
-	 * FAIL_NotInitialized - the state every pre-ready and refused checkpoint asserts.
+	 * FAIL_NotInitialized - the state every pre-ready and refused state asserts.
 	 */
 	private fun Native.reflexMarkersOrNull(): NativeApi.ReflexMarkerEvents? = try {
 		reflexMarkers()
@@ -670,7 +671,7 @@ class ReflexMarkersTest {
 	 * Records every reflex marker call in order so the delegation chain is assertable off the
 	 * render thread; everything else the lifecycle needs answers success.
 	 */
-	private class RecordingNative : NativeApi {
+	private class RecordingNativeApi : NativeApiTestDouble() {
 		val reflexCalls = mutableListOf<String>()
 		var failReflex = false
 
@@ -685,7 +686,7 @@ class ReflexMarkersTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			Dimensions(1707, 960)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -709,7 +710,7 @@ class ReflexMarkersTest {
 
 		override fun presentOutput(target: PresentTarget): Int = NativeApi.SUCCESS_RESULT
 
-		override fun evaluate(request: EvaluationRequest): Int = NativeApi.SUCCESS_RESULT
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = NativeApi.SUCCESS_RESULT
 
 		override fun reflexInputSample(): Int {
 			reflexCalls += "inputSample"
@@ -728,8 +729,7 @@ class ReflexMarkersTest {
 		}
 	}
 
-	/** Render target with no GPU buffers, so the phase is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height

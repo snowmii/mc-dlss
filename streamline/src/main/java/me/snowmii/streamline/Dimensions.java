@@ -1,5 +1,7 @@
 package me.snowmii.streamline;
 
+import org.jetbrains.annotations.NotNull;
+
 /**
  * A pixel size, in the units the flat native ABI takes them.
  *
@@ -10,9 +12,7 @@ package me.snowmii.streamline;
  * in it without the lowest layer of the mod having to import the higher ones.
  */
 public record Dimensions(
-	/** Width in pixels. */
 	int width,
-	/** Height in pixels. */
 	int height
 ) {
 	public Dimensions {
@@ -25,6 +25,7 @@ public record Dimensions(
 	}
 
 	/** One compact field for a diagnostic line, {@code width}x{@code height}. */
+	@NotNull
 	@Override
 	public String toString() {
 		return width + "x" + height;

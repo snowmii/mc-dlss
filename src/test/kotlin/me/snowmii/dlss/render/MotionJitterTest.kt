@@ -1,5 +1,5 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.nativeSource
+import me.snowmii.dlss.readNativeSource
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test
 import kotlin.math.abs
 
 /**
- * M-9's rung: camera-only motion, reversed-Z depth semantics, and deterministic jitter are
+ * Verifies that camera-only motion, reversed-Z depth semantics, and deterministic jitter are
  * produced coherently for world rendering and for NGX.
  *
  * The two halves have to agree or DLSS collapses silently. The world is rendered through a
@@ -31,7 +31,7 @@ import kotlin.math.abs
  *
  * The projection is built the way Minecraft 26.2 builds the world projection: `Projection.getMatrix`
  * passes `near = zFar, far = zNear` into JOML with zero-to-one depth, which is what makes the
- * effort's depth reversed.
+ * the projection's depth is reversed.
  */
 class MotionJitterTest {
 	private val output = Dimensions(2560, 1440)
@@ -214,7 +214,7 @@ class MotionJitterTest {
 
 	@Test
 	fun `Streamline converts NDC motion to pixels once`() {
-		val source = nativeSource("internal/sl_dlss.cpp")
+		val source = readNativeSource("internal/sl_dlss.cpp")
 
 		// Streamline multiplies this normalized scale by render width/height before handing it
 		// to NGX. NDC spans two units edge-to-edge, so half converts NDC displacement to pixels.
@@ -299,7 +299,7 @@ class MotionJitterTest {
 	fun `a frame abandoned before it rendered leaves no camera for the next frame to measure from`() {
 		val runtime = readyRuntime()
 		val phase = WorldPhase(runtime = runtime, present = { _, _ -> }, onWorldTargetChanged = {})
-		val mainTarget = FakeTarget(output.width, output.height)
+		val mainTarget = HeadlessRenderTarget(output.width, output.height)
 
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample())
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
@@ -370,7 +370,7 @@ class MotionJitterTest {
 		return RenderRuntime(
 			session = session,
 			sceneTarget = SceneTarget(
-				allocate = { width, height -> FakeTarget(width, height) },
+				allocate = { width, height -> HeadlessRenderTarget(width, height) },
 				release = {},
 			),
 			startup = {
@@ -384,8 +384,7 @@ class MotionJitterTest {
 		)
 	}
 
-	/** Render target with no GPU buffers, so the runtime is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height

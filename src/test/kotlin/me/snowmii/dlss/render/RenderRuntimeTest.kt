@@ -25,8 +25,8 @@ class RenderRuntimeTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1707, 960)
 
-	private val allocated = mutableListOf<FakeTarget>()
-	private val released = mutableListOf<FakeTarget>()
+	private val allocated = mutableListOf<HeadlessRenderTarget>()
+	private val released = mutableListOf<HeadlessRenderTarget>()
 
 	/** Ordered record of every device stall and every GPU-object free: "quiesce" then "free:target". */
 	private val freeLog = mutableListOf<String>()
@@ -44,11 +44,11 @@ class RenderRuntimeTest {
 		assertSame(first, second)
 		assertEquals(1, startupCalls)
 		assertEquals(1, allocated.size)
-		assertEquals(render, runtime.renderDimensions)
+		assertEquals(render, runtime.dlssRenderDimensions)
 		assertEquals(render.width, first!!.width)
 		assertEquals(render.height, first.height)
-		assertEquals(DlssFrameRoute.DLSS, runtime.activeRoute!!.frame.route)
-		assertSame(second, runtime.activeWorldTarget)
+		assertEquals(DlssFrameRoute.DLSS, runtime.worldTargetRoute!!.frame.route)
+		assertSame(second, runtime.worldRenderTarget)
 	}
 
 	@Test
@@ -59,8 +59,8 @@ class RenderRuntimeTest {
 		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
 		runtime.endWorldPhase()
 
-		assertNull(runtime.activeWorldTarget)
-		assertNull(runtime.activeRoute)
+		assertNull(runtime.worldRenderTarget)
+		assertNull(runtime.worldTargetRoute)
 		assertTrue(released.isEmpty())
 	}
 
@@ -74,9 +74,9 @@ class RenderRuntimeTest {
 		val vanilla = runtime.beginWorldPhase(normalInWorldFrame = false, outputDimensions = output)
 
 		assertNull(vanilla)
-		assertNull(runtime.activeWorldTarget)
-		assertEquals(DlssFrameRoute.VANILLA, runtime.activeRoute!!.frame.route)
-		assertEquals(output, runtime.activeRoute!!.worldDimensions)
+		assertNull(runtime.worldRenderTarget)
+		assertEquals(DlssFrameRoute.VANILLA, runtime.worldTargetRoute!!.frame.route)
+		assertEquals(output, runtime.worldTargetRoute!!.worldDimensions)
 		assertEquals(listOf(held), released)
 	}
 
@@ -95,7 +95,7 @@ class RenderRuntimeTest {
 		assertNull(second)
 		assertEquals(1, startupCalls)
 		assertTrue(allocated.isEmpty())
-		assertNull(runtime.renderDimensions)
+		assertNull(runtime.dlssRenderDimensions)
 		assertEquals(DlssSessionState.FALLBACK_LATCHED, session.state)
 	}
 
@@ -107,7 +107,7 @@ class RenderRuntimeTest {
 		val target = runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
 
 		assertNull(target)
-		assertNull(runtime.renderDimensions)
+		assertNull(runtime.dlssRenderDimensions)
 		assertTrue(allocated.isEmpty())
 	}
 
@@ -162,7 +162,7 @@ class RenderRuntimeTest {
 		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output)
 		runtime.endWorldPhase()
 
-		runtime.setEnabled(false)
+		runtime.setDlssEnabled(false)
 
 		assertTrue(released.isNotEmpty(), "the toggle must release the held target")
 		assertEquals(listOf("quiesce", "free:target"), freeLog)
@@ -202,17 +202,17 @@ class RenderRuntimeTest {
 		runtime.close()
 
 		assertEquals(listOf(held), released)
-		assertNull(runtime.activeWorldTarget)
-		assertNull(runtime.renderDimensions)
+		assertNull(runtime.worldRenderTarget)
+		assertNull(runtime.dlssRenderDimensions)
 		assertEquals(DlssSessionState.CLOSED, session.state)
 	}
 
 	private fun runtime(session: DlssSession, startup: () -> Dimensions?) = RenderRuntime(
 		session = session,
 		sceneTarget = SceneTarget(
-			allocate = { width, height -> FakeTarget(width, height).also(allocated::add) },
+			allocate = { width, height -> HeadlessRenderTarget(width, height).also(allocated::add) },
 			release = {
-				released += it as FakeTarget
+				released += it as HeadlessRenderTarget
 				freeLog += "free:target"
 			},
 		),
@@ -244,8 +244,7 @@ class RenderRuntimeTest {
 		),
 	)
 
-	/** Render target with no GPU buffers, so runtime lifetime is testable off the render thread. */
-	private class FakeTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
 		init {
 			this.width = width
 			this.height = height

@@ -411,12 +411,12 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
         // previous one: the FG tag refuses to run until mc_dlss_configure_fg re-records them
         // for the new dimensions, so a tag can never name resources the recorded options do
         // not describe.
-        g_state.fgOptionsRecorded = false;
+        g_state.fgOptions.recorded = false;
         // The frame eligibility belongs to the configuration too: a tag set recorded under
         // the replaced configuration - and the retained token of the frame it was tagged
         // under - must not satisfy a handoff for frames recorded under the new one, so the
         // records and the token clear with the options.
-        invalidate_frame_eligibility();
+        g_state.frameEligibility.invalidate();
         // The SL session gate lives inside record_sr_options: configuring against a bootstrap
         // without a recorded device stores nothing the recording calls could use and answers
         // FAIL_NotInitialized, exactly where the retired direct-NGX ready gate used to sit.
@@ -501,7 +501,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_release_images(void) {
         // A handoff reads the frame's tags against the module's images; with the images
         // gone, those tag records name resources that no longer exist, so the eligibility
         // they armed clears with them rather than surviving a later re-acquire.
-        invalidate_frame_eligibility();
+        g_state.frameEligibility.invalidate();
         return kSuccess;
     } catch (...) {
         return kFailure;
@@ -575,11 +575,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_tagged_frame_indexes(
         }
         // Equality of two never-recorded slots is meaningless, so the query refuses until
         // both tag calls have actually recorded an index.
-        if (!g_state.srTagFrameIndexRecorded || !g_state.fgTagFrameIndexRecorded) {
+        if (!g_state.frameEligibility.tagIndexes(sr_frame_index, fg_frame_index)) {
             return kNotInitialized;
         }
-        *sr_frame_index = g_state.lastSrTagFrameIndex;
-        *fg_frame_index = g_state.lastFgTagFrameIndex;
         return kSuccess;
     } catch (...) {
         return kFailure;
@@ -988,7 +986,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
         // they go with them: the next tag must obtain a fresh token, and a handoff must not
         // accept a tag set recorded before the reset once the images re-acquire.
         release_images();
-        invalidate_frame_eligibility();
+        g_state.frameEligibility.invalidate();
         return kSuccess;
     } catch (...) {
         return kFailure;

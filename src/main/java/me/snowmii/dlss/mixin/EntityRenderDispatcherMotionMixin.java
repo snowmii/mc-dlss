@@ -36,7 +36,7 @@ public class EntityRenderDispatcherMotionMixin {
 		final EntityRenderer renderer,
 		final EntityRenderState state,
 		final PoseStack poseStack,
-		final SubmitNodeCollector output,
+		final SubmitNodeCollector submitNodeCollector,
 		final CameraRenderState camera,
 		final Operation<Void> original
 	) {
@@ -44,7 +44,7 @@ public class EntityRenderDispatcherMotionMixin {
 		final Integer entityId = phase != null && phase.getEntityVelocityActive() ? phase.entityId(state) : null;
 		EntityVelocityWriterBindings.beginEntity(entityId);
 		try {
-			original.call(renderer, state, poseStack, output, camera);
+			original.call(renderer, state, poseStack, submitNodeCollector, camera);
 		} finally {
 			EntityVelocityWriterBindings.endEntity();
 		}

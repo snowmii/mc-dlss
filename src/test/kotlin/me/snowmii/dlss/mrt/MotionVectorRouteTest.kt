@@ -1,45 +1,22 @@
 package me.snowmii.dlss.mrt
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
-import java.nio.file.Path
-import kotlin.io.path.readText
-import me.snowmii.dlss.nativeSource
-import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.EvaluationImages
-import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.FillVelocityRequest
-import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.PresentTarget
-import me.snowmii.streamline.SrTagRequest
-import me.snowmii.streamline.VulkanContext
-import me.snowmii.dlss.render.DlssCameraSample
-import me.snowmii.dlss.render.DlssFrameMotion
-import me.snowmii.dlss.render.DlssJitter
-import me.snowmii.dlss.render.DlssJitterOffset
-import me.snowmii.dlss.render.FrameEvaluation
-import me.snowmii.dlss.render.RenderRuntime
-import me.snowmii.dlss.render.SceneResources
-import me.snowmii.dlss.render.WorldPhase
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.LifecycleAdapter
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.textures.GpuTextureView
+import me.snowmii.dlss.readNativeSource
+import me.snowmii.dlss.render.*
+import me.snowmii.dlss.session.DlssSession
+import me.snowmii.dlss.session.LifecycleAdapter
+import me.snowmii.streamline.*
 import org.joml.Matrix4f
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.lwjgl.vulkan.VkCommandBuffer
+import java.nio.file.Path
+import kotlin.io.path.readText
 
 /**
- * The M-6 route gate: the velocity-MRT frame merges the scene's RG16_FLOAT velocity companion
+ * The velocity-route gate: the velocity-MRT frame merges the scene's RG16_FLOAT velocity companion
  * into the native motion image through the sentinel fill, and tags only that image, while the
  * camera-only frame preserves the existing compute writer and the native motion image path
  * byte for byte.
@@ -53,7 +30,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  * module's motion image as the motion-vector buffer.
  *
  * The whole test is pure JVM: the frame path runs against a recording [NativeApi] fake and the
- * native behaviour is pinned by source text, exactly like the other M-4/M-5 route tests. The
+ * native behaviour is pinned by source text, exactly like the other route tests. The
  * live Streamline tests stay on the camera-only default, so nothing here changes what they
  * exercise.
  */
@@ -63,7 +40,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `the velocity route fills before tagging and tags only the native motion image`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 		val velocity = ImageBinding(11L, 12L, 124)
 
@@ -88,7 +65,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `the camera-only route keeps the compute writer and the native motion image path`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		// The default route and absent velocity are exactly what the live Streamline tests and
@@ -103,7 +80,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `a stray velocity on the camera-only route cannot trigger the fill`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		// WorldPhase never produces this shape, but a caller that does must not move the
@@ -124,7 +101,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `the velocity route without a velocity companion is not evaluated`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		// A velocity-route frame with no motion source at all must skip rather than hand DLSS
@@ -152,7 +129,7 @@ class MotionVectorRouteTest {
 		val (route, view) = checkNotNull(handed) { "an eligible frame must reach the evaluation" }
 		assertEquals(MotionVectorRoute.VELOCITY_MRT, route)
 		assertNotNull(view, "the velocity route must hand the scene velocity companion")
-		assertEquals(GpuFormat.RG16_FLOAT, view!!.texture().getFormat())
+		assertEquals(GpuFormat.RG16_FLOAT, view!!.texture().format)
 	}
 
 	@Test
@@ -229,7 +206,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `the tag ABI carries no velocity and the native tag call always selects the module motion image`() {
-		val header = nativeSource("mc_dlss.h")
+		val header = readNativeSource("mc_dlss.h")
 		val tagStruct = header.substringAfter("typedef struct McDlssTagInfo {")
 			.substringBefore("} McDlssTagInfo;")
 		assertFalse(
@@ -244,7 +221,7 @@ class MotionVectorRouteTest {
 		assertTrue(java.contains("IMAGE_LAYOUT.withName(\"depth\")"), "the FFM tag layout must mirror the tag struct")
 		assertFalse(java.contains("TAG_VELOCITY_VIEW"), "the FFM tag layout must carry no velocity field")
 
-		val sl = nativeSource("internal/sl_dlss.cpp")
+		val sl = readNativeSource("internal/sl_dlss.cpp")
 		// The motion source is unconditional: the module's motion image is tagged as the
 		// motion-vector buffer on every route, and no companion resource is ever described.
 		assertTrue(sl.contains("kBufferTypeMotionVectors"))
@@ -254,7 +231,7 @@ class MotionVectorRouteTest {
 
 	@Test
 	fun `the camera-only route keeps opening the timing chain in the compute writer`() {
-		val calls = RecordingNative(RENDER_DIMENSIONS)
+		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
 		assertTrue(evaluation.evaluateFrame(scene(), jitter(), motion()))
@@ -267,7 +244,7 @@ class MotionVectorRouteTest {
 		// The writer keeps opening the chain and closing the motion stage, and the evaluate and
 		// present marks that complete the slot are unchanged: the repair must not move the
 		// camera-only timing path.
-		val api = nativeSource("mc_dlss_api.cpp")
+		val api = readNativeSource("mc_dlss_api.cpp")
 		val motion = api.substringAfter("mc_dlss_write_motion(").substringBefore("mc_dlss_evaluate")
 		assertTrue(motion.contains("begin_frame_timing"), "the camera-only writer must keep opening the chain")
 		assertTrue(motion.contains("mark_frame_timing(recordingBuffer, 1)"))
@@ -277,7 +254,7 @@ class MotionVectorRouteTest {
 		assertTrue(present.contains("mark_frame_timing(recordingBuffer, 3)"))
 	}
 
-	private fun evaluation(calls: RecordingNative): FrameEvaluation {
+	private fun evaluation(calls: RecordingNativeApi): FrameEvaluation {
 		val session = DlssSession(startupConfig())
 		val adapter = LifecycleAdapter(session, calls)
 		// The adapter stamps the configured render dimensions onto every request from its own
@@ -293,8 +270,8 @@ class MotionVectorRouteTest {
 			0,
 			0,
 			0,
-			Supplier { fakeCommandBuffer() },
-			Consumer { },
+			{ fakeCommandBuffer() },
+			{ },
 		)
 		return FrameEvaluation(adapter, { context })
 	}
@@ -341,9 +318,9 @@ class MotionVectorRouteTest {
 	private fun motion() = DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, true)
 
 	/** Records every per-frame native call so the route gate is assertable off the render thread. */
-	private class RecordingNative(
+	private class RecordingNativeApi(
 		private val renderDimensions: Dimensions,
-	) : NativeApi {
+	) : NativeApiTestDouble() {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
 		val tags = mutableListOf<SrTagRequest>()
@@ -362,7 +339,7 @@ class MotionVectorRouteTest {
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			Dimensions(renderDimensions.width, renderDimensions.height)
 
-		override fun configure(
+		override fun configureSuperResolution(
 			outputWidth: Int,
 			outputHeight: Int,
 			renderWidth: Int,
@@ -405,7 +382,7 @@ class MotionVectorRouteTest {
 			return NativeApi.SUCCESS_RESULT
 		}
 
-		override fun evaluate(request: EvaluationRequest): Int {
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			evaluations += request
 			order += "evaluate"
 			return NativeApi.SUCCESS_RESULT

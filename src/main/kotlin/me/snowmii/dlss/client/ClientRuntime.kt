@@ -71,21 +71,21 @@ object ClientRuntime : RenderLoopView, ActiveView {
 	private val LOGGER = LoggerFactory.getLogger(McDlss.MOD_ID)
 
 	@Volatile
-	private var phase: WorldPhase? = null
+	private var worldPhaseInstance: WorldPhase? = null
 
 	@Volatile
-	private var uiPhase: UiPhase? = null
+	private var uiPhaseInstance: UiPhase? = null
 
 	@Volatile
-	private var controls: RuntimeControls? = null
+	private var runtimeControls: RuntimeControls? = null
 
 	/**
 	 * The bridge the render loop opened, kept so shutdown can close it. Nothing else holds it:
 	 * the runtime only ever sees the [NativeApi] view.
 	 */
 	@Volatile
-	private var native: Native? = null
-	private var initialized = false
+	private var nativeBridge: Native? = null
+	private var initializationAttempted = false
 
 	/** The render-loop view: the only side that can build the DLSS path. */
 	@JvmStatic
@@ -95,11 +95,11 @@ object ClientRuntime : RenderLoopView, ActiveView {
 	@JvmStatic
 	fun active(): ActiveView = this
 
-	override fun activeWorldPhase(): WorldPhase? = phase
+	override fun activeWorldPhase(): WorldPhase? = worldPhaseInstance
 
-	override fun activeUiPhase(): UiPhase? = uiPhase
+	override fun activeUiPhase(): UiPhase? = uiPhaseInstance
 
-	override fun activeControls(): RuntimeControls? = controls
+	override fun activeControls(): RuntimeControls? = runtimeControls
 
 	/**
 	 * Resolves what `GameRenderer.mainRenderTarget()` must answer: the world phase's scene target
@@ -108,34 +108,34 @@ object ClientRuntime : RenderLoopView, ActiveView {
 	 * seam's precedence is verifiable off the render thread.
 	 */
 	@JvmStatic
-	fun resolveTargetOverride(worldOverride: RenderTarget?, uiOverride: RenderTarget?): RenderTarget? =
+	fun resolveActiveTarget(worldOverride: RenderTarget?, uiOverride: RenderTarget?): RenderTarget? =
 		worldOverride ?: uiOverride
 
 	override fun uiPhase(): UiPhase? {
-		if (!initialized) {
+		if (!initializationAttempted) {
 			// The world phase is the single initializer: the UI phase shares its session gating
 			// and native startup, and a frame's world phase always runs before its hand and GUI
 			// windows.
 			worldPhase()
 		}
-		return uiPhase
+		return uiPhaseInstance
 	}
 
 	override fun worldPhase(): WorldPhase? {
-		if (initialized) {
-			return phase
+		if (initializationAttempted) {
+			return worldPhaseInstance
 		}
 
-		initialized = true
+		initializationAttempted = true
 		val session = McDlss.session
 		if (!session.config.enabled) {
 			LOGGER.info("DLSS disabled by {}; every frame renders vanilla", ModConfig.ENABLED_PROPERTY)
 			return null
 		}
 
-		phase = try {
+		worldPhaseInstance = try {
 			val native = Native.open(ExtensionBootstrap.nativeLibrary())
-			this.native = native
+			this.nativeBridge = native
 			if (Platform.get() == Platform.WINDOWS) {
 				val hwnd = glfwGetWin32Window(Minecraft.getInstance().window.handle())
 				if (native.installPclWindow(hwnd) != NativeApi.SUCCESS_RESULT) {
@@ -143,14 +143,13 @@ object ClientRuntime : RenderLoopView, ActiveView {
 				}
 			}
 			val diagnostics: (String) -> Unit = { message -> LOGGER.info(message) }
-			// One reporter for the whole session: the readout owns every "log is the acceptance
-			// record" line, fed by the phase and by the evaluation's first record. It is built
-			// here, the composition root, and handed to both.
+			// One reporter for the session: both the phase and evaluation feed their lines through
+			// the readout created at this composition root.
 			val readout = SessionReadout.forMinecraft(diagnostics)
 			val runtime = RenderRuntime.forMinecraft(session, native, diagnostics, readout)
 			// The controls answer on the same sink the rest of the mod reports on as well as in
 			// chat, so a session witnessed live and a session read back from the log agree.
-			controls = RuntimeControls(runtime) { message ->
+			runtimeControls = RuntimeControls(runtime) { message ->
 				LOGGER.info(message)
 				ChatReadout.send(message)
 			}
@@ -162,8 +161,8 @@ object ClientRuntime : RenderLoopView, ActiveView {
 		}
 		// The UI phase rides the world phase's startup: an active mod owns both windows, and a
 		// mod that never built the world path routes no GUI either.
-		uiPhase = if (phase != null) UiPhase.forMinecraft() else null
-		return phase
+		uiPhaseInstance = if (worldPhaseInstance != null) UiPhase.forMinecraft() else null
+		return worldPhaseInstance
 	}
 
 	/**
@@ -182,16 +181,16 @@ object ClientRuntime : RenderLoopView, ActiveView {
 	 */
 	@JvmStatic
 	fun shutdown() {
-		val ui = uiPhase
-		val world = phase
-		val bridge = native
-		uiPhase = null
-		phase = null
-		controls = null
-		native = null
+		val ui = uiPhaseInstance
+		val world = worldPhaseInstance
+		val bridge = nativeBridge
+		uiPhaseInstance = null
+		worldPhaseInstance = null
+		runtimeControls = null
+		nativeBridge = null
 		// Left latched: the client is exiting, and a rebuild from a late render call would open
 		// the native bridge again against a device that is already going away.
-		initialized = true
+		initializationAttempted = true
 
 		close("UI phase", ui)
 		close("world phase", world)
@@ -209,5 +208,5 @@ object ClientRuntime : RenderLoopView, ActiveView {
 
 	/** Whether the render loop has built the DLSS path, used by the seam's own test. */
 	internal val isInitialized: Boolean
-		get() = initialized
+		get() = initializationAttempted
 }

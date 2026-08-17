@@ -75,8 +75,8 @@ class VelocityWriterContractTest {
 
 			// All sixteen binding slots map exactly, sparse nulls included: the cloud pipelines
 			// bind none at all (their geometry comes from CloudFaces and gl_VertexID).
-			assertEquals(source.getVertexFormatBindings().size, twin.getVertexFormatBindings().size)
-			for (index in 0 until twin.getVertexFormatBindings().size) {
+			assertEquals(source.vertexFormatBindings.size, twin.vertexFormatBindings.size)
+			for (index in twin.vertexFormatBindings.indices) {
 				assertSame(source.getVertexFormatBinding(index), twin.getVertexFormatBinding(index), "binding $index")
 			}
 
@@ -120,7 +120,7 @@ class VelocityWriterContractTest {
 		}
 
 	/**
-	 * The plain twin is the M-4 descriptor contract the writer twins are built on: the source
+	 * The plain twin is the descriptor contract the writer twins are built on: the source
 	 * descriptor with the payload target added and the *source* fragment shader kept, at its own
 	 * `velocity/pipeline/` location - which stays distinct even for an mc-dlss source.
 	 */
@@ -152,7 +152,7 @@ class VelocityWriterContractTest {
 		val velocity = FakeView(FakeTexture(GpuFormat.RG16_FLOAT))
 		val depth = FakeView(FakeTexture(GpuFormat.D32_FLOAT))
 
-		val descriptor = com.mojang.blaze3d.systems.RenderPassDescriptor.create({ "velocity" })
+		val descriptor = com.mojang.blaze3d.systems.RenderPassDescriptor.create { "velocity" }
 			.withColorAttachment(scene)
 			.withColorAttachment(velocity, Optional.empty())
 			.withDepthAttachment(depth, OptionalDouble.empty())
@@ -160,13 +160,13 @@ class VelocityWriterContractTest {
 		val attachments = descriptor.colorAttachments()
 		assertEquals(2, attachments.size)
 		assertSame(velocity, attachments[1]!!.textureView())
-		assertTrue(attachments[1]!!.clearValue().isEmpty(), "the velocity attachment is never cleared mid-frame")
+		assertTrue(attachments[1]!!.clearValue().isEmpty, "the velocity attachment is never cleared mid-frame")
 
 		for ((writer, sources) in writers) {
 			for (source in sources) {
 				val twin = writerTwin(source, writer)
 				assertEquals(attachments.size, twin.colorTargetStates.size, "${writer.name} on ${source.location}")
-				assertEquals(twin.colorTargetStates[1]!!.format(), attachments[1]!!.textureView().texture().getFormat())
+				assertEquals(twin.colorTargetStates[1]!!.format(), attachments[1]!!.textureView().texture().format)
 			}
 		}
 	}

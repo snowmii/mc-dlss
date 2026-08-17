@@ -132,14 +132,14 @@ class FrameEvaluation(
 	 */
 	private val fgInputs: () -> FgFrameInputs? = { null },
 ) : AutoCloseable {
-	private var images: EvaluationImages? = null
-	private var reportedFirstEvaluation = false
+	private var nativeEvaluationImages: EvaluationImages? = null
+	private var firstEvaluationReported = false
 
 	fun presentStart(): Boolean = adapter.presentStart()
 	fun presentEnd(): Boolean = adapter.presentEnd()
 
-	// The Reflex/PCL frame markers of the M-12 surface, delegated straight to the adapter like
-	// the present bracket: the input sample at the GLFW poll seam is its own call because it
+	// Reflex/PCL frame markers delegate straight to the adapter like the present bracket: the
+	// input sample at the GLFW poll seam is its own call because it
 	// starts the frame, and the simulation and render-submit markers travel as a value, so
 	// this seam has one method rather than one per marker. The mixin handlers never touch the
 	// adapter directly - they call the world phase, which reaches this object - so the whole
@@ -149,7 +149,7 @@ class FrameEvaluation(
 
 	/** The native-owned images this evaluation writes into, or null before the first frame. */
 	val evaluationImages: EvaluationImages?
-		get() = images
+		get() = nativeEvaluationImages
 
 	/**
 	 * Records and submits this frame's motion pass and DLSS evaluation.
@@ -182,26 +182,26 @@ class FrameEvaluation(
 		camera: DlssCameraSample? = null,
 	): Boolean {
 		val vulkan = context() ?: return false
-		val held = images ?: adapter.acquireImages()?.also { images = it } ?: return false
+		val held = nativeEvaluationImages ?: adapter.acquireImages()?.also { nativeEvaluationImages = it } ?: return false
 
-		val buffer = vulkan.recordCommandBuffer()
+		val buffer = vulkan.allocateRecordingCommandBuffer()
 		// The FG frame composes its DLSS-G record around the SR evaluation, and only when the
 		// policy is active AND the runtime resolved this frame's FG inputs. An inactive frame or
 		// one without both output-sized targets records SR-only: no FG options, no FG tags, no
 		// handoff. Resolved here rather than inside [record] because the record's two halves
 		// straddle the output copy - see [openFgRecord] and [closeFgRecord].
-		val fg = if (frameGeneration.active) fgInputs() else null
+		val fg = if (frameGeneration.effective) fgInputs() else null
 		val handle = buffer.address()
 		// The motion stage opens the recording, ahead of the FG record: it fills the module's
 		// motion copy, which the FG tag below names as the frame's motion source.
 		val recorded = recordMotion(handle, scene, route, velocity, motion) &&
-			openFgRecord(handle, scene, fg) &&
-			record(buffer, scene, jitter, motion, camera) &&
-			(destinationImage == NO_DESTINATION || present(buffer, destinationImage)) &&
-			closeFgRecord(handle, scene, fg)
+			recordFrameGenerationStart(handle, scene, fg) &&
+			recordSuperResolution(buffer, scene, jitter, motion, camera) &&
+			(destinationImage == NO_DESTINATION || copyDlssOutput(buffer, destinationImage)) &&
+			recordFrameGenerationEnd(handle, scene, fg)
 		// Submitted on every path: see the class comment - an abandoned buffer is what actually
 		// breaks the renderer, not a failed evaluation.
-		vulkan.submitCommandBuffer(buffer)
+		vulkan.enqueueOnEngineEncoder(buffer)
 		reportFirstEvaluation(recorded, scene, held)
 		return recorded
 	}
@@ -227,11 +227,11 @@ class FrameEvaluation(
 	 * the images are sized from the configuration and outlive nothing that changes it.
 	 */
 	override fun close() {
-		if (images == null) {
+		if (nativeEvaluationImages == null) {
 			return
 		}
 
-		images = null
+		nativeEvaluationImages = null
 		adapter.releaseImages()
 	}
 
@@ -243,11 +243,11 @@ class FrameEvaluation(
 	 * copy has to sit behind the evaluation in one recording, and this is the only place holding
 	 * that recording.
 	 */
-	private fun present(buffer: VkCommandBuffer, destinationImage: Long): Boolean = adapter.presentOutput(
+	private fun copyDlssOutput(buffer: VkCommandBuffer, destinationImage: Long): Boolean = adapter.presentOutput(
 		PresentTarget(buffer.address(), destinationImage),
 	)
 
-	private fun record(
+	private fun recordSuperResolution(
 		buffer: VkCommandBuffer,
 		scene: SceneResources,
 		jitter: DlssJitterOffset,
@@ -354,9 +354,9 @@ class FrameEvaluation(
 	 * An SR-only frame passes straight through: no options, no tag, and the evaluation is then
 	 * free to consume the token itself.
 	 */
-	private fun openFgRecord(handle: Long, scene: SceneResources, fg: FgFrameInputs?): Boolean =
+	private fun recordFrameGenerationStart(handle: Long, scene: SceneResources, fg: FgFrameInputs?): Boolean =
 		fg == null ||
-			(adapter.configureFg(frameGeneration.declaredBackBuffers) && tagFg(handle, scene, fg))
+			(adapter.configureFg(frameGeneration.requiredSwapchainImages) && tagFg(handle, scene, fg))
 
 	/**
 	 * The composed frame's closing DLSS-G record: the post-evaluation FG re-tag and the present
@@ -387,7 +387,7 @@ class FrameEvaluation(
 	 * The handoff is then the frame's terminal act, consuming the retained token exactly once so
 	 * the next frame's tags advance it.
 	 */
-	private fun closeFgRecord(handle: Long, scene: SceneResources, fg: FgFrameInputs?): Boolean =
+	private fun recordFrameGenerationEnd(handle: Long, scene: SceneResources, fg: FgFrameInputs?): Boolean =
 		fg == null || (tagFg(handle, scene, fg) && adapter.presentHandoff())
 
 	/** The frame's four FG tags: shared depth, HUD-less colour, and the UI colour+alpha pair. */
@@ -413,12 +413,12 @@ class FrameEvaluation(
 		scene: SceneResources,
 		held: EvaluationImages,
 	) {
-		if (reportedFirstEvaluation) {
+		if (firstEvaluationReported) {
 			return
 		}
 
-		reportedFirstEvaluation = true
-		readout?.firstEvaluation(
+		firstEvaluationReported = true
+		readout?.reportFirstEvaluation(
 			recorded = recorded,
 			colorImage = scene.color.image,
 			depthImage = scene.depth.image,

@@ -1,5 +1,7 @@
 package me.snowmii.streamline;
 
+import org.jetbrains.annotations.NotNull;
+
 /**
  * GPU milliseconds one completed frame spent in each stage the native bridge records.
  *
@@ -24,6 +26,7 @@ public record FrameTimings(
 	float totalMs
 ) {
 	/** One compact field for a diagnostic line. */
+	@NotNull
 	@Override
 	public String toString() {
 		return String.format(

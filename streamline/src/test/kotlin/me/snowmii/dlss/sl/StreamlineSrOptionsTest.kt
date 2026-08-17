@@ -15,7 +15,7 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * M-3 rung: DLSS SR options and resource tagging through the native Streamline bridge.
+ * Verifies DLSS SR options and resource tagging DLSS SR options and resource tagging through the native Streamline bridge.
  *
  * The optimal render dimensions answer from slDLSSGetOptimalSettings, configure records the
  * ABI's NGX-valued mode/preset on sl::DLSSOptions through slDLSSSetOptions, and the frame's
@@ -63,7 +63,7 @@ class StreamlineSrOptionsTest {
 			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.configure(
+				bridge.configureSuperResolution(
 					outputWidth,
 					outputHeight,
 					dimensions.width,

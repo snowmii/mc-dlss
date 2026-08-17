@@ -13,7 +13,7 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * M-3 rung: DLSS SR evaluates through Streamline on the caller's command buffer.
+ * Verifies DLSS SR evaluation through Streamline: DLSS SR evaluates through Streamline on the caller's command buffer.
  *
  * The live frame drives the whole SL path on a headless device: bootstrap, proxy activation,
  * initialize, optimal-dimension query, configure, module-image acquisition, and then per frame
@@ -22,7 +22,7 @@ import org.lwjgl.vulkan.VK10
  * under the Khronos validation layer - the plugin transitions the tagged resources from the
  * declared states, and a stale declaration would surface there.
  *
- * The live scenario lives in [SrLiveSession], which the canonical M-3 rung
+ * The live scenario lives in [SrLiveSession], which the shared canonical test
  * ([SrOnStreamlineTest]) shares; this class asserts the evaluate seam itself and the frame
  * ordering around it. The whole device-backed scenario runs in ONE test method (and therefore
  * one test fork): the close-path slShutdown is what makes the fork's exit clean, and a fork
@@ -54,7 +54,7 @@ class StreamlineSrEvaluateTest {
 			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.configure(
+				bridge.configureSuperResolution(
 					outputWidth,
 					outputHeight,
 					dimensions.width,
@@ -105,11 +105,11 @@ class StreamlineSrEvaluateTest {
 			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.evaluate(SrLiveSession.evaluationRequest(frame.address(), color, depth, dimensions, reset = true)),
+				bridge.evaluateSuperResolution(SrLiveSession.evaluationRequest(frame.address(), color, depth, dimensions, reset = true)),
 				"the evaluation must record on the tagged frame's buffer",
 			)
 			fixture.endSubmitAndWait(frame)
-			SrLiveSession.assertValidationClean(fixture, color, depth, images!!)
+			SrLiveSession.assertFrameValidationClean(fixture, color, depth, images!!)
 
 			// Frame two: the same images with accumulated history rather than a reset, starting
 			// from the layouts the first frame left behind.
@@ -121,13 +121,13 @@ class StreamlineSrEvaluateTest {
 			)
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
-				bridge.evaluate(
+				bridge.evaluateSuperResolution(
 					SrLiveSession.evaluationRequest(secondFrame.address(), color, depth, dimensions, reset = false),
 				),
 				"the second frame must evaluate from the layouts the first left behind",
 			)
 			fixture.endSubmitAndWait(secondFrame)
-			SrLiveSession.assertValidationClean(fixture, color, depth, images)
+			SrLiveSession.assertFrameValidationClean(fixture, color, depth, images)
 
 		}
 	}

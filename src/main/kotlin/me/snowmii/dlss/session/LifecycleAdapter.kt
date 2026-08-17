@@ -56,7 +56,7 @@ class LifecycleAdapter(
 		} ?: return null
 
 		if (!invokeStatus(DlssNativeStage.CONFIGURE) {
-				native.configure(
+				native.configureSuperResolution(
 					session.outputDimensions.width,
 					session.outputDimensions.height,
 					queriedDimensions.width,
@@ -100,7 +100,7 @@ class LifecycleAdapter(
 		} ?: return null
 
 		if (!invokeStatus(DlssNativeStage.CONFIGURE) {
-				native.configure(
+				native.configureSuperResolution(
 					session.outputDimensions.width,
 					session.outputDimensions.height,
 					queriedDimensions.width,
@@ -148,7 +148,7 @@ class LifecycleAdapter(
 	 * and FAIL_InvalidParameter while no DLSS-G options record is stored, the same gates as
 	 * the FG tag.
 	 */
-	override fun recordFgModeOff(): Boolean {
+	override fun recordFrameGenerationOff(): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
 		}
@@ -280,7 +280,7 @@ class LifecycleAdapter(
 	 *
 	 * Latched under the same stage name as the SR tag: both are the frame's resource-tag
 	 * stage, and a failure in either means the frame's features have no tags to evaluate
-	 * against. The stage enum's wire name still says SR; splitting it is a later slice.
+	 * against. The stage enum keeps its existing wire name for ABI compatibility.
 	 */
 	fun tagFgResources(request: FgTagRequest): Boolean {
 		if (session.state != DlssSessionState.READY) {
@@ -288,7 +288,7 @@ class LifecycleAdapter(
 		}
 
 		return invokeStatus(DlssNativeStage.TAG) {
-			native.tagFgResources(request)
+			native.tagFrameGenerationResources(request)
 		}
 	}
 
@@ -299,7 +299,7 @@ class LifecycleAdapter(
 
 		val dimensions = renderDimensions ?: return false
 		return invokeStatus(DlssNativeStage.EVALUATE) {
-			native.evaluate(
+			native.evaluateSuperResolution(
 				EvaluationRequest.builder()
 					.commandBuffer(request.commandBuffer)
 					.color(request.color)
@@ -328,7 +328,7 @@ class LifecycleAdapter(
 	 */
 	fun presentHandoff(): Boolean {
 		if (session.state != DlssSessionState.READY) return false
-		return invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentHandoff() }
+		return invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.recordPresentHandoff() }
 	}
 
 	fun presentStart(): Boolean = session.state == DlssSessionState.READY &&
@@ -337,7 +337,7 @@ class LifecycleAdapter(
 	fun presentEnd(): Boolean = session.state == DlssSessionState.READY &&
 		invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentEnd() }
 
-	// The five Reflex/PCL frame markers of the M-12 marker surface: the input sample at
+	// The five Reflex/PCL frame markers: the input sample at
 	// Minecraft's GLFW input poll, the simulation pair around runTick's simulation, and the
 	// render-submit pair around renderFrame's command-encoder submit. All five are gated on
 	// the READY session like the present bracket, and unlike the present bracket they never
@@ -450,7 +450,7 @@ class LifecycleAdapter(
 	 * Records a new FG multiplier with the bridge, validated natively against the device
 	 * ceiling.
 	 *
-	 * Deliberately non-latching like [recordFgModeOff]: a refused record (the device does
+	 * Deliberately non-latching like [recordFrameGenerationOff]: a refused record (the device does
 	 * not support the value, or the session cannot answer) keeps the current multiplier in
 	 * effect and must not send the SR session to FALLBACK_LATCHED - the caller's readout
 	 * then reports the multiplier actually in effect, which is the contract's "a refusal

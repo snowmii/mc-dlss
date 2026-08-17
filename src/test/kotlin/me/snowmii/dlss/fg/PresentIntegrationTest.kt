@@ -18,13 +18,13 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * M-11 present-driven composition rung: ONE live SR+FG tagged frame runs the whole
+ * Present-driven composition: one live SR+FG tagged frame runs the whole
  * present-driven chain - SR tag, FG tag, SR evaluation, present handoff - on ONE command
  * buffer under ONE shared Streamline frame token, submits validation-clean, and is
  * present-eligible exactly once.
  *
- * The M-9 rung composed the two tag sets and the M-10 rung proved the handoff state on a
- * frame that carried NO evaluation. This rung composes the frame the present path actually
+ * Tagging and handoff tests cover their isolated boundaries. This test composes the frame the
+ * present path actually
  * consumes, and in doing so pins the one order the shared tag container makes legal: the
  * common plugin stores ONE tag per (buffer type, viewport) per frame, so the SR and FG tags
  * for the shared depth and motion inputs land in the same slots, and the LAST writer owns
@@ -37,8 +37,8 @@ import org.lwjgl.vulkan.VK10
  * leaves every FG-tagged resource in the engine-resting GENERAL layout, and the frame's FG
  * tag re-records after it - the evaluation retained the shared token, so the re-declaration
  * lands on the same frame index and hands the present path the FG GENERAL declarations the
- * images actually rest in until Present, the M-10 'depth/motion remain GENERAL and valid
- * until Present' discipline now with the evaluation that moves them out of GENERAL present
+ * images actually rest in until Present, with the evaluation that moves them out of GENERAL
+ * and restores them before the present handoff
  * on the frame. The present handoff then re-records the stored DLSS-G options for the
  * complete equal-index set and consumes the frame token - exactly once. The single buffer
  * submits under the Khronos validation layer, which is the only oracle for the layout
@@ -47,14 +47,13 @@ import org.lwjgl.vulkan.VK10
  * the engine-resting GENERAL layout the FG tag declared for its valid-until-present lifetime.
  *
  * The present path itself - Streamline's vkQueuePresentKHR interception and the DLSS-G
- * generation it records - is M-11 production wiring, not this rung: the headless fixture never
- * presents. What the rung proves is the recorded frame the present path consumes: complete
+ * generation it records - is production wiring, not this test: the headless fixture never
+ * presents. What it proves is the recorded frame the present path consumes: complete
  * equal-index tags, a validation-clean evaluation on the shared token and buffer, and a
  * handoff that answers success once and refuses the consumed set afterwards.
  *
- * The whole scenario runs in ONE test method (and therefore one test fork) like every other
- * live rung: the close-path slShutdown is what makes the fork's exit clean, and a fork that
- * followed an unclean exit comes up with the plugin manager already initialized.
+ * The device-backed scenario stays in one test method so shutdown runs while the fixture
+ * device is alive and the fork exits cleanly.
  */
 @NativeBridge
 class PresentIntegrationTest {
@@ -70,7 +69,7 @@ class PresentIntegrationTest {
 		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				FAIL_NOT_INITIALIZED,
-				bridge.presentHandoff(),
+				bridge.recordPresentHandoff(),
 				"presentHandoff before bootstrap must answer FAIL_NotInitialized",
 			)
 		}
@@ -114,7 +113,7 @@ class PresentIntegrationTest {
 				)
 
 				// The stored SR configuration: the queried render dimensions and the quality
-				// mode/preset the SR options record, exactly as the SR rungs drive them.
+				// mode/preset the SR options record, matching the SR configuration tests.
 				val outputWidth = 2560
 				val outputHeight = 1440
 				// MaxQuality = 2 (NVSDK_NGX_PerfQuality_Value), which the bridge maps onto
@@ -127,7 +126,7 @@ class PresentIntegrationTest {
 				)
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.configure(
+					bridge.configureSuperResolution(
 						outputWidth,
 						outputHeight,
 						dimensions.width,
@@ -222,14 +221,14 @@ class PresentIntegrationTest {
 				// the FG GENERAL declarations those resources actually rest in. The present
 				// handoff then re-records the stored DLSS-G options for the complete equal-index
 				// tag set and consumes the frame token - exactly once. The evaluation is what
-				// the M-10 handoff rung deliberately left off the frame: it is the stage whose
+				// the handoff test deliberately left off the frame: it is the stage whose
 				// transitions move the shared depth and motion inputs out of GENERAL and back,
 				// and the composed frame must end with every FG-tagged resource in the declared
 				// engine-resting layout for the present path to consume.
 				val frame = fixture.allocateAndBeginCommandBuffer()
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -276,10 +275,10 @@ class PresentIntegrationTest {
 				// have produced a strictly later index under the SR slot.
 				val indexes = bridge.taggedFrameIndexes()
 				assertEquals(
-					indexes.srFrameIndex,
-					indexes.fgFrameIndex,
+					indexes.lastSrTagFrameIndex,
+					indexes.lastFgTagFrameIndex,
 					"the SR and FG tags of the composed frame must record under the same " +
-						"Streamline frame index, got SR=${indexes.srFrameIndex}, FG=${indexes.fgFrameIndex}",
+						"Streamline frame index, got SR=${indexes.lastSrTagFrameIndex}, FG=${indexes.lastFgTagFrameIndex}",
 				)
 				// The SR evaluation records on the same buffer against the retained token, the
 				// way FrameEvaluation records it in production: the engine's colour and depth
@@ -291,7 +290,7 @@ class PresentIntegrationTest {
 				// layout its tag declared.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.evaluate(
+					bridge.evaluateSuperResolution(
 						EvaluationRequest.builder()
 							.commandBuffer(frame.address())
 							.color(ImageBinding(
@@ -326,7 +325,7 @@ class PresentIntegrationTest {
 				// must declare the FG GENERAL layouts the images actually rest in until Present.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.tagFgResources(
+					bridge.tagFrameGenerationResources(
 						FgTagRequest(
 							frame.address(),
 							ImageBinding(
@@ -357,12 +356,12 @@ class PresentIntegrationTest {
 				// consumes them.
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"the composed frame's complete equal-index tag set must hand off once",
 				)
 				assertEquals(
 					FAIL_INVALID_PARAMETER,
-					bridge.presentHandoff(),
+					bridge.recordPresentHandoff(),
 					"a second handoff for the composed frame's consumed tag set must answer " +
 						"FAIL_InvalidParameter: the frame is present-eligible exactly once",
 				)
@@ -373,7 +372,7 @@ class PresentIntegrationTest {
 	}
 
 	/**
-	 * Asserts the rung's validation oracle was actually running, then that the Khronos
+	 * Asserts that the validation oracle was actually running, then that the Khronos
 	 * validation layer reported NO new error-severity message since the frame's recording
 	 * began - every error the layer saw in the frame-attributable window, not only errors
 	 * naming one of the frame's six tagged images. The frame's six images are the only
@@ -384,8 +383,8 @@ class PresentIntegrationTest {
 	 * through whenever the message names a handle this list does not anticipate.
 	 *
 	 * Errors the layer reported before the window are not frame-attributable and do not fail
-	 * the rung: the pinned Streamline runtime's own device creation records device-extension
-	 * complaints (its DLSS-G optical-flow device) that no repair inside this slice's scope
+	 * the test: the pinned Streamline runtime's own device creation records device-extension
+	 * complaints (its DLSS-G optical-flow device) that no repair inside this test's scope
 	 * could clear, and they would otherwise make the clean-frame assertion worthless noise.
 	 *
 	 * The baseline is subtracted by COUNT, not by message equality: the fixture appends every
@@ -400,7 +399,7 @@ class PresentIntegrationTest {
 	 * Validation is the only oracle for image layouts: a transition whose oldLayout does not
 	 * match the image's actual layout is undefined behaviour to the driver and silent
 	 * without it, so a session whose layer could not be enabled has no evidence worth
-	 * asserting on and the rung FAILS rather than silently skipping the clean check.
+	 * asserting on and the test fails rather than silently skipping the clean check.
 	 */
 	private fun assertComposedFrameClean(
 		fixture: HeadlessVulkanFixture,
@@ -408,7 +407,7 @@ class PresentIntegrationTest {
 	) {
 		assertTrue(
 			fixture.validationEnabled(),
-			"the rung needs the Khronos validation layer (VK_LAYER_KHRONOS_validation " +
+			"this test needs the Khronos validation layer (VK_LAYER_KHRONOS_validation " +
 				"plus VK_EXT_debug_utils); without it the clean-frame assertion is worthless",
 		)
 		val errors = fixture.validationErrors()
