@@ -119,7 +119,7 @@ tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configur
 		dlssData.mkdirs()
 	}
 
-	systemProperty("mc.dlss.sdk-path", providers.gradleProperty("mc.dlss.sdk-path").orElse(sdkPath))
+	systemProperty("mc.dlss.sdk-path", providers.gradleProperty("mc.dlss.sdk-path").orElse(sdkPath).get())
 	systemProperty("mc.dlss.data-path", providers.gradleProperty("mc.dlss.data-path").getOrElse(dlssData.absolutePath))
 	// Performance mode by default: the widest render/output gap, so a routing change is easiest
 	// to see. Quality and balanced remain a -Pmc.dlss.mode away.
