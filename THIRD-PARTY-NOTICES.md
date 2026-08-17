@@ -11,8 +11,8 @@ contain them**, which is what makes this file necessary.
 
 ## Components staged into the jar
 
-Staged by `processResources` into `assets/mc-dlss/native/` and
-`assets/mc-dlss/native/streamline/`:
+Staged by `:streamline`'s `processResources` into `assets/streamline-api/native/` and
+`assets/streamline-api/native/streamline/`:
 
 | Component | Files | License |
 | --- | --- | --- |

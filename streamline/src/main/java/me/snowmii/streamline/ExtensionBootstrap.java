@@ -14,15 +14,27 @@ import java.util.Objects;
 /** Queries Streamline's exact Vulkan requirements at the game's pre-creation bootstrap seams. */
 public final class ExtensionBootstrap {
 	/**
-	 * Namespaced the same way the mod's other assets are, so in-game code can address it as
-	 * {@code McDlss.id("native/mc_dlss.dll")}. These seams run inside
-	 * {@code VulkanInstance.<init>}, before the game's {@code Minecraft} instance exists, so
-	 * there is no ResourceManager yet and the bootstrap reads it off the classloader instead.
+	 * Namespaced under the SDK's own asset namespace, so it resolves as the classloader resource
+	 * {@code /assets/streamline-api/native/mc_dlss.dll}. These seams run before any game-side
+	 * asset manager exists, so the SDK reads it off the classloader instead.
 	 */
-	static final String RESOURCE_PATH = "/assets/mc-dlss/native/mc_dlss.dll";
-	static final String STREAMLINE_RESOURCE_PATH = "/assets/mc-dlss/native/sl.interposer.dll";
+	private static final String RESOURCE_DIRECTORY = "/assets/streamline-api/native/";
+	static final String RESOURCE_PATH = RESOURCE_DIRECTORY + "mc_dlss.dll";
+	static final String STREAMLINE_RESOURCE_PATH = RESOURCE_DIRECTORY + "sl.interposer.dll";
 
-	private static final Path RELATIVE_STREAMLINE = Path.of("build", "resources", "main", "assets", "mc-dlss", "native");
+	/**
+	 * The colocated flat runtime set: the bridge plus every Streamline/NGX runtime dll that must
+	 * sit beside it on disk for Windows dependency resolution. Mirrors the nine files staged by
+	 * {@code :streamline}'s processResources into {@code assets/streamline-api/native/} (and,
+	 * for parity only, under {@code streamline/}).
+	 */
+	private static final List<String> FLAT_RUNTIME_FILES = List.of(
+		"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
+		"sl.pcl.dll",
+		"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
+	);
+
+	private static final Path RELATIVE_STREAMLINE = Path.of("build", "resources", "main", "assets", "streamline-api", "native");
 
 	/**
 	 * The knob the mod's config reads for the native-library path, kept so the error message
@@ -33,6 +45,7 @@ public final class ExtensionBootstrap {
 	private static final String NATIVE_LIBRARY_PROPERTY = "mc.dlss.native-library";
 
 	private static volatile Path configuredNativeLibrary;
+	/** The temp directory holding the extracted colocated flat runtime once extracted, else null. */
 	private static volatile Path extracted;
 	private static volatile boolean streamlineRuntimeLoaded;
 
@@ -146,8 +159,10 @@ public final class ExtensionBootstrap {
 
 	/**
 	 * The staged Streamline runtime directory: where sl.common.dll, sl.interposer.dll, and the
-	 * feature plugins were copied by processResources. Resolves the packaged resource first,
-	 * then walks up from the working directory for plain {@code :streamline:buildNativeDlss} runs.
+	 * feature plugins were copied by processResources. A loose file on the classpath is returned
+	 * in place; a packaged resource (plain jar or nested jar:jar: URL, which the JVM serves
+	 * transparently) is extracted once, as part of the whole colocated flat directory. Walks up
+	 * from the working directory for plain {@code :streamline} runs with no staged resource.
 	 */
 	public static Path streamlineRuntimeDirectory() {
 		final URL resource = ExtensionBootstrap.class.getResource(STREAMLINE_RESOURCE_PATH);
@@ -155,6 +170,13 @@ public final class ExtensionBootstrap {
 			try {
 				return Path.of(resource.toURI()).getParent();
 			} catch (URISyntaxException error) {
+				throw new NativeException("bootstrap-streamline", error);
+			}
+		}
+		if (resource != null) {
+			try {
+				return extractedDirectory();
+			} catch (IOException error) {
 				throw new NativeException("bootstrap-streamline", error);
 			}
 		}
@@ -205,7 +227,8 @@ public final class ExtensionBootstrap {
 	/**
 	 * Resolves the packaged resource to a real filesystem path, because
 	 * {@link java.lang.foreign.SymbolLookup#libraryLookup} cannot load from inside a jar.
-	 * A loose file on the classpath is loaded in place; a jar entry is extracted once.
+	 * A loose file on the classpath is loaded in place; a packaged resource is extracted, once,
+	 * as part of the whole colocated flat directory.
 	 */
 	private static Path packagedLibrary() {
 		final URL resource = ExtensionBootstrap.class.getResource(RESOURCE_PATH);
@@ -221,29 +244,49 @@ public final class ExtensionBootstrap {
 			}
 		}
 
+		try {
+			return extractedDirectory().resolve("mc_dlss.dll");
+		} catch (IOException error) {
+			throw new NativeException("load-library", error);
+		}
+	}
+
+	/**
+	 * Materializes the colocated flat runtime once, into a JVM-lifetime temp directory: the
+	 * bridge plus all nine Streamline/NGX runtime dlls that must sit beside it on disk for
+	 * Windows dependency resolution. Protocol-agnostic — every entry is read off the
+	 * classloader, which serves plain jar and nested jar:jar: URLs alike — so the same
+	 * extraction serves the SDK jar on a test classpath and the Fabric-nested jar in production.
+	 */
+	private static Path extractedDirectory() throws IOException {
 		final Path cached = extracted;
-		if (cached != null && Files.isRegularFile(cached)) {
+		if (cached != null && Files.isDirectory(cached)) {
 			return cached;
 		}
 
 		synchronized (ExtensionBootstrap.class) {
-			if (extracted != null && Files.isRegularFile(extracted)) {
+			if (extracted != null && Files.isDirectory(extracted)) {
 				return extracted;
 			}
-			try (InputStream source = ExtensionBootstrap.class.getResourceAsStream(RESOURCE_PATH)) {
-				if (source == null) {
-					return null;
-				}
-				final Path directory = Files.createTempDirectory("mc-dlss-native");
-				directory.toFile().deleteOnExit();
-				final Path target = directory.resolve("mc_dlss.dll");
-				Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
-				target.toFile().deleteOnExit();
-				extracted = target;
-				return target;
-			} catch (IOException error) {
-				throw new NativeException("load-library", error);
+			final Path directory = Files.createTempDirectory("mc-dlss-native");
+			directory.toFile().deleteOnExit();
+			extract(directory, "mc_dlss.dll");
+			for (String name : FLAT_RUNTIME_FILES) {
+				extract(directory, name);
 			}
+			extracted = directory;
+			return directory;
+		}
+	}
+
+	private static void extract(final Path directory, final String name) throws IOException {
+		try (InputStream source = ExtensionBootstrap.class.getResourceAsStream(RESOURCE_DIRECTORY + name)) {
+			if (source == null) {
+				throw new IOException("Staged native missing from packaged resources: " + name);
+			}
+			final Path target = directory.resolve(name);
+			Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+			target.toFile().deleteOnExit();
 		}
 	}
 }

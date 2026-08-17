@@ -119,35 +119,12 @@ val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 
 tasks.check { dependsOn(nativeBridgeTest) }
 
-val streamlineRuntime = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", DEFAULT_STREAMLINE_SDK)
-	.resolve("bin/x64")
-val streamlineRuntimeFiles = listOf(
-	"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
-	"sl.pcl.dll",
-	"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
-)
-
 tasks.processResources {
 	val version = version
 	inputs.property("version", version)
 
 	filesMatching("fabric.mod.json") {
 		expand("version" to version)
-	}
-
-	// Ship the native bridge under the mod's own namespace, so it resolves the same way
-	// wherever the client runs from. The dev client's working directory is `run/`, which is
-	// why a repository-relative path cannot be used.
-	from(project(":streamline").tasks.named<Exec>("buildNativeDlss")) {
-		into("assets/mc-dlss/native") // McDlss.MOD_ID
-	}
-	from(streamlineRuntimeFiles.map(streamlineRuntime::resolve)) {
-		into("assets/mc-dlss/native/streamline")
-	}
-	// Windows resolves mc_dlss.dll dependencies beside the bridge before bootstrap can provide
-	// the plugin search path. Keep a colocated generated copy; proprietary binaries remain external.
-	from(streamlineRuntimeFiles.map(streamlineRuntime::resolve)) {
-		into("assets/mc-dlss/native")
 	}
 }
 

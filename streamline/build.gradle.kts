@@ -131,6 +131,47 @@ tasks.named("build") {
 	dependsOn(buildNativeDlss)
 }
 
+// The SDK owns its native assets: the bridge and the nine Streamline/NGX runtime dlls are
+// staged under the SDK's own resource namespace, so they ride the nested SDK jar into the
+// produced mod jar's META-INF/jars. The dev client's working directory is `run/`, which is
+// why a repository-relative path cannot be used.
+val streamlineRuntime = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", DEFAULT_STREAMLINE_SDK)
+	.resolve("bin/x64")
+val streamlineRuntimeFiles = listOf(
+	"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
+	"sl.pcl.dll",
+	"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
+)
+
+tasks.processResources {
+	from(buildNativeDlss) {
+		into("assets/streamline-api/native")
+	}
+	from(streamlineRuntimeFiles.map(streamlineRuntime::resolve)) {
+		into("assets/streamline-api/native/streamline")
+	}
+	// Windows resolves mc_dlss.dll dependencies beside the bridge before bootstrap can provide
+	// the plugin search path. Keep a colocated generated copy; proprietary binaries remain external.
+	from(streamlineRuntimeFiles.map(streamlineRuntime::resolve)) {
+		into("assets/streamline-api/native")
+	}
+}
+
+// Windows marks every file downloaded or extracted from the internet with a `:Zone.Identifier`
+// NTFS stream (mark of the web). Gradle's copy and archive tasks carry it through, so a
+// downloaded resource silently pollutes the jar with bogus entries named with the sanitized
+// colon (U+F03A). The streams were stripped from the tree; these exclusions keep a future
+// downloaded file from re-polluting the produced jars. The root's configureEach does not
+// reach this project, so the hygiene is mirrored per-project.
+tasks.withType<AbstractArchiveTask>().configureEach {
+	exclude("**\uF03A*")
+	exclude("**/*Zone.Identifier")
+}
+
+tasks.processResources {
+	exclude("**/*Zone.Identifier")
+}
+
 tasks.withType<JavaCompile>().configureEach {
 	options.release = 25
 }
