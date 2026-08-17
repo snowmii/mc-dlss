@@ -3,6 +3,8 @@
 
 #include "internal/state.h"
 
+#include <cstdint>
+
 /*
  * The two compute passes this module records: the camera-only motion pass and the
  * velocity-MRT merge fill.
@@ -23,6 +25,21 @@
  * spread across the units that make it up.
  */
 namespace mc_dlss {
+
+// The fixed workgroup size of both motion dispatches, duplicated from the shaders
+// (local_size_x/y = 8 in mc_dlss_motion.comp and mc_dlss_velocity_fill.comp) because the
+// dispatch has to round the render size up to whole workgroups; the shaders' own bounds
+// checks are what keep the surplus invocations harmless.
+constexpr uint32_t kMotionWorkgroupSize = 8;
+
+// Rounds one render-size dimension up to whole kMotionWorkgroupSize workgroups, the group
+// count record_motion and record_velocity_fill give vkCmdDispatch for that axis. Pure
+// unsigned arithmetic - no device in sight - so the doctest harness pins it. The wrap
+// ceiling is pinned, not silently fixed: an extent within kMotionWorkgroupSize - 1 of
+// UINT32_MAX wraps and dead-reckons to 0 groups, and no render extent can get there.
+inline uint32_t motion_workgroup_count(uint32_t extent) noexcept {
+    return (extent + kMotionWorkgroupSize - 1) / kMotionWorkgroupSize;
+}
 
 // Builds the camera-only motion pass, or leaves nothing behind. Reused for the life of the
 // session - nothing here is per frame.

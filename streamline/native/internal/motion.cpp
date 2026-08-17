@@ -5,11 +5,6 @@
 namespace mc_dlss {
 namespace {
 
-// The workgroup size is duplicated from the shaders because the dispatch has to round the
-// render size up to whole workgroups; the shaders' own bounds checks are what keep the
-// surplus invocations harmless.
-constexpr uint32_t kMotionWorkgroupSize = 8;
-
 constexpr uint32_t kMotionSpirV[] =
 #include "mc_dlss_motion.spv.h"
     ;
@@ -429,9 +424,8 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept {
     vkCmdPushConstants(recordingBuffer, g_state.motionPass.pipelineLayout,
                        VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
     // Rounded up to whole workgroups; the shader discards the surplus invocations.
-    vkCmdDispatch(recordingBuffer,
-                  (info.render_width + kMotionWorkgroupSize - 1) / kMotionWorkgroupSize,
-                  (info.render_height + kMotionWorkgroupSize - 1) / kMotionWorkgroupSize, 1);
+    vkCmdDispatch(recordingBuffer, motion_workgroup_count(info.render_width),
+                  motion_workgroup_count(info.render_height), 1);
 
     // The dispatch's writes are not visible to anything downstream without a barrier of
     // this pass's own - and that includes both images it wrote: the motion image the
@@ -531,9 +525,8 @@ int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept {
     vkCmdPushConstants(recordingBuffer, g_velocityFill.pass.pipelineLayout,
                        VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
     // Rounded up to whole workgroups; the shader discards the surplus invocations.
-    vkCmdDispatch(recordingBuffer,
-                  (info.render_width + kMotionWorkgroupSize - 1) / kMotionWorkgroupSize,
-                  (info.render_height + kMotionWorkgroupSize - 1) / kMotionWorkgroupSize, 1);
+    vkCmdDispatch(recordingBuffer, motion_workgroup_count(info.render_width),
+                  motion_workgroup_count(info.render_height), 1);
 
     // The dispatch's writes to the motion image and its flipped copy are not visible to the
     // tag and the evaluation without a barrier of this pass's own: both images stay in
