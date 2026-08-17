@@ -1,4 +1,4 @@
-package me.snowmii.dlss.mixin;
+package me.snowmii.dlss;
 
 import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
 import com.mojang.blaze3d.vulkan.VulkanDevice;
@@ -14,7 +14,8 @@ import org.lwjgl.vulkan.VK12;
  * part of the capture out of the engine-free SDK.
  *
  * <p>Not a mixin: a plain static utility invoked from the ctor-TAIL injection in
- * {@code VulkanDeviceContextMixin}. Relocated verbatim from the old engine-coupled
+ * {@code VulkanDeviceContextMixin}. Lives outside {@code me.snowmii.dlss.mixin} because Mixin
+ * forbids direct references to classes in a declared mixin package. Relocated verbatim from the old engine-coupled
  * {@code fromVulkanDevice} factory; same null/zero-handle degradation semantics.
  *
  * <p>{@link VulkanDevice} exposes no physical-device accessor, so the mixin passes the
