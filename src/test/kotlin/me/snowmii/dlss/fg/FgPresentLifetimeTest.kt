@@ -2,8 +2,6 @@ package me.snowmii.dlss.fg
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
-import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.render.*
 import me.snowmii.dlss.session.DlssSession
@@ -14,11 +12,8 @@ import me.snowmii.streamline.*
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
-import org.lwjgl.system.MemoryStack
-import org.lwjgl.vulkan.*
+import org.lwjgl.vulkan.VkCommandBuffer
 import java.nio.file.Path
-import java.util.concurrent.atomic.AtomicInteger
-import kotlin.concurrent.thread
 
 /**
  * Present-lifetime behavior after the MFG latency change: production no longer waits on
@@ -30,12 +25,9 @@ import kotlin.concurrent.thread
  * are `eBlockPresentingClientQueue`, under which the guide makes it recommended rather than
  * required for a single-queue application. That reasoning lives at the production seam.
  *
- * The wait entry stays on the ABI - the mode is one options field away - so what this class
- * covers the ABI contract rather than production wiring: the native entry refuses before any
- * Streamline session exists, and a real timeline semaphore checks value-aware waiting. Treating
- * the semaphore as a VkFence or ignoring its value fails the test.
+ * Native ABI and timeline-semaphore behavior are covered by streamline integration tests; this
+ * class covers only mod-owned production wiring through [NativeApiTestDouble].
  */
-@NativeBridge
 class FgPresentLifetimeTest {
 
 	@Test
@@ -82,83 +74,6 @@ class FgPresentLifetimeTest {
 			"an FG-off frame must make no wait and no FG calls at all",
 		)
 		assertEquals(0, calls.waits)
-	}
-
-	@Test
-	fun `the input wait refuses before any Streamline session exists`() {
-		// Pre-init: this fork's module has never bootstrapped, so the wait seam has no
-		// Streamline session to answer through - the native pre-ready refusal. The check runs
-		// on a throwaway bridge and the module's bootstrap state is what it asserts against.
-		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
-			assertEquals(
-				FAIL_NOT_INITIALIZED,
-				bridge.waitFgInputsIdle(),
-				"the input wait before bootstrap must answer FAIL_NotInitialized",
-			)
-		}
-	}
-
-	@Test
-	fun `the input-processing wait blocks until the semaphore reaches the reported value`() {
-		// The wait's value semantics are native behavior no mock can reach, so the test runs
-		// the real bridge against a real headless Vulkan device and a real timeline semaphore:
-		// the wait is asked for a value the semaphore has not reached, and must stay blocked
-		// while the semaphore is below it - including after a lower signal - and complete only
-		// once the semaphore reaches the reported value. A wait that ignored the reported
-		// value (waiting for zero, say) or treated the semaphore as a VkFence - which
-		// vkWaitForFences cannot wait on - would answer the first probe immediately and fail
-		// the test.
-		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
-			HeadlessVulkanFixture().use { fixture ->
-				val device = fixture.deviceAddress()
-				assertEquals(
-					FAIL_INVALID_PARAMETER,
-					bridge.waitFgInputsValue(device, 0L, 1L),
-					"a null semaphore must refuse before any wait",
-				)
-
-				val semaphore = createTimelineSemaphore(fixture)
-				try {
-					// The reported value the plugin's state would carry for the previously
-					// presented frame; the semaphore starts at zero, below it.
-					val reportedValue = 7L
-					val result = AtomicInteger(NativeApi.SUCCESS_RESULT)
-					val waiter = thread(name = "fg-inputs-wait") {
-						result.set(bridge.waitFgInputsValue(device, semaphore, reportedValue))
-					}
-					// Probe 1: while the semaphore still reports a value below the one the wait
-					// names, a value-aware wait must not answer.
-					waiter.join(WAIT_PROBE_MS)
-					assertTrue(
-						waiter.isAlive,
-						"the wait must block while the semaphore is below the reported value",
-					)
-					// A lower signal must not release the wait either: only the reported value
-					// is the completion of the previous frame's input processing.
-					signalTimelineSemaphore(fixture, semaphore, reportedValue - 3)
-					waiter.join(WAIT_PROBE_MS)
-					assertTrue(
-						waiter.isAlive,
-						"a lower signal must not satisfy the wait for the reported value",
-					)
-					// Releasing the wait is what the plugin's input processing does when it
-					// completes: signaling the semaphore to the reported value.
-					signalTimelineSemaphore(fixture, semaphore, reportedValue)
-					waiter.join(WAIT_COMPLETE_MS)
-					assertFalse(
-						waiter.isAlive,
-						"the wait must complete once the semaphore reaches the reported value",
-					)
-					assertEquals(
-						NativeApi.SUCCESS_RESULT,
-						result.get(),
-						"the wait must answer success once the reported value is reached",
-					)
-				} finally {
-					destroySemaphore(fixture, semaphore)
-				}
-			}
-		}
 	}
 
 	/**
@@ -220,74 +135,12 @@ class FgPresentLifetimeTest {
 		return Harness(runtime, session, evaluation)
 	}
 
-	/** A [VkCommandBuffer] instance whose address() answers without any Vulkan device. */
+	/** Fake command buffer for mod-owned recording seam; no Vulkan device is opened. */
 	private fun fakeCommandBuffer(): VkCommandBuffer {
 		val unsafeField = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe")
 		unsafeField.isAccessible = true
 		val unsafe = unsafeField.get(null) as sun.misc.Unsafe
 		return unsafe.allocateInstance(VkCommandBuffer::class.java) as VkCommandBuffer
-	}
-
-	/**
-	 * Rebuilds the LWJGL wrapper objects over the fixture's live handles. The fixture exposes
-	 * addresses only, and the VK12 calls below route through the wrapper's device function
-	 * table, so the wrappers are built with the same create-info shape the fixture's own
-	 * device creation used (apiVersion 1.2) - that is what makes the VK12 command pointers
-	 * (vkCreateSemaphore, vkSignalSemaphore) resolve. Same object construction the fixture
-	 * performs in its constructor, on the same live handles.
-	 */
-	private fun HeadlessVulkanFixture.lwjglDevice(): VkDevice {
-		MemoryStack.stackPush().use { stack ->
-			val appInfo = VkApplicationInfo.calloc(stack)
-				.`sType$Default`()
-				.apiVersion(VK12.VK_API_VERSION_1_2)
-			val instanceInfo = VkInstanceCreateInfo.calloc(stack)
-				.`sType$Default`()
-				.pApplicationInfo(appInfo)
-			val instance = VkInstance(instanceAddress(), instanceInfo)
-			val physicalDevice = VkPhysicalDevice(physicalDeviceAddress(), instance)
-			return VkDevice(deviceAddress(), physicalDevice, VkDeviceCreateInfo.calloc(stack))
-		}
-	}
-
-	/** Creates a Vulkan timeline semaphore at value zero on the fixture's device. */
-	private fun createTimelineSemaphore(fixture: HeadlessVulkanFixture): Long {
-		val device = fixture.lwjglDevice()
-		MemoryStack.stackPush().use { stack ->
-			val typeInfo = VkSemaphoreTypeCreateInfo.calloc(stack)
-				.`sType$Default`()
-				.semaphoreType(VK12.VK_SEMAPHORE_TYPE_TIMELINE)
-				.initialValue(0L)
-			val createInfo = VkSemaphoreCreateInfo.calloc(stack)
-				.`sType$Default`()
-				.pNext(typeInfo.address())
-				.flags(0)
-			val handle = stack.callocLong(1)
-			checkVk(VK12.vkCreateSemaphore(device, createInfo, null, handle), "vkCreateSemaphore")
-			return handle.get(0)
-		}
-	}
-
-	/** Host-signals the timeline semaphore to `value`, like the plugin does at completion. */
-	private fun signalTimelineSemaphore(fixture: HeadlessVulkanFixture, semaphore: Long, value: Long) {
-		val device = fixture.lwjglDevice()
-		MemoryStack.stackPush().use { stack ->
-			val signalInfo = VkSemaphoreSignalInfo.calloc(stack)
-				.`sType$Default`()
-				.semaphore(semaphore)
-				.value(value)
-			checkVk(VK12.vkSignalSemaphore(device, signalInfo), "vkSignalSemaphore")
-		}
-	}
-
-	private fun destroySemaphore(fixture: HeadlessVulkanFixture, semaphore: Long) {
-		VK10.vkDestroySemaphore(fixture.lwjglDevice(), semaphore, null)
-	}
-
-	private fun checkVk(result: Int, what: String) {
-		if (result != VK10.VK_SUCCESS) {
-			error("$what failed with VkResult $result")
-		}
 	}
 
 	private fun scene() = SceneResources(
@@ -425,17 +278,5 @@ class FgPresentLifetimeTest {
 
 		/** The engine's output-sized main target image the frame's SR output copy records into. */
 		const val DESTINATION = 900L
-
-		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
-		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
-
-		/** NVSDK_NGX_Result_FAIL_NotInitialized = NVSDK_NGX_Result_Fail | 7 (0xBAD00000 | 7). */
-		const val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
-
-		/** How long a blocked wait must survive a probe before it is judged not to answer. */
-		private const val WAIT_PROBE_MS = 400L
-
-		/** How long a released wait may take to answer before it is judged stuck. */
-		private const val WAIT_COMPLETE_MS = 10_000L
 	}
 }
