@@ -17,6 +17,8 @@ import java.nio.file.Path
  * rather than passing on a silent no-op.
  */
 open class NativeApiTestDouble : NativeApi {
+	override fun close() = Unit
+
 	override fun initialize(
 		vkInstance: Long,
 		vkPhysicalDevice: Long,

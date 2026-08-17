@@ -13,7 +13,7 @@ import java.util.List;
  * without any diagnostic. The request types are defined in this package for the same reason
  * this interface is: they are the vocabulary of the ABI, not of the renderer that fills them.
  */
-public interface NativeApi {
+public interface NativeApi extends AutoCloseable {
 	/** Flat ABI success result defined by native/mc_dlss.h. */
 	int SUCCESS_RESULT = 1;
 
@@ -310,6 +310,9 @@ public interface NativeApi {
 
 	/** Installs the Win32 message hook that receives PCL's periodic latency-stat ping. */
 	int installPclWindow(long hwnd);
+
+	@Override
+	void close();
 
 	/**
 	 * Starts the frame's Reflex work at Minecraft's GLFW input poll seam.

@@ -1,7 +1,6 @@
 package me.snowmii.dlss.client
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.streamline.ExtensionBootstrap
-import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeApi
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.render.RenderRuntime
@@ -84,7 +83,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 	 * the runtime only ever sees the [NativeApi] view.
 	 */
 	@Volatile
-	private var nativeBridge: Native? = null
+	private var nativeBridge: NativeApi? = null
 	private var initializationAttempted = false
 
 	/** The render-loop view: the only side that can build the DLSS path. */
@@ -134,7 +133,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 		}
 
 		worldPhaseInstance = try {
-			val native = Native.open(ExtensionBootstrap.nativeLibrary())
+			val native = ExtensionBootstrap.openSession()
 			this.nativeBridge = native
 			if (Platform.get() == Platform.WINDOWS) {
 				val hwnd = glfwGetWin32Window(Minecraft.getInstance().window.handle())

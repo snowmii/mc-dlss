@@ -38,12 +38,6 @@ kotlin {
 // `forkEvery = 1` turns one bad run into one dump per test class, so every forked JVM is pointed
 // at build/jvm-crash instead of littering the repository.
 
-tasks.withType<Test>().configureEach {
-	// The bridge is loaded with System::load and called through FFM downcalls, both restricted
-	// methods the JVM warns about today and blocks in a future release.
-	jvmArgs("--enable-native-access=ALL-UNNAMED")
-}
-
 // Only the classes that load the bridge need a process of their own - Streamline's runtime
 // accepts one Vulkan device per process - and a fork costs a fresh JVM plus classpath loading.
 // Everything else shares one worker in `test`. The tag mirrors the @NativeBridge annotation the
@@ -113,6 +107,7 @@ val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 	classpath = sourceSets.test.get().runtimeClasspath
 	useJUnitPlatform { includeTags(nativeBridgeTag) }
 	forkEvery = 1
+	jvmArgs("--enable-native-access=ALL-UNNAMED")
 	providers.gradleProperty("mc.dlss.vulkan-libname").orNull
 		?.let { systemProperty("org.lwjgl.vulkan.libname", it) }
 }

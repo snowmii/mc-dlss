@@ -321,19 +321,6 @@ val checkEngineFreeClasspath = tasks.register("checkEngineFreeClasspath") {
 // at build/jvm-crash instead of littering the repository.
 val jvmCrashDirectory = layout.buildDirectory.dir("jvm-crash").get().asFile
 
-tasks.withType<Test>().configureEach {
-	// %p expands to the pid, keeping concurrent workers from overwriting each other.
-	jvmArgs(
-		"-XX:ErrorFile=${jvmCrashDirectory.resolve("hs_err_pid%p.log")}",
-		"-XX:ReplayDataFile=${jvmCrashDirectory.resolve("replay_pid%p.log")}",
-	)
-	// The JVM silently falls back to the working directory if the target is unwritable.
-	doFirst { jvmCrashDirectory.mkdirs() }
-	// The bridge is loaded with System::load and called through FFM downcalls, both restricted
-	// methods the JVM warns about today and blocks in a future release.
-	jvmArgs("--enable-native-access=ALL-UNNAMED")
-}
-
 // Only the classes that load the bridge need a process of their own - Streamline's runtime
 // accepts one Vulkan device per process - and a fork costs a fresh JVM plus classpath loading.
 // Everything else shares one worker in `test`. The tag mirrors the @NativeBridge annotation the
@@ -351,6 +338,14 @@ val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 	classpath = sourceSets.test.get().runtimeClasspath
 	useJUnitPlatform { includeTags(nativeBridgeTag) }
 	forkEvery = 1
+	// Only this test worker loads the bridge and performs FFM downcalls.
+	jvmArgs(
+		"--enable-native-access=ALL-UNNAMED",
+		"-XX:ErrorFile=${jvmCrashDirectory.resolve("hs_err_pid%p.log")}",
+		"-XX:ReplayDataFile=${jvmCrashDirectory.resolve("replay_pid%p.log")}",
+	)
+	// The JVM silently falls back to the working directory if the target is unwritable.
+	doFirst { jvmCrashDirectory.mkdirs() }
 }
 
 tasks.named("check") {

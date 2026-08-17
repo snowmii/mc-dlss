@@ -53,6 +53,12 @@ public final class ExtensionBootstrap {
 	private ExtensionBootstrap() {
 	}
 
+	/** Opens one Java session over the packaged native implementation. */
+	public static NativeApi openSession() {
+		loadStreamlineRuntime();
+		return Native.open(nativeLibrary());
+	}
+
 	public static List<String> queryInstanceExtensions() {
 		loadStreamlineRuntime();
 		try (Native nativeBridge = Native.open(nativeLibrary())) {
