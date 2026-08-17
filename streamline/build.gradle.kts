@@ -283,8 +283,30 @@ val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 	forkEvery = 1
 }
 
+// The half of the root's `checkLayering` that has to live here: resolving this project's
+// compileClasspath from a task the root project owns fails on this project's state lock.
+// Nothing engine-shaped may appear on it - the SDK compiles without Minecraft, Fabric, or
+// Blaze3D, which is what makes it usable by a mod that is not this one.
+val checkEngineFreeClasspath = tasks.register("checkEngineFreeClasspath") {
+	group = "verification"
+	description = "Asserts no Minecraft/Fabric/Blaze3D coordinate reaches the SDK compile classpath."
+
+	val engineCoordinate = Regex("(?i)minecraft|fabric|blaze3d|com\\.mojang")
+	val coordinates = configurations.named("compileClasspath")
+		.flatMap { it.incoming.artifacts.resolvedArtifacts }
+		.map { artifacts -> artifacts.map { it.id.componentIdentifier.displayName } }
+	inputs.property("coordinates", coordinates)
+
+	doLast {
+		val engine = coordinates.get().filter(engineCoordinate::containsMatchIn)
+		check(engine.isEmpty()) {
+			engine.joinToString("\n", prefix = "Engine coordinates on the SDK compile classpath:\n") { "  - $it" }
+		}
+	}
+}
+
 tasks.named("check") {
-	dependsOn(nativeTest, nativeBridgeTest)
+	dependsOn(nativeTest, nativeBridgeTest, checkEngineFreeClasspath)
 }
 
 // The SDK owns its native assets: the bridge and the nine Streamline/NGX runtime dlls are

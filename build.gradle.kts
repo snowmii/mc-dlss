@@ -118,7 +118,54 @@ val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 		?.let { systemProperty("org.lwjgl.vulkan.libname", it) }
 }
 
-tasks.check { dependsOn(nativeBridgeTest) }
+// The split is only real while something enforces it. `checkLayering` decides the structural
+// boundaries between the two projects in one task, so `build` fails the moment one regresses
+// rather than months later when a Blaze3D import has quietly grown back into the SDK.
+//
+// The `sl`/NGX vocabulary boundary is not asserted here yet - src/main still carries the residue
+// that assert would report, and purging it is its own change.
+// The FFM surface, by the names a downcall cannot avoid spelling.
+val ffmSymbol = Regex("\\b(java\\.lang\\.foreign|MemorySegment|SymbolLookup|MemoryLayout|ValueLayout|FunctionDescriptor|Arena)\\b")
+
+val checkLayering = tasks.register("checkLayering") {
+	group = "verification"
+	description = "Asserts the :streamline / :mc-dlss split boundaries."
+
+	// The engine-free classpath half runs as :streamline:checkEngineFreeClasspath - resolving
+	// another project's configuration from a root task fails on that project's state lock.
+	dependsOn(":streamline:checkEngineFreeClasspath")
+
+	val streamlineMainKotlin = fileTree("streamline/src/main") { include("**/*.kt") }
+	val modMainJavaOutsideMixin = fileTree("src/main/java") {
+		include("**/*.java")
+		exclude("me/snowmii/dlss/mixin/**")
+	}
+	val modMainSources = fileTree("src/main") { include("**/*.kt", "**/*.java") }
+
+	inputs.files(streamlineMainKotlin, modMainJavaOutsideMixin, modMainSources)
+
+	doLast {
+		val violations = mutableListOf<String>()
+
+		streamlineMainKotlin.forEach {
+			violations += ":streamline main source set is Java-only, but carries Kotlin: $it"
+		}
+		modMainJavaOutsideMixin.forEach {
+			violations += ":mc-dlss src/main/java holds only mixin/, but carries: $it"
+		}
+		modMainSources.forEach { file ->
+			ffmSymbol.find(file.readText())?.let {
+				violations += ":mc-dlss reaches the native stack through the SDK, but ${file.path} spells FFM: ${it.value}"
+			}
+		}
+
+		check(violations.isEmpty()) {
+			violations.joinToString("\n", prefix = "Layering boundaries violated:\n") { "  - $it" }
+		}
+	}
+}
+
+tasks.check { dependsOn(nativeBridgeTest, checkLayering, ":streamline:nativeTest") }
 
 tasks.processResources {
 	val version = version
