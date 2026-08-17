@@ -1,9 +1,28 @@
 # mc-dlss
 
-## Setup
+NVIDIA DLSS (Super Resolution and Frame Generation) for Minecraft Java 26.2 on the Vulkan
+backend, as a Fabric mod. Windows with an RTX GPU only.
 
-For setup instructions, please see the [Fabric Documentation page](https://docs.fabricmc.net/develop/getting-started/creating-a-project#setting-up) related to the IDE that you are using.
+The repository builds two Gradle subprojects:
+
+- `:streamline` — a Java-only Streamline/DLSS binding for the JVM. Owns every line of C++, the
+  FFM bridge, and all NVIDIA vocabulary; has no Minecraft on its compile classpath. Ships nested
+  inside the mod jar as the Fabric library mod `streamline-api`.
+- `:mc-dlss` (the root project) — the Kotlin-plus-mixins Fabric mod that implements the shipped
+  DLSS features through that binding.
+
+## Build
+
+```bash
+./gradlew.bat build     # Windows only: the native build shells out to MSVC
+./gradlew.bat runClient
+```
+
+`docs/agents/` holds the working conventions, `docs/` the domain notes, and `.rolling/` the
+execution records of each effort.
 
 ## License
 
-This template is available under the CC0 license. Feel free to learn from it and incorporate it in your own projects.
+MIT — see `LICENSE`. Third-party components and their terms are listed in
+`THIRD-PARTY-NOTICES.md`; the NVIDIA Streamline and DLSS runtimes are not covered by it and carry
+NVIDIA's own license.

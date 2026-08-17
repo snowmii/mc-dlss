@@ -8,17 +8,6 @@ plugins {
 
 version = providers.gradleProperty("mod_version").get()
 
-// The Fabric library-mod identity is ${version}-expanded here so the nested jar's
-// fabric.mod.json declares the real version (1.0.0) instead of leaving ${version} literal.
-tasks.processResources {
-	val version = version
-	inputs.property("version", version)
-
-	filesMatching("fabric.mod.json") {
-		expand("version" to version)
-	}
-}
-
 // Workstation-local toolchain roots. Every one is overridable by Gradle property first, then
 // environment variable, so a second machine only needs to point these somewhere else rather
 // than patch this file. The defaults are the paths the bridge was developed against.
@@ -322,6 +311,15 @@ val streamlineRuntimeFiles = listOf(
 )
 
 tasks.processResources {
+	// The Fabric library-mod identity is ${version}-expanded here so the nested jar's
+	// fabric.mod.json declares the real version (1.0.0) instead of leaving ${version} literal.
+	val version = version
+	inputs.property("version", version)
+	filesMatching("fabric.mod.json") {
+		expand("version" to version)
+	}
+	exclude("**/*Zone.Identifier")
+
 	from(buildNativeDlss) {
 		into("assets/streamline-api/native")
 	}
@@ -346,10 +344,6 @@ tasks.withType<AbstractArchiveTask>().configureEach {
 	exclude("**/*Zone.Identifier")
 }
 
-tasks.processResources {
-	exclude("**/*Zone.Identifier")
-}
-
 tasks.withType<JavaCompile>().configureEach {
 	options.release = 25
 }
@@ -362,3 +356,6 @@ kotlin {
 		jvmTarget = JvmTarget.JVM_25
 	}
 }
+
+// Same delta config as the root. Main sources here are Java, so this covers the Kotlin test and
+// test-fixture sources only.

@@ -4,9 +4,11 @@
 
 complexity:
   LongParameterList:
-    # Vulkan and Blaze3D signatures carry the handles they carry.
+    # Vulkan and Blaze3D signatures carry the handles they carry, and a parsed-config value
+    # object (ModConfig) carries one field per `-Dmc.dlss.*` knob - splitting it would only
+    # scatter the single parse the config handle exists to centralize.
     functionThreshold: 8
-    constructorThreshold: 10
+    constructorThreshold: 16
     ignoreDefaultParameters: true
     ignoreDataClasses: true
     excludes: ['**/test/**']
@@ -44,9 +46,6 @@ style:
     # a chain of them - every missing input is its own early answer.
     max: 6
     excludeGuardClauses: true
-  MatchingDeclarationName:
-    # Dimensions.kt holds DlssDimensions by convention.
-    active: false
   UnusedPrivateMember:
     active: true
   UnusedPrivateProperty:
@@ -65,6 +64,10 @@ exceptions:
     active: false
 
 naming:
+  MatchingDeclarationName:
+    # A file is named for the concept it carries, not for its first declaration: DlssConfigs.kt
+    # holds the whole startup-config vocabulary.
+    active: false
   VariableNaming:
     excludes: ['**/test/**']
   ConstructorParameterNaming:

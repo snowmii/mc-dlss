@@ -8,20 +8,21 @@ plugins {
 version = providers.gradleProperty("mod_version").get()
 group = providers.gradleProperty("maven_group").get()
 
-// Workstation-local toolchain roots. Every one is overridable by Gradle property first, then
-// environment variable, so a second machine only needs to point these somewhere else rather
-// than patch this file. The defaults are the paths the bridge was developed against.
-val DEFAULT_NGX_SDK = "C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0"
-val DEFAULT_STREAMLINE_SDK = "C:/Users/miuki/Development/NVIDIA/mc-dlss/streamline-sdk-v2.12.0"
-
-fun toolchainRoot(property: String, environment: String, default: String): File =
-	providers.gradleProperty(property)
-		.orElse(providers.environmentVariable(environment))
-		.orElse(default)
-		.get()
-		.let(::file)
+// Workstation-local toolchain root, overridable by Gradle property first, then environment
+// variable, so a second machine only needs to point it somewhere else rather than patch this
+// file. The default is the path the bridge was developed against. `:streamline` owns the rest of
+// the toolchain (Vulkan, Streamline, MSVC); the mod needs the DLSS SDK path only to hand the dev
+// client its `mc.dlss.sdk-path` compatibility input.
+val ngxSdkRoot: File = providers.gradleProperty("mc.dlss.ngx-sdk")
+	.orElse(providers.environmentVariable("NGX_SDK"))
+	.orElse("C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0")
+	.map(::file)
+	.get()
 
 repositories {
+	// Loom supplies the Minecraft/Fabric repositories; this one carries the ordinary Maven
+	// artifacts (JUnit, detekt-cli).
+	mavenCentral()
 	exclusiveContent {
 		forRepository { maven("https://api.modrinth.com/maven") { name = "Modrinth" } }
 		filter { includeGroup("maven.modrinth") }
@@ -45,11 +46,9 @@ fun DependencyHandlerScope.runtimeMod(property: String, coordinate: (String) -> 
 }
 
 dependencies {
-	// To change the versions see the gradle.properties file
+	// Versions live in gradle.properties.
 	minecraft("com.mojang:minecraft:${providers.gradleProperty("minecraft_version").get()}")
 	implementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
-
-	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 	implementation(project(":streamline"))
@@ -182,6 +181,7 @@ tasks.processResources {
 	filesMatching("fabric.mod.json") {
 		expand("version" to version)
 	}
+	exclude("**/*Zone.Identifier")
 }
 
 // Windows marks every file downloaded or extracted from the internet with a `:Zone.Identifier`
@@ -191,10 +191,6 @@ tasks.processResources {
 // downloaded file from re-polluting the produced jars.
 tasks.withType<AbstractArchiveTask>().configureEach {
 	exclude("**\uF03A*") // Gradle renders the ADS colon as U+F03A in archive entry names
-	exclude("**/*Zone.Identifier")
-}
-
-tasks.processResources {
 	exclude("**/*Zone.Identifier")
 }
 
@@ -212,8 +208,7 @@ tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configur
 
 	// sdk-path is a compatibility input: the retired direct-NGX path searched it for its
 	// feature DLL, and initialize now validates it and records only the Vulkan tuple.
-	val sdkPath = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
-		.resolve("lib/Windows_x86_64/rel")
+	val sdkPath = ngxSdkRoot.resolve("lib/Windows_x86_64/rel")
 	val dlssData = layout.buildDirectory.dir("dlss-data").get().asFile
 
 	doFirst {
@@ -242,6 +237,46 @@ kotlin {
 		jvmTarget = JvmTarget.JVM_25
 	}
 }
+
+// Static analysis over every Kotlin source in the repository, both projects at once. detekt.yml
+// is a delta over detekt's defaults, so each relaxation in it records a deliberate repo choice
+// and the findings that remain are defects rather than disagreements about shape.
+//
+// The CLI rather than the Gradle plugin, because detekt 1.23 (the newest release) predates JDK
+// 25 and dies parsing a "25.0.4" version string in whatever JVM it runs in. As a JavaExec it
+// runs on the workstation's JDK 21 while the rest of the build stays on 25. Revisit when detekt
+// 2 ships: the plugin is the nicer wiring once it can run on the daemon's JDK.
+val detektCli: Configuration by configurations.creating
+
+dependencies {
+	detektCli("io.gitlab.arturbosch.detekt:detekt-cli:1.23.8")
+}
+
+val detekt = tasks.register<JavaExec>("detekt") {
+	group = "verification"
+	description = "Runs detekt over the Kotlin sources of both projects."
+
+	val sources = listOf(
+		"src/main/kotlin", "src/test/kotlin",
+		"streamline/src/test/kotlin", "streamline/src/testFixtures/kotlin",
+	).map(layout.projectDirectory::dir)
+	val report = layout.buildDirectory.file("reports/detekt/detekt.html")
+	inputs.files(sources.map { fileTree(it) { include("**/*.kt") } })
+	inputs.file("detekt.yml")
+	outputs.file(report)
+
+	classpath = detektCli
+	mainClass = "io.gitlab.arturbosch.detekt.cli.Main"
+	javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+	args(
+		"--config", file("detekt.yml").absolutePath,
+		"--build-upon-default-config",
+		"--input", sources.joinToString(",") { it.asFile.absolutePath },
+		"--report", "html:${report.get().asFile.absolutePath}",
+	)
+}
+
+tasks.check { dependsOn(detekt) }
 
 java {
 	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
