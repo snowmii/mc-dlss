@@ -53,6 +53,9 @@ dependencies {
 	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 	implementation(project(":streamline"))
+	// The relocated SDK-subject test fixtures (SrLiveSession + HeadlessVulkanFixture) now live in
+	// :streamline's testFixtures source set; the root suite compiles against that jar.
+	testImplementation(testFixtures(project(":streamline")))
 	// Nests the Streamline library-mod jar (id streamline-api) into the produced mod jar's
 	// META-INF/jars, alongside the compile/runtime dependency above.
 	include(project(":streamline"))

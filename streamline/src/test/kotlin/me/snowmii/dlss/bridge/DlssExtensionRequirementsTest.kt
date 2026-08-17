@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test
 class DlssExtensionRequirementsTest {
 	@Test
 	fun `queries exact Streamline instance and device extension requirements pre-creation`() {
-		Native.open(Path.of("streamline/build/native/mc_dlss.dll")).use { native ->
+		Native.open(Path.of("build/native/mc_dlss.dll")).use { native ->
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				native.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),

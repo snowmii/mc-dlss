@@ -1,5 +1,9 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
 	`java-library`
+	kotlin("jvm") version "2.4.10"
+	`java-test-fixtures`
 }
 
 version = providers.gradleProperty("mod_version").get()
@@ -40,6 +44,23 @@ dependencies {
 	// feature offsets precisely to avoid pulling one - so the Streamline runtime still loads
 	// before any LWJGL-Vulkan class initializes. Brings org.lwjgl:lwjgl:3.4.1 transitively.
 	implementation("org.lwjgl:lwjgl-vulkan:3.4.1")
+
+	// The relocated SDK-subject JVM suite: JUnit 5 for the Kotlin/Java test sources, and the
+	// test-fixtures jar (SrLiveSession + HeadlessVulkanFixture) the shared live rungs and the
+	// root suite compile against. fastutil is the fixture's internal Int2IntMap usage; junit is
+	// there because SrLiveSession asserts through JUnit itself.
+	testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+	testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.4")
+	// The fixture drives real LWJGL Vulkan calls (MemoryStack, VK* structs) at runtime; the root
+	// suite got these natives from Minecraft's classpath, :streamline must stage them itself. Same
+	// 3.4.1 coordinate the main unit's lwjgl-vulkan pins.
+	testRuntimeOnly("org.lwjgl:lwjgl:3.4.1:natives-windows")
+	testFixturesImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+	testFixturesImplementation("it.unimi.dsi:fastutil:8.5.15")
+	// The fixture drives a real headless Vulkan context through org.lwjgl.vulkan; the main unit's
+	// implementation-scoped lwjgl-vulkan does not reach the testFixtures compile classpath, so the
+	// fixture declares the same coordinate itself (identical version, no new transitive surface).
+	testFixturesImplementation("org.lwjgl:lwjgl-vulkan:3.4.1")
 }
 
 val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
@@ -218,8 +239,52 @@ val nativeTest = tasks.register<Exec>("nativeTest") {
 	commandLine(layout.buildDirectory.dir("native-test").get().asFile.resolve("native_tests.exe").absolutePath)
 }
 
+// The @NativeBridge tag, mirrored from the annotation the relocated test sources carry. Only the
+// classes that load the bridge need a process of their own - see the annotation's own
+// documentation for why - and a fork costs a fresh JVM plus classpath loading. The suite is
+// split exactly like the root's: everything tagged runs in nativeBridgeTest (one JVM per class,
+// because Streamline's runtime accepts one Vulkan device per process), everything else shares
+// one worker in test.
+val nativeBridgeTag = "native-bridge"
+
+// A crashing JVM writes hs_err/replay dumps to its working directory, which for a Gradle test
+// worker is the project dir. `forkEvery = 1` turns one bad run into one dump per test class, so
+// every forked JVM is pointed at build/jvm-crash instead of littering the repository root.
+// Mirror of the root script's helper, kept local so the relocated suite does not cross projects.
+fun <T> T.redirectJvmCrashDumps() where T : Task, T : JavaForkOptions {
+	val crashDirectory = layout.buildDirectory.dir("jvm-crash").get().asFile
+	// %p expands to the pid, keeping concurrent workers from overwriting each other.
+	jvmArgs(
+		"-XX:ErrorFile=${crashDirectory.resolve("hs_err_pid%p.log")}",
+		"-XX:ReplayDataFile=${crashDirectory.resolve("replay_pid%p.log")}",
+	)
+	// The JVM silently falls back to the working directory if the target is unwritable.
+	doFirst { crashDirectory.mkdirs() }
+}
+
+tasks.test {
+	// One worker for every class that never touches the bridge (currently only the isolation
+	// pin, which walks the relocated test sources from the :streamline worker cwd).
+	useJUnitPlatform { excludeTags(nativeBridgeTag) }
+	redirectJvmCrashDumps()
+	// The bridge is loaded with System::load and called through FFM downcalls, both restricted
+	// methods the JVM warns about today and blocks in a future release.
+	jvmArgs("--enable-native-access=ALL-UNNAMED")
+}
+
+val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
+	group = "verification"
+	description = "Runs the @NativeBridge test classes, one JVM per class."
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	useJUnitPlatform { includeTags(nativeBridgeTag) }
+	redirectJvmCrashDumps()
+	jvmArgs("--enable-native-access=ALL-UNNAMED")
+	forkEvery = 1
+}
+
 tasks.named("check") {
-	dependsOn(nativeTest)
+	dependsOn(nativeTest, nativeBridgeTest)
 }
 
 // The SDK owns its native assets: the bridge and the nine Streamline/NGX runtime dlls are
@@ -265,4 +330,13 @@ tasks.processResources {
 
 tasks.withType<JavaCompile>().configureEach {
 	options.release = 25
+}
+
+// The relocated SDK-subject test sources are Kotlin; the Kotlin test compilation must match the
+// Java 25 release the main sources compile to. Same coordinate as the root's Kotlin plugin, so
+// the same toolchain serves both.
+kotlin {
+	compilerOptions {
+		jvmTarget = JvmTarget.JVM_25
+	}
 }
