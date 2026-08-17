@@ -50,8 +50,11 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 	// Every translation unit under native/, so adding one to the module split does not also
 	// mean remembering to add it here. The headers are inputs too: they carry the ABI structs
 	// and the shared inline helpers, so a header-only edit still has to rebuild.
-	val nativeSources = nativeDirectory.asFileTree.matching { include("**/*.cpp") }
-	val nativeHeaders = nativeDirectory.asFileTree.matching { include("**/*.h") }
+	// The device-free doctest harness lives under native/test/ and is a build-time
+	// verification asset, not part of the shipped bridge: keep it out of the production
+	// sources and headers so doctest's main and the test TUs never link into mc_dlss.dll.
+	val nativeSources = nativeDirectory.asFileTree.matching { include("**/*.cpp"); exclude("test/**") }
+	val nativeHeaders = nativeDirectory.asFileTree.matching { include("**/*.h"); exclude("test/**") }
 	val motionShader = nativeDirectory.file("mc_dlss_motion.comp")
 	val velocityFillShader = nativeDirectory.file("mc_dlss_velocity_fill.comp")
 	val outputDirectory = layout.buildDirectory.dir("native")
@@ -129,6 +132,94 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 
 tasks.named("build") {
 	dependsOn(buildNativeDlss)
+}
+
+// M-5 rung: the device-free native logic proven in C++, in-process, on a machine with no
+// device, no Streamline session, and no sl.interposer.lib. state.cpp/timing.cpp/common.cpp
+// compile beside the doctest harness under native/test/ and link vulkan-1.lib only - the
+// vk* entry points those units reference - so the whole rung exercises exactly the logic
+// the device-bound live tests assert through their own frame fences, twice under one seam.
+val nativeTestCompile = tasks.register<Exec>("nativeTestCompile") {
+	group = "verification"
+	description = "Compiles the device-free native doctest harness with MSVC."
+
+	val nativeDirectory = layout.projectDirectory.dir("native")
+	// The three device-free units under test. Every other native/ TU is device- or
+	// session-bound and deliberately stays out of the harness.
+	val internalSources = listOf("state.cpp", "timing.cpp", "common.cpp")
+		.map { nativeDirectory.file("internal/$it").asFile }
+	val nativeHeaders = nativeDirectory.asFileTree.matching { include("internal/*.h", "mc_dlss.h") }
+	// Test headers (doctest.h) are inputs so a header-only edit rebuilds, but they are not
+	// source arguments: the linker would otherwise try to consume doctest.h as an object.
+	val testHeaders = nativeDirectory.asFileTree.matching { include("test/*.h") }
+	val testSources = nativeDirectory.asFileTree.matching { include("test/*.cpp") }
+	val outputDirectory = layout.buildDirectory.dir("native-test")
+	inputs.files(internalSources, nativeHeaders, testSources, testHeaders)
+	outputs.file(outputDirectory.map { it.file("native_tests.exe") })
+
+	doFirst {
+		val vsDevCmd = toolchainRoot(
+			"mc.dlss.vs-dev-cmd", "VSDEVCMD",
+			"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/Tools/VsDevCmd.bat"
+		)
+		val vulkanSdk = toolchainRoot("mc.dlss.vulkan-sdk", "VULKAN_SDK", "C:/VulkanSDK/1.4.357.0")
+		val ngxSdk = toolchainRoot("mc.dlss.ngx-sdk", "NGX_SDK", DEFAULT_NGX_SDK)
+		val streamlineSdk = toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", DEFAULT_STREAMLINE_SDK)
+		val vulkanHeader = vulkanSdk.resolve("Include/vulkan/vulkan.h")
+		val vulkanLibrary = vulkanSdk.resolve("Lib/vulkan-1.lib")
+		// The NGX and Streamline headers are needed for compilation (common.h includes
+		// nvsdk_ngx.h, state.h includes sl_core_types.h); no NGX or Streamline library is
+		// ever linked - if the link fails on a sl:: or NVSDK symbol, a wrong TU slipped in.
+		val ngxHeader = ngxSdk.resolve("include/nvsdk_ngx.h")
+		val streamlineHeader = streamlineSdk.resolve("include/sl.h")
+
+		check(vsDevCmd.isFile) { "Visual Studio 2022 Build Tools missing: $vsDevCmd" }
+		check(vulkanHeader.isFile) { "Vulkan SDK 1.4.357.0 header missing: $vulkanHeader (set VULKAN_SDK or install at C:/VulkanSDK/1.4.357.0)" }
+		check(vulkanLibrary.isFile) { "Vulkan SDK 1.4.357.0 loader library missing: $vulkanLibrary" }
+		check(ngxHeader.isFile) { "Pinned NVIDIA DLSS SDK 310.7.0 header (reference vocabulary only) missing: $ngxHeader" }
+		check(streamlineHeader.isFile) { "Pinned Streamline 2.12.0 header missing: $streamlineHeader" }
+
+		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
+		val output = outputDir.resolve("native_tests.exe")
+		// Object directory, not object file: with more than one source, /Fo must name a
+		// directory and must end in a separator, or cl.exe writes every object over the same
+		// name and links only the last one. The separator is a forward slash - which MSVC
+		// accepts in paths - because a trailing backslash would escape the closing quote and
+		// swallow the rest of the command line into one argument.
+		val objectDir = outputDir.resolve("obj").apply { mkdirs() }
+		val objectDirArgument = objectDir.absolutePath.replace('\\', '/') + "/"
+		// Sorted so the command line - and therefore the up-to-date check - does not depend on
+		// the order the file tree happens to walk in.
+		val sourceArguments = (internalSources + testSources.files.sorted())
+			.joinToString(" ") { "\"${it.absolutePath}\"" }
+		commandLine(
+			"cmd.exe", "/d", "/c",
+			"call \"${vsDevCmd.absolutePath}\" -arch=x64 -host_arch=x64 && " +
+				"cl.exe /nologo /std:c++17 /EHsc /O2 /DNOMINMAX /Fo\"${objectDirArgument}\" " +
+				// native/ first: the internal units include each other as "internal/<unit>.h"
+				// and the public header as "mc_dlss.h", both relative to it.
+				"/I\"${nativeDirectory.asFile.absolutePath}\" " +
+				"/I\"${vulkanSdk.resolve("Include").absolutePath}\" " +
+				"/I\"${ngxSdk.resolve("include").absolutePath}\" " +
+				"/I\"${streamlineSdk.resolve("include").absolutePath}\" " +
+				sourceArguments + " " +
+				"/link /OUT:\"${output.absolutePath}\" " +
+				"\"${vulkanLibrary.absolutePath}\""
+		)
+	}
+}
+
+val nativeTest = tasks.register<Exec>("nativeTest") {
+	group = "verification"
+	description = "Runs the device-free native doctest harness."
+	dependsOn(nativeTestCompile)
+	// No outputs on purpose: the binary is cheap, and an up-to-date skip must never hide a
+	// failed run - a doctest failure is a failing task, every time.
+	commandLine(layout.buildDirectory.dir("native-test").get().asFile.resolve("native_tests.exe").absolutePath)
+}
+
+tasks.named("check") {
+	dependsOn(nativeTest)
 }
 
 // The SDK owns its native assets: the bridge and the nine Streamline/NGX runtime dlls are
