@@ -340,7 +340,7 @@ class WorldPhase(
 				state = runtime.sessionState,
 				qualityMode = runtime.qualityMode,
 				renderPreset = runtime.renderPreset,
-				outputDimensions = runtime.config.outputDimensions,
+				outputDimensions = runtime.outputDimensions,
 				renderDimensions = runtime.renderDimensions,
 			),
 			frameTimings = { runtime.frameEvaluation?.sampleTimings() },

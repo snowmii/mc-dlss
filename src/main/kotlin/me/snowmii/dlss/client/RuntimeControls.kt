@@ -133,7 +133,7 @@ class RuntimeControls(
 			" | mode ${runtime.qualityMode.propertyValue}" +
 			" | preset ${runtime.renderPreset.propertyValue}" +
 			" | internal $internal" +
-			" | output ${runtime.config.outputDimensions}"
+			" | output ${runtime.outputDimensions}"
 	}
 
 	/**

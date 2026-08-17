@@ -70,8 +70,11 @@ class EnablementFallbackTest {
 		assertEquals("unsupported-frame", fixture.route?.frame?.reason)
 	}
 
+	// A size the session is not configured against renders full-resolution *for that frame*. This
+	// runtime has no bridge, so there is no native side to reconfigure and the refusal is the
+	// whole story; the session's own adoption of the client's size is OutputResolutionTest's.
 	@Test
-	fun `a window the configuration does not name renders full-resolution`() {
+	fun `a window the session is not configured against renders full-resolution`() {
 		val fixture = fixture()
 		val resized = FakeTarget(1920, 1080)
 

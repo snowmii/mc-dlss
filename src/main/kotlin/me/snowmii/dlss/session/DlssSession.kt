@@ -65,6 +65,32 @@ class DlssSession(
 	var failure: DlssNativeFailure? = null
 		private set
 
+	/**
+	 * Output size this session is configured against right now.
+	 *
+	 * Seeded from the configuration and then, unless the configuration pinned it, replaced by the
+	 * client's real main-target size on the first world frame and on every later change. This is
+	 * the size every native call is stamped with, so a reader asking what DLSS is running at asks
+	 * here rather than at `config.outputDimensions`, which only records where the session started.
+	 */
+	var outputDimensions: Dimensions = config.outputDimensions
+		private set
+
+	/**
+	 * Adopts [dimensions] as the size this session configures against, and reports whether the
+	 * caller must now reconfigure the native side.
+	 *
+	 * A pinned session refuses: `mc.dlss.output-width/height` were named, so frames at any other
+	 * size keep routing vanilla, which is the one case the old fixed-size refusal still describes.
+	 */
+	fun adoptOutputDimensions(dimensions: Dimensions): Boolean {
+		if (config.outputPinned || dimensions == outputDimensions) {
+			return false
+		}
+		outputDimensions = dimensions
+		return true
+	}
+
 	internal fun markReadyAfterNativeStartup(): Boolean {
 		if (state != DlssSessionState.WAITING_FOR_VULKAN) {
 			return false
@@ -81,7 +107,10 @@ class DlssSession(
 			state == DlssSessionState.CLOSED -> vanilla("closed")
 			state != DlssSessionState.READY -> vanilla("native-not-ready")
 			!normalInWorldFrame -> vanilla("unsupported-frame")
-			outputDimensions != config.outputDimensions -> vanilla("unsupported-output-size")
+			// The session's *current* size, not the configured one: an unpinned session adopts the
+			// client's size and reconfigures, so this refusal survives only for the frame that
+			// reported a new size before the reconfigure ran, and permanently for a pinned session.
+			outputDimensions != this.outputDimensions -> vanilla("unsupported-output-size")
 			else -> DlssFrameDecision(DlssFrameRoute.DLSS, "normal-world-frame")
 		}
 	}

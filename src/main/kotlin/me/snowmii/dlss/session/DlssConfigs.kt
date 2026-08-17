@@ -15,11 +15,22 @@ data class DlssStartupConfig(
 	val qualityMode: SRMode,
 	/** Preset this session runs; the mode's own documented default unless one was asked for. */
 	val renderPreset: SRModelPreset = qualityMode.defaultPreset,
+	/**
+	 * Output size the session starts against. It is the size in effect only until the first world
+	 * frame reports the client's real main target; see [DlssSession.outputDimensions]. A session
+	 * with [outputPinned] set keeps this size for its whole life.
+	 */
 	val outputDimensions: Dimensions,
 	val sdkPath: Path?,
 	val nativeLibraryPath: Path?,
 	val dataPath: Path?,
 	val warnings: List<String>,
+	/**
+	 * Whether `mc.dlss.output-width` / `mc.dlss.output-height` were named explicitly, which pins
+	 * the session to [outputDimensions] and refuses every frame at another size. Unset - the
+	 * default - lets the output size follow the client's main render target.
+	 */
+	val outputPinned: Boolean = false,
 )
 
 /**

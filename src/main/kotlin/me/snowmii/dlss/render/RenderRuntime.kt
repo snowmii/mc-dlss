@@ -101,7 +101,7 @@ class RenderRuntime(
 	 */
 	private val fgFrameSupported: (Boolean, Dimensions) -> Boolean =
 		{ normalInWorldFrame, outputDimensions ->
-			normalInWorldFrame && outputDimensions == session.config.outputDimensions
+			normalInWorldFrame && outputDimensions == session.outputDimensions
 		},
 	/** Emits diagnostics; the FG status latch reports its one exact line through this. */
 	private val diagnostics: (String) -> Unit = {},
@@ -111,6 +111,19 @@ class RenderRuntime(
 	private val entityIds = IdentityHashMap<EntityRenderState, Int>()
 	private var currentViewProjectionState: Matrix4f? = null
 	private var startupAttempted = false
+
+	/** Last main-target size a world frame reported, which the next one has to match to be adopted. */
+	private var pendingOutputDimensions: Dimensions? = null
+
+	/** Whether any world frame has reported a main-target size yet; the first one is adopted at once. */
+	private var outputDimensionsSeen = false
+
+	/**
+	 * Output size DLSS is running at, which follows the client's main target unless the
+	 * configuration pinned it. Every readout reports this rather than `config.outputDimensions`.
+	 */
+	val outputDimensions: Dimensions
+		get() = session.outputDimensions
 
 	/** Quality mode this runtime is rendering at, which starts as the configured one. */
 	var qualityMode: SRMode = session.config.qualityMode
@@ -284,6 +297,14 @@ class RenderRuntime(
 		// Switched off takes effect before startup is ever attempted, so a session that begins
 		// switched off never initializes the bridge at all.
 		val started = if (runtimeEnabled) ensureStarted() else false
+
+		// The client's main target is the authority on the output size, so a frame at a size the
+		// session is not configured against reconfigures it rather than routing vanilla forever.
+		// This runs before the FG classifier and the route: both read the session's size, and the
+		// reconfigure suspends FG and releases the images itself.
+		if (started) {
+			adoptOutputDimensions(outputDimensions)
+		}
 
 		// No wait on DLSSGState::inputsProcessingCompletionFence here any more, and the measurement
 		// is why: it cost 10-11ms of every 13ms FG frame, which is the whole difference between
@@ -592,13 +613,58 @@ class RenderRuntime(
 	}
 
 	/**
+	 * Moves the session onto [dimensions] when the client has settled there, and reports whether
+	 * the native side was reconfigured.
+	 *
+	 * A drag-resize reports a different size every frame and each reconfigure costs a device-idle
+	 * release, so a new size has to be seen twice in a row before it is adopted: the frames during
+	 * the drag route vanilla at their own size, and the first stable size pays one reconfigure.
+	 * The very first world frame is exempt - the session has rendered nothing yet, so there is no
+	 * running configuration to protect and no reason to spend a vanilla frame.
+	 *
+	 * A pinned session ([DlssStartupConfig.outputPinned]) adopts nothing, and a refused native
+	 * reconfigure puts the session back on the size it was actually running at, because the frames
+	 * that follow are still the old configuration's.
+	 */
+	private fun adoptOutputDimensions(dimensions: Dimensions): Boolean {
+		if (session.config.outputPinned || dimensions == session.outputDimensions) {
+			pendingOutputDimensions = null
+			return false
+		}
+
+		val settled = !outputDimensionsSeen || pendingOutputDimensions == dimensions
+		outputDimensionsSeen = true
+		pendingOutputDimensions = dimensions
+		if (!settled) {
+			return false
+		}
+
+		val previous = session.outputDimensions
+		if (!session.adoptOutputDimensions(dimensions)) {
+			return false
+		}
+		pendingOutputDimensions = null
+
+		val reconfigured = bridge?.reconfigure(qualityMode, renderPreset)
+		if (reconfigured == null) {
+			session.adoptOutputDimensions(previous)
+			return false
+		}
+
+		rebuildFrom(reconfigured)
+		releaseFrameState(releaseImages = true)
+		diagnostics("DLSS output resolution: $previous -> $dimensions render=$reconfigured")
+		return true
+	}
+
+	/**
 	 * Rebuilds everything sized from the render dimensions after they change: the two sequences
 	 * the phase accumulates, and the render dimensions themselves, which are the routing
 	 * decision's one source of truth.
 	 */
 	private fun rebuildFrom(dimensions: Dimensions) {
 		renderDimensions = dimensions
-		phase.rebuild(dimensions, session.config.outputDimensions)
+		phase.rebuild(dimensions, session.outputDimensions)
 	}
 
 	/**
@@ -745,7 +811,7 @@ class RenderRuntime(
 				lastFullscreen = fullscreen
 				isFgFrameSupported(
 					normalInWorldFrame = normalInWorldFrame,
-					outputMatches = outputDimensions == session.config.outputDimensions,
+					outputMatches = outputDimensions == session.outputDimensions,
 					paused = client.isPaused,
 					loading = client.gui.overlay() is LoadingOverlay,
 					screenOpen = client.gui.screen() != null,

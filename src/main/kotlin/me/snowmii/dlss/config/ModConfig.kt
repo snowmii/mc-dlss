@@ -30,6 +30,8 @@ class ModConfig(
 	/** Preset this session runs; the mode's own documented default unless one was asked for. */
 	val renderPreset: SRModelPreset,
 	val outputDimensions: Dimensions,
+	/** Whether either output knob was named, which pins the session to [outputDimensions]. */
+	val outputPinned: Boolean,
 	val sdkPath: Path?,
 	val nativeLibraryPath: Path?,
 	val dataPath: Path?,
@@ -58,6 +60,7 @@ class ModConfig(
 			nativeLibraryPath,
 			dataPath,
 			warnings,
+			outputPinned,
 		)
 
 	companion object {
@@ -109,6 +112,10 @@ class ModConfig(
 				qualityMode = qualityMode,
 				renderPreset = renderPreset,
 				outputDimensions = Dimensions(width, height),
+				// Naming either knob pins the session to that size; naming neither lets the output
+				// size follow whatever main target the client actually renders into.
+				outputPinned = properties.getProperty(OUTPUT_WIDTH_PROPERTY) != null ||
+					properties.getProperty(OUTPUT_HEIGHT_PROPERTY) != null,
 				sdkPath = readPath(properties, SDK_PATH_PROPERTY, warnings),
 				nativeLibraryPath = readPath(properties, NATIVE_LIBRARY_PROPERTY, warnings),
 				dataPath = readPath(properties, DATA_PATH_PROPERTY, warnings),

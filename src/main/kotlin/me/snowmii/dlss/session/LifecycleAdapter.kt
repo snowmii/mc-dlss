@@ -20,7 +20,8 @@ import java.nio.file.Path
  * Also the one place the configured dimensions are stamped onto a request. The bridge checks
  * every recording call against the configuration it was given, and this adapter is what holds
  * that configuration - [renderDimensions] from the last successful configure, and the output
- * size from the session. A caller describing a frame supplies what it can see; the sizes it
+ * size from the session, which is the size the session currently runs at rather than the one it
+ * started at (see [DlssSession.outputDimensions]). A caller describing a frame supplies what it can see; the sizes it
  * would have to be told are added here rather than threaded through it.
  */
 class LifecycleAdapter(
@@ -48,16 +49,16 @@ class LifecycleAdapter(
 
 		val queriedDimensions = invokeDimensions {
 			native.queryOptimalDimensions(
-				session.config.outputDimensions.width,
-				session.config.outputDimensions.height,
+				session.outputDimensions.width,
+				session.outputDimensions.height,
 				session.config.qualityMode.sdkValue,
 			)
 		} ?: return null
 
 		if (!invokeStatus(DlssNativeStage.CONFIGURE) {
 				native.configure(
-					session.config.outputDimensions.width,
-					session.config.outputDimensions.height,
+					session.outputDimensions.width,
+					session.outputDimensions.height,
 					queriedDimensions.width,
 					queriedDimensions.height,
 					session.config.qualityMode.sdkValue,
@@ -92,16 +93,16 @@ class LifecycleAdapter(
 
 		val queriedDimensions = invokeDimensions {
 			native.queryOptimalDimensions(
-				session.config.outputDimensions.width,
-				session.config.outputDimensions.height,
+				session.outputDimensions.width,
+				session.outputDimensions.height,
 				qualityMode.sdkValue,
 			)
 		} ?: return null
 
 		if (!invokeStatus(DlssNativeStage.CONFIGURE) {
 				native.configure(
-					session.config.outputDimensions.width,
-					session.config.outputDimensions.height,
+					session.outputDimensions.width,
+					session.outputDimensions.height,
 					queriedDimensions.width,
 					queriedDimensions.height,
 					qualityMode.sdkValue,
@@ -496,7 +497,7 @@ class LifecycleAdapter(
 
 		return invokeStatus(DlssNativeStage.PRESENT_OUTPUT) {
 			native.presentOutput(
-				PresentTarget(destination.commandBuffer, destination.image, session.config.outputDimensions),
+				PresentTarget(destination.commandBuffer, destination.image, session.outputDimensions),
 			)
 		}
 	}
