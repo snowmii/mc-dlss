@@ -603,13 +603,13 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			return new Native(arena, lookup);
 		} catch (Throwable error) {
 			arena.close();
-			throw new NativeException("load-library", error);
+			throw new StreamlineException("load-library", error);
 		}
 	}
 
 	public int bootstrapStreamline(final Path pluginPath) {
 		Objects.requireNonNull(pluginPath, "pluginPath");
-		if (bootstrapStreamline == null) throw new NativeException("bootstrap-streamline", new IllegalStateException("Native bridge lacks Streamline bootstrap"));
+		if (bootstrapStreamline == null) throw new StreamlineException("bootstrap-streamline", new IllegalStateException("Native bridge lacks Streamline bootstrap"));
 		try (Arena callArena = Arena.ofConfined()) {
 			return (int)this.bootstrapStreamline.invokeExact(callArena.allocateFrom(pluginPath.toString()));
 		} catch (Throwable error) {
@@ -666,7 +666,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				? (int)this.queryDeviceExtension.invokeExact(vkInstance, vkPhysicalDevice, 0, MemorySegment.NULL, 0, count)
 				: (int)this.queryInstanceExtension.invokeExact(0, MemorySegment.NULL, 0, count);
 			if (result != SUCCESS) {
-				throw new NativeException("query-extensions", result);
+				throw new StreamlineException("query-extensions", result);
 			}
 			final int extensionCount = count.get(JAVA_INT, 0);
 			final LinkedHashSet<String> names = new LinkedHashSet<>(extensionCount);
@@ -676,12 +676,12 @@ public final class Native implements AutoCloseable, StreamlineSession {
 					? (int)this.queryDeviceExtension.invokeExact(vkInstance, vkPhysicalDevice, index, name, 256, count)
 					: (int)this.queryInstanceExtension.invokeExact(index, name, 256, count);
 				if (result != SUCCESS) {
-					throw new NativeException("query-extensions", result);
+					throw new StreamlineException("query-extensions", result);
 				}
 				names.add(name.getString(0));
 			}
 			return List.copyOf(names);
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-extensions", error);
@@ -708,7 +708,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			final MemorySegment count = callArena.allocate(JAVA_INT);
 			int result = (int)query.invokeExact(0, MemorySegment.NULL, 0, count);
 			if (result != SUCCESS) {
-				throw new NativeException("query-device-features", result);
+				throw new StreamlineException("query-device-features", result);
 			}
 			final int featureCount = count.get(JAVA_INT, 0);
 			final LinkedHashSet<String> names = new LinkedHashSet<>(featureCount);
@@ -716,12 +716,12 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				final MemorySegment name = callArena.allocate(256);
 				result = (int)query.invokeExact(index, name, 256, count);
 				if (result != SUCCESS) {
-					throw new NativeException("query-device-features", result);
+					throw new StreamlineException("query-device-features", result);
 				}
 				names.add(name.getString(0));
 			}
 			return List.copyOf(names);
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-device-features", error);
@@ -736,14 +736,14 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			final MemorySegment opticalFlow = callArena.allocate(JAVA_INT);
 			final int result = (int)this.queryQueueRequirements.invokeExact(graphics, compute, opticalFlow);
 			if (result != SUCCESS) {
-				throw new NativeException("query-queue-requirements", result);
+				throw new StreamlineException("query-queue-requirements", result);
 			}
 			return new SlQueueRequirements(
 				graphics.get(JAVA_INT, 0),
 				compute.get(JAVA_INT, 0),
 				opticalFlow.get(JAVA_INT, 0)
 			);
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-queue-requirements", error);
@@ -757,10 +757,10 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			final MemorySegment fg = callArena.allocate(JAVA_INT);
 			final int result = (int)this.queryTaggedFrameIndexes.invokeExact(sr, fg);
 			if (result != SUCCESS) {
-				throw new NativeException("query-tagged-frame-indexes", result);
+				throw new StreamlineException("query-tagged-frame-indexes", result);
 			}
 			return new TaggedFrameIndexes(sr.get(JAVA_INT, 0), fg.get(JAVA_INT, 0));
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-tagged-frame-indexes", error);
@@ -769,7 +769,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public PresentMarkerEvents presentMarkers() {
-		if (queryPresentMarkers == null) throw new NativeException("query-present-markers", new IllegalStateException("Native bridge lacks the present-marker oracle"));
+		if (queryPresentMarkers == null) throw new StreamlineException("query-present-markers", new IllegalStateException("Native bridge lacks the present-marker oracle"));
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment startCount = callArena.allocate(JAVA_INT);
 			final MemorySegment endCount = callArena.allocate(JAVA_INT);
@@ -783,7 +783,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				PresentMarkerEvents.LOG_CAPACITY
 			);
 			if (result != SUCCESS) {
-				throw new NativeException("query-present-markers", result);
+				throw new StreamlineException("query-present-markers", result);
 			}
 			final int total = eventCount.get(JAVA_INT, 0);
 			final int readable = Math.min(total, PresentMarkerEvents.LOG_CAPACITY);
@@ -799,7 +799,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				total,
 				List.copyOf(log)
 			);
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-present-markers", error);
@@ -808,26 +808,26 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int installPclWindow(final long hwnd) {
-		if (installPclWindow == null) throw new NativeException("install-pcl-window", new IllegalStateException("Native bridge lacks the PCL window hook"));
+		if (installPclWindow == null) throw new StreamlineException("install-pcl-window", new IllegalStateException("Native bridge lacks the PCL window hook"));
 		try { return (int)installPclWindow.invokeExact(hwnd); } catch (Throwable error) { throw nativeError("install-pcl-window", error); }
 	}
 
 	@Override
 	public int reflexInputSample() {
-		if (reflexInputSample == null) throw new NativeException("reflex-input-sample", new IllegalStateException("Native bridge lacks the reflex input-sample marker"));
+		if (reflexInputSample == null) throw new StreamlineException("reflex-input-sample", new IllegalStateException("Native bridge lacks the reflex input-sample marker"));
 		try { return (int)reflexInputSample.invokeExact(); } catch (Throwable error) { throw nativeError("reflex-input-sample", error); }
 	}
 
 	@Override
 	public int reflexMarker(final StreamlineSession.ReflexMarkerType type) {
-		if (reflexMarker == null) throw new NativeException("reflex-marker", new IllegalStateException("Native bridge lacks the reflex marker entry"));
+		if (reflexMarker == null) throw new StreamlineException("reflex-marker", new IllegalStateException("Native bridge lacks the reflex marker entry"));
 		final int value = type.getNativeValue();
 		try { return (int)reflexMarker.invokeExact(value); } catch (Throwable error) { throw nativeError("reflex-marker", error); }
 	}
 
 	@Override
 	public StreamlineSession.ReflexMarkerEvents reflexMarkers() {
-		if (queryReflexMarkers == null) throw new NativeException("query-reflex-markers", new IllegalStateException("Native bridge lacks the reflex-marker oracle"));
+		if (queryReflexMarkers == null) throw new StreamlineException("query-reflex-markers", new IllegalStateException("Native bridge lacks the reflex-marker oracle"));
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment typeCounts = callArena.allocate(JAVA_INT, StreamlineSession.ReflexMarkerEvents.TYPE_COUNT);
 			final MemorySegment eventCount = callArena.allocate(JAVA_INT);
@@ -839,7 +839,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				StreamlineSession.ReflexMarkerEvents.LOG_CAPACITY
 			);
 			if (result != SUCCESS) {
-				throw new NativeException("query-reflex-markers", result);
+				throw new StreamlineException("query-reflex-markers", result);
 			}
 			final int total = eventCount.get(JAVA_INT, 0);
 			final int readable = Math.min(total, StreamlineSession.ReflexMarkerEvents.LOG_CAPACITY);
@@ -854,7 +854,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				counts[i] = typeCounts.get(JAVA_INT, (long) i * JAVA_INT.byteSize());
 			}
 			return new StreamlineSession.ReflexMarkerEvents(counts, total, List.copyOf(log));
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-reflex-markers", error);
@@ -863,16 +863,16 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public StreamlineSession.ReflexRegistration queryReflexOptions() {
-		if (queryReflexOptions == null) throw new NativeException("query-reflex-options", new IllegalStateException("Native bridge lacks the reflex options oracle"));
+		if (queryReflexOptions == null) throw new StreamlineException("query-reflex-options", new IllegalStateException("Native bridge lacks the reflex options oracle"));
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment mode = callArena.allocate(JAVA_INT);
 			final MemorySegment calls = callArena.allocate(JAVA_INT);
 			final int result = (int)this.queryReflexOptions.invokeExact(mode, calls);
 			if (result != SUCCESS) {
-				throw new NativeException("query-reflex-options", result);
+				throw new StreamlineException("query-reflex-options", result);
 			}
 			return new StreamlineSession.ReflexRegistration(mode.get(JAVA_INT, 0), calls.get(JAVA_INT, 0));
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-reflex-options", error);
@@ -913,10 +913,10 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				renderHeight
 			);
 			if (result != SUCCESS) {
-				throw new NativeException("query-dimensions", result);
+				throw new StreamlineException("query-dimensions", result);
 			}
 			return new Dimensions(renderWidth.get(JAVA_INT, 0), renderHeight.get(JAVA_INT, 0));
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-dimensions", error);
@@ -948,7 +948,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int configureFg(final int numBackBuffers) {
-		if (configureFg == null) throw new NativeException("configure-fg", new IllegalStateException("Native bridge lacks FG configure"));
+		if (configureFg == null) throw new StreamlineException("configure-fg", new IllegalStateException("Native bridge lacks FG configure"));
 		try {
 			return (int)this.configureFg.invokeExact(numBackBuffers);
 		} catch (Throwable error) {
@@ -958,7 +958,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int setFgMode(final int fgEnabled) {
-		if (setFgMode == null) throw new NativeException("set-fg-mode", new IllegalStateException("Native bridge lacks the FG mode record"));
+		if (setFgMode == null) throw new StreamlineException("set-fg-mode", new IllegalStateException("Native bridge lacks the FG mode record"));
 		try {
 			return (int)this.setFgMode.invokeExact(fgEnabled);
 		} catch (Throwable error) {
@@ -968,7 +968,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int setFgMultiplier(final int numFramesToGenerate) {
-		if (setFgMultiplier == null) throw new NativeException("set-fg-multiplier", new IllegalStateException("Native bridge lacks the FG multiplier record"));
+		if (setFgMultiplier == null) throw new StreamlineException("set-fg-multiplier", new IllegalStateException("Native bridge lacks the FG multiplier record"));
 		try {
 			return (int)this.setFgMultiplier.invokeExact(numFramesToGenerate);
 		} catch (Throwable error) {
@@ -978,19 +978,19 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public FgMultiplier queryFgMultiplier() {
-		if (queryFgMultiplier == null) throw new NativeException("query-fg-multiplier", new IllegalStateException("Native bridge lacks the FG multiplier query"));
+		if (queryFgMultiplier == null) throw new StreamlineException("query-fg-multiplier", new IllegalStateException("Native bridge lacks the FG multiplier query"));
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment current = callArena.allocate(JAVA_INT);
 			final MemorySegment max = callArena.allocate(JAVA_INT);
 			final int result = (int)this.queryFgMultiplier.invokeExact(current, max);
 			if (result != SUCCESS) {
-				throw new NativeException("query-fg-multiplier", result);
+				throw new StreamlineException("query-fg-multiplier", result);
 			}
 			return new FgMultiplier(
 				current.get(JAVA_INT, 0),
 				max.get(JAVA_INT, 0)
 			);
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-fg-multiplier", error);
@@ -1004,10 +1004,10 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			final MemorySegment output = callArena.allocate(IMAGE_LAYOUT);
 			final int result = (int)this.acquireImages.invokeExact(motion, output);
 			if (result != SUCCESS) {
-				throw new NativeException("acquire-images", result);
+				throw new StreamlineException("acquire-images", result);
 			}
 			return new EvaluationImages(readImage(motion), readImage(output));
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("acquire-images", error);
@@ -1126,13 +1126,13 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int presentStart() {
-		if (presentStart == null) throw new NativeException("present-start", new IllegalStateException("Native bridge lacks present start"));
+		if (presentStart == null) throw new StreamlineException("present-start", new IllegalStateException("Native bridge lacks present start"));
 		try { return (int)presentStart.invokeExact(); } catch (Throwable error) { throw nativeError("present-start", error); }
 	}
 
 	@Override
 	public int presentEnd() {
-		if (presentEnd == null) throw new NativeException("present-end", new IllegalStateException("Native bridge lacks present end"));
+		if (presentEnd == null) throw new StreamlineException("present-end", new IllegalStateException("Native bridge lacks present end"));
 		try { return (int)presentEnd.invokeExact(); } catch (Throwable error) { throw nativeError("present-end", error); }
 	}
 
@@ -1235,7 +1235,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int tagFrameGenerationResources(final FgTagRequest request) {
-		if (tagFgResources == null) throw new NativeException("tag-fg-resources", new IllegalStateException("Native bridge lacks FG tag"));
+		if (tagFgResources == null) throw new StreamlineException("tag-fg-resources", new IllegalStateException("Native bridge lacks FG tag"));
 		try {
 			final MemorySegment info = this.fgTagScratch;
 			FG_TAG_COMMAND_BUFFER.set(info, 0L, request.commandBuffer());
@@ -1263,7 +1263,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int recordPresentHandoff() {
-		if (presentHandoff == null) throw new NativeException("present-handoff", new IllegalStateException("Native bridge lacks present handoff"));
+		if (presentHandoff == null) throw new StreamlineException("present-handoff", new IllegalStateException("Native bridge lacks present handoff"));
 		try {
 			return (int)this.presentHandoff.invokeExact();
 		} catch (Throwable error) {
@@ -1273,7 +1273,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int waitFgInputsIdle() {
-		if (waitFgInputsIdle == null) throw new NativeException("wait-fg-inputs", new IllegalStateException("Native bridge lacks FG input wait"));
+		if (waitFgInputsIdle == null) throw new StreamlineException("wait-fg-inputs", new IllegalStateException("Native bridge lacks FG input wait"));
 		try {
 			return (int)this.waitFgInputsIdle.invokeExact();
 		} catch (Throwable error) {
@@ -1283,7 +1283,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int recordReflexFrameLimit(int frameLimitUs) {
-		if (recordReflexFrameLimit == null) throw new NativeException("record-reflex-frame-limit", new IllegalStateException("Native bridge lacks the Reflex frame-limit record"));
+		if (recordReflexFrameLimit == null) throw new StreamlineException("record-reflex-frame-limit", new IllegalStateException("Native bridge lacks the Reflex frame-limit record"));
 		try {
 			return (int)this.recordReflexFrameLimit.invokeExact(frameLimitUs);
 		} catch (Throwable error) {
@@ -1293,7 +1293,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public int waitFgInputsValue(long vkDevice, long semaphore, long value) {
-		if (waitFgInputsValue == null) throw new NativeException("wait-fg-inputs-value", new IllegalStateException("Native bridge lacks the FG input value wait oracle"));
+		if (waitFgInputsValue == null) throw new StreamlineException("wait-fg-inputs-value", new IllegalStateException("Native bridge lacks the FG input value wait oracle"));
 		try {
 			return (int)this.waitFgInputsValue.invokeExact(vkDevice, semaphore, value);
 		} catch (Throwable error) {
@@ -1303,7 +1303,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	@Override
 	public FgState queryFgState() {
-		if (queryFgState == null) throw new NativeException("query-fg-state", new IllegalStateException("Native bridge lacks the FG state query"));
+		if (queryFgState == null) throw new StreamlineException("query-fg-state", new IllegalStateException("Native bridge lacks the FG state query"));
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment status = callArena.allocate(JAVA_INT);
 			final MemorySegment numFramesPresented = callArena.allocate(JAVA_INT);
@@ -1311,7 +1311,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			final MemorySegment fence = callArena.allocate(JAVA_LONG);
 			final int result = (int)this.queryFgState.invokeExact(status, numFramesPresented, fenceValue, fence);
 			if (result != SUCCESS) {
-				throw new NativeException("query-fg-state", result);
+				throw new StreamlineException("query-fg-state", result);
 			}
 			return new FgState(
 				status.get(JAVA_INT, 0),
@@ -1319,7 +1319,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				fenceValue.get(JAVA_LONG, 0),
 				fence.get(JAVA_LONG, 0)
 			);
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-fg-state", error);
@@ -1329,16 +1329,16 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	@Override
 	public CameraConstants queryCameraConstants() {
 		if (queryCameraConstants == null) {
-			throw new NativeException("query-camera-constants", new IllegalStateException("Native bridge lacks the camera-constants query"));
+			throw new StreamlineException("query-camera-constants", new IllegalStateException("Native bridge lacks the camera-constants query"));
 		}
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment out = callArena.allocate(CAMERA_LAYOUT);
 			final int result = (int)this.queryCameraConstants.invokeExact(out);
 			if (result != SUCCESS) {
-				throw new NativeException("query-camera-constants", result);
+				throw new StreamlineException("query-camera-constants", result);
 			}
 			return readCameraConstants(out);
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-camera-constants", error);
@@ -1348,16 +1348,16 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	@Override
 	public CameraConstants queryFgCameraConstants() {
 		if (queryFgCameraConstants == null) {
-			throw new NativeException("query-fg-camera-constants", new IllegalStateException("Native bridge lacks the FG camera-constants query"));
+			throw new StreamlineException("query-fg-camera-constants", new IllegalStateException("Native bridge lacks the FG camera-constants query"));
 		}
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment out = callArena.allocate(CAMERA_LAYOUT);
 			final int result = (int)this.queryFgCameraConstants.invokeExact(out);
 			if (result != SUCCESS) {
-				throw new NativeException("query-fg-camera-constants", result);
+				throw new StreamlineException("query-fg-camera-constants", result);
 			}
 			return readCameraConstants(out);
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-fg-camera-constants", error);
@@ -1367,7 +1367,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	@Override
 	public FgOrientationImages queryFgImages() {
 		if (queryFgImages == null) {
-			throw new NativeException("query-fg-images", new IllegalStateException("Native bridge lacks the FG images query"));
+			throw new StreamlineException("query-fg-images", new IllegalStateException("Native bridge lacks the FG images query"));
 		}
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment depth = callArena.allocate(IMAGE_LAYOUT);
@@ -1376,12 +1376,12 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			final MemorySegment motion = callArena.allocate(IMAGE_LAYOUT);
 			final int result = (int)this.queryFgImages.invokeExact(depth, hudless, ui, motion);
 			if (result != SUCCESS) {
-				throw new NativeException("query-fg-images", result);
+				throw new StreamlineException("query-fg-images", result);
 			}
 			return new FgOrientationImages(
 				readImage(depth), readImage(hudless), readImage(ui), readImage(motion)
 			);
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-fg-images", error);
@@ -1448,11 +1448,11 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			final int result = (int)this.close.invokeExact();
 			if (result != SUCCESS) {
 				// Keep arena and downcall handles alive so native shutdown can be retried.
-				throw new NativeException("close", result);
+				throw new StreamlineException("close", result);
 			}
 			this.closed = true;
 			this.nativeArena.close();
-		} catch (NativeException error) {
+		} catch (StreamlineException error) {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("close", error);
@@ -1478,10 +1478,10 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		return lookup.find(symbol).map(segment -> LINKER.downcallHandle(segment, descriptor)).orElse(null);
 	}
 
-	private static NativeException nativeError(final String stage, final Throwable error) {
-		if (error instanceof NativeException nativeError) {
+	private static StreamlineException nativeError(final String stage, final Throwable error) {
+		if (error instanceof StreamlineException nativeError) {
 			return nativeError;
 		}
-		return new NativeException(stage, error);
+		return new StreamlineException(stage, error);
 	}
 }

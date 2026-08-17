@@ -7,7 +7,7 @@ import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.StreamlineSession
-import me.snowmii.streamline.NativeException
+import me.snowmii.streamline.StreamlineException
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -264,7 +264,7 @@ class SrOnStreamlineTest {
 				"a failed initialize must not record the tuple",
 			)
 			assertThrows(
-				NativeException::class.java,
+				StreamlineException::class.java,
 			) { bridge.acquireImages() }
 		}
 	}

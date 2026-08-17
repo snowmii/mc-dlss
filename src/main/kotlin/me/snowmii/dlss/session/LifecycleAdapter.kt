@@ -1,6 +1,6 @@
 package me.snowmii.dlss.session
 import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.NativeException
+import me.snowmii.streamline.StreamlineException
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.EvaluationRequest
@@ -172,7 +172,7 @@ class LifecycleAdapter(
 
 		return try {
 			native.acquireImages()
-		} catch (error: NativeException) {
+		} catch (error: StreamlineException) {
 			latch(DlssNativeStage.ACQUIRE_IMAGES, error)
 			null
 		} catch (error: Throwable) {
@@ -395,7 +395,7 @@ class LifecycleAdapter(
 
 		val result = try {
 			native.waitFgInputsIdle()
-		} catch (error: NativeException) {
+		} catch (error: StreamlineException) {
 			latch(DlssNativeStage.WAIT_FG_INPUTS, error)
 			return false
 		} catch (error: Throwable) {
@@ -505,7 +505,7 @@ class LifecycleAdapter(
 	private fun invokeStatus(stage: DlssNativeStage, operation: () -> Int): Boolean {
 		val result = try {
 			operation()
-		} catch (error: NativeException) {
+		} catch (error: StreamlineException) {
 			latch(stage, error)
 			return false
 		} catch (error: Throwable) {
@@ -524,7 +524,7 @@ class LifecycleAdapter(
 	private fun invokeDimensions(operation: () -> Dimensions): Dimensions? {
 		return try {
 			operation()
-		} catch (error: NativeException) {
+		} catch (error: StreamlineException) {
 			latch(DlssNativeStage.QUERY_DIMENSIONS, error)
 			null
 		} catch (error: Throwable) {
@@ -534,7 +534,7 @@ class LifecycleAdapter(
 	}
 
 	private fun latch(stage: DlssNativeStage, error: Throwable) {
-		val failure = if (error is NativeException) {
+		val failure = if (error is StreamlineException) {
 			DlssNativeFailure(stageFrom(error.stage(), stage), error.resultCode())
 		} else {
 			DlssNativeFailure(stage, 0, error.message ?: error::class.java.simpleName)

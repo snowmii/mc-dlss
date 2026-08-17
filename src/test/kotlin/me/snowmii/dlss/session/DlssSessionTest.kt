@@ -4,7 +4,7 @@ import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.StreamlineSession
-import me.snowmii.streamline.NativeException
+import me.snowmii.streamline.StreamlineException
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.EvaluationImages
@@ -199,7 +199,7 @@ class DlssSessionTest {
 			qualityMode: Int,
 		): Dimensions {
 			queryCalls++
-			queryResult?.let { throw NativeException("query-dimensions", it) }
+			queryResult?.let { throw StreamlineException("query-dimensions", it) }
 			return Dimensions(1280, 720)
 		}
 
@@ -217,7 +217,7 @@ class DlssSessionTest {
 
 		override fun acquireImages(): EvaluationImages {
 			acquireImageCalls++
-			acquireImagesResult?.let { throw NativeException("acquire-images", it) }
+			acquireImagesResult?.let { throw StreamlineException("acquire-images", it) }
 			return EvaluationImages(
 				ImageBinding(0x1002, 0x1001, 83),
 				ImageBinding(0x2002, 0x2001, 37),

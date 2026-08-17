@@ -29,13 +29,13 @@ public final class StreamlineVulkanProvider {
 
 	/**
 	 * Points {@code org.lwjgl.vulkan.libname} at the staged interposer and returns its absolute
-	 * path. Throws {@link NativeException} when the staged runtime is missing, so the caller can
+	 * path. Throws {@link StreamlineException} when the staged runtime is missing, so the caller can
 	 * decide how loudly to fail.
 	 */
 	public static Path redirectToInterposer() {
 		final Path interposer = ExtensionBootstrap.streamlineRuntimeDirectory().resolve(INTERPOSER_NAME);
 		if (!Files.isRegularFile(interposer)) {
-			throw new NativeException(
+			throw new StreamlineException(
 				"vulkan-redirect",
 				new IllegalStateException("Staged Streamline interposer not found: " + interposer)
 			);

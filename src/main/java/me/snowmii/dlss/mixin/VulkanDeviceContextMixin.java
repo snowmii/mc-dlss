@@ -47,7 +47,7 @@ public class VulkanDeviceContextMixin {
 		if (context != null) {
 			VulkanContextRegistry.register(context);
 			// Loud on failure: a device Streamline cannot hook must not be silently presented as
-			// proxy-active. bootstrap throws NativeException at this same seam, so the injection
+			// proxy-active. bootstrap throws StreamlineException at this same seam, so the injection
 			// point is already the one that fails device creation rather than the frame loop.
 			Streamline.activateVulkanProxies(context);
 		}

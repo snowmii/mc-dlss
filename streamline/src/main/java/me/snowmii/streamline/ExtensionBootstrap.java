@@ -122,7 +122,7 @@ public final class ExtensionBootstrap {
 	 * Activates Streamline's manual-hook Vulkan proxies against the live device, right after
 	 * the VulkanDevice is constructed. Opens a fresh bridge like the other seams (bootstrap is
 	 * idempotent and the Streamline state survives the bridge close) and throws
-	 * {@link NativeException} if slSetVulkanInfo fails, so a device that Streamline cannot hook
+	 * {@link StreamlineException} if slSetVulkanInfo fails, so a device that Streamline cannot hook
 	 * fails loudly at the same seam where bootstrap already throws.
 	 */
 	public static void activateVulkanProxies(final VulkanContext context) {
@@ -140,7 +140,7 @@ public final class ExtensionBootstrap {
 				context.getComputeQueueIndex()
 			);
 			if (result != StreamlineSession.SUCCESS_RESULT) {
-				throw new NativeException("activate-vulkan-proxies", result);
+				throw new StreamlineException("activate-vulkan-proxies", result);
 			}
 		}
 	}
@@ -160,7 +160,7 @@ public final class ExtensionBootstrap {
 	private static void bootstrap(final Native nativeBridge) {
 		final int result = nativeBridge.bootstrapStreamline(streamlineRuntimeDirectory());
 		if (result != StreamlineSession.SUCCESS_RESULT) {
-			throw new NativeException("bootstrap-streamline", result);
+			throw new StreamlineException("bootstrap-streamline", result);
 		}
 	}
 
@@ -177,21 +177,21 @@ public final class ExtensionBootstrap {
 			try {
 				return Path.of(resource.toURI()).getParent();
 			} catch (URISyntaxException error) {
-				throw new NativeException("bootstrap-streamline", error);
+				throw new StreamlineException("bootstrap-streamline", error);
 			}
 		}
 		if (resource != null) {
 			try {
 				return extractedDirectory();
 			} catch (IOException error) {
-				throw new NativeException("bootstrap-streamline", error);
+				throw new StreamlineException("bootstrap-streamline", error);
 			}
 		}
 		for (Path directory = Path.of("").toAbsolutePath(); directory != null; directory = directory.getParent()) {
 			final Path candidate = directory.resolve(RELATIVE_STREAMLINE);
 			if (Files.isRegularFile(candidate.resolve("sl.interposer.dll"))) return candidate;
 		}
-		throw new NativeException("bootstrap-streamline", new IllegalStateException("Staged Streamline runtime not found; run ./gradlew.bat processResources"));
+		throw new StreamlineException("bootstrap-streamline", new IllegalStateException("Staged Streamline runtime not found; run ./gradlew.bat processResources"));
 	}
 
 	/**
@@ -222,7 +222,7 @@ public final class ExtensionBootstrap {
 			return packaged;
 		}
 
-		throw new NativeException(
+		throw new StreamlineException(
 			"load-library",
 			new IllegalStateException(
 				"Native DLSS bridge not found. Run ./gradlew.bat :streamline:buildNativeDlss, or set -D"
@@ -247,14 +247,14 @@ public final class ExtensionBootstrap {
 			try {
 				return Path.of(resource.toURI());
 			} catch (URISyntaxException error) {
-				throw new NativeException("load-library", error);
+				throw new StreamlineException("load-library", error);
 			}
 		}
 
 		try {
 			return extractedDirectory().resolve("mc_dlss.dll");
 		} catch (IOException error) {
-			throw new NativeException("load-library", error);
+			throw new StreamlineException("load-library", error);
 		}
 	}
 
