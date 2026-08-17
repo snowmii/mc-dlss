@@ -6,6 +6,7 @@ import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -154,7 +155,7 @@ class StreamlineSrOptionsTest {
 			true,
 			mapOf(graphicsFamily to requirementsExtras()),
 		).use { fixture ->
-			Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
@@ -186,7 +187,7 @@ class StreamlineSrOptionsTest {
 
 	/** The summed extra graphics + compute queues the loaded SL features require. */
 	private fun requirementsExtras(): Int {
-		val requirements = Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+		val requirements = NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),

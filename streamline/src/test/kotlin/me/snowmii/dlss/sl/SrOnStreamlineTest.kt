@@ -5,7 +5,7 @@ import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.NativeException
 import me.snowmii.streamline.SrTagRequest
@@ -236,7 +236,7 @@ class SrOnStreamlineTest {
 		// no session is ready (mc_dlss_close returns success without tearing anything down),
 		// and the pinned lookup keeps the module loaded: the Streamline bootstrap state lives
 		// in the module's globals, not in the bridge's arena.
-		Native.open(library).use { bridge ->
+		NativeTestAccess.open(library).use { bridge ->
 			assertEquals(NativeApi.SUCCESS_RESULT, bridge.bootstrapStreamline(runtime))
 			assertTrue(bridge.queryQueueRequirements().graphicsQueues >= 0)
 		}
@@ -244,7 +244,7 @@ class SrOnStreamlineTest {
 		// Bridge two opens WITHOUT bootstrapping: the requirements query still answers only if
 		// the module globals survived bridge one's close. A lookup tied to the bridge's arena
 		// would have unloaded the module and the query would fail with kNotInitialized.
-		Native.open(library).use { bridge ->
+		NativeTestAccess.open(library).use { bridge ->
 			assertTrue(
 				bridge.queryQueueRequirements().graphicsQueues >= 0,
 				"the pinned module must keep its Streamline bootstrap state across a bridge close",

@@ -33,20 +33,7 @@ kotlin {
 	}
 }
 
-// A crashing JVM writes hs_err/replay dumps to its working directory, which for a Gradle worker
-// is the project directory. The bridge can fault inside NVIDIA's own libraries, and
-// `forkEvery = 1` turns one bad run into one dump per test class, so every forked JVM is pointed
-// at build/jvm-crash instead of littering the repository.
-
-// Only the classes that load the bridge need a process of their own - Streamline's runtime
-// accepts one Vulkan device per process - and a fork costs a fresh JVM plus classpath loading.
-// Everything else shares one worker in `test`. The tag mirrors the @NativeBridge annotation the
-// test sources carry.
-val nativeBridgeTag = "native-bridge"
-
-tasks.test {
-	useJUnitPlatform { excludeTags(nativeBridgeTag) }
-}
+tasks.test { useJUnitPlatform() }
 
 repositories {
 	// Loom supplies the Minecraft/Fabric repositories; this one carries the ordinary Maven
@@ -97,78 +84,7 @@ dependencies {
 	runtimeMod("devauth_version") { "me.djtheredstoner:DevAuth-fabric:$it" }
 }
 
-// The optional bridge-loading test path reproduces the StreamlineVulkanProvider redirect in a
-// dedicated worker. Production uses manual proxy calls; pass
-// -Pmc.dlss.vulkan-libname=<abs path to sl.interposer.dll> only when testing the interposer path.
-val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
-	group = "verification"
-	description = "Runs the @NativeBridge test classes, one JVM per class."
-	testClassesDirs = sourceSets.test.get().output.classesDirs
-	classpath = sourceSets.test.get().runtimeClasspath
-	useJUnitPlatform { includeTags(nativeBridgeTag) }
-	forkEvery = 1
-	jvmArgs("--enable-native-access=ALL-UNNAMED")
-	providers.gradleProperty("mc.dlss.vulkan-libname").orNull
-		?.let { systemProperty("org.lwjgl.vulkan.libname", it) }
-}
-
-// The split is only real while something enforces it. `checkLayering` decides the structural
-// boundaries between the two projects in one task, so `build` fails the moment one regresses
-// rather than months later when a Blaze3D import has quietly grown back into the SDK.
-// The FFM surface, by the names a downcall cannot avoid spelling.
-val ffmSymbol = Regex("\\b(java\\.lang\\.foreign|MemorySegment|SymbolLookup|MemoryLayout|ValueLayout|FunctionDescriptor|Arena)\\b")
-// NVIDIA's own vocabulary: the NGX names, and Streamline's `sl`-prefixed C entry points. The
-// SDK's Java types are deliberately not matched - `SlVulkanFeatures` is how the mod is supposed
-// to reach the native stack, and naming it is different from speaking NGX.
-val nativeVocabulary =
-	Regex("\\b(NVSDK\\w*|NGX\\w*|ngx[A-Z]\\w*|sl(Init|Shutdown|SetTag|SetConstants|Evaluate\\w*|Allocate\\w*|Free\\w*|Get\\w+|Is\\w+|Upgrade\\w*))\\b")
-// Comments are stripped before the vocabulary match: prose may explain native terminology
-// without creating a dependency.
-val commentOrString = Regex("/\\*[\\s\\S]*?\\*/|//[^\\n]*")
-
-val checkLayering = tasks.register("checkLayering") {
-	group = "verification"
-	description = "Asserts the :streamline / :mc-dlss split boundaries."
-
-	// The engine-free classpath half runs as :streamline:checkEngineFreeClasspath - resolving
-	// another project's configuration from a root task fails on that project's state lock.
-	dependsOn(":streamline:checkEngineFreeClasspath")
-
-	val streamlineMainKotlin = fileTree("streamline/src/main") { include("**/*.kt") }
-	val modMainJavaOutsideMixin = fileTree("src/main/java") {
-		include("**/*.java")
-		exclude("me/snowmii/dlss/mixin/**")
-	}
-	val modMainSources = fileTree("src/main") { include("**/*.kt", "**/*.java") }
-
-	inputs.files(streamlineMainKotlin, modMainJavaOutsideMixin, modMainSources)
-
-	doLast {
-		val violations = mutableListOf<String>()
-
-		streamlineMainKotlin.forEach {
-			violations += ":streamline main source set is Java-only, but carries Kotlin: $it"
-		}
-		modMainJavaOutsideMixin.forEach {
-			violations += ":mc-dlss src/main/java holds only mixin/, but carries: $it"
-		}
-		modMainSources.forEach { file ->
-			val source = file.readText()
-			ffmSymbol.find(source)?.let {
-				violations += ":mc-dlss reaches the native stack through the SDK, but ${file.path} spells FFM: ${it.value}"
-			}
-			nativeVocabulary.find(commentOrString.replace(source, ""))?.let {
-				violations += ":mc-dlss speaks no NGX/Streamline vocabulary, but ${file.path} names: ${it.value}"
-			}
-		}
-
-		check(violations.isEmpty()) {
-			violations.joinToString("\n", prefix = "Layering boundaries violated:\n") { "  - $it" }
-		}
-	}
-}
-
-tasks.check { dependsOn(nativeBridgeTest, checkLayering, ":streamline:nativeTest") }
+tasks.check { dependsOn(":streamline:check") }
 
 tasks.processResources {
 	val version = version

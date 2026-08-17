@@ -5,7 +5,7 @@ import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.StreamlineVulkanProvider
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -48,7 +48,7 @@ class StreamlineProxyActivationTest {
 			ExtensionBootstrap.addDeviceExtensions(extensions, instance, physicalDevice)
 			extensions
 		}.use { fixture ->
-			Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),

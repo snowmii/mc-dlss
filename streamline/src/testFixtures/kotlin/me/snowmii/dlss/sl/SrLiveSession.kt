@@ -8,6 +8,7 @@ import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -50,7 +51,7 @@ object SrLiveSession {
 		// Query bridge: instance requirements and the merged queue counts, closed before the
 		// device exists (its close path is a no-op while no session is ready).
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
-		val requirements = Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+		val requirements = NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
@@ -77,7 +78,7 @@ object SrLiveSession {
 			// activation, closed before initialize exactly like ExtensionBootstrap's
 			// activateVulkanProxies seam. The proxy tuple survives this close only because
 			// the module is pinned; an arena-scoped lookup would unload it here.
-			Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
@@ -105,7 +106,7 @@ object SrLiveSession {
 			// records it for the module-owned images and motion pass. The sdk/data paths are
 			// compatibility inputs the retired direct-NGX path used to consume; the temp
 			// directory stands in for them.
-			Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),

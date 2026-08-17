@@ -8,7 +8,7 @@ import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.NativeApi
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.Vec2
@@ -30,7 +30,7 @@ class DlssNativeStructAbiTest {
 		// offset the real C compiler placed it. A Java StructLayout that disagreed - a missing
 		// padding declaration, a transposed pair, a field of the wrong width - reads back as a
 		// value the probe rejects rather than as a silently wrong frame.
-		Native.open(compileAbiProbe()).use { native ->
+		NativeTestAccess.open(compileAbiProbe()).use { native ->
 			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluateSuperResolution(request))
 			// The camera's six arrays are fixed-length ABI fields: a malformed array is a
 			// caller bug the boundary must refuse before any byte of the reused scratch is

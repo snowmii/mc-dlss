@@ -583,7 +583,7 @@ public final class Native implements AutoCloseable, NativeApi {
 		this.fgTagScratch = arena.allocate(FG_TAG_LAYOUT);
 	}
 
-	public static Native open(final Path libraryPath) {
+	static Native open(final Path libraryPath) {
 		Objects.requireNonNull(libraryPath, "libraryPath");
 		final Path absoluteLibrary = libraryPath.toAbsolutePath();
 		final Path runtime = absoluteLibrary.getParent();

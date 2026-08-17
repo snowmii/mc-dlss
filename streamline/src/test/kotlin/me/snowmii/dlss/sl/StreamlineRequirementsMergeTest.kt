@@ -4,7 +4,7 @@ import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.streamline.Native
+import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.NativeApi
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -48,7 +48,7 @@ class StreamlineRequirementsMergeTest {
 		// place because slInit is idempotent and every production seam (ExtensionBootstrap)
 		// does the same.
 		ExtensionBootstrap.queryInstanceExtensions()
-		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+		NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
@@ -72,7 +72,7 @@ class StreamlineRequirementsMergeTest {
 	@Test
 	fun `DLSS_G queue requirements surface through the bridge`() {
 		ExtensionBootstrap.queryInstanceExtensions()
-		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+		NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
@@ -94,7 +94,7 @@ class StreamlineRequirementsMergeTest {
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
 		// The query bridge closes before the device exists, when its close path is a no-op;
 		// the pinned module keeps the bootstrap state for the activation bridge below.
-		val requirements = Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+		val requirements = NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				NativeApi.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
@@ -120,7 +120,7 @@ class StreamlineRequirementsMergeTest {
 		).use { fixture ->
 			// The fixture OUTLIVES the bridge: the close's slShutdown must run while the
 			// device is still alive.
-			Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
 					NativeApi.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
