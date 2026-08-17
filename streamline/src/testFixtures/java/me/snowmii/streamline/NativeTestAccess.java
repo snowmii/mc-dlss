@@ -7,6 +7,6 @@ public final class NativeTestAccess {
 	private NativeTestAccess() {}
 
 	public static Native open(Path library) {
-		return NativeTestAccess.open(library);
+		return Native.open(library);
 	}
 }
