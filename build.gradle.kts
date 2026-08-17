@@ -1,23 +1,17 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 plugins {
 	id("net.fabricmc.fabric-loom")
-	id("org.jetbrains.kotlin.jvm") version "2.4.10"
+	id("mc-dlss.jvm-conventions")
 }
 
 version = providers.gradleProperty("mod_version").get()
 group = providers.gradleProperty("maven_group").get()
 
-// Workstation-local toolchain root, overridable by Gradle property first, then environment
-// variable, so a second machine only needs to point it somewhere else rather than patch this
-// file. The default is the path the bridge was developed against. `:streamline` owns the rest of
-// the toolchain (Vulkan, Streamline, MSVC); the mod needs the DLSS SDK path only to hand the dev
-// client its `mc.dlss.sdk-path` compatibility input.
-val ngxSdkRoot: File = providers.gradleProperty("mc.dlss.ngx-sdk")
-	.orElse(providers.environmentVariable("NGX_SDK"))
-	.orElse("C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0")
-	.map(::file)
-	.get()
+// `:streamline` owns the rest of the toolchain (Vulkan, Streamline, MSVC); the mod needs the
+// DLSS SDK path only to hand the dev client its `mc.dlss.sdk-path` compatibility input.
+val ngxSdkRoot = toolchainRoot(
+	"mc.dlss.ngx-sdk", "NGX_SDK",
+	"C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0"
+)
 
 repositories {
 	// Loom supplies the Minecraft/Fabric repositories; this one carries the ordinary Maven
@@ -68,51 +62,13 @@ dependencies {
 	runtimeMod("devauth_version") { "me.djtheredstoner:DevAuth-fabric:$it" }
 }
 
-// A crashing JVM writes hs_err/replay dumps to its working directory, which for Gradle test
-// workers is the project root. The DLSS native bridge can fault inside NVIDIA's own libraries,
-// and `forkEvery = 1` turns one bad run into one dump per test class, so every forked JVM is
-// pointed at build/jvm-crash instead of littering the repository root.
-fun <T> T.redirectJvmCrashDumps() where T : Task, T : JavaForkOptions {
-	val crashDirectory = layout.buildDirectory.dir("jvm-crash").get().asFile
-	// %p expands to the pid, keeping concurrent workers from overwriting each other.
-	jvmArgs(
-		"-XX:ErrorFile=${crashDirectory.resolve("hs_err_pid%p.log")}",
-		"-XX:ReplayDataFile=${crashDirectory.resolve("replay_pid%p.log")}",
-	)
-	// The JVM silently falls back to the working directory if the target is unwritable.
-	doFirst { crashDirectory.mkdirs() }
-}
-
-// The @NativeBridge tag, mirrored from the annotation the test sources carry. Only the classes
-// that load the bridge need a process of their own - see the annotation's own documentation for
-// why - and a fork costs about fifteen seconds of Minecraft/Loom classpath loading. The suite used
-// to run forkEvery = 1 for every class, so seventy-odd of them spent roughly eighteen minutes
-// forking to execute under two seconds of tests.
-val nativeBridgeTag = "native-bridge"
-
-tasks.test {
-	// One worker for every class that never touches the bridge, which is most of them.
-	useJUnitPlatform { excludeTags(nativeBridgeTag) }
-	redirectJvmCrashDumps()
-	// The bridge is loaded with System::load and called through FFM downcalls, both restricted
-	// methods the JVM warns about today and blocks in a future release.
-	jvmArgs("--enable-native-access=ALL-UNNAMED")
-}
-
-val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
-	group = "verification"
-	description = "Runs the @NativeBridge test classes, one JVM per class."
-	testClassesDirs = sourceSets.test.get().output.classesDirs
-	classpath = sourceSets.test.get().runtimeClasspath
-	useJUnitPlatform { includeTags(nativeBridgeTag) }
-	redirectJvmCrashDumps()
-	jvmArgs("--enable-native-access=ALL-UNNAMED")
-	forkEvery = 1
-	// Reproduces the mod's StreamlineVulkanProvider redirect inside a test worker. Production
-	// points LWJGL at the staged sl.interposer.dll; the live FG rungs never did, which is the
-	// one process-level difference between a session where DLSS-G's swapchain hook fires and a
-	// game session where it does not. Off by default so the rungs keep their known-good shape:
-	// -Pmc.dlss.vulkan-libname=<abs path to sl.interposer.dll> turns it on.
+// The suite split itself is a convention (see buildSrc). What only the mod's copy carries:
+// reproducing the StreamlineVulkanProvider redirect inside a test worker. Production points LWJGL
+// at the staged sl.interposer.dll; the live FG rungs never did, which is the one process-level
+// difference between a session where DLSS-G's swapchain hook fires and a game session where it
+// does not. Off by default so the rungs keep their known-good shape:
+// -Pmc.dlss.vulkan-libname=<abs path to sl.interposer.dll> turns it on.
+val nativeBridgeTest = tasks.named<Test>("nativeBridgeTest") {
 	providers.gradleProperty("mc.dlss.vulkan-libname").orNull
 		?.let { systemProperty("org.lwjgl.vulkan.libname", it) }
 }
@@ -181,17 +137,6 @@ tasks.processResources {
 	filesMatching("fabric.mod.json") {
 		expand("version" to version)
 	}
-	exclude("**/*Zone.Identifier")
-}
-
-// Windows marks every file downloaded or extracted from the internet with a `:Zone.Identifier`
-// NTFS stream (mark of the web). Gradle's copy and archive tasks carry it through, so a
-// downloaded resource silently pollutes the jar with bogus entries named with the sanitized
-// colon (U+F03A). The streams were stripped from the tree; these exclusions keep a future
-// downloaded file from re-polluting the produced jars.
-tasks.withType<AbstractArchiveTask>().configureEach {
-	exclude("**\uF03A*") // Gradle renders the ADS colon as U+F03A in archive entry names
-	exclude("**/*Zone.Identifier")
 }
 
 // Development-only dev-client wiring. Loom's run-config `property(...)` never reaches
@@ -225,16 +170,6 @@ tasks.withType<JavaExec>().matching { it.name.startsWith("runClient") }.configur
 	systemProperty("mc.dlss.mode", providers.gradleProperty("mc.dlss.mode").getOrElse("performance"))
 	for (name in listOf("mc.dlss.enabled", "mc.dlss.output-width", "mc.dlss.output-height")) {
 		providers.gradleProperty(name).orNull?.let { systemProperty(name, it) }
-	}
-}
-
-tasks.withType<JavaCompile>().configureEach {
-	options.release = 25
-}
-
-kotlin {
-	compilerOptions {
-		jvmTarget = JvmTarget.JVM_25
 	}
 }
 

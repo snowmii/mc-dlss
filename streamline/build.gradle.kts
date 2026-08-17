@@ -1,25 +1,16 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 plugins {
 	`java-library`
-	kotlin("jvm") version "2.4.10"
 	`java-test-fixtures`
+	id("mc-dlss.jvm-conventions")
 }
 
 version = providers.gradleProperty("mod_version").get()
 
-// Workstation-local toolchain roots. Every one is overridable by Gradle property first, then
-// environment variable, so a second machine only needs to point these somewhere else rather
-// than patch this file. The defaults are the paths the bridge was developed against.
+// The toolchain roots this project's MSVC tasks resolve, each overridable by Gradle property
+// first and environment variable second (see buildSrc's toolchainRoot). The defaults are the
+// paths the bridge was developed against.
 val DEFAULT_NGX_SDK = "C:/Users/miuki/Development/NVIDIA/mc-dlss/dlss-sdk-v310.7.0/DLSS-310.7.0"
 val DEFAULT_STREAMLINE_SDK = "C:/Users/miuki/Development/NVIDIA/mc-dlss/streamline-sdk-v2.12.0"
-
-fun toolchainRoot(property: String, environment: String, default: String): File =
-	providers.gradleProperty(property)
-		.orElse(providers.environmentVariable(environment))
-		.orElse(default)
-		.get()
-		.let(::file)
 
 repositories {
 	mavenCentral()
@@ -228,50 +219,6 @@ val nativeTest = tasks.register<Exec>("nativeTest") {
 	commandLine(layout.buildDirectory.dir("native-test").get().asFile.resolve("native_tests.exe").absolutePath)
 }
 
-// The @NativeBridge tag, mirrored from the annotation the relocated test sources carry. Only the
-// classes that load the bridge need a process of their own - see the annotation's own
-// documentation for why - and a fork costs a fresh JVM plus classpath loading. The suite is
-// split exactly like the root's: everything tagged runs in nativeBridgeTest (one JVM per class,
-// because Streamline's runtime accepts one Vulkan device per process), everything else shares
-// one worker in test.
-val nativeBridgeTag = "native-bridge"
-
-// A crashing JVM writes hs_err/replay dumps to its working directory, which for a Gradle test
-// worker is the project dir. `forkEvery = 1` turns one bad run into one dump per test class, so
-// every forked JVM is pointed at build/jvm-crash instead of littering the repository root.
-// Mirror of the root script's helper, kept local so the relocated suite does not cross projects.
-fun <T> T.redirectJvmCrashDumps() where T : Task, T : JavaForkOptions {
-	val crashDirectory = layout.buildDirectory.dir("jvm-crash").get().asFile
-	// %p expands to the pid, keeping concurrent workers from overwriting each other.
-	jvmArgs(
-		"-XX:ErrorFile=${crashDirectory.resolve("hs_err_pid%p.log")}",
-		"-XX:ReplayDataFile=${crashDirectory.resolve("replay_pid%p.log")}",
-	)
-	// The JVM silently falls back to the working directory if the target is unwritable.
-	doFirst { crashDirectory.mkdirs() }
-}
-
-tasks.test {
-	// One worker for every class that never touches the bridge (currently only the isolation
-	// pin, which walks the relocated test sources from the :streamline worker cwd).
-	useJUnitPlatform { excludeTags(nativeBridgeTag) }
-	redirectJvmCrashDumps()
-	// The bridge is loaded with System::load and called through FFM downcalls, both restricted
-	// methods the JVM warns about today and blocks in a future release.
-	jvmArgs("--enable-native-access=ALL-UNNAMED")
-}
-
-val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
-	group = "verification"
-	description = "Runs the @NativeBridge test classes, one JVM per class."
-	testClassesDirs = sourceSets.test.get().output.classesDirs
-	classpath = sourceSets.test.get().runtimeClasspath
-	useJUnitPlatform { includeTags(nativeBridgeTag) }
-	redirectJvmCrashDumps()
-	jvmArgs("--enable-native-access=ALL-UNNAMED")
-	forkEvery = 1
-}
-
 // The half of the root's `checkLayering` that has to live here: resolving this project's
 // compileClasspath from a task the root project owns fails on this project's state lock.
 // Nothing engine-shaped may appear on it - the SDK compiles without Minecraft, Fabric, or
@@ -294,8 +241,10 @@ val checkEngineFreeClasspath = tasks.register("checkEngineFreeClasspath") {
 	}
 }
 
+// The suite split (test vs nativeBridgeTest, one JVM per bridge-loading class because
+// Streamline's runtime accepts one Vulkan device per process) is a convention; see buildSrc.
 tasks.named("check") {
-	dependsOn(nativeTest, nativeBridgeTest, checkEngineFreeClasspath)
+	dependsOn(nativeTest, tasks.named("nativeBridgeTest"), checkEngineFreeClasspath)
 }
 
 // The SDK owns its native assets: the bridge and the nine Streamline/NGX runtime dlls are
@@ -318,7 +267,6 @@ tasks.processResources {
 	filesMatching("fabric.mod.json") {
 		expand("version" to version)
 	}
-	exclude("**/*Zone.Identifier")
 
 	from(buildNativeDlss) {
 		into("assets/streamline-api/native")
@@ -332,30 +280,3 @@ tasks.processResources {
 		into("assets/streamline-api/native")
 	}
 }
-
-// Windows marks every file downloaded or extracted from the internet with a `:Zone.Identifier`
-// NTFS stream (mark of the web). Gradle's copy and archive tasks carry it through, so a
-// downloaded resource silently pollutes the jar with bogus entries named with the sanitized
-// colon (U+F03A). The streams were stripped from the tree; these exclusions keep a future
-// downloaded file from re-polluting the produced jars. The root's configureEach does not
-// reach this project, so the hygiene is mirrored per-project.
-tasks.withType<AbstractArchiveTask>().configureEach {
-	exclude("**\uF03A*")
-	exclude("**/*Zone.Identifier")
-}
-
-tasks.withType<JavaCompile>().configureEach {
-	options.release = 25
-}
-
-// The relocated SDK-subject test sources are Kotlin; the Kotlin test compilation must match the
-// Java 25 release the main sources compile to. Same coordinate as the root's Kotlin plugin, so
-// the same toolchain serves both.
-kotlin {
-	compilerOptions {
-		jvmTarget = JvmTarget.JVM_25
-	}
-}
-
-// Same delta config as the root. Main sources here are Java, so this covers the Kotlin test and
-// test-fixture sources only.
