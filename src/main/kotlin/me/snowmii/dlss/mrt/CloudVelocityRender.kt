@@ -378,6 +378,9 @@ object CloudVelocityRender {
 
 		val phase = openWorldPhase() ?: return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
 		val velocity = phase.terrainVelocityView ?: return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
+		if (!preflightCloudPass(encoder, phase, velocity, colorTexture, meshRebuilt)) {
+			return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
+		}
 
 		var pass: RenderPass? = null
 		try {

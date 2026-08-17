@@ -84,6 +84,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 	 */
 	@Volatile
 	private var nativeBridge: StreamlineSession? = null
+	internal var sessionOpener: () -> StreamlineSession = Streamline::open
 	private var initializationAttempted = false
 
 	/** The render-loop view: the only side that can build the DLSS path. */
@@ -133,7 +134,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 		}
 
 		worldPhaseInstance = try {
-			val native = Streamline.open()
+			val native = sessionOpener()
 			this.nativeBridge = native
 			if (Platform.get() == Platform.WINDOWS) {
 				val hwnd = glfwGetWin32Window(Minecraft.getInstance().window.handle())

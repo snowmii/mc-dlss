@@ -25,7 +25,13 @@ class ClientRuntimeTest {
 		assertFalse(ClientRuntime.isInitialized, "reads must not initialize the runtime")
 		assertNull(ClientRuntime.active().activeWorldPhase())
 
-		ClientRuntime.renderLoop().worldPhase()
+		val sessionOpener = ClientRuntime.sessionOpener
+		ClientRuntime.sessionOpener = { error("test stops before native startup") }
+		try {
+			ClientRuntime.renderLoop().worldPhase()
+		} finally {
+			ClientRuntime.sessionOpener = sessionOpener
+		}
 
 		assertTrue(ClientRuntime.isInitialized, "the render loop is the only builder")
 
