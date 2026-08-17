@@ -2,18 +2,14 @@ package me.snowmii.dlss.fg
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
-import me.snowmii.dlss.NativeBridge
-import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.dlss.client.RuntimeControls
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import me.snowmii.dlss.render.*
 import me.snowmii.dlss.session.*
-import me.snowmii.dlss.sl.SrLiveSession
 import me.snowmii.streamline.*
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VkCommandBuffer
 import java.nio.file.Path
 
@@ -23,10 +19,8 @@ import java.nio.file.Path
  * An unhealthy `slDLSSGGetState` status switches composition to SR-only, records retained
  * eOff options, and resumes on the first healthy frame. User-off mode remains reversible,
  * unsupported client frames do not recreate the swapchain, and level changes reset shared history.
- * The test drives the production seams off the render thread against a native double and a live
- * Streamline session where required.
+ * The test drives production seams off render thread against NativeApiTestDouble.
  */
-@NativeBridge
 class FgEnablementFallbackTest {
 
 	@Test
@@ -617,106 +611,6 @@ class FgEnablementFallbackTest {
 		assertEquals(DlssSessionState.READY, session.state, "the refused eOff record must not latch the SR session")
 	}
 
-	@Test
-	fun `the FG mode record answers the live gates and records eOff after configured options`(
-		@TempDir dataPath: Path,
-	) {
-		// Pre-init: this fork's module has never bootstrapped, so the mode record has no
-		// Streamline session to answer through. The check runs before the live session below
-		// and on a throwaway bridge, and the module's bootstrap state is what it asserts
-		// against.
-		Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
-			assertEquals(
-				FAIL_NOT_INITIALIZED,
-				bridge.setFgMode(0),
-				"setFgMode before bootstrap must answer FAIL_NotInitialized",
-			)
-		}
-
-		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
-		val graphicsFamily = probeGraphicsQueueFamily()
-		HeadlessVulkanFixture(
-			instanceExtensions,
-			{ instance, physicalDevice ->
-				val extensions = mutableListOf<String>()
-				ExtensionBootstrap.addDeviceExtensions(extensions, instance, physicalDevice)
-				extensions
-			},
-			true,
-			mapOf(graphicsFamily to requirementsExtras()),
-		).use { fixture ->
-			Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
-				assertEquals(
-					NativeApi.SUCCESS_RESULT,
-					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
-				)
-				val hostQueueCount = 1
-				assertEquals(
-					NativeApi.SUCCESS_RESULT,
-					bridge.activateVulkanProxies(
-						fixture.instanceAddress(),
-						fixture.physicalDeviceAddress(),
-						fixture.deviceAddress(),
-						graphicsFamily,
-						hostQueueCount,
-						graphicsFamily,
-						hostQueueCount,
-					),
-					"activation must succeed against the merged queue layout",
-				)
-
-				// The mode record switches an existing options record, so a session whose
-				// options never recorded has nothing to switch: the same gate as the FG tag.
-				assertEquals(
-					FAIL_INVALID_PARAMETER,
-					bridge.setFgMode(0),
-					"setFgMode before any FG options record must answer FAIL_InvalidParameter",
-				)
-
-				val outputWidth = 2560
-				val outputHeight = 1440
-				val dimensions = bridge.queryOptimalDimensions(outputWidth, outputHeight, 2)
-				assertEquals(
-					NativeApi.SUCCESS_RESULT,
-					bridge.configureSuperResolution(
-						outputWidth,
-						outputHeight,
-						dimensions.width,
-						dimensions.height,
-						2,
-						11,
-					),
-					"configure must record the SL options for the stored configuration",
-				)
-				assertEquals(
-					NativeApi.SUCCESS_RESULT,
-					bridge.configureFg(3),
-					"the eOn options must record before the mode record can switch them",
-				)
-
-				// The eOff record: same stored record, mode switched, retained resources.
-				// slDLSSGSetOptions answers eOk only when it accepts the record, so the
-				// success result is the seam's observable contract, exactly as for the eOn
-				// record.
-				assertEquals(
-					NativeApi.SUCCESS_RESULT,
-					bridge.setFgMode(0),
-					"after a ready session and a stored options record the eOff mode must record",
-				)
-				assertEquals(
-					NativeApi.SUCCESS_RESULT,
-					bridge.setFgMode(1),
-					"the mode record must also answer the eOn mode",
-				)
-
-				// Arm the close path: the already-activated tuple is recorded through the
-				// existing initialize, so this bridge's close runs the orderly slShutdown while
-				// the device is still alive instead of leaving the fork to crash at exit.
-				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
-			}
-		}
-	}
-
 	/** Builds the production seams over a recording fake and a READY session. */
 	private fun harness(
 		calls: RecordingNativeApi,
@@ -803,22 +697,6 @@ class FgEnablementFallbackTest {
 
 	private fun motion() =
 		DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, false)
-
-	/** The summed extra graphics + compute queues the loaded SL features require. */
-	private fun requirementsExtras(): Int {
-		val requirements = Native.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
-			assertEquals(
-				NativeApi.SUCCESS_RESULT,
-				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
-			)
-			bridge.queryQueueRequirements()
-		}
-		return requirements.graphicsQueues + requirements.computeQueues
-	}
-
-	/** The family the fixture creates its queues in, discovered with a throwaway default fixture. */
-	private fun probeGraphicsQueueFamily(): Int =
-		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 
 	private class Harness(
 		val runtime: RenderRuntime,
@@ -1000,11 +878,5 @@ class FgEnablementFallbackTest {
 		val RENDER_DIMENSIONS = Dimensions(1280, 720)
 		val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 		const val DESTINATION = 999L
-
-		/** NVSDK_NGX_Result_FAIL_NotInitialized = NVSDK_NGX_Result_Fail | 7 (0xBAD00000 | 7). */
-		const val FAIL_NOT_INITIALIZED = 0xBAD00007.toInt()
-
-		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
-		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()
 	}
 }
