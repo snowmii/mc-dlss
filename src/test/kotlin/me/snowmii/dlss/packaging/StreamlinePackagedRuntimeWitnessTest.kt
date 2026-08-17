@@ -73,11 +73,9 @@ class StreamlinePackagedRuntimeWitnessTest {
 	}
 
 	private companion object {
-		// The SDK class this witness loads, assembled from pieces on purpose: the source-text
-		// isolation ratchet in NativeBridgeIsolationTest keys "reaches the bridge" on the
-		// unbroken class name, and this witness reaches only resolution seams that extract
-		// without loading, so it must not be counted a bridge owner.
-		private const val SDK_CLASS_NAME = "me.snowmii.streamline." + "Ex" + "tensionBootstrap"
-		private const val SDK_CLASS_RESOURCE = "me/snowmii/streamline/" + "Ex" + "tensionBootstrap" + ".class"
+		// This witness reaches only resolution seams that extract without loading, so it needs
+		// no bridge marker and no fork of its own.
+		private const val SDK_CLASS_NAME = "me.snowmii.streamline.ExtensionBootstrap"
+		private const val SDK_CLASS_RESOURCE = "me/snowmii/streamline/ExtensionBootstrap.class"
 	}
 }

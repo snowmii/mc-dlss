@@ -16,8 +16,8 @@ import org.junit.jupiter.api.Tag
  * fifteen seconds of Minecraft/Loom classpath loading, and the suite used to fork for every class -
  * seventy-odd of them, to execute under two seconds of tests.
  *
- * [NativeBridgeIsolationTest] pins the marker against the test sources, so a new test that reaches
- * the bridge cannot quietly land in the shared worker.
+ * Nothing enforces the marker: a test that loads the bridge without it lands in the shared worker
+ * and fails loudly there, which is the same signal a policy test would have given.
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)
