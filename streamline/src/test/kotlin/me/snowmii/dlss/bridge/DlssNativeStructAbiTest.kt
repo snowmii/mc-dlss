@@ -9,7 +9,7 @@ import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.NativeTestAccess
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -31,7 +31,7 @@ class DlssNativeStructAbiTest {
 		// padding declaration, a transposed pair, a field of the wrong width - reads back as a
 		// value the probe rejects rather than as a silently wrong frame.
 		NativeTestAccess.open(compileAbiProbe()).use { native ->
-			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluateSuperResolution(request))
+			assertEquals(StreamlineSession.SUCCESS_RESULT, native.evaluateSuperResolution(request))
 			// The camera's six arrays are fixed-length ABI fields: a malformed array is a
 			// caller bug the boundary must refuse before any byte of the reused scratch is
 			// written - a shorter array would leave the field's tail holding the previous
@@ -42,9 +42,9 @@ class DlssNativeStructAbiTest {
 				}
 			}
 			// The refusals left the scratch intact: a valid camera still crosses unchanged.
-			assertEquals(NativeApi.SUCCESS_RESULT, native.evaluateSuperResolution(request))
+			assertEquals(StreamlineSession.SUCCESS_RESULT, native.evaluateSuperResolution(request))
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				native.writeMotion(
 					MotionRequest(
 						101L,
@@ -57,7 +57,7 @@ class DlssNativeStructAbiTest {
 			// The velocity fill crosses the same boundary in the opposite shape: every field of
 			// McDlssFillVelocityInfo read back at the offset the real C compiler placed it.
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				native.fillVelocity(
 					FillVelocityRequest(
 						101L,
@@ -70,7 +70,7 @@ class DlssNativeStructAbiTest {
 				),
 			)
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				native.presentOutput(
 					PresentTarget(
 						101L,

@@ -1,9 +1,9 @@
 package me.snowmii.dlss.fg
 
 import java.nio.file.Path
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.dlss.session.DlssNativeStage
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssSessionState
@@ -39,7 +39,7 @@ class FgOptionsContractTest {
 
 		// A refused record latches the session under the configure stage, exactly like any
 		// other native stage.
-		native.configureFgResult = NativeApi.SUCCESS_RESULT + 1
+		native.configureFgResult = StreamlineSession.SUCCESS_RESULT + 1
 		assertFalse(adapter.configureFg(4), "a refused FG record must latch the session")
 		assertEquals(DlssSessionState.FALLBACK_LATCHED, session.state)
 		assertEquals(DlssNativeStage.CONFIGURE, session.failure?.stage)
@@ -59,8 +59,8 @@ class FgOptionsContractTest {
 	 * Records the FG-option seam and answers the three calls [LifecycleAdapter.initialize]
 	 * drives; everything else is a call this test never makes.
 	 */
-	private class FakeNative : NativeApiTestDouble() {
-		var configureFgResult = NativeApi.SUCCESS_RESULT
+	private class FakeNative : StreamlineSessionTestDouble() {
+		var configureFgResult = StreamlineSession.SUCCESS_RESULT
 		var configureFgCalls = 0
 		val configureFgValues = mutableListOf<Int>()
 
@@ -76,7 +76,7 @@ class FgOptionsContractTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
@@ -88,6 +88,6 @@ class FgOptionsContractTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 	}
 }

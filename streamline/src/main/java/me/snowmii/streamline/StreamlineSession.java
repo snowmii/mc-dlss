@@ -13,7 +13,7 @@ import java.util.List;
  * without any diagnostic. The request types are defined in this package for the same reason
  * this interface is: they are the vocabulary of the ABI, not of the renderer that fills them.
  */
-public interface NativeApi extends AutoCloseable {
+public interface StreamlineSession extends AutoCloseable {
 	/** Flat ABI success result defined by native/mc_dlss.h. */
 	int SUCCESS_RESULT = 1;
 

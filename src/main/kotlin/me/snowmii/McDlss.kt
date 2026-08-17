@@ -4,7 +4,7 @@ import net.fabricmc.api.ModInitializer
 import me.snowmii.dlss.config.ModConfig
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.streamline.ExtensionBootstrap
+import me.snowmii.streamline.Streamline
 import net.minecraft.resources.Identifier
 import org.slf4j.LoggerFactory
 
@@ -17,10 +17,10 @@ object McDlss : ModInitializer {
 
 	override fun onInitialize() {
 		// The SDK's native-library seam is injected here, once, from the mod's own config.
-		// onInitialize runs strictly before any ExtensionBootstrap seam (the VulkanInstance
+		// onInitialize runs strictly before any Streamline seam (the VulkanInstance
 		// <init> mixins and ClientRuntime), so this read lands EARLIER than the lazy ModConfig
 		// read it replaces at the first query seam — never later.
-		ExtensionBootstrap.setNativeLibraryPath(startupConfig.nativeLibraryPath)
+		Streamline.configure(startupConfig.nativeLibraryPath)
 		startupConfig.warnings.forEach { warning -> LOGGER.warn("DLSS startup configuration: {}", warning) }
 		LOGGER.info(
 			"DLSS SR startup: enabled={} mode={} output={} native-library={}",
@@ -30,7 +30,7 @@ object McDlss : ModInitializer {
 			startupConfig.nativeLibraryPath ?: "external",
 		)
 		// LWJGL's Vulkan loading is intentionally not redirected to sl.interposer.dll. The mod uses
-		// Streamline manual hooking: ExtensionBootstrap loads the runtime before Vulkan classes are
+		// Streamline manual hooking: Streamline loads the runtime before Vulkan classes are
 		// touched, then mc_dlss_activate_vulkan_proxies supplies the live instance, device, and
 		// queue layout. StreamlineVulkanProvider remains an optional test-only interposer path,
 		// enabled with -Pmc.dlss.vulkan-libname=<path>.

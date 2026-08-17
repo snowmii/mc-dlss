@@ -8,7 +8,7 @@ import me.snowmii.streamline.FgState
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
 
 import me.snowmii.streamline.SrTagRequest
@@ -145,7 +145,7 @@ class FrameEvaluation(
 	// adapter directly - they call the world phase, which reaches this object - so the whole
 	// marker surface is verifiable off the render thread through this class.
 	fun reflexInputSample(): Boolean = adapter.reflexInputSample()
-	fun reflexMarker(type: NativeApi.ReflexMarkerType): Boolean = adapter.reflexMarker(type)
+	fun reflexMarker(type: StreamlineSession.ReflexMarkerType): Boolean = adapter.reflexMarker(type)
 
 	/** The native-owned images this evaluation writes into, or null before the first frame. */
 	val evaluationImages: EvaluationImages?

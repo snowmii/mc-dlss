@@ -19,7 +19,7 @@ import java.nio.file.Path
  * An unhealthy `slDLSSGGetState` status switches composition to SR-only, records retained
  * eOff options, and resumes on the first healthy frame. User-off mode remains reversible,
  * unsupported client frames do not recreate the swapchain, and level changes reset shared history.
- * The test drives production seams off render thread against NativeApiTestDouble.
+ * The test drives production seams off render thread against StreamlineSessionTestDouble.
  */
 class FgEnablementFallbackTest {
 
@@ -606,7 +606,7 @@ class FgEnablementFallbackTest {
 
 		// A refused eOff record is invisible to the session: the status latch leaves SR READY
 		// by design, so the record failure must not send the session to FALLBACK_LATCHED.
-		native.setFgModeResult = NativeApi.SUCCESS_RESULT + 1
+		native.setFgModeResult = StreamlineSession.SUCCESS_RESULT + 1
 		assertFalse(adapter.recordFrameGenerationOff(), "a refused eOff record must answer false")
 		assertEquals(DlssSessionState.READY, session.state, "the refused eOff record must not latch the SR session")
 	}
@@ -718,7 +718,7 @@ class FgEnablementFallbackTest {
 	 * Answers the live status the poll reads and records every per-frame native call in
 	 * submission order; everything else is the lifecycle [LifecycleAdapter] drives to READY.
 	 */
-	private class RecordingNativeApi : NativeApiTestDouble() {
+	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		var status: FgState = FgState(0, 1, 0L, 0L)
 		val order = mutableListOf<String>()
 		val fgTags = mutableListOf<FgTagRequest>()
@@ -734,7 +734,7 @@ class FgEnablementFallbackTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			RENDER_DIMENSIONS
@@ -746,7 +746,7 @@ class FgEnablementFallbackTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages(): EvaluationImages = EvaluationImages(
 			ImageBinding(401L, 402L, 124),
@@ -755,16 +755,16 @@ class FgEnablementFallbackTest {
 
 		override fun releaseImages(): Int {
 			order += "releaseImages"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
-		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
+		override fun waitDeviceIdle(): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
 
 		override fun waitFgInputsIdle(): Int {
 			order += "waitFgInputs"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun queryFgState(): FgState = status
@@ -773,57 +773,57 @@ class FgEnablementFallbackTest {
 			fgModeValues += fgEnabled
 			fgModeOffRecords++
 			order += "setFgModeOff"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun configureFg(numBackBuffers: Int): Int {
 			fgConfigures += numBackBuffers
 			order += "configureFg"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun tagFrameGenerationResources(request: FgTagRequest): Int {
 			fgTags += request
 			order += "fgTag"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun recordPresentHandoff(): Int {
 			handoffs++
 			order += "handoff"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun tagSrResources(request: SrTagRequest): Int {
 			order += "srTag"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun writeMotion(request: MotionRequest): Int {
 			order += "writeMotion"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun fillVelocity(request: FillVelocityRequest): Int {
 			order += "fillVelocity"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun presentOutput(target: PresentTarget): Int {
 			order += "present"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			evaluations += request
 			order += "evaluate"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
 
 	/** Records the eOff-mode seam and answers the three calls [LifecycleAdapter.initialize] drives. */
-	private class FakeNative : NativeApiTestDouble() {
-		var setFgModeResult = NativeApi.SUCCESS_RESULT
+	private class FakeNative : StreamlineSessionTestDouble() {
+		var setFgModeResult = StreamlineSession.SUCCESS_RESULT
 		val setFgModeValues = mutableListOf<Int>()
 
 		override fun setFgMode(fgEnabled: Int): Int {
@@ -837,7 +837,7 @@ class FgEnablementFallbackTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
@@ -849,7 +849,7 @@ class FgEnablementFallbackTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")

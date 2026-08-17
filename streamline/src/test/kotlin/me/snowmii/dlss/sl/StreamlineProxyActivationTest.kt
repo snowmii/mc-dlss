@@ -6,7 +6,7 @@ import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.NativeTestAccess
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.StreamlineVulkanProvider
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -50,7 +50,7 @@ class StreamlineProxyActivationTest {
 		}.use { fixture ->
 			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 				)
 
@@ -71,9 +71,9 @@ class StreamlineProxyActivationTest {
 						hostQueueCount,
 					)
 				}
-				assertEquals(NativeApi.SUCCESS_RESULT, layout(), "first activation must succeed")
+				assertEquals(StreamlineSession.SUCCESS_RESULT, layout(), "first activation must succeed")
 				// Idempotent: the same seven values must not re-call slSetVulkanInfo.
-				assertEquals(NativeApi.SUCCESS_RESULT, layout(), "repeated activation must succeed")
+				assertEquals(StreamlineSession.SUCCESS_RESULT, layout(), "repeated activation must succeed")
 
 				// Arm the close path: the already-activated tuple is recorded through the
 				// existing initialize, so this bridge's close runs the orderly slShutdown

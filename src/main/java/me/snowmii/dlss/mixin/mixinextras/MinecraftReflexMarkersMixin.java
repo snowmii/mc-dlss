@@ -3,7 +3,7 @@ package me.snowmii.dlss.mixin.mixinextras;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.systems.CommandEncoder;
-import me.snowmii.streamline.NativeApi;
+import me.snowmii.streamline.StreamlineSession;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.render.WorldPhase;
 import net.minecraft.client.Minecraft;
@@ -39,7 +39,7 @@ public class MinecraftReflexMarkersMixin {
 	private void mcDlssReflexRenderSubmit(final CommandEncoder encoder, final Operation<Void> original) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
 		if (phase != null) {
-			phase.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START);
+			phase.reflexMarker(StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_START);
 			phase.submitStart();
 		}
 		try {
@@ -47,7 +47,7 @@ public class MinecraftReflexMarkersMixin {
 		} finally {
 			if (phase != null) {
 				phase.submitEnd();
-				phase.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END);
+				phase.reflexMarker(StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_END);
 			}
 		}
 	}

@@ -8,7 +8,7 @@ import com.mojang.blaze3d.vulkan.init.VulkanFeature;
 import it.unimi.dsi.fastutil.ints.Int2IntArrayMap;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.IntIntPair;
-import me.snowmii.streamline.ExtensionBootstrap;
+import me.snowmii.streamline.Streamline;
 import me.snowmii.streamline.SlQueueRequirements;
 import me.snowmii.dlss.bridge.StreamlineFeatureMapping;
 import org.lwjgl.vulkan.VkDevice;
@@ -43,7 +43,7 @@ public abstract class VulkanBackendExtensionMixin {
 		Operation<VkDevice> original
 	) {
 		VkPhysicalDevice vkPhysicalDevice = physicalDevice.vkPhysicalDevice();
-		ExtensionBootstrap.addDeviceExtensions(
+		Streamline.addDeviceExtensions(
 			deviceExtensions,
 			vkPhysicalDevice.getInstance().address(),
 			vkPhysicalDevice.address()
@@ -51,8 +51,8 @@ public abstract class VulkanBackendExtensionMixin {
 		// The feature names Streamline requires, mapped onto Minecraft's VulkanFeature records.
 		// Names Minecraft already enables are skipped, so the set only grows by what the mod adds.
 		vulkanFeatures.addAll(StreamlineFeatureMapping.requiredFeatures(
-			ExtensionBootstrap.queryDeviceFeatures12(),
-			ExtensionBootstrap.queryDeviceFeatures13()
+			Streamline.queryDeviceFeatures12(),
+			Streamline.queryDeviceFeatures13()
 		));
 		// The wrapped createDevice declares BackendCreationException. Operation.call does not, so
 		// the checked exception passes through undeclared - legal in bytecode, and the enclosing
@@ -82,7 +82,7 @@ public abstract class VulkanBackendExtensionMixin {
 		Operation<Int2IntMap> original
 	) {
 		Int2IntMap merged = new Int2IntArrayMap(original.call(physicalDevice));
-		SlQueueRequirements requirements = ExtensionBootstrap.queryQueueRequirements();
+		SlQueueRequirements requirements = Streamline.queryQueueRequirements();
 		IntIntPair graphics = physicalDevice.graphicsQueueFamilyAndIndex();
 		if (graphics != null) {
 			merged.put(graphics.leftInt(), merged.get(graphics.leftInt()) + requirements.graphicsQueues());

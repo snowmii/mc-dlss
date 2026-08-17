@@ -7,8 +7,8 @@ import me.snowmii.dlss.session.SRMode
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSession
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -19,14 +19,14 @@ class DlssResourceAbiTest {
 	@Test
 	fun adapterStampsConfiguredDimensionsOntoTheRequest() {
 		var evaluated: EvaluationRequest? = null
-		val native = object : NativeApiTestDouble() {
+		val native = object : StreamlineSessionTestDouble() {
 			override fun initialize(
 				vkInstance: Long,
 				vkPhysicalDevice: Long,
 				vkDevice: Long,
 				sdkPath: Path,
 				dataPath: Path,
-			) = NativeApi.SUCCESS_RESULT
+			) = StreamlineSession.SUCCESS_RESULT
 
 			override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 				Dimensions(1280, 720)
@@ -38,11 +38,11 @@ class DlssResourceAbiTest {
 				renderHeight: Int,
 				qualityMode: Int,
 				renderPreset: Int,
-			) = NativeApi.SUCCESS_RESULT
+			) = StreamlineSession.SUCCESS_RESULT
 
 			override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 				evaluated = request
-				return NativeApi.SUCCESS_RESULT
+				return StreamlineSession.SUCCESS_RESULT
 			}
 		}
 		val outputDimensions = Dimensions(2560, 1440)

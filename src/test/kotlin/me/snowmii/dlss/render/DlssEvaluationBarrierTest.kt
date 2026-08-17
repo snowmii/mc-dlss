@@ -7,8 +7,8 @@ import me.snowmii.dlss.session.SRMode
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSession
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -66,12 +66,12 @@ class DlssEvaluationBarrierTest {
 		assertEquals(listOf(render, render), native.evaluated.map(EvaluationRequest::renderDimensions))
 	}
 
-	private inner class RecordingNative : NativeApiTestDouble() {
+	private inner class RecordingNative : StreamlineSessionTestDouble() {
 		val taggedBuffers = mutableListOf<Long>()
 		val evaluated = mutableListOf<EvaluationRequest>()
 
 		override fun initialize(vkInstance: Long, vkPhysicalDevice: Long, vkDevice: Long, sdkPath: Path, dataPath: Path) =
-			NativeApi.SUCCESS_RESULT
+			StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) = render
 
@@ -82,16 +82,16 @@ class DlssEvaluationBarrierTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		) = NativeApi.SUCCESS_RESULT
+		) = StreamlineSession.SUCCESS_RESULT
 
 		override fun tagSrResources(request: SrTagRequest): Int {
 			taggedBuffers += request.commandBuffer
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			evaluated += request
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
 }

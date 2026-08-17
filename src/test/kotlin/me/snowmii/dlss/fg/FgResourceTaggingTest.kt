@@ -4,8 +4,8 @@ import java.nio.file.Path
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSession
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.dlss.session.DlssNativeStage
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssSessionState
@@ -43,7 +43,7 @@ class FgResourceTaggingTest {
 		assertTrue(adapter.tagFgResources(request), "a READY session must tag the frame's resources")
 		assertEquals(listOf(request), native.tagFgResourcesRequests)
 
-		native.tagFgResourcesResult = NativeApi.SUCCESS_RESULT + 1
+		native.tagFgResourcesResult = StreamlineSession.SUCCESS_RESULT + 1
 		assertFalse(adapter.tagFgResources(request), "a refused FG tag must latch the session")
 		assertEquals(DlssSessionState.FALLBACK_LATCHED, session.state)
 		assertEquals(DlssNativeStage.TAG, session.failure?.stage)
@@ -59,8 +59,8 @@ class FgResourceTaggingTest {
 		warnings = emptyList(),
 	)
 
-	private class FakeNative : NativeApiTestDouble() {
-		var tagFgResourcesResult = NativeApi.SUCCESS_RESULT
+	private class FakeNative : StreamlineSessionTestDouble() {
+		var tagFgResourcesResult = StreamlineSession.SUCCESS_RESULT
 		var tagFgResourcesCalls = 0
 		val tagFgResourcesRequests = mutableListOf<FgTagRequest>()
 
@@ -76,7 +76,7 @@ class FgResourceTaggingTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
@@ -88,6 +88,6 @@ class FgResourceTaggingTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 	}
 }

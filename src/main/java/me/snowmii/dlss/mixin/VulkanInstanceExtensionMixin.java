@@ -1,7 +1,7 @@
 package me.snowmii.dlss.mixin;
 
 import com.mojang.blaze3d.vulkan.VulkanInstance;
-import me.snowmii.streamline.ExtensionBootstrap;
+import me.snowmii.streamline.Streamline;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -25,6 +25,6 @@ public class VulkanInstanceExtensionMixin {
 		)
 	)
 	private void mcDlssAddInstanceExtensions(CallbackInfo info) {
-		enabledExtensions.addAll(ExtensionBootstrap.queryInstanceExtensions());
+		enabledExtensions.addAll(Streamline.queryInstanceExtensions());
 	}
 }

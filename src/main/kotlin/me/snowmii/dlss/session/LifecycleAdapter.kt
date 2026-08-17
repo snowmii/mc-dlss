@@ -9,7 +9,7 @@ import me.snowmii.streamline.FgMultiplier
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import java.nio.file.Path
@@ -26,7 +26,7 @@ import java.nio.file.Path
  */
 class LifecycleAdapter(
 	private val session: DlssSession,
-	private val native: NativeApi,
+	private val native: StreamlineSession,
 ) : SessionBridge {
 	private var renderDimensions: Dimensions? = null
 
@@ -352,10 +352,10 @@ class LifecycleAdapter(
 	/**
 	 * Emits one of the four simulation/render-submit markers. The marker is a value the whole
 	 * way down to the ABI, so this seam does not grow a method per marker;
-	 * [NativeApi.ReflexMarkerType.INPUT_SAMPLE] is refused natively because that seam is
+	 * [StreamlineSession.ReflexMarkerType.INPUT_SAMPLE] is refused natively because that seam is
 	 * [reflexInputSample], which obtains the frame's token and sleeps before it emits.
 	 */
-	fun reflexMarker(type: NativeApi.ReflexMarkerType): Boolean =
+	fun reflexMarker(type: StreamlineSession.ReflexMarkerType): Boolean =
 		emitMarker { native.reflexMarker(type) }
 
 	private fun emitMarker(operation: () -> Int): Boolean {
@@ -546,7 +546,7 @@ class LifecycleAdapter(
 		DlssNativeStage.entries.firstOrNull { it.wireName == wireName } ?: fallback
 
 	private companion object {
-		const val NATIVE_SUCCESS = NativeApi.SUCCESS_RESULT
+		const val NATIVE_SUCCESS = StreamlineSession.SUCCESS_RESULT
 
 		/** NVSDK_NGX_Result_FAIL_InvalidParameter = NVSDK_NGX_Result_Fail | 5 (0xBAD00000 | 5). */
 		const val FAIL_INVALID_PARAMETER = 0xBAD00005.toInt()

@@ -7,8 +7,8 @@ import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSession
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -48,9 +48,9 @@ class PresentIntegrationTest {
 		assertEquals(2, native.handoffs)
 	}
 
-	private class RecordingNativeApi : NativeApiTestDouble() {
+	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		var handoffs = 0
-		var handoffResult = NativeApi.SUCCESS_RESULT
+		var handoffResult = StreamlineSession.SUCCESS_RESULT
 
 		override fun initialize(
 			vkInstance: Long,
@@ -58,7 +58,7 @@ class PresentIntegrationTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(
 			outputWidth: Int,
@@ -73,7 +73,7 @@ class PresentIntegrationTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun recordPresentHandoff(): Int {
 			handoffs++

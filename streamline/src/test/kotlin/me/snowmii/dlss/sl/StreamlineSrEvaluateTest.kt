@@ -3,7 +3,7 @@ package me.snowmii.dlss.sl
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -53,7 +53,7 @@ class StreamlineSrEvaluateTest {
 				"queried render height must be in (0, output], got ${dimensions.height}",
 			)
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.configureSuperResolution(
 					outputWidth,
 					outputHeight,
@@ -99,12 +99,12 @@ class StreamlineSrEvaluateTest {
 			// submit clean.
 			val frame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.tagSrResources(SrTagRequest(frame.address(), tagRequest.color, tagRequest.depth)),
 				"the frame's resources must tag on the caller's command buffer",
 			)
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.evaluateSuperResolution(SrLiveSession.evaluationRequest(frame.address(), color, depth, dimensions, reset = true)),
 				"the evaluation must record on the tagged frame's buffer",
 			)
@@ -115,12 +115,12 @@ class StreamlineSrEvaluateTest {
 			// from the layouts the first frame left behind.
 			val secondFrame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.tagSrResources(SrTagRequest(secondFrame.address(), tagRequest.color, tagRequest.depth)),
 				"the second frame must tag with a fresh frame token",
 			)
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.evaluateSuperResolution(
 					SrLiveSession.evaluationRequest(secondFrame.address(), color, depth, dimensions, reset = false),
 				),

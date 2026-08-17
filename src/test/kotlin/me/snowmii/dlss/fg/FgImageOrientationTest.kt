@@ -10,8 +10,8 @@ import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSession
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
@@ -104,7 +104,7 @@ class FgImageOrientationTest {
 		0.05f, 1000f, 1f, 16f / 9f,
 	)
 
-	private class RecordingNativeApi : NativeApiTestDouble() {
+	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		val order = mutableListOf<String>()
 		lateinit var fgTag: FgTagRequest
 		lateinit var evaluation: EvaluationRequest
@@ -117,7 +117,7 @@ class FgImageOrientationTest {
 			dataPath: Path,
 		): Int {
 			order += "initialize"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun queryOptimalDimensions(
@@ -133,23 +133,23 @@ class FgImageOrientationTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun configureFg(numBackBuffers: Int): Int {
 			order += "configureFg"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun tagFrameGenerationResources(request: FgTagRequest): Int {
 			order += "fgTag"
 			fgTag = request
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			order += "evaluate"
 			evaluation = request
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
 }

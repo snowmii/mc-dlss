@@ -26,7 +26,7 @@ import java.nio.file.Path
  * required for a single-queue application. That reasoning lives at the production seam.
  *
  * Native ABI and timeline-semaphore behavior are covered by streamline integration tests; this
- * class covers only mod-owned production wiring through [NativeApiTestDouble].
+ * class covers only mod-owned production wiring through [StreamlineSessionTestDouble].
  */
 class FgPresentLifetimeTest {
 
@@ -175,8 +175,8 @@ class FgPresentLifetimeTest {
 	 * drives to READY.
 	 */
 	private class RecordingNativeApi(
-		private val waitResult: Int = NativeApi.SUCCESS_RESULT,
-	) : NativeApiTestDouble() {
+		private val waitResult: Int = StreamlineSession.SUCCESS_RESULT,
+	) : StreamlineSessionTestDouble() {
 		val order = mutableListOf<String>()
 		var waits = 0
 
@@ -186,7 +186,7 @@ class FgPresentLifetimeTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			RENDER_DIMENSIONS
@@ -198,16 +198,16 @@ class FgPresentLifetimeTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages(): EvaluationImages = EvaluationImages(
 			ImageBinding(401L, 402L, 124),
 			ImageBinding(501L, 502L, 37),
 		)
 
-		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT
+		override fun releaseImages(): Int = StreamlineSession.SUCCESS_RESULT
 
-		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
+		override fun waitDeviceIdle(): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
 
@@ -219,42 +219,42 @@ class FgPresentLifetimeTest {
 
 		override fun configureFg(numBackBuffers: Int): Int {
 			order += "configureFg"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun tagFrameGenerationResources(request: FgTagRequest): Int {
 			order += "fgTag"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun recordPresentHandoff(): Int {
 			order += "handoff"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun tagSrResources(request: SrTagRequest): Int {
 			order += "srTag"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun writeMotion(request: MotionRequest): Int {
 			order += "writeMotion"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun fillVelocity(request: FillVelocityRequest): Int {
 			order += "fillVelocity"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun presentOutput(target: PresentTarget): Int {
 			order += "present"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			order += "evaluate"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
 

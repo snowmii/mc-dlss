@@ -5,7 +5,7 @@ import me.snowmii.dlss.readout.FramePacingProbe
 import me.snowmii.dlss.readout.SessionFacts
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.dlss.mrt.MotionVectorPipeline
 import me.snowmii.dlss.mrt.MotionVectorRoute
 import net.minecraft.client.renderer.entity.state.EntityRenderState
@@ -155,7 +155,7 @@ class WorldPhase(
 			runtime.pacing.end(FramePacingProbe.Span.REFLEX_SLEEP)
 		}
 	}
-	fun reflexMarker(type: NativeApi.ReflexMarkerType): Boolean =
+	fun reflexMarker(type: StreamlineSession.ReflexMarkerType): Boolean =
 		runtime.frameEvaluation?.reflexMarker(type) == true
 
 	fun observePipeline(pipeline: MotionVectorPipeline) {

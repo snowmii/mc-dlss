@@ -8,8 +8,8 @@ import me.snowmii.dlss.session.SRMode
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSession
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -80,7 +80,7 @@ class EvaluationImagesTest {
 		warnings = emptyList(),
 	)
 
-	private class RecordingNative : NativeApiTestDouble() {
+	private class RecordingNative : StreamlineSessionTestDouble() {
 		private val configuredRender = Dimensions(1280, 720)
 		var acquireCalls = 0
 		var releaseCalls = 0
@@ -92,7 +92,7 @@ class EvaluationImagesTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		) = NativeApi.SUCCESS_RESULT
+		) = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) = configuredRender
 
@@ -103,7 +103,7 @@ class EvaluationImagesTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		) = NativeApi.SUCCESS_RESULT
+		) = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages(): EvaluationImages {
 			acquireCalls++
@@ -116,7 +116,7 @@ class EvaluationImagesTest {
 		override fun releaseImages(): Int {
 			releaseCalls++
 			images = null
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
 }

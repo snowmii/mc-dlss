@@ -3,10 +3,10 @@ package me.snowmii.streamline
 import java.nio.file.Path
 
 /**
- * Base class for a [NativeApi] test double: extend it and override only the calls the test
+ * Base class for a [StreamlineSession] test double: extend it and override only the calls the test
  * exercises.
  *
- * `NativeApi` used to carry 27 `default` bodies that threw, for exactly this purpose - so a
+ * `StreamlineSession` used to carry 27 `default` bodies that threw, for exactly this purpose - so a
  * double could implement three calls and inherit the rest. That shaped the production interface,
  * now the public surface of a Fabric library mod, around its test doubles: an external
  * implementer got no compiler diagnostic for the 27 calls they missed, only a runtime throw. The
@@ -16,7 +16,7 @@ import java.nio.file.Path
  * deleted defaults did, so a double that forgets a call it depends on fails the way it always did
  * rather than passing on a silent no-op.
  */
-open class NativeApiTestDouble : NativeApi {
+open class StreamlineSessionTestDouble : StreamlineSession {
 	override fun close() = Unit
 
 	override fun initialize(
@@ -84,11 +84,11 @@ open class NativeApiTestDouble : NativeApi {
 
 	override fun reflexInputSample(): Int = notStubbed("reflexInputSample")
 
-	override fun reflexMarker(type: NativeApi.ReflexMarkerType): Int = notStubbed("reflexMarker")
+	override fun reflexMarker(type: StreamlineSession.ReflexMarkerType): Int = notStubbed("reflexMarker")
 
-	override fun reflexMarkers(): NativeApi.ReflexMarkerEvents = notStubbed("reflexMarkers")
+	override fun reflexMarkers(): StreamlineSession.ReflexMarkerEvents = notStubbed("reflexMarkers")
 
-	override fun queryReflexOptions(): NativeApi.ReflexRegistration = notStubbed("queryReflexOptions")
+	override fun queryReflexOptions(): StreamlineSession.ReflexRegistration = notStubbed("queryReflexOptions")
 
 	override fun recordReflexFrameLimit(frameLimitUs: Int): Int = notStubbed("recordReflexFrameLimit")
 
@@ -103,7 +103,7 @@ open class NativeApiTestDouble : NativeApi {
 
 	override fun queryFgCameraConstants(): CameraConstants = notStubbed("queryFgCameraConstants")
 
-	override fun queryFgImages(): NativeApi.FgOrientationImages = notStubbed("queryFgImages")
+	override fun queryFgImages(): StreamlineSession.FgOrientationImages = notStubbed("queryFgImages")
 
 	override fun queryDeviceFeatures12(): List<String> = notStubbed("queryDeviceFeatures12")
 

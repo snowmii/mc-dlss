@@ -1,11 +1,11 @@
 package me.snowmii.dlss.render
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
@@ -155,7 +155,7 @@ class EnablementFallbackTest {
 
 	private fun fixture(
 		enabled: Boolean = true,
-		initializeResult: Int = NativeApi.SUCCESS_RESULT,
+		initializeResult: Int = StreamlineSession.SUCCESS_RESULT,
 	) = Fixture(enabled, initializeResult)
 
 	/** The production stack, wired the way `RenderRuntime.forMinecraft` wires it. */
@@ -253,10 +253,10 @@ class EnablementFallbackTest {
 	}
 
 	/** The native bridge as results, which is all the enablement and fallback paths read of it. */
-	private class FakeNative(private val initializeResult: Int, private val render: Dimensions) : NativeApiTestDouble() {
+	private class FakeNative(private val initializeResult: Int, private val render: Dimensions) : StreamlineSessionTestDouble() {
 		var initializeCalls = 0
 		var evaluateCalls = 0
-		var evaluateResult = NativeApi.SUCCESS_RESULT
+		var evaluateResult = StreamlineSession.SUCCESS_RESULT
 
 		override fun initialize(
 			vkInstance: Long,
@@ -278,22 +278,22 @@ class EnablementFallbackTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		) = NativeApi.SUCCESS_RESULT
+		) = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages() = EvaluationImages(
 			ImageBinding(0x1002, 0x1001, 83),
 			ImageBinding(0x2002, 0x2001, 37),
 		)
 
-		override fun releaseImages() = NativeApi.SUCCESS_RESULT
+		override fun releaseImages() = StreamlineSession.SUCCESS_RESULT
 
-		override fun waitDeviceIdle() = NativeApi.SUCCESS_RESULT
+		override fun waitDeviceIdle() = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
 
-		override fun writeMotion(request: MotionRequest) = NativeApi.SUCCESS_RESULT
+		override fun writeMotion(request: MotionRequest) = StreamlineSession.SUCCESS_RESULT
 
-		override fun presentOutput(target: PresentTarget) = NativeApi.SUCCESS_RESULT
+		override fun presentOutput(target: PresentTarget) = StreamlineSession.SUCCESS_RESULT
 
 		@Suppress("LongParameterList")
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int {

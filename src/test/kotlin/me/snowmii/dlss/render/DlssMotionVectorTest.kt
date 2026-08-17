@@ -7,8 +7,8 @@ import me.snowmii.dlss.session.SRMode
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSession
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -52,7 +52,7 @@ class DlssMotionVectorTest {
 		)
 	}
 
-	private class RecordingNative : NativeApiTestDouble() {
+	private class RecordingNative : StreamlineSessionTestDouble() {
 		var lastRequest: MotionRequest? = null
 
 		override fun initialize(
@@ -61,7 +61,7 @@ class DlssMotionVectorTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(
 			outputWidth: Int,
@@ -76,11 +76,11 @@ class DlssMotionVectorTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun writeMotion(request: MotionRequest): Int {
 		lastRequest = request
-		return NativeApi.SUCCESS_RESULT
+		return StreamlineSession.SUCCESS_RESULT
 	}
 	}
 }

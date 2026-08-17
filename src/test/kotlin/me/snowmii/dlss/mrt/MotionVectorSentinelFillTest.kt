@@ -15,7 +15,7 @@ import java.nio.file.Path
 /**
  * The sentinel-fill gate: the velocity-MRT route records one fill before tagging and
  * evaluation, while camera-only routing keeps its compute writer. These tests exercise pure
- * frame routing against [NativeApiTestDouble], including reset propagation and fill order.
+ * frame routing against [StreamlineSessionTestDouble], including reset propagation and fill order.
  */
 class MotionVectorSentinelFillTest {
 	@Test
@@ -164,7 +164,7 @@ class MotionVectorSentinelFillTest {
 	/** Records every per-frame native call so the fill gate is assertable off the render thread. */
 	private class RecordingNativeApi(
 		private val renderDimensions: Dimensions,
-	) : NativeApiTestDouble() {
+	) : StreamlineSessionTestDouble() {
 		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
 		val tags = mutableListOf<SrTagRequest>()
@@ -178,7 +178,7 @@ class MotionVectorSentinelFillTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			Dimensions(renderDimensions.width, renderDimensions.height)
@@ -190,46 +190,46 @@ class MotionVectorSentinelFillTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages(): EvaluationImages = EvaluationImages(
 			ImageBinding(401L, 402L, 124),
 			ImageBinding(501L, 502L, 37),
 		)
 
-		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT
+		override fun releaseImages(): Int = StreamlineSession.SUCCESS_RESULT
 
-		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
+		override fun waitDeviceIdle(): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
 
 		override fun fillVelocity(request: FillVelocityRequest): Int {
 			fills += request
 			order += "fill"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun writeMotion(request: MotionRequest): Int {
 			writeMotion += request
 			order += "writeMotion"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun tagSrResources(request: SrTagRequest): Int {
 			tags += request
 			order += "tag"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun presentOutput(target: PresentTarget): Int {
 			order += "present"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			evaluations += request
 			order += "evaluate"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
 

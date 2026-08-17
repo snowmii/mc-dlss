@@ -1,9 +1,9 @@
 package me.snowmii.dlss.session
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.Dimensions
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.NativeException
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.EvaluationRequest
@@ -172,7 +172,7 @@ class DlssSessionTest {
 		private val evaluateResult: Int = 1,
 		private val acquireImagesResult: Int? = null,
 		private val releaseImagesResult: Int = 1,
-	) : NativeApiTestDouble() {
+	) : StreamlineSessionTestDouble() {
 		var initializeCalls = 0
 		var queryCalls = 0
 		var configureCalls = 0
@@ -229,7 +229,7 @@ class DlssSessionTest {
 			return releaseImagesResult
 		}
 
-		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
+		override fun waitDeviceIdle(): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
 
@@ -237,12 +237,12 @@ class DlssSessionTest {
 		// here for the interface to be implemented.
 		override fun writeMotion(request: MotionRequest): Int {
 			writeMotionCalls++
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun presentOutput(target: PresentTarget): Int {
 			presentOutputCalls++
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int {

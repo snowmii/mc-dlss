@@ -1,6 +1,6 @@
 package me.snowmii.dlss.mixin;
 
-import me.snowmii.streamline.NativeApi;
+import me.snowmii.streamline.StreamlineSession;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.render.WorldPhase;
 import net.minecraft.client.Minecraft;
@@ -47,7 +47,7 @@ public class MinecraftReflexMarkersMixin {
 	@Inject(method = "runTick", at = @At("HEAD"))
 	private void mcDlssReflexSimulateStart(final CallbackInfo ci) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
-		if (phase != null) phase.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START);
+		if (phase != null) phase.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_START);
 	}
 
 	@Inject(
@@ -60,6 +60,6 @@ public class MinecraftReflexMarkersMixin {
 	)
 	private void mcDlssReflexSimulateEnd(final CallbackInfo ci) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
-		if (phase != null) phase.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END);
+		if (phase != null) phase.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_END);
 	}
 }

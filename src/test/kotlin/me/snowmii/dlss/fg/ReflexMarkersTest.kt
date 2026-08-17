@@ -1,14 +1,14 @@
 package me.snowmii.dlss.fg
 
 import java.nio.file.Path
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.dlss.render.FrameEvaluation
 import me.snowmii.dlss.render.WorldPhase
@@ -35,20 +35,20 @@ class ReflexMarkersTest {
 		val adapter = LifecycleAdapter(session, calls)
 		// Not READY yet: every marker is refused before it reaches the native side.
 		assertFalse(adapter.reflexInputSample(), "a non-READY session must refuse the input sample")
-		assertFalse(adapter.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START), "a non-READY session must refuse the simulation start")
-		assertFalse(adapter.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END), "a non-READY session must refuse the simulation end")
-		assertFalse(adapter.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START), "a non-READY session must refuse the render-submit start")
-		assertFalse(adapter.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END), "a non-READY session must refuse the render-submit end")
+		assertFalse(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_START), "a non-READY session must refuse the simulation start")
+		assertFalse(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_END), "a non-READY session must refuse the simulation end")
+		assertFalse(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_START), "a non-READY session must refuse the render-submit start")
+		assertFalse(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_END), "a non-READY session must refuse the render-submit end")
 		assertTrue(calls.reflexCalls.isEmpty(), "refused markers must never reach the native side")
 
 		// READY: every marker delegates and reports the native result.
 		adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data"))
 		assertEquals(DlssSessionState.READY, session.state)
 		assertTrue(adapter.reflexInputSample(), "a READY session must emit the input sample")
-		assertTrue(adapter.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START), "a READY session must emit the simulation start")
-		assertTrue(adapter.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END), "a READY session must emit the simulation end")
-		assertTrue(adapter.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START), "a READY session must emit the render-submit start")
-		assertTrue(adapter.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END), "a READY session must emit the render-submit end")
+		assertTrue(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_START), "a READY session must emit the simulation start")
+		assertTrue(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_END), "a READY session must emit the simulation end")
+		assertTrue(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_START), "a READY session must emit the render-submit start")
+		assertTrue(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_END), "a READY session must emit the render-submit end")
 		assertEquals(
 			listOf("inputSample", "simulateStart", "simulateEnd", "renderSubmitStart", "renderSubmitEnd"),
 			calls.reflexCalls,
@@ -94,10 +94,10 @@ class ReflexMarkersTest {
 		)
 
 		assertTrue(phase.reflexInputSample(), "the world phase must delegate the input sample")
-		assertTrue(phase.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_START), "the world phase must delegate the simulation start")
-		assertTrue(phase.reflexMarker(NativeApi.ReflexMarkerType.SIMULATION_END), "the world phase must delegate the simulation end")
-		assertTrue(phase.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_START), "the world phase must delegate the render-submit start")
-		assertTrue(phase.reflexMarker(NativeApi.ReflexMarkerType.RENDER_SUBMIT_END), "the world phase must delegate the render-submit end")
+		assertTrue(phase.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_START), "the world phase must delegate the simulation start")
+		assertTrue(phase.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_END), "the world phase must delegate the simulation end")
+		assertTrue(phase.reflexMarker(StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_START), "the world phase must delegate the render-submit start")
+		assertTrue(phase.reflexMarker(StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_END), "the world phase must delegate the render-submit end")
 		assertEquals(
 			listOf("inputSample", "simulateStart", "simulateEnd", "renderSubmitStart", "renderSubmitEnd"),
 			calls.reflexCalls,
@@ -124,7 +124,7 @@ class ReflexMarkersTest {
 	 * Records every reflex marker call in order so the delegation chain is assertable off the
 	 * render thread; everything else the lifecycle needs answers success.
 	 */
-	private class RecordingNativeApi : NativeApiTestDouble() {
+	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		val reflexCalls = mutableListOf<String>()
 		var failReflex = false
 
@@ -134,7 +134,7 @@ class ReflexMarkersTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			Dimensions(1707, 960)
@@ -146,39 +146,39 @@ class ReflexMarkersTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages(): EvaluationImages = EvaluationImages(
 			ImageBinding(401L, 402L, 124),
 			ImageBinding(501L, 502L, 37),
 		)
 
-		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT
+		override fun releaseImages(): Int = StreamlineSession.SUCCESS_RESULT
 
-		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
+		override fun waitDeviceIdle(): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
 
-		override fun writeMotion(request: MotionRequest): Int = NativeApi.SUCCESS_RESULT
+		override fun writeMotion(request: MotionRequest): Int = StreamlineSession.SUCCESS_RESULT
 
-		override fun presentOutput(target: PresentTarget): Int = NativeApi.SUCCESS_RESULT
+		override fun presentOutput(target: PresentTarget): Int = StreamlineSession.SUCCESS_RESULT
 
-		override fun evaluateSuperResolution(request: EvaluationRequest): Int = NativeApi.SUCCESS_RESULT
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun reflexInputSample(): Int {
 			reflexCalls += "inputSample"
-			return if (failReflex) NativeApi.SUCCESS_RESULT + 1 else NativeApi.SUCCESS_RESULT
+			return if (failReflex) StreamlineSession.SUCCESS_RESULT + 1 else StreamlineSession.SUCCESS_RESULT
 		}
 
-		override fun reflexMarker(type: NativeApi.ReflexMarkerType): Int {
+		override fun reflexMarker(type: StreamlineSession.ReflexMarkerType): Int {
 			reflexCalls += when (type) {
-				NativeApi.ReflexMarkerType.SIMULATION_START -> "simulateStart"
-				NativeApi.ReflexMarkerType.SIMULATION_END -> "simulateEnd"
-				NativeApi.ReflexMarkerType.RENDER_SUBMIT_START -> "renderSubmitStart"
-				NativeApi.ReflexMarkerType.RENDER_SUBMIT_END -> "renderSubmitEnd"
-				NativeApi.ReflexMarkerType.INPUT_SAMPLE -> return FAIL_INVALID_PARAMETER
+				StreamlineSession.ReflexMarkerType.SIMULATION_START -> "simulateStart"
+				StreamlineSession.ReflexMarkerType.SIMULATION_END -> "simulateEnd"
+				StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_START -> "renderSubmitStart"
+				StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_END -> "renderSubmitEnd"
+				StreamlineSession.ReflexMarkerType.INPUT_SAMPLE -> return FAIL_INVALID_PARAMETER
 			}
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
 

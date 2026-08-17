@@ -103,24 +103,24 @@ class FgViewportSplitTest {
 		return (field.get(null) as sun.misc.Unsafe).allocateInstance(VkCommandBuffer::class.java) as VkCommandBuffer
 	}
 
-	private class RecordingNativeApi : NativeApiTestDouble() {
+	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		val order = mutableListOf<String>()
 		val fgTags = mutableListOf<FgTagRequest>()
 		val evaluateRequests = mutableListOf<EvaluationRequest>()
 
-		override fun initialize(vkInstance: Long, vkPhysicalDevice: Long, vkDevice: Long, sdkPath: Path, dataPath: Path) = NativeApi.SUCCESS_RESULT
+		override fun initialize(vkInstance: Long, vkPhysicalDevice: Long, vkDevice: Long, sdkPath: Path, dataPath: Path) = StreamlineSession.SUCCESS_RESULT
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) = RENDER_DIMENSIONS
-		override fun configureSuperResolution(outputWidth: Int, outputHeight: Int, renderWidth: Int, renderHeight: Int, qualityMode: Int, renderPreset: Int) = NativeApi.SUCCESS_RESULT
+		override fun configureSuperResolution(outputWidth: Int, outputHeight: Int, renderWidth: Int, renderHeight: Int, qualityMode: Int, renderPreset: Int) = StreamlineSession.SUCCESS_RESULT
 		override fun acquireImages() = EvaluationImages(ImageBinding(401L, 402L, 124), ImageBinding(501L, 502L, 37))
-		override fun releaseImages() = NativeApi.SUCCESS_RESULT
-		override fun waitDeviceIdle() = NativeApi.SUCCESS_RESULT
-		override fun configureFg(numBackBuffers: Int): Int { order += "configureFg"; return NativeApi.SUCCESS_RESULT }
-		override fun tagFrameGenerationResources(request: FgTagRequest): Int { fgTags += request; order += "fgTag"; return NativeApi.SUCCESS_RESULT }
-		override fun tagSrResources(request: SrTagRequest): Int { order += "srTag"; return NativeApi.SUCCESS_RESULT }
-		override fun writeMotion(request: MotionRequest): Int { order += "writeMotion"; return NativeApi.SUCCESS_RESULT }
-		override fun evaluateSuperResolution(request: EvaluationRequest): Int { evaluateRequests += request; order += "evaluate"; return NativeApi.SUCCESS_RESULT }
-		override fun presentOutput(target: PresentTarget): Int { order += "present"; return NativeApi.SUCCESS_RESULT }
-		override fun recordPresentHandoff(): Int { order += "handoff"; return NativeApi.SUCCESS_RESULT }
+		override fun releaseImages() = StreamlineSession.SUCCESS_RESULT
+		override fun waitDeviceIdle() = StreamlineSession.SUCCESS_RESULT
+		override fun configureFg(numBackBuffers: Int): Int { order += "configureFg"; return StreamlineSession.SUCCESS_RESULT }
+		override fun tagFrameGenerationResources(request: FgTagRequest): Int { fgTags += request; order += "fgTag"; return StreamlineSession.SUCCESS_RESULT }
+		override fun tagSrResources(request: SrTagRequest): Int { order += "srTag"; return StreamlineSession.SUCCESS_RESULT }
+		override fun writeMotion(request: MotionRequest): Int { order += "writeMotion"; return StreamlineSession.SUCCESS_RESULT }
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int { evaluateRequests += request; order += "evaluate"; return StreamlineSession.SUCCESS_RESULT }
+		override fun presentOutput(target: PresentTarget): Int { order += "present"; return StreamlineSession.SUCCESS_RESULT }
+		override fun recordPresentHandoff(): Int { order += "handoff"; return StreamlineSession.SUCCESS_RESULT }
 	}
 
 	private companion object {

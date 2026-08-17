@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render
 import me.snowmii.dlss.session.DlssFrameDecision
 import me.snowmii.dlss.session.DlssFrameRoute
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.dlss.readout.AcceptanceRecord
 import me.snowmii.dlss.readout.FramePacingProbe
 import me.snowmii.streamline.VulkanContextRegistry
@@ -326,7 +326,7 @@ class RenderRuntime(
 		// options are eBlockPresentingClientQueue now, under which the guide makes the wait
 		// "recommended but not required" when the tagged inputs are modified on the presenting
 		// queue - the only queue this frame has - and the plugin blocks that queue itself for as
-		// long as it actually needs. [me.snowmii.streamline.NativeApi.waitFgInputsIdle] stays on
+		// long as it actually needs. [me.snowmii.streamline.StreamlineSession.waitFgInputsIdle] stays on
 		// the ABI: it is the mode's obligation, and the mode is one options field away.
 		// Polled on the user's mode rather than the effective one: an unhealthy status suspends
 		// composition, and gating the poll on composition would stop the polling that observes the
@@ -755,7 +755,7 @@ class RenderRuntime(
 		 */
 		fun forMinecraft(
 			session: DlssSession,
-			native: NativeApi,
+			native: StreamlineSession,
 			diagnostics: (String) -> Unit = {},
 			/**
 			 * The session readout the evaluation feeds its first record to, or null for a runtime

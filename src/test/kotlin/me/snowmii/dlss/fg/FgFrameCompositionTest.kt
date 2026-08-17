@@ -431,7 +431,7 @@ class FgFrameCompositionTest {
 	 */
 	private class RecordingNativeApi(
 		private val failFgTag: Boolean = false,
-	) : NativeApiTestDouble() {
+	) : StreamlineSessionTestDouble() {
 		val order = mutableListOf<String>()
 		val fgTags = mutableListOf<FgTagRequest>()
 		val fgConfigures = mutableListOf<Int>()
@@ -444,7 +444,7 @@ class FgFrameCompositionTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			RENDER_DIMENSIONS
@@ -456,61 +456,61 @@ class FgFrameCompositionTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages(): EvaluationImages = EvaluationImages(
 			ImageBinding(401L, 402L, 124),
 			ImageBinding(501L, 502L, 37),
 		)
 
-		override fun releaseImages(): Int = NativeApi.SUCCESS_RESULT
+		override fun releaseImages(): Int = StreamlineSession.SUCCESS_RESULT
 
-		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
+		override fun waitDeviceIdle(): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
 
 		override fun configureFg(numBackBuffers: Int): Int {
 			fgConfigures += numBackBuffers
 			order += "configureFg"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun tagFrameGenerationResources(request: FgTagRequest): Int {
 			fgTags += request
 			order += "fgTag"
-			return if (failFgTag) NativeApi.SUCCESS_RESULT + 1 else NativeApi.SUCCESS_RESULT
+			return if (failFgTag) StreamlineSession.SUCCESS_RESULT + 1 else StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun recordPresentHandoff(): Int {
 			handoffs++
 			order += "handoff"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun tagSrResources(request: SrTagRequest): Int {
 			order += "srTag"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun writeMotion(request: MotionRequest): Int {
 			order += "writeMotion"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun fillVelocity(request: FillVelocityRequest): Int {
 			order += "fillVelocity"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun presentOutput(target: PresentTarget): Int {
 			order += "present"
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int {
 			order += "evaluate"
 			evaluateRequests += request
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
 

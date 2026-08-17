@@ -9,7 +9,7 @@ import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeTestAccess
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -53,7 +53,7 @@ object SrLiveSession {
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
 		val requirements = NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 			)
 			bridge.queryQueueRequirements()
@@ -80,14 +80,14 @@ object SrLiveSession {
 			// the module is pinned; an arena-scoped lookup would unload it here.
 			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 				)
 				// The fixture creates one host queue in the family, so Streamline's own queues
 				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
 				val hostQueueCount = 1
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					bridge.activateVulkanProxies(
 						fixture.instanceAddress(),
 						fixture.physicalDeviceAddress(),
@@ -108,11 +108,11 @@ object SrLiveSession {
 			// directory stands in for them.
 			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 				)
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					bridge.initialize(
 						fixture.instanceAddress(),
 						fixture.physicalDeviceAddress(),
@@ -147,7 +147,7 @@ object SrLiveSession {
 		dataPath: Path,
 	) {
 		assertEquals(
-			NativeApi.SUCCESS_RESULT,
+			StreamlineSession.SUCCESS_RESULT,
 			bridge.initialize(
 				fixture.instanceAddress(),
 				fixture.physicalDeviceAddress(),

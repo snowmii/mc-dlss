@@ -67,24 +67,24 @@ class CompositionOrderTest {
 		return unsafe.allocateInstance(VkCommandBuffer::class.java) as VkCommandBuffer
 	}
 
-	private class RecordingNativeApi : NativeApiTestDouble() {
+	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		val order = mutableListOf<String>()
 		val commandBuffers = mutableListOf<Long>()
 		val presentTargets = mutableListOf<PresentTarget>()
 
 		override fun initialize(vkInstance: Long, vkPhysicalDevice: Long, vkDevice: Long, sdkPath: Path, dataPath: Path) =
-			NativeApi.SUCCESS_RESULT
+			StreamlineSession.SUCCESS_RESULT
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) = RENDER
 		override fun configureSuperResolution(outputWidth: Int, outputHeight: Int, renderWidth: Int, renderHeight: Int, qualityMode: Int, renderPreset: Int) =
-			NativeApi.SUCCESS_RESULT
+			StreamlineSession.SUCCESS_RESULT
 		override fun acquireImages() = EvaluationImages(ImageBinding(401L, 402L, 124), ImageBinding(501L, 502L, 37))
-		override fun releaseImages() = NativeApi.SUCCESS_RESULT
-		override fun waitDeviceIdle() = NativeApi.SUCCESS_RESULT
+		override fun releaseImages() = StreamlineSession.SUCCESS_RESULT
+		override fun waitDeviceIdle() = StreamlineSession.SUCCESS_RESULT
 		override fun frameTimings(): FrameTimings? = null
-		override fun writeMotion(request: MotionRequest): Int { commandBuffers += request.commandBuffer; order += "writeMotion"; return NativeApi.SUCCESS_RESULT }
-		override fun tagSrResources(request: SrTagRequest): Int { commandBuffers += request.commandBuffer; order += "srTag"; return NativeApi.SUCCESS_RESULT }
-		override fun evaluateSuperResolution(request: EvaluationRequest): Int { commandBuffers += request.commandBuffer; order += "evaluate"; return NativeApi.SUCCESS_RESULT }
-		override fun presentOutput(target: PresentTarget): Int { commandBuffers += target.commandBuffer; presentTargets += target; order += "present"; return NativeApi.SUCCESS_RESULT }
+		override fun writeMotion(request: MotionRequest): Int { commandBuffers += request.commandBuffer; order += "writeMotion"; return StreamlineSession.SUCCESS_RESULT }
+		override fun tagSrResources(request: SrTagRequest): Int { commandBuffers += request.commandBuffer; order += "srTag"; return StreamlineSession.SUCCESS_RESULT }
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int { commandBuffers += request.commandBuffer; order += "evaluate"; return StreamlineSession.SUCCESS_RESULT }
+		override fun presentOutput(target: PresentTarget): Int { commandBuffers += target.commandBuffer; presentTargets += target; order += "present"; return StreamlineSession.SUCCESS_RESULT }
 	}
 
 	private companion object {

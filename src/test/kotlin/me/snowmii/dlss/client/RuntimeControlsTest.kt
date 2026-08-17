@@ -1,10 +1,10 @@
 package me.snowmii.dlss.client
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
@@ -287,14 +287,14 @@ class RuntimeControlsTest {
 	 * The render size answers per mode the way NGX does, because a mode change that returned the
 	 * same size would let a runtime that rebuilt nothing pass.
 	 */
-	private class FakeNative : NativeApiTestDouble() {
+	private class FakeNative : StreamlineSessionTestDouble() {
 		var initializeCalls = 0
 		var releaseImageCalls = 0
 		var waitDeviceIdleCalls = 0
 
 		/** Records the calls whose *order* is the invariant, not just their count. */
 		var log: ((String) -> Unit)? = null
-		var configureResult = NativeApi.SUCCESS_RESULT
+		var configureResult = StreamlineSession.SUCCESS_RESULT
 		var lastConfiguredRender: Dimensions? = null
 		var lastConfiguredPreset: Int? = null
 
@@ -314,7 +314,7 @@ class RuntimeControlsTest {
 			dataPath: Path,
 		): Int {
 			initializeCalls++
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun queryOptimalDimensions(
@@ -331,12 +331,12 @@ class RuntimeControlsTest {
 			qualityMode: Int,
 			renderPreset: Int,
 		): Int {
-			if (configureResult != NativeApi.SUCCESS_RESULT) {
+			if (configureResult != StreamlineSession.SUCCESS_RESULT) {
 				return configureResult
 			}
 			lastConfiguredRender = Dimensions(renderWidth, renderHeight)
 			lastConfiguredPreset = renderPreset
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun acquireImages() = EvaluationImages(
@@ -347,7 +347,7 @@ class RuntimeControlsTest {
 		override fun releaseImages(): Int {
 			releaseImageCalls++
 			log?.invoke("release-images")
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun frameTimings(): FrameTimings? = null
@@ -355,13 +355,13 @@ class RuntimeControlsTest {
 		override fun waitDeviceIdle(): Int {
 			waitDeviceIdleCalls++
 			log?.invoke("wait-device-idle")
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
-		override fun writeMotion(request: MotionRequest): Int = NativeApi.SUCCESS_RESULT
+		override fun writeMotion(request: MotionRequest): Int = StreamlineSession.SUCCESS_RESULT
 
-		override fun presentOutput(target: PresentTarget): Int = NativeApi.SUCCESS_RESULT
+		override fun presentOutput(target: PresentTarget): Int = StreamlineSession.SUCCESS_RESULT
 
-		override fun evaluateSuperResolution(request: EvaluationRequest): Int = NativeApi.SUCCESS_RESULT
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int = StreamlineSession.SUCCESS_RESULT
 	}
 }

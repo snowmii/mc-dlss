@@ -2,7 +2,7 @@ package me.snowmii.dlss.fg
 import me.snowmii.dlss.session.TestSessionBridge
 
 import java.nio.file.Path
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
@@ -10,7 +10,7 @@ import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgMultiplier
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.dlss.client.RuntimeControls
@@ -193,7 +193,7 @@ class FgMultiplierToggleTest {
 				override fun queryFgMultiplier(): FgMultiplier = calls.multiplier()
 
 				override fun setFgMultiplier(numFramesToGenerate: Int): Boolean =
-					calls.set(numFramesToGenerate) == NativeApi.SUCCESS_RESULT
+					calls.set(numFramesToGenerate) == StreamlineSession.SUCCESS_RESULT
 			},
 			invalidateSurfaceConfiguration = invalidateSurfaceConfiguration,
 		)
@@ -262,15 +262,15 @@ class FgMultiplierToggleTest {
 	private class MultiplierNative(
 		private var current: Int = 1,
 		private val max: Int = 3,
-		var setResult: Int = NativeApi.SUCCESS_RESULT,
-	) : NativeApiTestDouble() {
+		var setResult: Int = StreamlineSession.SUCCESS_RESULT,
+	) : StreamlineSessionTestDouble() {
 		val setValues = mutableListOf<Int>()
 
 		fun multiplier(): FgMultiplier = FgMultiplier(current, max)
 
 		fun set(numFramesToGenerate: Int): Int {
 			setValues += numFramesToGenerate
-			if (setResult == NativeApi.SUCCESS_RESULT) {
+			if (setResult == StreamlineSession.SUCCESS_RESULT) {
 				current = numFramesToGenerate
 			}
 			return setResult
@@ -312,8 +312,8 @@ class FgMultiplierToggleTest {
 	}
 
 	/** Records the multiplier seams and answers the three calls [LifecycleAdapter.initialize] drives. */
-	private class AdapterNative : NativeApiTestDouble() {
-		var setResult = NativeApi.SUCCESS_RESULT
+	private class AdapterNative : StreamlineSessionTestDouble() {
+		var setResult = StreamlineSession.SUCCESS_RESULT
 		val setValues = mutableListOf<Int>()
 
 		override fun setFgMultiplier(numFramesToGenerate: Int): Int {
@@ -329,7 +329,7 @@ class FgMultiplierToggleTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
@@ -341,7 +341,7 @@ class FgMultiplierToggleTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")
@@ -370,6 +370,6 @@ class FgMultiplierToggleTest {
 
 	private companion object {
 		/** Any non-success native result: the record refused without naming which refusal. */
-		const val REFUSED = NativeApi.SUCCESS_RESULT + 1
+		const val REFUSED = StreamlineSession.SUCCESS_RESULT + 1
 	}
 }

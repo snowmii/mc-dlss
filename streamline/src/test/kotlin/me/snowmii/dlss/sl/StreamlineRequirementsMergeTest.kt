@@ -5,7 +5,7 @@ import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.NativeTestAccess
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -50,7 +50,7 @@ class StreamlineRequirementsMergeTest {
 		ExtensionBootstrap.queryInstanceExtensions()
 		NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 			)
 			val features12 = bridge.queryDeviceFeatures12()
@@ -74,7 +74,7 @@ class StreamlineRequirementsMergeTest {
 		ExtensionBootstrap.queryInstanceExtensions()
 		NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 			)
 			val requirements = bridge.queryQueueRequirements()
@@ -96,7 +96,7 @@ class StreamlineRequirementsMergeTest {
 		// the pinned module keeps the bootstrap state for the activation bridge below.
 		val requirements = NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 			)
 			bridge.queryQueueRequirements()
@@ -122,7 +122,7 @@ class StreamlineRequirementsMergeTest {
 			// device is still alive.
 			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 				)
 				// The fixture creates one host queue in the family, so Streamline's own queues
@@ -140,13 +140,13 @@ class StreamlineRequirementsMergeTest {
 					)
 				}
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					layout(),
 					"activation must succeed against the merged queue layout",
 				)
 				// Idempotent: the same seven values must not re-call slSetVulkanInfo.
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					layout(),
 					"repeated activation must succeed",
 				)

@@ -54,7 +54,7 @@ public final class ExtensionBootstrap {
 	}
 
 	/** Opens one Java session over the packaged native implementation. */
-	public static NativeApi openSession() {
+	public static StreamlineSession openSession() {
 		loadStreamlineRuntime();
 		return Native.open(nativeLibrary());
 	}
@@ -139,7 +139,7 @@ public final class ExtensionBootstrap {
 				context.getComputeQueueFamily(),
 				context.getComputeQueueIndex()
 			);
-			if (result != NativeApi.SUCCESS_RESULT) {
+			if (result != StreamlineSession.SUCCESS_RESULT) {
 				throw new NativeException("activate-vulkan-proxies", result);
 			}
 		}
@@ -159,7 +159,7 @@ public final class ExtensionBootstrap {
 
 	private static void bootstrap(final Native nativeBridge) {
 		final int result = nativeBridge.bootstrapStreamline(streamlineRuntimeDirectory());
-		if (result != NativeApi.SUCCESS_RESULT) {
+		if (result != StreamlineSession.SUCCESS_RESULT) {
 			throw new NativeException("bootstrap-streamline", result);
 		}
 	}

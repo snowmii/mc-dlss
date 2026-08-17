@@ -20,8 +20,8 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Flat Java 25 FFM binding. NGX types and ownership stay inside mc_dlss_native. */
-public final class Native implements AutoCloseable, NativeApi {
-	private static final int SUCCESS = NativeApi.SUCCESS_RESULT;
+public final class Native implements AutoCloseable, StreamlineSession {
+	private static final int SUCCESS = StreamlineSession.SUCCESS_RESULT;
 	private static final ValueLayout.OfInt JAVA_INT = ValueLayout.JAVA_INT;
 	private static final ValueLayout.OfLong JAVA_LONG = ValueLayout.JAVA_LONG;
 	private static final ValueLayout.OfFloat JAVA_FLOAT = ValueLayout.JAVA_FLOAT;
@@ -819,41 +819,41 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
-	public int reflexMarker(final NativeApi.ReflexMarkerType type) {
+	public int reflexMarker(final StreamlineSession.ReflexMarkerType type) {
 		if (reflexMarker == null) throw new NativeException("reflex-marker", new IllegalStateException("Native bridge lacks the reflex marker entry"));
 		final int value = type.getNativeValue();
 		try { return (int)reflexMarker.invokeExact(value); } catch (Throwable error) { throw nativeError("reflex-marker", error); }
 	}
 
 	@Override
-	public NativeApi.ReflexMarkerEvents reflexMarkers() {
+	public StreamlineSession.ReflexMarkerEvents reflexMarkers() {
 		if (queryReflexMarkers == null) throw new NativeException("query-reflex-markers", new IllegalStateException("Native bridge lacks the reflex-marker oracle"));
 		try (Arena callArena = Arena.ofConfined()) {
-			final MemorySegment typeCounts = callArena.allocate(JAVA_INT, NativeApi.ReflexMarkerEvents.TYPE_COUNT);
+			final MemorySegment typeCounts = callArena.allocate(JAVA_INT, StreamlineSession.ReflexMarkerEvents.TYPE_COUNT);
 			final MemorySegment eventCount = callArena.allocate(JAVA_INT);
-			final MemorySegment events = callArena.allocate((long) NativeApi.ReflexMarkerEvents.LOG_CAPACITY * 2 * JAVA_INT.byteSize());
+			final MemorySegment events = callArena.allocate((long) StreamlineSession.ReflexMarkerEvents.LOG_CAPACITY * 2 * JAVA_INT.byteSize());
 			final int result = (int)this.queryReflexMarkers.invokeExact(
 				typeCounts,
 				eventCount,
 				events,
-				NativeApi.ReflexMarkerEvents.LOG_CAPACITY
+				StreamlineSession.ReflexMarkerEvents.LOG_CAPACITY
 			);
 			if (result != SUCCESS) {
 				throw new NativeException("query-reflex-markers", result);
 			}
 			final int total = eventCount.get(JAVA_INT, 0);
-			final int readable = Math.min(total, NativeApi.ReflexMarkerEvents.LOG_CAPACITY);
-			final List<NativeApi.ReflexMarkerEvent> log = new ArrayList<>(readable);
+			final int readable = Math.min(total, StreamlineSession.ReflexMarkerEvents.LOG_CAPACITY);
+			final List<StreamlineSession.ReflexMarkerEvent> log = new ArrayList<>(readable);
 			for (int i = 0; i < readable; i++) {
 				final int type = events.get(JAVA_INT, (long) i * 2 * JAVA_INT.byteSize());
 				final int frameIndex = events.get(JAVA_INT, ((long) i * 2 + 1) * JAVA_INT.byteSize());
-				log.add(new NativeApi.ReflexMarkerEvent(NativeApi.ReflexMarkerType.fromNative(type), frameIndex));
+				log.add(new StreamlineSession.ReflexMarkerEvent(StreamlineSession.ReflexMarkerType.fromNative(type), frameIndex));
 			}
-			final int[] counts = new int[NativeApi.ReflexMarkerEvents.TYPE_COUNT];
+			final int[] counts = new int[StreamlineSession.ReflexMarkerEvents.TYPE_COUNT];
 			for (int i = 0; i < counts.length; i++) {
 				counts[i] = typeCounts.get(JAVA_INT, (long) i * JAVA_INT.byteSize());
 			}
-			return new NativeApi.ReflexMarkerEvents(counts, total, List.copyOf(log));
+			return new StreamlineSession.ReflexMarkerEvents(counts, total, List.copyOf(log));
 		} catch (NativeException error) {
 			throw error;
 		} catch (Throwable error) {
@@ -862,7 +862,7 @@ public final class Native implements AutoCloseable, NativeApi {
 	}
 
 	@Override
-	public NativeApi.ReflexRegistration queryReflexOptions() {
+	public StreamlineSession.ReflexRegistration queryReflexOptions() {
 		if (queryReflexOptions == null) throw new NativeException("query-reflex-options", new IllegalStateException("Native bridge lacks the reflex options oracle"));
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment mode = callArena.allocate(JAVA_INT);
@@ -871,7 +871,7 @@ public final class Native implements AutoCloseable, NativeApi {
 			if (result != SUCCESS) {
 				throw new NativeException("query-reflex-options", result);
 			}
-			return new NativeApi.ReflexRegistration(mode.get(JAVA_INT, 0), calls.get(JAVA_INT, 0));
+			return new StreamlineSession.ReflexRegistration(mode.get(JAVA_INT, 0), calls.get(JAVA_INT, 0));
 		} catch (NativeException error) {
 			throw error;
 		} catch (Throwable error) {

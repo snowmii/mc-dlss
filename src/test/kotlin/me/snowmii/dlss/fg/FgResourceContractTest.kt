@@ -8,8 +8,8 @@ import me.snowmii.dlss.session.SRMode
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.ImageBinding
-import me.snowmii.streamline.NativeApi
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSession
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -54,7 +54,7 @@ class FgResourceContractTest {
 		assertEquals(commandBuffer, native.fgRequest?.commandBuffer)
 	}
 
-	private class RecordingNativeApi : NativeApiTestDouble() {
+	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		val order = mutableListOf<String>()
 		var srRequest: SrTagRequest? = null
 		var fgRequest: FgTagRequest? = null
@@ -65,7 +65,7 @@ class FgResourceContractTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int): Dimensions =
 			Dimensions(1280, 720)
@@ -77,18 +77,18 @@ class FgResourceContractTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun tagSrResources(request: SrTagRequest): Int {
 			order += "sr"
 			srRequest = request
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun tagFrameGenerationResources(request: FgTagRequest): Int {
 			order += "fg"
 			fgRequest = request
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
 }

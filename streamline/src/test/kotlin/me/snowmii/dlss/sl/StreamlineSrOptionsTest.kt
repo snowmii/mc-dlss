@@ -7,7 +7,7 @@ import me.snowmii.dlss.bridge.HeadlessVulkanFixture
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeTestAccess
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -63,7 +63,7 @@ class StreamlineSrOptionsTest {
 				"queried render height must be in (0, output], got ${dimensions.height}",
 			)
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.configureSuperResolution(
 					outputWidth,
 					outputHeight,
@@ -95,7 +95,7 @@ class StreamlineSrOptionsTest {
 			val commandBuffer = fixture.allocateAndBeginCommandBuffer()
 
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.tagSrResources(
 					SrTagRequest(
 						commandBuffer.address(),
@@ -157,14 +157,14 @@ class StreamlineSrOptionsTest {
 		).use { fixture ->
 			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 				)
 				// The fixture creates one host queue in the family, so Streamline's own queues
 				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
 				val hostQueueCount = 1
 				assertEquals(
-					NativeApi.SUCCESS_RESULT,
+					StreamlineSession.SUCCESS_RESULT,
 					bridge.activateVulkanProxies(
 						fixture.instanceAddress(),
 						fixture.physicalDeviceAddress(),
@@ -189,7 +189,7 @@ class StreamlineSrOptionsTest {
 	private fun requirementsExtras(): Int {
 		val requirements = NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 			)
 			bridge.queryQueueRequirements()

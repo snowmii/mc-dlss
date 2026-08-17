@@ -6,7 +6,7 @@ import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.NativeTestAccess
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.NativeException
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -68,7 +68,7 @@ class SrOnStreamlineTest {
 				"queried render height must be in (0, output], got ${dimensions.height}",
 			)
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.configureSuperResolution(
 					outputWidth,
 					outputHeight,
@@ -114,12 +114,12 @@ class SrOnStreamlineTest {
 			// submit clean.
 			val frame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.tagSrResources(SrTagRequest(frame.address(), tagRequest.color, tagRequest.depth)),
 				"the frame's resources must tag on the caller's command buffer",
 			)
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.evaluateSuperResolution(
 					SrLiveSession.evaluationRequest(frame.address(), color, depth, dimensions, reset = true),
 				),
@@ -132,12 +132,12 @@ class SrOnStreamlineTest {
 			// from the layouts the first frame left behind.
 			val secondFrame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.tagSrResources(SrTagRequest(secondFrame.address(), tagRequest.color, tagRequest.depth)),
 				"the second frame must tag with a fresh frame token",
 			)
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				bridge.evaluateSuperResolution(
 					SrLiveSession.evaluationRequest(secondFrame.address(), color, depth, dimensions, reset = false),
 				),
@@ -237,7 +237,7 @@ class SrOnStreamlineTest {
 		// and the pinned lookup keeps the module loaded: the Streamline bootstrap state lives
 		// in the module's globals, not in the bridge's arena.
 		NativeTestAccess.open(library).use { bridge ->
-			assertEquals(NativeApi.SUCCESS_RESULT, bridge.bootstrapStreamline(runtime))
+			assertEquals(StreamlineSession.SUCCESS_RESULT, bridge.bootstrapStreamline(runtime))
 			assertTrue(bridge.queryQueueRequirements().graphicsQueues >= 0)
 		}
 
@@ -255,7 +255,7 @@ class SrOnStreamlineTest {
 			// recorded sessionReady would answer success on the repeat).
 			val first = bridge.initialize(1L, 2L, 3L, dataPath, dataPath)
 			assertTrue(
-				first != NativeApi.SUCCESS_RESULT,
+				first != StreamlineSession.SUCCESS_RESULT,
 				"initialize without proxy activation must fail, got $first",
 			)
 			assertEquals(

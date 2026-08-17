@@ -1,13 +1,13 @@
 package me.snowmii.dlss.fg
 
 import java.nio.file.Path
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.dlss.session.DlssNativeStage
 import me.snowmii.dlss.session.DlssSession
@@ -43,7 +43,7 @@ class FgEvaluationTest {
 
 		// A refused handoff latches the session under the present-handoff stage, exactly like
 		// any other native stage: a frame that cannot hand off must not present as if it could.
-		native.presentHandoffResult = NativeApi.SUCCESS_RESULT + 1
+		native.presentHandoffResult = StreamlineSession.SUCCESS_RESULT + 1
 		assertFalse(adapter.presentHandoff(), "a refused present handoff must latch the session")
 		assertEquals(DlssSessionState.FALLBACK_LATCHED, session.state)
 		assertEquals(DlssNativeStage.PRESENT_HANDOFF, session.failure?.stage)
@@ -63,8 +63,8 @@ class FgEvaluationTest {
 	 * Records the present-handoff seam and answers the three calls [LifecycleAdapter.initialize]
 	 * drives; everything else is a call this test never makes.
 	 */
-	private class FakeNative : NativeApiTestDouble() {
-		var presentHandoffResult = NativeApi.SUCCESS_RESULT
+	private class FakeNative : StreamlineSessionTestDouble() {
+		var presentHandoffResult = StreamlineSession.SUCCESS_RESULT
 		var presentHandoffCalls = 0
 
 		override fun recordPresentHandoff(): Int {
@@ -78,7 +78,7 @@ class FgEvaluationTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(1280, 720)
@@ -90,7 +90,7 @@ class FgEvaluationTest {
 			renderHeight: Int,
 			qualityMode: Int,
 			renderPreset: Int,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun acquireImages(): EvaluationImages = error("unexpected acquireImages")
 		override fun releaseImages(): Int = error("unexpected releaseImages")

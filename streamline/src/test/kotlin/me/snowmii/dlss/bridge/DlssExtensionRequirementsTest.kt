@@ -4,7 +4,7 @@ import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.streamline.NativeTestAccess
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -26,7 +26,7 @@ class DlssExtensionRequirementsTest {
 	fun `queries exact Streamline instance and device extension requirements pre-creation`() {
 		NativeTestAccess.open(Path.of("build/native/mc_dlss.dll")).use { native ->
 			assertEquals(
-				NativeApi.SUCCESS_RESULT,
+				StreamlineSession.SUCCESS_RESULT,
 				native.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 			)
 			val instanceExtensions = native.queryInstanceExtensions()

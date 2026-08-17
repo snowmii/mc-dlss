@@ -1,7 +1,7 @@
 package me.snowmii.dlss.client
 import com.mojang.blaze3d.pipeline.RenderTarget
-import me.snowmii.streamline.ExtensionBootstrap
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.Streamline
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.WorldPhase
@@ -80,10 +80,10 @@ object ClientRuntime : RenderLoopView, ActiveView {
 
 	/**
 	 * The bridge the render loop opened, kept so shutdown can close it. Nothing else holds it:
-	 * the runtime only ever sees the [NativeApi] view.
+	 * the runtime only ever sees the [StreamlineSession] view.
 	 */
 	@Volatile
-	private var nativeBridge: NativeApi? = null
+	private var nativeBridge: StreamlineSession? = null
 	private var initializationAttempted = false
 
 	/** The render-loop view: the only side that can build the DLSS path. */
@@ -133,11 +133,11 @@ object ClientRuntime : RenderLoopView, ActiveView {
 		}
 
 		worldPhaseInstance = try {
-			val native = ExtensionBootstrap.openSession()
+			val native = Streamline.open()
 			this.nativeBridge = native
 			if (Platform.get() == Platform.WINDOWS) {
 				val hwnd = glfwGetWin32Window(Minecraft.getInstance().window.handle())
-				if (native.installPclWindow(hwnd) != NativeApi.SUCCESS_RESULT) {
+				if (native.installPclWindow(hwnd) != StreamlineSession.SUCCESS_RESULT) {
 					LOGGER.warn("PCL latency-stat window hook failed; NVIDIA latency overlay will be unavailable")
 				}
 			}

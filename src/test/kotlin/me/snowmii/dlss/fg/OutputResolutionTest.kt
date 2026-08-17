@@ -12,7 +12,7 @@ import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.TestSessionBridge
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
@@ -20,7 +20,7 @@ import me.snowmii.streamline.FgState
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
@@ -238,7 +238,7 @@ class OutputResolutionTest {
 	 * ratio and is exactly why it is used - a render size that moved can only have come from the
 	 * output size the reconfigure was given.
 	 */
-	private class FakeNative : NativeApiTestDouble() {
+	private class FakeNative : StreamlineSessionTestDouble() {
 		var configureCalls = 0
 		var configuredOutput: Dimensions? = null
 
@@ -248,7 +248,7 @@ class OutputResolutionTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		) = NativeApi.SUCCESS_RESULT
+		) = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) =
 			Dimensions(outputWidth / 2, outputHeight / 2)
@@ -263,7 +263,7 @@ class OutputResolutionTest {
 		): Int {
 			configureCalls++
 			configuredOutput = Dimensions(outputWidth, outputHeight)
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun acquireImages() = EvaluationImages(
@@ -271,17 +271,17 @@ class OutputResolutionTest {
 			ImageBinding(0x2002, 0x2001, 37),
 		)
 
-		override fun releaseImages() = NativeApi.SUCCESS_RESULT
+		override fun releaseImages() = StreamlineSession.SUCCESS_RESULT
 
-		override fun waitDeviceIdle() = NativeApi.SUCCESS_RESULT
+		override fun waitDeviceIdle() = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
 
-		override fun writeMotion(request: MotionRequest) = NativeApi.SUCCESS_RESULT
+		override fun writeMotion(request: MotionRequest) = StreamlineSession.SUCCESS_RESULT
 
-		override fun presentOutput(target: PresentTarget) = NativeApi.SUCCESS_RESULT
+		override fun presentOutput(target: PresentTarget) = StreamlineSession.SUCCESS_RESULT
 
-		override fun evaluateSuperResolution(request: EvaluationRequest) = NativeApi.SUCCESS_RESULT
+		override fun evaluateSuperResolution(request: EvaluationRequest) = StreamlineSession.SUCCESS_RESULT
 
 		/** Healthy status, so the FG status latch never suspends composition for its own reason. */
 		override fun queryFgState() = FgState(0, 2, 0L, 0L)

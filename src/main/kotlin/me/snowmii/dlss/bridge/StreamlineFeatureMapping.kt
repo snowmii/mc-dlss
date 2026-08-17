@@ -6,7 +6,7 @@ import me.snowmii.streamline.SlVulkanFeatures
 
 /**
  * Maps Streamline's Vulkan feature names — as the bridge reports them through
- * [me.snowmii.streamline.ExtensionBootstrap.queryDeviceFeatures12]/[me.snowmii.streamline.ExtensionBootstrap.queryDeviceFeatures13] —
+ * [me.snowmii.streamline.Streamline.queryDeviceFeatures12]/[me.snowmii.streamline.Streamline.queryDeviceFeatures13] —
  * onto Minecraft's [VulkanFeature] records, so the names can merge into the enabled-feature
  * set Minecraft passes to `vkCreateDevice`.
  *

@@ -1,12 +1,12 @@
 package me.snowmii.dlss.session
 import me.snowmii.dlss.readNativeSource
-import me.snowmii.streamline.NativeApiTestDouble
+import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.config.ModConfig
-import me.snowmii.streamline.NativeApi
+import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 
@@ -215,7 +215,7 @@ class QualityModePresetTest {
 	}
 
 	/** Records what the adapter passed down, and nothing else; every later stage is unreachable. */
-	private class RecordingNativeApi : NativeApiTestDouble() {
+	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		var queriedQualityMode: Int? = null
 		var configuredQualityMode: Int? = null
 		var configuredRenderPreset: Int? = null
@@ -226,7 +226,7 @@ class QualityModePresetTest {
 			vkDevice: Long,
 			sdkPath: Path,
 			dataPath: Path,
-		): Int = NativeApi.SUCCESS_RESULT
+		): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun queryOptimalDimensions(
 			outputWidth: Int,
@@ -247,14 +247,14 @@ class QualityModePresetTest {
 		): Int {
 			configuredQualityMode = qualityMode
 			configuredRenderPreset = renderPreset
-			return NativeApi.SUCCESS_RESULT
+			return StreamlineSession.SUCCESS_RESULT
 		}
 
 		override fun acquireImages(): EvaluationImages = throw UnsupportedOperationException()
 
 		override fun releaseImages(): Int = throw UnsupportedOperationException()
 
-		override fun waitDeviceIdle(): Int = NativeApi.SUCCESS_RESULT
+		override fun waitDeviceIdle(): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
 
