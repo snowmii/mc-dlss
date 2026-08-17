@@ -14,7 +14,7 @@ import me.snowmii.streamline.SlVulkanFeatures
  * ([SlVulkanFeatures.requirements]); this object adds the Blaze3D mapping and the engine
  * knowledge of what Minecraft 26.2 already enables.
  */
-object SlVulkanFeatureMapping {
+object StreamlineFeatureMapping {
 	/**
 	 * Feature names Minecraft 26.2 already enables in its own `REQUIRED_DEVICE_FEATURES`.
 	 * Re-adding them would either duplicate an identical [VulkanFeature] record or enable the
@@ -33,7 +33,7 @@ object SlVulkanFeatureMapping {
 	 * across both lists.
 	 */
 	@JvmStatic
-	fun slRequiredFeatures(features12: List<String>, features13: List<String>): List<VulkanFeature> {
+	fun requiredFeatures(features12: List<String>, features13: List<String>): List<VulkanFeature> {
 		val required = ArrayList<VulkanFeature>()
 		val seen = LinkedHashSet<String>()
 		for (name in features12) {

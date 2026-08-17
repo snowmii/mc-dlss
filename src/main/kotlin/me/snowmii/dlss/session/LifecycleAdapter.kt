@@ -50,7 +50,7 @@ class LifecycleAdapter(
 			native.queryOptimalDimensions(
 				session.config.outputDimensions.width,
 				session.config.outputDimensions.height,
-				session.config.qualityMode.ngxValue,
+				session.config.qualityMode.sdkValue,
 			)
 		} ?: return null
 
@@ -60,8 +60,8 @@ class LifecycleAdapter(
 					session.config.outputDimensions.height,
 					queriedDimensions.width,
 					queriedDimensions.height,
-					session.config.qualityMode.ngxValue,
-					session.config.renderPreset.ngxValue,
+					session.config.qualityMode.sdkValue,
+					session.config.renderPreset.sdkValue,
 				)
 			}) {
 			return null
@@ -94,7 +94,7 @@ class LifecycleAdapter(
 			native.queryOptimalDimensions(
 				session.config.outputDimensions.width,
 				session.config.outputDimensions.height,
-				qualityMode.ngxValue,
+				qualityMode.sdkValue,
 			)
 		} ?: return null
 
@@ -104,8 +104,8 @@ class LifecycleAdapter(
 					session.config.outputDimensions.height,
 					queriedDimensions.width,
 					queriedDimensions.height,
-					qualityMode.ngxValue,
-					renderPreset.ngxValue,
+					qualityMode.sdkValue,
+					renderPreset.sdkValue,
 				)
 			}) {
 			return null

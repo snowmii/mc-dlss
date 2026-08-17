@@ -121,11 +121,15 @@ val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 // The split is only real while something enforces it. `checkLayering` decides the structural
 // boundaries between the two projects in one task, so `build` fails the moment one regresses
 // rather than months later when a Blaze3D import has quietly grown back into the SDK.
-//
-// The `sl`/NGX vocabulary boundary is not asserted here yet - src/main still carries the residue
-// that assert would report, and purging it is its own change.
 // The FFM surface, by the names a downcall cannot avoid spelling.
 val ffmSymbol = Regex("\\b(java\\.lang\\.foreign|MemorySegment|SymbolLookup|MemoryLayout|ValueLayout|FunctionDescriptor|Arena)\\b")
+// NVIDIA's own vocabulary: the NGX names, and Streamline's `sl`-prefixed C entry points. The
+// SDK's Java types are deliberately not matched - `SlVulkanFeatures` is how the mod is supposed
+// to reach the native stack, and naming it is not the same as speaking NGX.
+val nativeVocabulary = Regex("\\b(NVSDK\\w*|NGX\\w*|ngx[A-Z]\\w*|sl(Init|Shutdown|SetTag|SetConstants|Evaluate\\w*|Allocate\\w*|Free\\w*|Get\\w+|Is\\w+|Upgrade\\w*))\\b")
+// Comments are stripped before the vocabulary match: AC-1 asks for no NGX *symbol* in the mod,
+// and a comment explaining what NGX does to the next reader is documentation, not a dependency.
+val commentOrString = Regex("/\\*[\\s\\S]*?\\*/|//[^\\n]*")
 
 val checkLayering = tasks.register("checkLayering") {
 	group = "verification"
@@ -154,8 +158,12 @@ val checkLayering = tasks.register("checkLayering") {
 			violations += ":mc-dlss src/main/java holds only mixin/, but carries: $it"
 		}
 		modMainSources.forEach { file ->
-			ffmSymbol.find(file.readText())?.let {
+			val source = file.readText()
+			ffmSymbol.find(source)?.let {
 				violations += ":mc-dlss reaches the native stack through the SDK, but ${file.path} spells FFM: ${it.value}"
+			}
+			nativeVocabulary.find(commentOrString.replace(source, ""))?.let {
+				violations += ":mc-dlss speaks no NGX/Streamline vocabulary, but ${file.path} names: ${it.value}"
 			}
 		}
 

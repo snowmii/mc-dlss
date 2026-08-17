@@ -53,12 +53,12 @@ class QualityModePresetTest {
 	fun modeCarriesTheNgxValueTheSdkDefinesForIt() {
 		// NVSDK_NGX_PerfQuality_Value: MaxPerf 0, Balanced 1, MaxQuality 2, UltraPerformance 3,
 		// UltraQuality 4 (defined, never implemented), DLAA 5.
-		assertEquals(0, SRMode.PERFORMANCE.ngxValue)
-		assertEquals(1, SRMode.BALANCED.ngxValue)
-		assertEquals(2, SRMode.QUALITY.ngxValue)
-		assertEquals(3, SRMode.ULTRA_PERFORMANCE.ngxValue)
-		assertEquals(5, SRMode.DLAA.ngxValue)
-		assertTrue(SRMode.entries.none { it.ngxValue == 4 }, "UltraQuality is not offered")
+		assertEquals(0, SRMode.PERFORMANCE.sdkValue)
+		assertEquals(1, SRMode.BALANCED.sdkValue)
+		assertEquals(2, SRMode.QUALITY.sdkValue)
+		assertEquals(3, SRMode.ULTRA_PERFORMANCE.sdkValue)
+		assertEquals(5, SRMode.DLAA.sdkValue)
+		assertTrue(SRMode.entries.none { it.sdkValue == 4 }, "UltraQuality is not offered")
 	}
 
 	@Test
@@ -120,9 +120,9 @@ class QualityModePresetTest {
 		val native = RecordingNative()
 
 		assertNotNull(LifecycleAdapter(session, native).initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")))
-		assertEquals(SRMode.ULTRA_PERFORMANCE.ngxValue, native.queriedQualityMode)
-		assertEquals(SRMode.ULTRA_PERFORMANCE.ngxValue, native.configuredQualityMode)
-		assertEquals(SRModelPreset.J.ngxValue, native.configuredRenderPreset)
+		assertEquals(SRMode.ULTRA_PERFORMANCE.sdkValue, native.queriedQualityMode)
+		assertEquals(SRMode.ULTRA_PERFORMANCE.sdkValue, native.configuredQualityMode)
+		assertEquals(SRModelPreset.J.sdkValue, native.configuredRenderPreset)
 	}
 
 	@Test

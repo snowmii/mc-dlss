@@ -144,7 +144,7 @@ class RuntimeControlsTest {
 
 		assertNotEquals(presetBefore, fixture.runtime.renderPreset)
 		assertEquals(before.width, after.width, "a preset change is not a resolution change")
-		assertEquals(fixture.runtime.renderPreset.ngxValue, fixture.native.lastConfiguredPreset)
+		assertEquals(fixture.runtime.renderPreset.sdkValue, fixture.native.lastConfiguredPreset)
 	}
 
 	@Test
@@ -328,7 +328,7 @@ class RuntimeControlsTest {
 			outputWidth: Int,
 			outputHeight: Int,
 			qualityMode: Int,
-		): Dimensions = renderFor(SRMode.entries.first { it.ngxValue == qualityMode })
+		): Dimensions = renderFor(SRMode.entries.first { it.sdkValue == qualityMode })
 
 		override fun configure(
 			outputWidth: Int,

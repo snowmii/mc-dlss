@@ -37,7 +37,7 @@ data class DlssStartupConfig(
  * them is a choice this mod offers.
  */
 enum class SRModelPreset(
-	val ngxValue: Int,
+	val sdkValue: Int,
 	val propertyValue: String,
 ) {
 	/** Transformer, best image quality, default for DLAA/Quality/Balanced. */
@@ -65,14 +65,14 @@ enum class SRModelPreset(
  *
  * The three original modes keep their NGX values; [ULTRA_PERFORMANCE] and [DLAA] are the extended
  * ones, and their gap in the numbering is `NVSDK_NGX_PerfQuality_Value_UltraQuality` (4), which
- * NGX defines and does not implement. Nothing here is ordered by [ngxValue]: the enum order is the
+ * NGX defines and does not implement. Nothing here is ordered by [sdkValue]: the enum order is the
  * order a reviewer cycles through, sharpest first.
  *
  * [DLAA] renders at the output size, so it is the only mode whose render and output dimensions are
  * equal - the degenerate case of every ratio the renderer computes.
  */
 enum class SRMode(
-	val ngxValue: Int,
+	val sdkValue: Int,
 	val propertyValue: String,
 	val defaultPreset: SRModelPreset,
 ) {

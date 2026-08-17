@@ -10,7 +10,7 @@ import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.IntIntPair;
 import me.snowmii.streamline.ExtensionBootstrap;
 import me.snowmii.streamline.SlQueueRequirements;
-import me.snowmii.dlss.bridge.SlVulkanFeatureMapping;
+import me.snowmii.dlss.bridge.StreamlineFeatureMapping;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.spongepowered.asm.mixin.Mixin;
@@ -50,7 +50,7 @@ public abstract class VulkanBackendExtensionMixin {
 		);
 		// The feature names Streamline requires, mapped onto Minecraft's VulkanFeature records.
 		// Names Minecraft already enables are skipped, so the set only grows by what the mod adds.
-		features.addAll(SlVulkanFeatureMapping.slRequiredFeatures(
+		features.addAll(StreamlineFeatureMapping.requiredFeatures(
 			ExtensionBootstrap.queryDeviceFeatures12(),
 			ExtensionBootstrap.queryDeviceFeatures13()
 		));

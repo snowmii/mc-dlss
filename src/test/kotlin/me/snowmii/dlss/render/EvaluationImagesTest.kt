@@ -88,8 +88,8 @@ class EvaluationImagesTest {
 				output.height,
 				render.width / 2,
 				render.height / 2,
-				SRMode.PERFORMANCE.ngxValue,
-				SRMode.PERFORMANCE.defaultPreset.ngxValue,
+				SRMode.PERFORMANCE.sdkValue,
+				SRMode.PERFORMANCE.defaultPreset.sdkValue,
 			)
 			assertEquals(NativeApi.SUCCESS_RESULT, reconfigured)
 
