@@ -5,7 +5,9 @@ import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
+import me.snowmii.dlss.config.ClientConfig
 import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.readout.SessionReadout
 import org.slf4j.LoggerFactory
 
 /**
@@ -14,9 +16,8 @@ import org.slf4j.LoggerFactory
  * These controls let one live session compare internal-resolution rendering with full-resolution
  * fallback without restarting the client.
  *
- * The controls are deliberately three keys and a chat line. Nothing here persists, because the
- * startup properties remain the source of what a session begins as, and nothing here has a screen,
- * because a settings GUI is outside the contract.
+ * Fabric key mappings and the video-settings screen delegate here. User-facing choices persist in
+ * [ClientConfig]; launch properties remain explicit overrides for development and diagnostics.
  *
  * Every action answers with the state that is actually in effect afterwards, not the one that was
  * asked for: a native side that refuses a mode change leaves the session rendering exactly as it
@@ -46,26 +47,27 @@ class RuntimeControls(
 	 * status-latched policy stays refused - the readout reports the state actually in effect
 	 * either way.
 	 */
-	fun toggleFrameGeneration() {
+	fun toggleFrameGeneration() = setFrameGenerationEnabled(!surfacePolicy.userEnabled)
+
+	fun setFrameGenerationEnabled(enabled: Boolean) {
 		// The user's own mode, not the effective one: while composition is suspended - a pause, a
 		// menu, an unhealthy plugin status - the effective mode reads off, and toggling against it
 		// would ask for the mode the policy is already in and change nothing. Pressing the key
 		// during a suspension has to switch the mode the user set, which is the armed one.
 		val before = surfacePolicy.userEnabled
-		val changed = runtime.setFrameGenerationEnabled(!before)
-		// DIAGNOSTIC: the readout reports the FG mode but not whether the key reached this method,
-		// and those two failures look identical from chat - a keypress that never arrives leaves
-		// the last readout on screen, exactly like an arm that was refused. One line separates
-		// them: no line at all means the key never dispatched.
+		val changed = runtime.setFrameGenerationEnabled(enabled)
+		// DIAGNOSTIC: the F3 readout reports state, not whether the key reached this method. This
+		// line separates a missed key event from a mode change the runtime refused.
 		LOGGER.info(
 			"DLSS fg toggle: armed {} -> {} (requested={} changed={} active={} multiplier={})",
 			before,
 			surfacePolicy.userEnabled,
-			!before,
+			enabled,
 			changed,
 			surfacePolicy.effective,
 			runtime.fgMultiplier,
 		)
+		ClientConfig.INSTANCE.setFrameGeneration(surfacePolicy.userEnabled)
 		emitStatus(readout())
 	}
 
@@ -84,8 +86,11 @@ class RuntimeControls(
 	}
 
 	/** Switches DLSS off or back on, then reports what the frames after this one will be. */
-	fun toggleEnabled() {
-		runtime.setDlssEnabled(!runtime.dlssEnabled)
+	fun toggleEnabled() = setEnabled(!runtime.dlssEnabled)
+
+	fun setEnabled(enabled: Boolean) {
+		runtime.setDlssEnabled(enabled)
+		ClientConfig.INSTANCE.setEnabled(runtime.dlssEnabled)
 		emitStatus(readout())
 	}
 
@@ -93,15 +98,7 @@ class RuntimeControls(
 	fun cycleQualityMode() {
 		val modes = SRMode.entries
 		val next = modes[(modes.indexOf(runtime.qualityMode) + 1) % modes.size]
-		// The preset follows the mode unless the reviewer had chosen one: a preset that is a
-		// deliberate choice survives a mode change, and one that was only a default is replaced by
-		// the new mode's default rather than carried into a mode it was never the default for.
-		val preset = if (runtime.renderPreset == runtime.qualityMode.defaultPreset) {
-			next.defaultPreset
-		} else {
-			runtime.renderPreset
-		}
-		applyConfiguration(next, preset)
+		applyConfiguration(next, runtime.renderPreset)
 	}
 
 	/** Moves to the next preset, leaving the quality mode alone. */
@@ -117,6 +114,21 @@ class RuntimeControls(
 	 * NGX chooses internal resolution; no setting exposes it, and output-resolution frames look
 	 * the same whether this route or native rendering produced them.
 	 */
+	val enabled: Boolean
+		get() = runtime.dlssEnabled
+
+	val qualityMode: SRMode
+		get() = runtime.qualityMode
+
+	val renderPreset: SRModelPreset
+		get() = runtime.renderPreset
+
+	val frameGenerationEnabled: Boolean
+		get() = surfacePolicy.userEnabled
+
+	val frameGenerationMultiplier: Int
+		get() = runtime.fgMultiplier + 1
+
 	fun readout(): String {
 		val state = when {
 			!runtime.config.enabled -> "disabled by ${ModConfig.ENABLED_PROPERTY}"
@@ -131,6 +143,16 @@ class RuntimeControls(
 			" | internal $internal" +
 			" | output ${runtime.outputDimensions}"
 	}
+
+	fun fgPresentedFpsSuffix(appFps: Int): String {
+		if (!surfacePolicy.effective) {
+			return ""
+		}
+		val fg = runtime.frameEvaluation?.sampleFgState() ?: return ""
+		return SessionReadout.fgPresentedFpsSuffix(appFps, fg)
+	}
+
+	fun motionProbeLine(): String? = runtime.frameEvaluation?.motionProbeLine()
 
 	/**
 	 * The FG half of the readout: the user's mode, and whether it is composing right now.
@@ -157,6 +179,8 @@ class RuntimeControls(
 	private fun applyConfiguration(mode: SRMode, preset: SRModelPreset) {
 		val applied = runtime.applyConfiguration(mode, preset)
 		if (applied) {
+			ClientConfig.INSTANCE.setQualityMode(runtime.qualityMode.propertyValue)
+			ClientConfig.INSTANCE.setRenderPreset(runtime.renderPreset.propertyValue)
 			emitStatus(readout())
 		} else {
 			// Naming the refusal matters more than naming the request: the session kept rendering,

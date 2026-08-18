@@ -22,6 +22,7 @@ import me.snowmii.dlss.session.DlssSessionState
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.session.SRMode
+import me.snowmii.dlss.session.SRModelPreset
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.junit.jupiter.api.AfterEach
@@ -224,7 +225,7 @@ class FgMultiplierToggleTest {
 				enabled = true,
 				state = DlssSessionState.READY,
 				qualityMode = SRMode.QUALITY,
-				renderPreset = SRMode.QUALITY.defaultPreset,
+				renderPreset = SRModelPreset.K,
 				outputDimensions = Dimensions(2560, 1440),
 				renderDimensions = Dimensions(1706, 960),
 				fgMultiplier = multiplier ?: AcceptanceRecord.activeFgMultiplier,
@@ -238,7 +239,7 @@ class FgMultiplierToggleTest {
 				enabled = true,
 				state = DlssSessionState.READY,
 				qualityMode = SRMode.QUALITY,
-				renderPreset = SRMode.QUALITY.defaultPreset,
+				renderPreset = SRModelPreset.K,
 				outputDimensions = Dimensions(2560, 1440),
 				renderDimensions = Dimensions(1706, 960),
 			)

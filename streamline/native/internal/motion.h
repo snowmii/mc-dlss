@@ -74,6 +74,10 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept;
 // Records and never submits: the work is ordered by Minecraft's own graphics submission.
 int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept;
 
+// Centre-pixel motion/depth from the probe ring slot two records old, or kNotInitialized until
+// three motion dispatches have completed. Never waits on the GPU.
+int32_t query_motion_probe(float* motionX, float* motionY, float* depth, int32_t* slot) noexcept;
+
 } // namespace mc_dlss
 
 #endif

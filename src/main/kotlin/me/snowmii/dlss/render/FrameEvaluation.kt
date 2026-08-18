@@ -330,7 +330,13 @@ class FrameEvaluation(
 				null,
 			),
 		)
+	}.also { recorded ->
+		if (recorded) {
+			MotionProbe.recordFrame(motion)
+		}
 	}
+
+	fun motionProbeLine(): String = MotionProbe.line(adapter.queryMotionProbe())
 
 	/**
 	 * The composed frame's opening DLSS-G record: this frame's options, then its first FG tag.

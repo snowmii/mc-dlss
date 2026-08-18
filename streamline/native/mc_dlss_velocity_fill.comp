@@ -32,11 +32,15 @@ layout(set = 0, binding = 2, rg16f) uniform writeonly image2D motionImage;
 // from the companion included - at the mirrored pixel with its y component negated, so the
 // plugin's motion reads agree with its mirrored inputs.
 layout(set = 0, binding = 3, rg16f) uniform writeonly image2D flippedMotionImage;
+layout(set = 0, binding = 4, std430) buffer MotionProbe {
+	vec4 samples[3];
+} probe;
 
 layout(push_constant) uniform VelocityFillPushConstants {
 	mat4 reprojection;
 	ivec2 renderSize;
 	int reset;
+	int probeSlot;
 } constants;
 
 const float INVALID_VELOCITY = 10000.0;
@@ -54,6 +58,9 @@ void main() {
 		imageStore(motionImage, pixel, vec4(INVALID_VELOCITY, INVALID_VELOCITY, 0.0, 0.0));
 		imageStore(flippedMotionImage, ivec2(pixel.x, constants.renderSize.y - 1 - pixel.y),
 			vec4(INVALID_VELOCITY, -INVALID_VELOCITY, 0.0, 0.0));
+		if (pixel.x == constants.renderSize.x / 2 && pixel.y == constants.renderSize.y / 2) {
+			probe.samples[constants.probeSlot] = vec4(INVALID_VELOCITY, INVALID_VELOCITY, 0.0, 1.0);
+		}
 		return;
 	}
 
@@ -66,6 +73,10 @@ void main() {
 		imageStore(motionImage, pixel, vec4(current, 0.0, 0.0));
 		imageStore(flippedMotionImage, ivec2(pixel.x, constants.renderSize.y - 1 - pixel.y),
 			vec4(current.x, -current.y, 0.0, 0.0));
+		if (pixel.x == constants.renderSize.x / 2 && pixel.y == constants.renderSize.y / 2) {
+			probe.samples[constants.probeSlot] =
+				vec4(current, texelFetch(depthTexture, pixel, 0).x, 1.0);
+		}
 		return;
 	}
 
@@ -78,4 +89,7 @@ void main() {
 	imageStore(motionImage, pixel, vec4(motion, 0.0, 0.0));
 	imageStore(flippedMotionImage, ivec2(pixel.x, constants.renderSize.y - 1 - pixel.y),
 		vec4(motion.x, -motion.y, 0.0, 0.0));
+	if (pixel.x == constants.renderSize.x / 2 && pixel.y == constants.renderSize.y / 2) {
+		probe.samples[constants.probeSlot] = vec4(motion, depth, 1.0);
+	}
 }

@@ -247,6 +247,18 @@ class WorldPhase(
 		}
 
 	/**
+	 * Depth of the target the world actually rendered into this frame, or null when the phase
+	 * is closed or that target has no depth view. Cloud velocity borrows this to depth-test
+	 * Fabulous clouds, whose own target depth does not contain the terrain in front of them.
+	 *
+	 * An eligible DLSS frame renders into [sceneTarget], not [mainRenderTarget]; reading the
+	 * vanilla main here would either miss (full-res vs scene-sized clouds) or test against a
+	 * buffer that never received the terrain.
+	 */
+	val sceneDepthView: GpuTextureView?
+		get() = if (isOpen) (sceneTarget ?: mainRenderTarget)?.getDepthTextureView() else null
+
+	/**
 	 * This frame's published camera motion while the phase is open, or null outside one.
 	 *
 	 * Read by the stress pass at the tail of the world phase, before [end] consumes the value:

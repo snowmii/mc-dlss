@@ -90,10 +90,7 @@ class CompositeRoutingTest {
 
 	@Test
 	fun `no unowned mixin injects on a consumer caller seam`() {
-		// The one sanctioned owner: KeyboardHandlerControlsMixin only reads the key event to
-		// cycle DLSS settings and never touches the render target, so its keyPress injection is
-		// unrelated to the F2 grab. It still reports its reviewed hit below, so the expectation
-		// proves both that no new owner appeared and that the sanctioned one stayed unchanged.
+		// Controls use Fabric key mappings, so no mixin needs to own KeyboardHandler.keyPress.
 		val hits = mixinSources()
 			.flatMap { (file, source) ->
 				consumerSeamHits(source).map { (clazz, method) -> "$clazz.$method -> $file" }
@@ -101,7 +98,7 @@ class CompositeRoutingTest {
 			.sorted()
 
 		assertEquals(
-			listOf("KeyboardHandler.keyPress -> KeyboardHandlerControlsMixin.java"),
+			emptyList<String>(),
 			hits,
 			"the F2 grab must keep reading the vanilla main target - no new mixin may own a consumer caller seam: $hits",
 		)

@@ -1008,6 +1008,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_state(uint32_t* status,
                                                          uint64_t* last_present_inputs_processing_fence_value,
                                                          uint64_t* inputs_processing_completion_fence);
 
+/*
+ * Centre-pixel GPU motion (NDC xy), reversed-Z depth, and the probe ring slot two records old.
+ * The CPU side stores that frame's reprojection under the same slot. Never waits; refuses
+ * FAIL_NotInitialized until three motion dispatches have written the ring, and
+ * FAIL_InvalidParameter when any output pointer is null.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_motion_probe(float* motion_x, float* motion_y,
+                                                             float* depth, int32_t* slot);
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);
 

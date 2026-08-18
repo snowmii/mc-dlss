@@ -229,7 +229,7 @@ class MotionVectorCloudTest {
 			CloudVelocityRender.deviceProvider = { backend.device }
 
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
-			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
+			val depthView = checkNotNull(phase.sceneDepthView)
 			val pass = CloudVelocityRender.createCloudVelocityPass(
 				backend.encoder,
 				{ "Clouds" },
@@ -261,9 +261,11 @@ class MotionVectorCloudTest {
 
 			// The preflight precompiled both cloud twins on the writer's device, so the bind is
 			// a cache hit on a validated pipeline.
-			assertEquals(2, backend.precompiledPipelines.size, "both cloud statics' twins were precompiled")
+			assertEquals(4, backend.precompiledPipelines.size, "both cloud statics' writer and scene-depth twins were precompiled")
 			assertTrue(backend.precompiledPipelines.contains(writerTwin(RenderPipelines.CLOUDS, VelocityWriter.CLOUD)))
 			assertTrue(backend.precompiledPipelines.contains(writerTwin(RenderPipelines.FLAT_CLOUDS, VelocityWriter.CLOUD)))
+			assertTrue(backend.precompiledPipelines.contains(cloudSceneDepthTwin(RenderPipelines.CLOUDS)))
+			assertTrue(backend.precompiledPipelines.contains(cloudSceneDepthTwin(RenderPipelines.FLAT_CLOUDS)))
 
 			// The pipeline-boundary swap binds the preflighted twin, and the real
 			// RenderPass.setPipeline validation accepted its two targets against the attachments.
@@ -274,6 +276,59 @@ class MotionVectorCloudTest {
 			CloudVelocityRender.closeCloudVelocityPass(pass)
 			assertEquals(1, backend.passCloses)
 			assertFalse(CloudVelocityRender.isLatched(pass), "the close seam drops the latch")
+		} finally {
+			resetSeams()
+			if (phase.isOpen) phase.end()
+		}
+	}
+
+	/**
+	 * Fabulous clouds render into a separate target whose depth is cleared, so testing against
+	 * that depth lets cloud motion overwrite terrain in front of the clouds. The writer must
+	 * depth-test against the scene instead, without writing that borrowed depth.
+	 */
+	@Test
+	fun `fabulous clouds depth-test against the scene so cloud motion cannot write through terrain`() {
+		val runtime = velocityRuntime()
+		val phase = velocityWorldPhase(runtime)
+		try {
+			renderFrame(phase, mainTarget)
+			phase.prepare(true, mainTarget, cameraSample())
+			phase.begin(true, mainTarget)
+			CloudVelocityRender.resetState()
+
+			val backend = CloudFakeBackend()
+			CloudVelocityRender.testPhaseOverride = phase
+			CloudVelocityRender.currentCloudClock = { CloudVelocityRender.CloudClock(100L, 0.5f) }
+			CloudVelocityRender.deviceProvider = { backend.device }
+
+			val cloudsColor = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
+			val cloudsDepth = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
+			val sceneDepth = checkNotNull(phase.sceneDepthView)
+			val pass = CloudVelocityRender.createCloudVelocityPass(
+				backend.encoder,
+				{ "Clouds" },
+				cloudsColor,
+				Optional.empty(),
+				cloudsDepth,
+				OptionalDouble.empty(),
+				meshRebuilt = false,
+			)
+
+			val descriptor = checkNotNull(backend.renderPassDescriptors.lastOrNull())
+			assertSame(
+				sceneDepth,
+				checkNotNull(descriptor.depthAttachment()).textureView(),
+				"the pass depth-tests against the scene, not the cleared clouds-target depth",
+			)
+			assertTrue(checkNotNull(descriptor.depthAttachment()).clearValue().isEmpty, "borrowed scene depth is never cleared")
+
+			CloudVelocityRender.bindCloudPipeline(pass, RenderPipelines.CLOUDS)
+			val occlude = cloudSceneDepthTwin(RenderPipelines.CLOUDS)
+			assertSame(occlude, backend.pipeline)
+			assertFalse(checkNotNull(occlude.depthStencilState).writeDepth, "borrowing scene depth must not write it")
+
+			CloudVelocityRender.closeCloudVelocityPass(pass)
 		} finally {
 			resetSeams()
 			if (phase.isOpen) phase.end()
@@ -458,7 +513,7 @@ class MotionVectorCloudTest {
 			val backend = CloudFakeBackend().also { it.failAt = "passClose" }
 			CloudVelocityRender.deviceProvider = { backend.device }
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
-			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
+			val depthView = checkNotNull(phase.sceneDepthView)
 
 			val pass = CloudVelocityRender.createCloudVelocityPass(
 				backend.encoder,

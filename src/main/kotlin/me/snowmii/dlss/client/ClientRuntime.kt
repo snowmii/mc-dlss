@@ -8,6 +8,7 @@ import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.session.DlssNativeFailure
 import me.snowmii.dlss.session.DlssNativeStage
 import me.snowmii.dlss.ui.UiPhase
+import me.snowmii.dlss.config.ClientConfig
 import me.snowmii.dlss.config.ModConfig
 import me.snowmii.McDlss
 import net.minecraft.client.Minecraft
@@ -142,16 +143,17 @@ object ClientRuntime : RenderLoopView, ActiveView {
 					LOGGER.warn("PCL latency-stat window hook failed; NVIDIA latency overlay will be unavailable")
 				}
 			}
-			val diagnostics: (String) -> Unit = { message -> LOGGER.info(message) }
+			val diagnostics: (String) -> Unit = { message ->
+				LOGGER.info(message)
+				DlssDebugSnapshot.record(message)
+			}
 			// One reporter for the session: both the phase and evaluation feed their lines through
 			// the readout created at this composition root.
 			val readout = SessionReadout.forMinecraft(diagnostics)
 			val runtime = RenderRuntime.forMinecraft(session, native, diagnostics, readout)
-			// The controls answer on the same sink the rest of the mod reports on as well as in
-			// chat, so a session witnessed live and a session read back from the log agree.
-			runtimeControls = RuntimeControls(runtime) { message ->
-				LOGGER.info(message)
-				ChatReadout.send(message)
+			runtimeControls = RuntimeControls(runtime, diagnostics).also { controls ->
+				if (!ClientConfig.INSTANCE.enabled()) controls.setEnabled(false)
+				if (ClientConfig.INSTANCE.frameGeneration()) controls.setFrameGenerationEnabled(true)
 			}
 			WorldPhase.forMinecraft(runtime, readout)
 		} catch (error: Throwable) {

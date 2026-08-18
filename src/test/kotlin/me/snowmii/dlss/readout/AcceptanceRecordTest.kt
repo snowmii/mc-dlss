@@ -1,5 +1,6 @@
 package me.snowmii.dlss.readout
 import me.snowmii.dlss.session.SRMode
+import me.snowmii.dlss.session.SRModelPreset
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.session.DlssSessionState
 
@@ -19,7 +20,7 @@ class AcceptanceRecordTest {
 			enabled = true,
 			state = DlssSessionState.READY,
 			qualityMode = SRMode.QUALITY,
-			renderPreset = SRMode.QUALITY.defaultPreset,
+			renderPreset = SRModelPreset.K,
 			outputDimensions = Dimensions(2560, 1440),
 			renderDimensions = Dimensions(1706, 960),
 		)
@@ -54,7 +55,7 @@ class AcceptanceRecordTest {
 			enabled = true,
 			state = DlssSessionState.FALLBACK_LATCHED,
 			qualityMode = SRMode.PERFORMANCE,
-			renderPreset = SRMode.PERFORMANCE.defaultPreset,
+			renderPreset = SRModelPreset.M,
 			outputDimensions = Dimensions(2560, 1440),
 			renderDimensions = null,
 		)
@@ -72,7 +73,7 @@ class AcceptanceRecordTest {
 			enabled = true,
 			state = DlssSessionState.READY,
 			qualityMode = SRMode.QUALITY,
-			renderPreset = SRMode.QUALITY.defaultPreset,
+			renderPreset = SRModelPreset.K,
 			outputDimensions = Dimensions(2560, 1440),
 			renderDimensions = Dimensions(1706, 960),
 		)
@@ -100,7 +101,7 @@ class AcceptanceRecordTest {
 			enabled = false,
 			state = DlssSessionState.DISABLED,
 			qualityMode = SRMode.BALANCED,
-			renderPreset = SRMode.BALANCED.defaultPreset,
+			renderPreset = SRModelPreset.K,
 			outputDimensions = Dimensions(1920, 1080),
 			renderDimensions = null,
 		)

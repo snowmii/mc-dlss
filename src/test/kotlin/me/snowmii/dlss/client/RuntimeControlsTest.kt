@@ -142,16 +142,14 @@ class RuntimeControlsTest {
 	}
 
 	@Test
-	fun `a preset chosen deliberately survives a mode change and a default does not`() {
+	fun `a mode change leaves the preset alone`() {
 		val fixture = fixture()
 		fixture.frame()
+		val preset = fixture.runtime.renderPreset
 
-		// The configured session runs its mode's default, so cycling the mode takes the next
-		// mode's default with it.
 		fixture.controls.cycleQualityMode()
-		assertEquals(fixture.runtime.qualityMode.defaultPreset, fixture.runtime.renderPreset)
+		assertEquals(preset, fixture.runtime.renderPreset)
 
-		// Once the reviewer has chosen one, it is theirs and stays across the next mode.
 		fixture.controls.cyclePreset()
 		val chosen = fixture.runtime.renderPreset
 		fixture.controls.cycleQualityMode()

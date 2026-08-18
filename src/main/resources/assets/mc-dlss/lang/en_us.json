@@ -1,0 +1,18 @@
+{
+  "mc-dlss.options.open": "DLSS Settings…",
+  "mc-dlss.options.title": "DLSS Settings",
+  "mc-dlss.options.enabled": "DLSS Super Resolution",
+  "mc-dlss.options.mode": "Quality mode",
+  "mc-dlss.options.preset": "SR model preset",
+  "mc-dlss.options.frame_generation": "Frame generation",
+  "mc-dlss.options.fg_multiplier": "Frame generation multiplier",
+  "mc-dlss.options.in_world": "available in world",
+  "mc-dlss.options.restart_required": "Changes apply after restart",
+  "key.category.mc-dlss.controls": "mc-dlss",
+  "key.mc-dlss.toggle": "Toggle DLSS",
+  "key.mc-dlss.mode": "Cycle DLSS quality mode",
+  "key.mc-dlss.preset": "Cycle DLSS SR model preset",
+  "key.mc-dlss.stress": "Toggle DLSS stress pass",
+  "key.mc-dlss.frame_generation": "Toggle DLSS frame generation",
+  "key.mc-dlss.fg_multiplier": "Cycle DLSS frame generation multiplier"
+}

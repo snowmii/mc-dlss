@@ -9,13 +9,16 @@
 	],
 	"license": "MIT",
 	"icon": "assets/mc-dlss/icon.png",
-	"environment": "*",
+	"environment": "client",
 	"entrypoints": {
-		"main": [
+		"client": [
 			{
 				"value": "me.snowmii.McDlss",
 				"adapter": "kotlin"
 			}
+		],
+		"sodium:config_api_user": [
+			"me.snowmii.dlss.client.SodiumConfigEntryPoint"
 		]
 	},
 	"mixins": [

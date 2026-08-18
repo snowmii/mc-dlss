@@ -263,7 +263,7 @@ class MotionJitterTest {
 
 		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output, camera = sample())
 		runtime.endWorldPhase()
-		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output, camera = sample())
+		runtime.beginWorldPhase(normalInWorldFrame = true, outputDimensions = output, camera = sample(x = 1.0))
 		val beforeBreak = runtime.activeJitter
 		runtime.endWorldPhase()
 

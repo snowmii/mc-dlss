@@ -42,12 +42,15 @@ import kotlin.math.abs
  * cells through the `CloudFaces` texel buffer with the `CloudInfo`/`DynamicTransforms`
  * uniforms and a single QUADS index draw. The pass-creation redirect asks this object whether
  * the open world phase offers the scene velocity view; when it does, [createCloudVelocityPass] builds a
- * two-attachment pass - the source cloud color target at index 0 unchanged, the scene-sized
- * RG16_FLOAT velocity view at index 1 - and the pipeline-boundary seam [bindCloudPipeline] binds
- * the cached cloud writer twin, whose fragment shader ([FRAGMENT_SHADER], swapped in for the
- * source's core/rendertype_clouds shader by [writerTwin] for [VelocityWriter.CLOUD])
- * reproduces the vanilla cloud color output (the vertex color with only the fog alpha fade)
- * and writes NDC motion into the velocity attachment. The
+	 * two-attachment pass - the source cloud color target at index 0 unchanged, the scene-sized
+	 * RG16_FLOAT velocity view at index 1 - and the pipeline-boundary seam [bindCloudPipeline] binds
+	 * the cached cloud writer twin, whose fragment shader ([FRAGMENT_SHADER], swapped in for the
+	 * source's core/rendertype_clouds shader by [writerTwin] for [VelocityWriter.CLOUD])
+	 * reproduces the vanilla cloud color output (the vertex color with only the fog alpha fade)
+	 * and writes NDC motion into the velocity attachment. Fabulous clouds use a separate target
+	 * whose depth does not hold the terrain, so that pass depth-tests against the scene depth
+	 * with writes off ([cloudSceneDepthTwin]) and does not leak cloud motion through nearer
+	 * geometry. The
  * `CloudInfo`/`CloudFaces`/`DynamicTransforms` binds, the depth behavior, and the draw count
  * are the source render call's own - the twin carries the source layouts so those binds
  * resolve exactly as before, and the redirects never touch the draw.
@@ -153,6 +156,13 @@ object CloudVelocityRender {
 	 * misattribute a later render's pass.
 	 */
 	private val CLOUD_VELOCITY_PASS = ThreadLocal<RenderPass>()
+
+	/**
+	 * True when this frame's latched cloud MRT pass borrowed the scene depth. Fabulous clouds
+	 * otherwise depth-test against a cleared clouds-target depth and write motion through the
+	 * terrain in front of them.
+	 */
+	private val CLOUD_SCENE_DEPTH_TEST = ThreadLocal.withInitial { false }
 
 	/** The two cloud pipelines the render call can bind, exactly the twins [preflightCloudPass] preflights. */
 	private val CLOUD_PIPELINES = listOf(RenderPipelines.CLOUDS, RenderPipelines.FLAT_CLOUDS)
@@ -375,20 +385,22 @@ object CloudVelocityRender {
 	): RenderPass {
 		// A stale latch from a crashed frame must never misattribute this render's pass.
 		CLOUD_VELOCITY_PASS.remove()
+		CLOUD_SCENE_DEPTH_TEST.set(false)
 
 		val phase = openWorldPhase() ?: return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
 		val velocity = phase.terrainVelocityView ?: return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
 		if (!preflightCloudPass(encoder, phase, velocity, colorTexture, meshRebuilt)) {
 			return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
 		}
+		val (testDepth, occludeAgainstScene) = depthForCloudVelocity(phase, colorTexture, depthTexture)
 
 		var pass: RenderPass? = null
 		try {
 			val descriptor = RenderPassDescriptor.create(label)
 				.withColorAttachment(colorTexture, clearColor)
 				.withColorAttachment(velocity, Optional.empty())
-			if (depthTexture != null) {
-				descriptor.withDepthAttachment(depthTexture, clearDepth)
+			if (testDepth != null) {
+				descriptor.withDepthAttachment(testDepth, if (occludeAgainstScene) OptionalDouble.empty() else clearDepth)
 			}
 			descriptor.withRenderArea(RenderPass.RenderArea(0, 0, colorTexture.getWidth(0), colorTexture.getHeight(0)))
 			pass = encoder.createRenderPass(descriptor)
@@ -407,6 +419,7 @@ object CloudVelocityRender {
 		}
 
 		CLOUD_VELOCITY_PASS.set(pass)
+		CLOUD_SCENE_DEPTH_TEST.set(occludeAgainstScene)
 		return pass
 	}
 
@@ -464,6 +477,7 @@ object CloudVelocityRender {
 				LOGGER.warn("Cloud velocity pass close failed; absorbed", failure)
 			} finally {
 				CLOUD_VELOCITY_PASS.remove()
+				CLOUD_SCENE_DEPTH_TEST.set(false)
 			}
 		} else {
 			pass.close()
@@ -475,7 +489,10 @@ object CloudVelocityRender {
 	 * non-cloud pipeline, or no successful preflight this frame).
 	 */
 	@JvmStatic
-	internal fun twinFor(pipeline: RenderPipeline): RenderPipeline? = preflightedTwins[pipeline]
+	internal fun twinFor(pipeline: RenderPipeline): RenderPipeline? {
+		if (!preflightedTwins.containsKey(pipeline)) return null
+		return if (CLOUD_SCENE_DEPTH_TEST.get()) cloudSceneDepthTwin(pipeline) else preflightedTwins[pipeline]
+	}
 
 	/**
 	 * Headless test seam: whether [pass] is the latched MRT pass this frame's render call is
@@ -521,6 +538,30 @@ object CloudVelocityRender {
 	}
 
 	/**
+	 * Fabulous clouds own a cleared depth buffer, so testing against it lets cloud motion write
+	 * through nearer terrain. Borrow the scene depth instead when it is a different texture of
+	 * the same size; keep the source depth when clouds already draw into the main target.
+	 */
+	private fun depthForCloudVelocity(
+		phase: WorldPhase,
+		colorTexture: GpuTextureView,
+		sourceDepth: GpuTextureView?,
+	): Pair<GpuTextureView?, Boolean> {
+		val sceneDepth = phase.sceneDepthView
+		if (
+			sourceDepth != null &&
+			sceneDepth != null &&
+			sourceDepth.texture() !== sceneDepth.texture() &&
+			!sceneDepth.isClosed &&
+			sceneDepth.getWidth(0) == colorTexture.getWidth(0) &&
+			sceneDepth.getHeight(0) == colorTexture.getHeight(0)
+		) {
+			return sceneDepth to true
+		}
+		return sourceDepth to false
+	}
+
+	/**
 	 * Constructs both cloud writer twins and forces the lazy shader compilation the first
 	 * bind would trigger, on the writer's device, validating the compiled result. A failure
 	 * here (a missing or broken shader, an invalid twin, a device failure) answers false from
@@ -534,6 +575,9 @@ object CloudVelocityRender {
 			val twin = writerTwin(source, VelocityWriter.CLOUD)
 			val compiled = device.precompilePipeline(twin)
 			check(compiled.isValid) { "cloud twin ${twin.location} failed to compile" }
+			val occlude = cloudSceneDepthTwin(source)
+			val occludeCompiled = device.precompilePipeline(occlude)
+			check(occludeCompiled.isValid) { "cloud scene-depth twin ${occlude.location} failed to compile" }
 			twins[source] = twin
 		}
 		preflightedTwins.clear()

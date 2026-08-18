@@ -61,30 +61,24 @@ class QualityModePresetTest {
 	}
 
 	@Test
-	fun everyModeDefaultsToTheDocumentedPresetForIt() {
-		assertEquals(SRModelPreset.K, SRMode.DLAA.defaultPreset)
-		assertEquals(SRModelPreset.K, SRMode.QUALITY.defaultPreset)
-		assertEquals(SRModelPreset.K, SRMode.BALANCED.defaultPreset)
-		assertEquals(SRModelPreset.M, SRMode.PERFORMANCE.defaultPreset)
-		assertEquals(SRModelPreset.L, SRMode.ULTRA_PERFORMANCE.defaultPreset)
-
+	fun unsetOrUnreadablePresetFallsBackToMForEveryMode() {
 		SRMode.entries.forEach { mode ->
 			val config = configFrom(ModConfig.MODE_PROPERTY to mode.propertyValue)
-			assertEquals(mode.defaultPreset, config.renderPreset, "${mode.propertyValue} default preset")
+			assertEquals(SRModelPreset.M, config.renderPreset, "${mode.propertyValue} fallback preset")
 		}
 	}
 
 	@Test
-	fun presetPropertyOverridesTheModeDefaultAndDegradesToItWhenUnreadable() {
+	fun presetPropertyOverridesTheFallbackAndDegradesToMWhenUnreadable() {
 		val overridden = configFrom(
 			ModConfig.MODE_PROPERTY to "performance",
-			ModConfig.PRESET_PROPERTY to "j",
+			ModConfig.PRESET_PROPERTY to "k",
 		)
-		assertEquals(SRModelPreset.J, overridden.renderPreset)
+		assertEquals(SRModelPreset.K, overridden.renderPreset)
 		assertTrue(overridden.warnings.isEmpty())
 
 		val explicitDefault = configFrom(
-			ModConfig.MODE_PROPERTY to "performance",
+			ModConfig.MODE_PROPERTY to "quality",
 			ModConfig.PRESET_PROPERTY to "default",
 		)
 		assertEquals(SRModelPreset.M, explicitDefault.renderPreset)
@@ -95,7 +89,7 @@ class QualityModePresetTest {
 			ModConfig.MODE_PROPERTY to "ultra-performance",
 			ModConfig.PRESET_PROPERTY to "e",
 		)
-		assertEquals(SRModelPreset.L, invalid.renderPreset, "degrades to the mode's own default")
+		assertEquals(SRModelPreset.M, invalid.renderPreset, "degrades to M")
 		assertTrue(
 			invalid.warnings.any { it.contains(ModConfig.PRESET_PROPERTY) && it.contains("e") },
 			"invalid preset must warn: ${invalid.warnings}",
@@ -108,7 +102,7 @@ class QualityModePresetTest {
 			DlssStartupConfig(
 				enabled = true,
 				qualityMode = SRMode.ULTRA_PERFORMANCE,
-				renderPreset = SRModelPreset.J,
+				renderPreset = SRModelPreset.K,
 				outputDimensions = output,
 				sdkPath = Path.of("sdk"),
 				nativeLibraryPath = null,
@@ -121,7 +115,7 @@ class QualityModePresetTest {
 		assertNotNull(LifecycleAdapter(session, native).initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")))
 		assertEquals(SRMode.ULTRA_PERFORMANCE.sdkValue, native.queriedQualityMode)
 		assertEquals(SRMode.ULTRA_PERFORMANCE.sdkValue, native.configuredQualityMode)
-		assertEquals(SRModelPreset.J.sdkValue, native.configuredRenderPreset)
+		assertEquals(SRModelPreset.K.sdkValue, native.configuredRenderPreset)
 	}
 
 	@Test

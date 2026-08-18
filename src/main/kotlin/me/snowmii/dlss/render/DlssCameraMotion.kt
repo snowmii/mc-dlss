@@ -65,6 +65,8 @@ data class DlssFrameMotion(
 	 * [DlssCameraMotion.advance] always supplies it.
 	 */
 	val clipToPrevClip: Matrix4f = Matrix4f(),
+	/** World-space camera Y this frame minus the predecessor's. Zero on a reset frame's first sample. */
+	val cameraDeltaY: Float = 0f,
 )
 
 /**
@@ -125,6 +127,11 @@ class DlssCameraMotion(renderDimensions: Dimensions) {
 		// motion pass's reprojection is this conjugated by the frame's jitter translation.
 		// Composing them in that order keeps one expression of the camera step rather than two
 		// that could drift apart.
+		val cameraDeltaY = if (!hasPrevious) {
+			0f
+		} else {
+			(camera.cameraY - previousCameraY).toFloat()
+		}
 		val clipToPrevClip = if (!continuous) {
 			Matrix4f()
 		} else {
@@ -132,7 +139,7 @@ class DlssCameraMotion(renderDimensions: Dimensions) {
 				// Camera-relative: the point sat one camera-delta further along last frame.
 				.translate(
 					(camera.cameraX - previousCameraX).toFloat(),
-					(camera.cameraY - previousCameraY).toFloat(),
+					cameraDeltaY,
 					(camera.cameraZ - previousCameraZ).toFloat(),
 				)
 				.mul(current.invert(inverse))
@@ -168,6 +175,7 @@ class DlssCameraMotion(renderDimensions: Dimensions) {
 			motionScaleY = motionScaleY,
 			frameTimeMillis = frameTimeMillis,
 			reset = reset,
+			cameraDeltaY = cameraDeltaY,
 		)
 	}
 

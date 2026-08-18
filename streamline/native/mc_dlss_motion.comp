@@ -24,10 +24,14 @@ layout(set = 0, binding = 1, rg16f) uniform writeonly image2D motionImage;
 // about the horizontal axis: the FG motion copy receives every vector at the mirrored pixel
 // with its y component negated, so the plugin's motion reads agree with its mirrored inputs.
 layout(set = 0, binding = 2, rg16f) uniform writeonly image2D flippedMotionImage;
+layout(set = 0, binding = 3, std430) buffer MotionProbe {
+	vec4 samples[3];
+} probe;
 
 layout(push_constant) uniform MotionPushConstants {
 	mat4 reprojection;
 	ivec2 renderSize;
+	int probeSlot;
 } constants;
 
 void main() {
@@ -49,4 +53,7 @@ void main() {
 	imageStore(motionImage, pixel, vec4(motion, 0.0, 0.0));
 	imageStore(flippedMotionImage, ivec2(pixel.x, constants.renderSize.y - 1 - pixel.y),
 		vec4(motion.x, -motion.y, 0.0, 0.0));
+	if (pixel.x == constants.renderSize.x / 2 && pixel.y == constants.renderSize.y / 2) {
+		probe.samples[constants.probeSlot] = vec4(motion, depth, 1.0);
+	}
 }

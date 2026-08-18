@@ -3,6 +3,7 @@ package me.snowmii.dlss.mrt
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.BindGroupLayout
 import com.mojang.blaze3d.pipeline.ColorTargetState
+import com.mojang.blaze3d.pipeline.DepthStencilState
 import com.mojang.blaze3d.pipeline.RenderPipeline
 import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
@@ -83,7 +84,34 @@ fun writerTwin(
 		}
 	}
 
+/**
+ * Cloud writer twin that depth-tests against the scene and does not write depth.
+ *
+ * Fabulous clouds render into a separate target whose depth is cleared, so testing against
+ * that depth lets cloud motion overwrite terrain pixels that sit in front. The MRT pass
+ * borrows the scene depth instead; depth writes stay off so that borrow cannot stomp the
+ * main buffer the transparency composite still reads.
+ */
+fun cloudSceneDepthTwin(source: RenderPipeline): RenderPipeline =
+	cloudSceneDepthTwins.computeIfAbsent(source) {
+		val writer = writerTwin(it, VelocityWriter.CLOUD)
+		val depth = writer.depthStencilState ?: return@computeIfAbsent writer
+		if (!depth.writeDepth) return@computeIfAbsent writer
+		build(
+			writer,
+			Identifier.fromNamespaceAndPath(
+				VELOCITY_NAMESPACE,
+				"${VELOCITY_PATH_PREFIX}cloud-occlude/${it.path.removePrefix("pipeline/")}",
+			),
+		) {
+			withDepthStencilState(
+				DepthStencilState(depth.depthTest, false, depth.depthBiasScaleFactor, depth.depthBiasConstant),
+			)
+		}
+	}
+
 private val velocityTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
+private val cloudSceneDepthTwins = ConcurrentHashMap<RenderPipeline, RenderPipeline>()
 
 private fun plainTwin(source: RenderPipeline): RenderPipeline =
 	build(source, Identifier.fromNamespaceAndPath(VELOCITY_NAMESPACE, "$VELOCITY_PATH_PREFIX${source.path}")) {

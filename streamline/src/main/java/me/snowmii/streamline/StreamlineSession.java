@@ -450,6 +450,12 @@ public interface StreamlineSession extends AutoCloseable {
 	FgState queryFgState();
 
 	/**
+	 * Centre-pixel GPU motion and depth from the probe ring, or throws if the native bridge
+	 * has not written three motion dispatches yet.
+	 */
+	MotionProbeSample queryMotionProbe();
+
+	/**
 	 * The camera constants the last successful evaluation recorded into Streamline's common
 	 * constants, as reported by {@code mc_dlss_query_camera_constants}: the jitter-free
 	 * row-major view-to-clip, clip-to-view, and clip-to-prev-clip matrices, the frustum

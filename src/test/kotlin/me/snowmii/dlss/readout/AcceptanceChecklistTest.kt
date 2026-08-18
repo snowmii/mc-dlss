@@ -88,7 +88,7 @@ class AcceptanceChecklistTest {
 		// observe what the session never shows.
 		assertCovers(
 			"FG diagnostics",
-			listOf("F10", "fg=presented", "status", "fence", "latched"),
+			listOf("F10", "fg=presented", "status", "fence", "F3"),
 		)
 	}
 

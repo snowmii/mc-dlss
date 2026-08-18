@@ -267,6 +267,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private final MethodHandle queryReflexOptions;
 	private final MethodHandle waitFgInputsValue;
 	private final MethodHandle queryFgState;
+	private final MethodHandle queryMotionProbe;
 	private final MethodHandle queryCameraConstants;
 	private final MethodHandle queryFgCameraConstants;
 	private final MethodHandle queryFgImages;
@@ -542,6 +543,11 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		this.queryFgState = bindOptional(
 			lookup,
 			"mc_dlss_query_fg_state",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
+		);
+		this.queryMotionProbe = bindOptional(
+			lookup,
+			"mc_dlss_query_motion_probe",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
 		// Optional like queryFgState: the ABI-probe DLL does not export the camera-constants
@@ -1323,6 +1329,33 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-fg-state", error);
+		}
+	}
+
+	@Override
+	public MotionProbeSample queryMotionProbe() {
+		if (queryMotionProbe == null) {
+			throw new StreamlineException("query-motion-probe", new IllegalStateException("Native bridge lacks the motion probe query"));
+		}
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment motionX = callArena.allocate(JAVA_FLOAT);
+			final MemorySegment motionY = callArena.allocate(JAVA_FLOAT);
+			final MemorySegment depth = callArena.allocate(JAVA_FLOAT);
+			final MemorySegment slot = callArena.allocate(JAVA_INT);
+			final int result = (int)this.queryMotionProbe.invokeExact(motionX, motionY, depth, slot);
+			if (result != SUCCESS) {
+				throw new StreamlineException("query-motion-probe", result);
+			}
+			return new MotionProbeSample(
+				motionX.get(JAVA_FLOAT, 0),
+				motionY.get(JAVA_FLOAT, 0),
+				depth.get(JAVA_FLOAT, 0),
+				slot.get(JAVA_INT, 0)
+			);
+		} catch (StreamlineException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-motion-probe", error);
 		}
 	}
 

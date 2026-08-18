@@ -13,8 +13,8 @@ import java.nio.file.Path
 data class DlssStartupConfig(
 	val enabled: Boolean,
 	val qualityMode: SRMode,
-	/** Preset this session runs; the mode's own documented default unless one was asked for. */
-	val renderPreset: SRModelPreset = qualityMode.defaultPreset,
+	/** Preset this session runs; [SRModelPreset.M] unless one was asked for. Independent of [qualityMode]. */
+	val renderPreset: SRModelPreset = SRModelPreset.M,
 	/**
 	 * Output size the session starts against. It is the size in effect only until the first world
 	 * frame reports the client's real main target; see [DlssSession.outputDimensions]. A session
@@ -39,8 +39,8 @@ data class DlssStartupConfig(
  *
  * NGX picks a preset for every mode whether or not one is asked for, and which one it picks moves
  * with the DLL and with driver-side overrides. A session that never names a preset therefore
- * cannot report which model produced its frames. The preset is always written, using the mode's
- * documented default unless the user selects another.
+ * cannot report which model produced its frames. The preset is always written, independently of
+ * the quality mode, using [M] unless the user selects another.
  *
  * Only the presets SDK 310.7.0 documents as usable are here. A through D were removed from the
  * SDK, E and F are deprecated, and G through I and N and O revert to default behaviour, so none of
@@ -50,16 +50,13 @@ enum class SRModelPreset(
 	val sdkValue: Int,
 	val propertyValue: String,
 ) {
-	/** Transformer, best image quality, default for DLAA/Quality/Balanced. */
+	/** Transformer; NVIDIA's documented Quality/Balanced/DLAA model. Heavier temporal history. */
 	K(11, "k"),
 
-	/** Transformer, less ghosting than [K] and more flicker. */
-	J(10, "j"),
-
-	/** Transformer, default for Ultra Performance. */
+	/** Transformer; NVIDIA's documented Ultra Performance model. */
 	L(12, "l"),
 
-	/** Transformer, default for Performance. */
+	/** Transformer; NVIDIA's documented Performance model, and this mod's fallback. */
 	M(13, "m"),
 	;
 
@@ -84,11 +81,10 @@ enum class SRModelPreset(
 enum class SRMode(
 	val sdkValue: Int,
 	val propertyValue: String,
-	val defaultPreset: SRModelPreset,
 ) {
-	DLAA(5, "dlaa", SRModelPreset.K),
-	QUALITY(2, "quality", SRModelPreset.K),
-	BALANCED(1, "balanced", SRModelPreset.K),
-	PERFORMANCE(0, "performance", SRModelPreset.M),
-	ULTRA_PERFORMANCE(3, "ultra-performance", SRModelPreset.L),
+	DLAA(5, "dlaa"),
+	QUALITY(2, "quality"),
+	BALANCED(1, "balanced"),
+	PERFORMANCE(0, "performance"),
+	ULTRA_PERFORMANCE(3, "ultra-performance"),
 }

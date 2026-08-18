@@ -24,10 +24,9 @@ Builds and dev-client runs require Windows. Install these first:
 No system-wide Visual Studio IDE is required. Build Tools supplies `cl.exe`, linker, libraries,
 and `VsDevCmd.bat` used by Gradle.
 
-Gradle downloads pinned DLSS and Streamline SDK archives on first build, verifies their SHA-256
-digests, and extracts them under the Gradle user cache. Versions, source commit, and digests live
-in `gradle.properties`; upgrading an SDK means updating those properties together. `NGX_SDK` and
-`STREAMLINE_SDK` remain optional overrides for local SDK copies.
+Gradle downloads the pinned Streamline SDK on first build, verifies its GitHub SHA-256 digest,
+and extracts it under the Gradle user cache. The version lives in `gradle.properties`; `STREAMLINE_SDK`
+remains an optional override for a local SDK copy.
 
 Set `VSDEVCMD` and verify installer-created `VULKAN_SDK`. Values must be absolute paths:
 
@@ -35,7 +34,6 @@ Set `VSDEVCMD` and verify installer-created `VULKAN_SDK`. Values must be absolut
 | --- | --- | --- | --- |
 | `VSDEVCMD` | Yes | Visual Studio developer-command batch file | `VsDevCmd.bat` |
 | `VULKAN_SDK` | Yes | Vulkan SDK root | `Include/vulkan/vulkan.h` |
-| `NGX_SDK` | No | Extracted DLSS SDK root override | `include/nvsdk_ngx.h` |
 | `STREAMLINE_SDK` | No | Extracted Streamline SDK root override | `include/sl.h` |
 
 Example PowerShell session; replace placeholders with local paths:

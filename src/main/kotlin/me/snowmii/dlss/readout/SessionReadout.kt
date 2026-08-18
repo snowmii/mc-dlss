@@ -197,7 +197,7 @@ class SessionReadout(
 				frame?.route ?: DlssFrameRoute.VANILLA,
 				scene?.let { "${it.width}x${it.height}" } ?: "main-target",
 				frameTimings() ?: "unmeasured",
-				fgMonitorSuffix(fgState(), fps),
+				fgMonitorSuffix(fgState()),
 				pacing() ?: "",
 				accumulationSuffix(),
 			),
@@ -234,21 +234,21 @@ class SessionReadout(
 		private const val SAMPLE_INTERVAL_NANOS = 5_000_000_000L
 
 		/**
-		 * The DLSS-G monitor suffix for the frame-rate line: actual presented FPS, status word,
-		 * and input-processing completion fence. Streamline reports the number of real plus
-		 * generated presentations per app frame, so its documented calculation is app FPS times
-		 * that value. A factor of two indicates 2x generation; an advancing fence indicates the
-		 * plugin is reading presented frames' tagged inputs.
+		 * The DLSS-G monitor suffix for the frame-rate line: status word and input-processing
+		 * completion fence. Presented FPS lives on vanilla's F3 fps line instead.
 		 */
-		fun fgMonitorSuffix(fg: FgState?, appFps: Double): String = if (fg == null) {
+		fun fgMonitorSuffix(fg: FgState?): String = if (fg == null) {
 			""
 		} else {
-			", fg=presented=%.1f status=%d fence=%d".format(
-				appFps * fg.numFramesPresented,
+			", fg=status=%d fence=%d".format(
 				fg.status,
 				fg.lastPresentInputsProcessingFenceValue,
 			)
 		}
+
+		/** Presented FPS next to vanilla's F3 fps line while generation is actually composing. */
+		fun fgPresentedFpsSuffix(appFps: Int, fg: FgState): String =
+			if (fg.numFramesPresented <= 1) "" else " fg ${appFps * fg.numFramesPresented}"
 
 		/** Formats and drops, for tests that assert on the phase's own behavior. */
 		val NOOP: SessionReadout = SessionReadout({})

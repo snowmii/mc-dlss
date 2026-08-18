@@ -60,7 +60,7 @@ class LevelChangeResetTest {
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample())
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
-		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample())
+		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample(x = 1.0))
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		assertEquals(1, runtime.activeJitter!!.index)
 		phase.end()
@@ -105,12 +105,12 @@ class LevelChangeResetTest {
 		phase.end()
 	}
 
-	private fun sample() = DlssCameraSample(
+	private fun sample(x: Double = 0.0, y: Double = 64.0, z: Double = 0.0) = DlssCameraSample(
 		projection = Matrix4f().perspective(1.2f, 16f / 9f, 0.05f, 1000f),
 		viewRotation = Matrix4f(),
-		cameraX = 0.0,
-		cameraY = 64.0,
-		cameraZ = 0.0,
+		cameraX = x,
+		cameraY = y,
+		cameraZ = z,
 	)
 
 	private fun phase(runtime: RenderRuntime) = WorldPhase(

@@ -85,7 +85,7 @@ internal fun velocityRuntime(withVelocity: Boolean = true, enabled: Boolean = tr
 	return RenderRuntime(
 		session = session,
 		sceneTarget = SceneTarget(
-			allocate = { width, height -> HeadlessRenderTarget(width, height) },
+			allocate = { width, height -> HeadlessRenderTarget(width, height, withDepthView = true) },
 			release = { (it as HeadlessRenderTarget).releases++ },
 			allocateVelocity = if (withVelocity) {
 				{ width, height -> HeadlessRenderTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) }
@@ -123,15 +123,21 @@ internal class HeadlessRenderTarget(
 	height: Int,
 	format: GpuFormat = GpuFormat.RGBA8_UNORM,
 	withView: Boolean = false,
+	withDepthView: Boolean = false,
 ) : RenderTarget("fake", true, format) {
 	var releases = 0
 	private val texture = FakeTexture(format, width, height)
+	private val extraDepthView: GpuTextureView? =
+		if (withDepthView) FakeView(FakeTexture(GpuFormat.D32_FLOAT, width, height)) else null
 
 	init {
 		this.width = width
 		this.height = height
 		if (withView) colorTextureView = FakeView(texture)
+		if (extraDepthView != null) depthTextureView = extraDepthView
 	}
+
+	override fun getDepthTextureView(): GpuTextureView? = extraDepthView ?: super.getDepthTextureView()
 
 	override fun createBuffers(width: Int, height: Int) {
 		this.width = width

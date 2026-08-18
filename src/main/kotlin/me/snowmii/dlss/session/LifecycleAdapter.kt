@@ -6,6 +6,7 @@ import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgState
 import me.snowmii.streamline.FgMultiplier
+import me.snowmii.streamline.MotionProbeSample
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.MotionRequest
@@ -422,6 +423,17 @@ class LifecycleAdapter(
 		// latch the session, it just shows the monitor nothing.
 		return try {
 			native.queryFgState()
+		} catch (_: Throwable) {
+			null
+		}
+	}
+
+	fun queryMotionProbe(): MotionProbeSample? {
+		if (session.state != DlssSessionState.READY) {
+			return null
+		}
+		return try {
+			native.queryMotionProbe()
 		} catch (_: Throwable) {
 			null
 		}

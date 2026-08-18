@@ -99,6 +99,8 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 
 	override fun queryFgState(): FgState = notStubbed("queryFgState")
 
+	override fun queryMotionProbe(): MotionProbeSample = notStubbed("queryMotionProbe")
+
 	override fun queryCameraConstants(): CameraConstants = notStubbed("queryCameraConstants")
 
 	override fun queryFgCameraConstants(): CameraConstants = notStubbed("queryFgCameraConstants")

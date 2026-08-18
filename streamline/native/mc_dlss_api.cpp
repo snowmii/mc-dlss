@@ -974,6 +974,16 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_motion_probe(
+    float* motion_x, float* motion_y, float* depth, int32_t* slot) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_motion_probe(motion_x, motion_y, depth, slot);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);

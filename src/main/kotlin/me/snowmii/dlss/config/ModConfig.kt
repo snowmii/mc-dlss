@@ -27,7 +27,7 @@ import java.util.Properties
 class ModConfig(
 	val enabled: Boolean,
 	val qualityMode: SRMode,
-	/** Preset this session runs; the mode's own documented default unless one was asked for. */
+	/** Preset this session runs; [SRModelPreset.M] unless one was asked for. Independent of [qualityMode]. */
 	val renderPreset: SRModelPreset,
 	val outputDimensions: Dimensions,
 	/** Whether either output knob was named, which pins the session to [outputDimensions]. */
@@ -97,13 +97,13 @@ class ModConfig(
 		 * through a Kotlin object.
 		 */
 		@JvmStatic
-		fun fromSystemProperties(): ModConfig = from()
+		fun fromSystemProperties(): ModConfig = from(ClientConfig.INSTANCE.withSystemOverrides(System.getProperties()))
 
 		fun from(properties: Properties = System.getProperties()): ModConfig {
 			val warnings = mutableListOf<String>()
 			val enabled = readBoolean(properties, ENABLED_PROPERTY, true, warnings)
 			val qualityMode = readMode(properties, warnings)
-			val renderPreset = readPreset(properties, qualityMode, warnings)
+			val renderPreset = readPreset(properties, warnings)
 			val width = readPositiveInt(properties, OUTPUT_WIDTH_PROPERTY, DEFAULT_OUTPUT_WIDTH, warnings)
 			val height = readPositiveInt(properties, OUTPUT_HEIGHT_PROPERTY, DEFAULT_OUTPUT_HEIGHT, warnings)
 
@@ -145,24 +145,20 @@ class ModConfig(
 		}
 
 		/**
-		 * Reads the preset override, falling back to the mode's own default.
-		 *
-		 * An unreadable value degrades to that default rather than to one fixed preset, because
-		 * the default is per mode: silently running Performance on K would be a quieter and worse
-		 * outcome than the invalid value the reviewer typed.
+		 * Reads the preset override. Unset, "default", or unreadable values fall back to [SRModelPreset.M],
+		 * independently of the quality mode.
 		 */
 		private fun readPreset(
 			properties: Properties,
-			qualityMode: SRMode,
 			warnings: MutableList<String>,
 		): SRModelPreset {
 			val value = properties.getProperty(PRESET_PROPERTY)?.trim()?.lowercase(Locale.ROOT)
 			if (value.isNullOrEmpty() || value == "default") {
-				return qualityMode.defaultPreset
+				return SRModelPreset.M
 			}
 			return SRModelPreset.fromPropertyValue(value) ?: run {
-				warnings += "$PRESET_PROPERTY=$value is invalid; using ${qualityMode.defaultPreset.propertyValue}"
-				qualityMode.defaultPreset
+				warnings += "$PRESET_PROPERTY=$value is invalid; using ${SRModelPreset.M.propertyValue}"
+				SRModelPreset.M
 			}
 		}
 

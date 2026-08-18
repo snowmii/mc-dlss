@@ -14,25 +14,27 @@ constexpr uint32_t kVelocityFillSpirV[] =
     ;
 
 // The largest descriptor-set binding layout either dispatch pass declares. The camera-only
-// pass binds three descriptors (depth, motion, flipped motion), the velocity fill four
-// (depth, velocity, motion, flipped motion).
-constexpr uint32_t kMaxDispatchBindings = 4;
+// pass binds four descriptors (depth, motion, flipped motion, probe), the velocity fill five
+// (depth, velocity, motion, flipped motion, probe).
+constexpr uint32_t kMaxDispatchBindings = 5;
 
 // Push-constant block, matching mc_dlss_motion.comp exactly: a column-major mat4 followed by
-// the render size.
+// the render size and the probe ring slot.
 struct DlssMotionPushConstants {
     float reprojection[16];
     int32_t renderWidth;
     int32_t renderHeight;
+    int32_t probeSlot;
 };
 
 // Push-constant block, matching mc_dlss_velocity_fill.comp exactly: the same mat4 and render
-// size, plus the reset flag.
+// size, plus the reset flag and the probe ring slot.
 struct DlssVelocityFillPushConstants {
     float reprojection[16];
     int32_t renderWidth;
     int32_t renderHeight;
     int32_t reset;
+    int32_t probeSlot;
 };
 
 // The two passes this module records declare different descriptor layouts: the camera-only
@@ -41,10 +43,12 @@ struct DlssVelocityFillPushConstants {
 // copy the FG tag names, as a second storage image.
 constexpr VkDescriptorType kMotionBindingTypes[] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                                     VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                                                    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
+                                                    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                                    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
 constexpr VkDescriptorType kVelocityFillBindingTypes[] = {
     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
+    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
 
 // The velocity-fill pass lives here rather than in g_state because it is the velocity-MRT
 // route's merge dispatch: it has the same shape as the motion pass - one shader, one
@@ -57,6 +61,130 @@ struct VelocityFillPass {
 };
 
 VelocityFillPass g_velocityFill;
+
+constexpr uint32_t kMotionProbeRing = 3;
+constexpr VkDeviceSize kMotionProbeBytes = kMotionProbeRing * 4 * sizeof(float);
+
+struct MotionProbeBuffer {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    float* mapped = nullptr;
+    uint32_t records = 0;
+};
+
+MotionProbeBuffer g_probe;
+
+bool find_host_memory_type(const uint32_t typeBits, uint32_t* index) noexcept {
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+    vkGetPhysicalDeviceMemoryProperties(g_state.physicalDevice, &memoryProperties);
+    for (uint32_t candidate = 0; candidate < memoryProperties.memoryTypeCount; ++candidate) {
+        const bool allowed = (typeBits & (1u << candidate)) != 0;
+        const VkMemoryPropertyFlags flags = memoryProperties.memoryTypes[candidate].propertyFlags;
+        if (allowed &&
+            (flags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+            *index = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+void destroy_probe() noexcept {
+    if (g_state.device != VK_NULL_HANDLE) {
+        if (g_probe.mapped != nullptr) {
+            vkUnmapMemory(g_state.device, g_probe.memory);
+        }
+        if (g_probe.buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(g_state.device, g_probe.buffer, nullptr);
+        }
+        if (g_probe.memory != VK_NULL_HANDLE) {
+            vkFreeMemory(g_state.device, g_probe.memory, nullptr);
+        }
+    }
+    g_probe = MotionProbeBuffer{};
+}
+
+int32_t ensure_probe() noexcept {
+    if (g_probe.buffer != VK_NULL_HANDLE) {
+        return kSuccess;
+    }
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = kMotionProbeBytes;
+    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    if (vkCreateBuffer(g_state.device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+        return kFailure;
+    }
+    g_probe.buffer = buffer;
+
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(g_state.device, buffer, &requirements);
+    uint32_t memoryTypeIndex = 0;
+    if (!find_host_memory_type(requirements.memoryTypeBits, &memoryTypeIndex)) {
+        destroy_probe();
+        return kFailure;
+    }
+    VkMemoryAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocateInfo.allocationSize = requirements.size;
+    allocateInfo.memoryTypeIndex = memoryTypeIndex;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    if (vkAllocateMemory(g_state.device, &allocateInfo, nullptr, &memory) != VK_SUCCESS) {
+        destroy_probe();
+        return kFailure;
+    }
+    g_probe.memory = memory;
+    if (vkBindBufferMemory(g_state.device, buffer, memory, 0) != VK_SUCCESS) {
+        destroy_probe();
+        return kFailure;
+    }
+    void* mapped = nullptr;
+    if (vkMapMemory(g_state.device, memory, 0, kMotionProbeBytes, 0, &mapped) != VK_SUCCESS) {
+        destroy_probe();
+        return kFailure;
+    }
+    g_probe.mapped = static_cast<float*>(mapped);
+    std::memset(g_probe.mapped, 0, kMotionProbeBytes);
+    return kSuccess;
+}
+
+void write_probe_binding(VkWriteDescriptorSet& write, VkDescriptorSet set, const uint32_t binding,
+                         VkDescriptorBufferInfo& info) noexcept {
+    info.buffer = g_probe.buffer;
+    info.offset = 0;
+    info.range = VK_WHOLE_SIZE;
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = set;
+    write.dstBinding = binding;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &info;
+}
+
+void barrier_probe(const VkCommandBuffer commandBuffer) noexcept {
+    VkBufferMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = g_probe.buffer;
+    barrier.offset = 0;
+    barrier.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
+}
+
+int32_t probe_slot() noexcept {
+    return static_cast<int32_t>(g_probe.records % kMotionProbeRing);
+}
+
+void advance_probe() noexcept {
+    g_probe.records++;
+}
 
 // Points one ring slot at this frame's depth view, the owned motion view, and the owned
 // flipped motion view, reusing the slot already describing them whenever nothing changed -
@@ -85,7 +213,7 @@ VkDescriptorSet bind_motion_descriptors(const uint64_t depthView) noexcept {
     flippedInfo.imageView = g_state.fgMotionImage.view;
     flippedInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet writes[3]{};
+    VkWriteDescriptorSet writes[4]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = set;
     writes[0].dstBinding = 0;
@@ -104,7 +232,9 @@ VkDescriptorSet bind_motion_descriptors(const uint64_t depthView) noexcept {
     writes[2].descriptorCount = 1;
     writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     writes[2].pImageInfo = &flippedInfo;
-    vkUpdateDescriptorSets(g_state.device, 3, writes, 0, nullptr);
+    VkDescriptorBufferInfo probeInfo{};
+    write_probe_binding(writes[3], set, 3, probeInfo);
+    vkUpdateDescriptorSets(g_state.device, 4, writes, 0, nullptr);
 
     pass.boundSet = static_cast<int32_t>(slot);
     pass.boundDepthView = depthView;
@@ -151,7 +281,7 @@ VkDescriptorSet bind_velocity_fill_descriptors(const uint64_t depthView,
     flippedInfo.imageView = g_state.fgMotionImage.view;
     flippedInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet writes[4]{};
+    VkWriteDescriptorSet writes[5]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = set;
     writes[0].dstBinding = 0;
@@ -176,7 +306,9 @@ VkDescriptorSet bind_velocity_fill_descriptors(const uint64_t depthView,
     writes[3].descriptorCount = 1;
     writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     writes[3].pImageInfo = &flippedInfo;
-    vkUpdateDescriptorSets(g_state.device, 4, writes, 0, nullptr);
+    VkDescriptorBufferInfo probeInfo{};
+    write_probe_binding(writes[4], set, 4, probeInfo);
+    vkUpdateDescriptorSets(g_state.device, 5, writes, 0, nullptr);
 
     pass.boundSet = static_cast<int32_t>(slot);
     pass.boundDepthView = depthView;
@@ -298,20 +430,28 @@ int32_t create_dispatch_pass(DlssMotionPass& pass, const uint32_t* spirv, const 
     }
     pass.pipelineLayout = pipelineLayout;
 
-    // Pool sizes follow the binding layout: one ring's worth of each declared type, with the
-    // sampler and storage counts accumulated across the layout's bindings.
-    VkDescriptorPoolSize poolSizes[2]{};
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    // Pool sizes follow the binding layout: one ring's worth of each declared type.
+    VkDescriptorPoolSize poolSizes[kMaxDispatchBindings]{};
+    uint32_t poolCount = 0;
     for (uint32_t index = 0; index < bindingCount; ++index) {
-        const uint32_t poolIndex =
-            bindingTypes[index] == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? 1 : 0;
+        const VkDescriptorType type = bindingTypes[index];
+        uint32_t poolIndex = poolCount;
+        for (uint32_t existing = 0; existing < poolCount; ++existing) {
+            if (poolSizes[existing].type == type) {
+                poolIndex = existing;
+                break;
+            }
+        }
+        if (poolIndex == poolCount) {
+            poolSizes[poolCount].type = type;
+            poolCount++;
+        }
         poolSizes[poolIndex].descriptorCount += kMotionDescriptorRing;
     }
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = kMotionDescriptorRing;
-    poolInfo.poolSizeCount = 2;
+    poolInfo.poolSizeCount = poolCount;
     poolInfo.pPoolSizes = poolSizes;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     if (vkCreateDescriptorPool(g_state.device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
@@ -372,16 +512,25 @@ void destroy_motion_pass() noexcept {
     // The fill pass was created after the motion pass, so it goes first.
     destroy_dispatch_pass(g_velocityFill.pass);
     destroy_dispatch_pass(g_state.motionPass);
+    destroy_probe();
     g_velocityFill = VelocityFillPass{};
 }
 
 int32_t create_motion_pass() noexcept {
+    const int32_t probeResult = ensure_probe();
+    if (probeResult != kSuccess) {
+        return probeResult;
+    }
     return create_dispatch_pass(g_state.motionPass, kMotionSpirV, sizeof(kMotionSpirV),
                                 sizeof(DlssMotionPushConstants), kMotionBindingTypes,
                                 sizeof(kMotionBindingTypes) / sizeof(kMotionBindingTypes[0]));
 }
 
 int32_t create_velocity_fill_pass() noexcept {
+    const int32_t probeResult = ensure_probe();
+    if (probeResult != kSuccess) {
+        return probeResult;
+    }
     return create_dispatch_pass(g_velocityFill.pass, kVelocityFillSpirV,
                                 sizeof(kVelocityFillSpirV),
                                 sizeof(DlssVelocityFillPushConstants), kVelocityFillBindingTypes,
@@ -417,6 +566,7 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept {
     std::memcpy(constants.reprojection, info.reprojection, sizeof(constants.reprojection));
     constants.renderWidth = static_cast<int32_t>(info.render_width);
     constants.renderHeight = static_cast<int32_t>(info.render_height);
+    constants.probeSlot = probe_slot();
 
     vkCmdBindPipeline(recordingBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_state.motionPass.pipeline);
     vkCmdBindDescriptorSets(recordingBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -459,6 +609,8 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept {
     // and where a reader of this module's own image expects to find it.
     record_layout_transition(recordingBuffer, from_uint64<VkImage>(info.depth.image), depthRange,
                              kDlssInputLayout, depthEntryLayout);
+    barrier_probe(recordingBuffer);
+    advance_probe();
     return kSuccess;
 }
 
@@ -516,6 +668,7 @@ int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept {
     constants.renderWidth = static_cast<int32_t>(info.render_width);
     constants.renderHeight = static_cast<int32_t>(info.render_height);
     constants.reset = info.reset;
+    constants.probeSlot = probe_slot();
 
     vkCmdBindPipeline(recordingBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                       g_velocityFill.pass.pipeline);
@@ -557,6 +710,24 @@ int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept {
     // next evaluation's transition starts from.
     record_layout_transition(recordingBuffer, from_uint64<VkImage>(info.depth.image), depthRange,
                              kDlssInputLayout, depthEntryLayout);
+    barrier_probe(recordingBuffer);
+    advance_probe();
+    return kSuccess;
+}
+
+int32_t query_motion_probe(float* motionX, float* motionY, float* depth, int32_t* slot) noexcept {
+    if (motionX == nullptr || motionY == nullptr || depth == nullptr || slot == nullptr) {
+        return kInvalidParameter;
+    }
+    if (g_probe.mapped == nullptr || g_probe.records < kMotionProbeRing) {
+        return kNotInitialized;
+    }
+    const uint32_t readable = (g_probe.records - kMotionProbeRing) % kMotionProbeRing;
+    const float* sample = g_probe.mapped + readable * 4;
+    *motionX = sample[0];
+    *motionY = sample[1];
+    *depth = sample[2];
+    *slot = static_cast<int32_t>(readable);
     return kSuccess;
 }
 
