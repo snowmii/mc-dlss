@@ -26,8 +26,7 @@ public final class ExtensionBootstrap {
 	/**
 	 * The colocated flat runtime set: the bridge plus every Streamline/NGX runtime dll that must
 	 * sit beside it on disk for Windows dependency resolution. Mirrors the nine files staged by
-	 * {@code :streamline}'s processResources into {@code assets/streamline-api/native/} (and,
-	 * for parity only, under {@code streamline/}).
+	 * {@code :streamline}'s processResources into {@code assets/streamline-api/native/}.
 	 */
 	private static final List<String> FLAT_RUNTIME_FILES = List.of(
 		"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",

@@ -288,9 +288,6 @@ tasks.processResources {
 		into("assets/streamline-api/native")
 	}
 	from(streamlineRuntimeFiles.map { name -> streamlineRuntime.map { it.resolve(name) } }) {
-		into("assets/streamline-api/native/streamline")
-	}
-	from(streamlineRuntimeFiles.map { name -> streamlineRuntime.map { it.resolve(name) } }) {
 		into("assets/streamline-api/native")
 	}
 }

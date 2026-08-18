@@ -70,6 +70,5 @@ of each effort.
 
 ## License
 
-MIT — see `LICENSE`. Third-party components and their terms are listed in
-`THIRD-PARTY-NOTICES.md`; the NVIDIA Streamline and DLSS runtimes are not covered by it and carry
-NVIDIA's own license.
+MIT — see `LICENSE`. Third-party components included with this software are
+listed in `THIRD-PARTY-NOTICES.md`.

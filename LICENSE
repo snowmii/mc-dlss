@@ -24,10 +24,6 @@ SOFTWARE.
 
 SCOPE OF THIS LICENSE
 
-This license covers the source code in this repository only.
-
-It does NOT cover the NVIDIA binary components that the build stages into the
-produced mod jar. Those remain licensed by NVIDIA under their own terms and are
-not relicensed, sublicensed, or placed in the public domain by this file. See
-THIRD-PARTY-NOTICES.md for the components, their licenses, and the conditions
-that apply to redistributing them.
+This license applies only to the original source code of this project.
+Third-party components included with this software are licensed under their
+own terms; see THIRD-PARTY-NOTICES.md.
