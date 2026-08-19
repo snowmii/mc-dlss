@@ -1,82 +1,42 @@
 # mc-dlss
 
-As the name suggests, DLSS to Minecraft Java Edition!
-With the power provided by Streamline SDK, 
-NVIDIA DLSS for Minecraft Java 26.2 on the Vulkan backend: Super Resolution (including DLAA),
-Frame Generation, and Reflex. Fabric mod. Windows, RTX GPU.
+DLSS for Minecraft Java Edition powered by NVIDIA [Streamline](https://github.com/NVIDIA-RTX/Streamline).
 
-![Stress-pass framerate with DLSS off vs on](docs/stress-test.png)
+![Stress-pass framerate with DLSS off vs on](assets/comparison.png)
 
-Sodium is the compatibility test case. Other mods should work as long as they do not replace
-Minecraft's renderer. This does nothing useful in a CPU-limited world that already runs at
-hundreds of frames — the screenshot is the GPU-bound case.
+Made with compatibility in mind. mc-dlss is expected to work with any modification that doesn't
+fully replace minecraft's game renderer. 
 
-Use the Vulkan graphics backend. Video Settings → DLSS Settings…, or Sodium's options page.
+Comes with a few keybinds you can use to toggle through things quickly:<br>
+F6: Toggles DLSS on/off<br>
+F7: Cycle through Super Resolution modes (DLAA → Quality → Balanced → Performance → Ultra Performance)<br>
+F8: Cycle through Super Resolution presets (K / L / M)<br>
+F9: Toggles built-in stress test on/off<br>
+F10: Toggles Frame Generation on/off<br>
+F12: Cycle through Frame Generation multiplier (2x ~ up to 6x if supported)
 
-| Key | |
-| --- | --- |
-| F6 | Super Resolution on/off |
-| F7 | Quality mode (DLAA → Quality → Balanced → Performance → Ultra Performance) |
-| F8 | SR model preset (K / L / M) |
-| F9 | GPU stress pass (the screenshot) |
-| F10 | Frame Generation on/off |
-| F12 | Frame Generation multiplier (2x, then 3x/4x if the GPU allows it) |
-
-Frame Generation needs a 40-series or newer. 3x/4x needs a 50-series. Super Resolution runs on
-any RTX GPU.
-
-## Install
-
-Minecraft 26.2, Fabric Loader, [Fabric API](https://modrinth.com/mod/fabric-api), and
-[Fabric Language Kotlin](https://modrinth.com/mod/fabric-language-kotlin). Drop the mod jar in
-`mods/`. Sodium is optional.
-
-The jar already contains the Streamline runtime. No separate NVIDIA SDK install.
-
-## Build
+## Build from source
 
 Windows only. Install these first:
 
-1. [JDK 25](https://adoptium.net/temurin/releases/?version=25). Set `JAVA_HOME` to its root.
-2. [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/). In Visual
+1. [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/). In Visual
    Studio Installer, select **Desktop development with C++** and its Windows SDK component.
-3. [LunarG Vulkan SDK 1.4.357.0](https://vulkan.lunarg.com/sdk/home#windows). Install the SDK,
+2. [LunarG Vulkan SDK 1.4.357.0](https://vulkan.lunarg.com/sdk/home#windows). Install the SDK,
    including `glslc`; its installer normally sets `VULKAN_SDK`.
 
-No system-wide Visual Studio IDE is required. Build Tools supplies `cl.exe`, linker, libraries,
-and `VsDevCmd.bat` used by Gradle.
+Set `VSDEVCMD` to `VsDevCmd.bat` which should be under `<build tool location>/Common7/Tools/` 
+and `VULKAN_SDK` to Vulkan SDK install location.
 
-Gradle downloads the pinned Streamline SDK on first build, verifies its GitHub SHA-256 digest,
-and extracts it under the Gradle user cache. The version lives in `gradle.properties`;
-`STREAMLINE_SDK` remains an optional override for a local SDK copy.
-
-Set `VSDEVCMD` and verify installer-created `VULKAN_SDK`. Values must be absolute paths:
-
-| Variable | Required | Path must point to | File used to validate it |
-| --- | --- | --- | --- |
-| `VSDEVCMD` | Yes | Visual Studio developer-command batch file | `VsDevCmd.bat` |
-| `VULKAN_SDK` | Yes | Vulkan SDK root | `Include/vulkan/vulkan.h` |
-| `STREAMLINE_SDK` | No | Extracted Streamline SDK root override | `include/sl.h` |
-
+And run: 
 ```powershell
-$env:JAVA_HOME = '<JDK 25 root>'
-$env:VSDEVCMD = '<Visual Studio root>\Common7\Tools\VsDevCmd.bat'
-$env:VULKAN_SDK = '<Vulkan SDK root>'
 .\gradlew.bat build
-.\gradlew.bat runClient
 ```
 
-Gradle properties override environment variables when one invocation needs different tools or
-local SDK copies:
+## AI usage disclosure
+This project has fully embraced the exponential and is very vibe-coded,
+so pls don't trash on me for the code quality or the amount of docs out there in the code.
+And use it at your own risk.
 
-```powershell
-.\gradlew.bat build `
-  -Pmc.dlss.vs-dev-cmd='<path to VsDevCmd.bat>' `
-  -Pmc.dlss.vulkan-sdk='<Vulkan SDK root>'
-```
-
-Do not commit machine paths to `gradle.properties`. For persistent local Gradle properties, put
-these keys in `%USERPROFILE%\.gradle\gradle.properties` instead.
 
 ## License
 
