@@ -1,4 +1,5 @@
 package me.snowmii.dlss.session
+import me.snowmii.dlss.SRMode
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.client.ModConfig
 
@@ -12,7 +13,7 @@ import java.util.Properties
 
 class DlssStartupConfigTest {
 	@Test
-	fun defaultsTargetFixedOutputAndQualityMode() {
+	fun `defaults target fixed output and quality mode`() {
 		val config = ModConfig.from(Properties()).startupConfig
 
 		assertTrue(config.enabled)
@@ -24,7 +25,7 @@ class DlssStartupConfigTest {
 	// Mode selection and NGX values for all six modes are QualityModePresetTest's.
 
 	@Test
-	fun startupPropertiesSelectAllSupportedModesAndPaths() {
+	fun `startup properties select all supported modes and paths`() {
 		val properties = Properties().apply {
 			setProperty(ModConfig.ENABLED_PROPERTY, "off")
 			setProperty(ModConfig.MODE_PROPERTY, "PERFORMANCE")
@@ -46,7 +47,7 @@ class DlssStartupConfigTest {
 	}
 
 	@Test
-	fun invalidPathDoesNotAbortStartupConfiguration() {
+	fun `invalid path does not abort startup configuration`() {
 		val properties = Properties().apply {
 			setProperty(ModConfig.SDK_PATH_PROPERTY, "bad\u0000path")
 		}
@@ -58,7 +59,7 @@ class DlssStartupConfigTest {
 	}
 
 	@Test
-	fun invalidStartupPropertiesFallBackWithWarnings() {
+	fun `invalid startup properties fall back with warnings`() {
 		val properties = Properties().apply {
 			setProperty(ModConfig.ENABLED_PROPERTY, "maybe")
 			setProperty(ModConfig.MODE_PROPERTY, "ultra")

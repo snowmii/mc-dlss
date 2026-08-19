@@ -14,10 +14,9 @@ import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.Vec2
 import me.snowmii.streamline.VulkanContext
-import me.snowmii.dlss.fg.FgSurfacePolicy
-import me.snowmii.dlss.mrt.MotionVectorRoute
+import me.snowmii.dlss.render.mrt.MotionVectorRoute
 import me.snowmii.dlss.readout.SessionReadout
-import me.snowmii.dlss.session.LifecycleAdapter
+import me.snowmii.dlss.streamline.LifecycleAdapter
 import org.joml.Matrix4f
 import org.joml.Vector4f
 import kotlin.math.abs

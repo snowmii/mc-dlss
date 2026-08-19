@@ -2,11 +2,11 @@ package me.snowmii.dlss.readout
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.FgState
-import me.snowmii.dlss.session.DlssFrameDecision
-import me.snowmii.dlss.session.DlssFrameRoute
-import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.session.SRModelPreset
-import me.snowmii.dlss.session.DlssSessionState
+import me.snowmii.dlss.DlssFrameDecision
+import me.snowmii.dlss.DlssFrameRoute
+import me.snowmii.dlss.SRMode
+import me.snowmii.dlss.SRModelPreset
+import me.snowmii.dlss.DlssSessionState
 import com.mojang.blaze3d.pipeline.RenderTarget
 import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.client.Minecraft
@@ -160,8 +160,7 @@ class SessionReadout(
 				" resolved=${resolved?.let { "${it.width}x${it.height}" } ?: "unprobed"}" +
 				" redirected=${resolved != null && resolved === scene}",
 		)
-		reportAcceptanceRecord(facts)
-	}
+		}
 
 	/**
 	 * Counts world phases and reports the rate every few seconds.
@@ -207,27 +206,6 @@ class SessionReadout(
 		sampledJitterPhases.clear()
 		sampledJitterFrames = 0
 		sampledHistoryResets = 0
-	}
-
-	/**
-	 * Emits environment and runtime facts after the first world phase, when native startup has
-	 * selected the internal resolution.
-	 */
-	private fun reportAcceptanceRecord(facts: SessionFacts) {
-		emitLine(
-			AcceptanceRecord.render(
-				minecraftBuild = minecraftBuild(),
-				enabled = facts.enabled,
-				state = facts.state,
-				// The runtime's mode and preset rather than the configuration's: a reviewer who
-				// switched either one before the first world frame is holding the record for a
-				// session that is not running what it started as.
-				qualityMode = facts.qualityMode,
-				renderPreset = facts.renderPreset,
-				outputDimensions = facts.outputDimensions,
-				renderDimensions = facts.renderDimensions,
-			),
-		)
 	}
 
 	companion object {

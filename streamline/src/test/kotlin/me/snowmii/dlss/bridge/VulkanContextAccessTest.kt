@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test
 class VulkanContextAccessTest {
 
 	@Test
-	fun capturesNonZeroHandlesAndProducesRecordingCommandBuffer() {
+	fun `captures non-zero handles and produces a recording command buffer`() {
 		HeadlessVulkanFixture().use { fixture ->
 			val context = VulkanContext.fromNativeHandles(
 				fixture.instanceAddress(),

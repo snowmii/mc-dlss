@@ -13,7 +13,7 @@
 	"entrypoints": {
 		"client": [
 			{
-				"value": "me.snowmii.McDlss",
+				"value": "me.snowmii.dlss.ModEntry",
 				"adapter": "kotlin"
 			}
 		],

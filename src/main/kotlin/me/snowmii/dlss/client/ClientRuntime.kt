@@ -5,10 +5,10 @@ import me.snowmii.streamline.StreamlineSession
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.WorldPhase
-import me.snowmii.dlss.session.DlssNativeFailure
-import me.snowmii.dlss.session.DlssNativeStage
-import me.snowmii.dlss.ui.UiPhase
-import me.snowmii.McDlss
+import me.snowmii.dlss.DlssNativeFailure
+import me.snowmii.dlss.DlssNativeStage
+import me.snowmii.dlss.render.ui.UiPhase
+import me.snowmii.dlss.ModEntry
 import net.minecraft.client.Minecraft
 import org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window
 import org.lwjgl.system.Platform
@@ -66,7 +66,7 @@ interface ActiveView {
  * exactly like a failed native stage.
  */
 object ClientRuntime : RenderLoopView, ActiveView {
-	private val LOGGER = LoggerFactory.getLogger(McDlss.MOD_ID)
+	private val LOGGER = LoggerFactory.getLogger(ModEntry.MOD_ID)
 
 	@Volatile
 	private var worldPhaseInstance: WorldPhase? = null
@@ -126,7 +126,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 		}
 
 		initializationAttempted = true
-		val session = McDlss.session
+		val session = ModEntry.session
 		if (!session.config.enabled) {
 			LOGGER.info("DLSS disabled by {}; every frame renders vanilla", ModConfig.ENABLED_PROPERTY)
 			return null

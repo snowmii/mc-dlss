@@ -1,48 +1,38 @@
 {
-	"required": true,
-	"package": "me.snowmii.dlss.mixin",
-	"compatibilityLevel": "JAVA_25",
-	"client": [
-		"GameRendererHandPhaseMixin",
-		"GameRendererProjectionJitterMixin",
-		"GameRendererWorldTargetMixin",
-		"GuiRendererMixin",
-		"DebugScreenEntriesInvoker",
-		"DebugEntryFpsMixin",
-		"OptionInstanceEnumRgssMixin",
-		"OptionInstanceVideoLockMixin",
-		"VideoSettingsScreenMixin",
-		"VideoSettingsVsyncLockMixin",
-		"LevelExtractorCaptureMixin",
-		"EntityRenderDispatcherMotionMixin",
-		"BlockEntityRenderDispatcherMotionMixin",
-		"ModelFeatureSubmitMotionMixin",
-		"ModelFeatureRendererMotionMixin",
-		"MovingBlockFeatureRendererMotionMixin",
-		"RenderTypeFeatureRendererMotionMixin",
-		"StagedVertexBufferMotionMixin",
-		"PreparedRenderTypeMotionMixin",
-		"LevelRendererWorldPhaseMixin",
-		"MinecraftLevelChangeMixin",
-		"MinecraftReflexMarkersMixin",
-		"MinecraftSurfaceConfigurationMixin",
-		"MinecraftShutdownMixin",
-		"CloudRendererMotionMixin",
-		"VulkanBackendExtensionMixin",
-		"VulkanChunkSectionsToRenderMixin",
-		"VulkanDeviceContextMixin",
-		"VulkanInstanceExtensionMixin",
-		"VulkanPipelineCompatibilityMixin",
-		"VulkanGpuSurfaceAcquireMixin",
-		"VulkanGpuSurfaceSwapchainMixin",
-		"VulkanGpuSurfaceProxyMixin",
-		"VulkanGpuSurfacePresentMixin",
-		"mixinextras.MinecraftReflexMarkersMixin"
-	],
-	"injectors": {
-		"defaultRequire": 1
-	},
-	"overwrites": {
-		"requireAnnotations": true
+  "required": true,
+  "package": "me.snowmii.dlss.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "DebugEntryFpsMixin",
+    "DebugScreenEntriesInvoker",
+    "renderer.LevelExtractorCaptureMixin",
+    "MinecraftMixin",
+    "renderer.ModelFeatureRendererMotionMixin",
+    "renderer.ModelFeatureSubmitMotionMixin",
+    "renderer.MovingBlockFeatureRendererMotionMixin",
+    "OptionInstanceEnumRgssMixin",
+    "OptionInstanceVideoLockMixin",
+    "renderer.PreparedRenderTypeMotionMixin",
+    "VideoSettingsScreenMixin",
+    "VideoSettingsVsyncLockMixin",
+    "blaze3d.VulkanBackendExtensionMixin",
+    "blaze3d.VulkanChunkSectionsToRenderMixin",
+    "blaze3d.VulkanDeviceMixin",
+    "blaze3d.VulkanGpuSurfaceMixin",
+    "blaze3d.VulkanInstanceExtensionMixin",
+    "renderer.BlockEntityRenderDispatcherMotionMixin",
+    "renderer.CloudRendererMotionMixin",
+    "renderer.EntityRenderDispatcherMotionMixin",
+    "renderer.GameRendererMixin",
+    "renderer.GuiRendererMixin",
+    "renderer.LevelRendererWorldPhaseMixin",
+    "renderer.RenderTypeFeatureRendererMotionMixin",
+    "renderer.StagedVertexBufferMotionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
 	}
 }

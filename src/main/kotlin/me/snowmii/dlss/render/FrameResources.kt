@@ -2,7 +2,7 @@ package me.snowmii.dlss.render
 
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.textures.GpuTextureView
-import me.snowmii.dlss.session.DlssFrameRoute
+import me.snowmii.dlss.DlssFrameRoute
 
 /**
  * The GPU objects one DLSS configuration owns, and the stall that makes freeing them safe.

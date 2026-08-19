@@ -1,0 +1,79 @@
+package me.snowmii.dlss
+import me.snowmii.dlss.client.ModConfig
+import me.snowmii.dlss.stress.StressConfig
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import java.util.Properties
+
+/**
+ * The stress pass never changes what a session renders by default: a benchmark whose baseline
+ * includes the instrument measures nothing.
+ */
+class StressConfigTest {
+	@Test
+	fun `stress is off unless a session asks for it`() {
+		val config = StressConfig.from(Properties())
+
+		assertFalse(config.enabled)
+	}
+
+	@Test
+	fun `a session names its own workload`() {
+		val properties = Properties().apply {
+			setProperty(ModConfig.STRESS_ENABLED_PROPERTY, "true")
+			setProperty(ModConfig.STRESS_STEPS_PROPERTY, "96")
+			setProperty(ModConfig.STRESS_OCTAVES_PROPERTY, "7")
+			setProperty(ModConfig.STRESS_GODRAYS_PROPERTY, "32")
+			setProperty(ModConfig.STRESS_INTENSITY_PROPERTY, "1.5")
+		}
+
+		val config = StressConfig.from(properties)
+
+		assertTrue(config.enabled)
+		assertEquals(96, config.steps)
+		assertEquals(7, config.octaves)
+		assertEquals(32, config.godrayTaps)
+		assertEquals(1.5f, config.intensity)
+	}
+
+	@Test
+	fun `a workload beyond what the shader loops for is clamped rather than refused`() {
+		val properties = Properties().apply {
+			setProperty(ModConfig.STRESS_STEPS_PROPERTY, "100000")
+			setProperty(ModConfig.STRESS_OCTAVES_PROPERTY, "40")
+			setProperty(ModConfig.STRESS_GODRAYS_PROPERTY, "-8")
+		}
+
+		val config = StressConfig.from(properties)
+
+		// The shader's own loop bounds; a request past them would silently do less work than the
+		// requested number, so the number is clamped here instead.
+		assertEquals(192, config.steps)
+		assertEquals(8, config.octaves)
+		assertEquals(0, config.godrayTaps)
+	}
+
+	@Test
+	fun `an unreadable value leaves the default workload in place`() {
+		val properties = Properties().apply {
+			setProperty(ModConfig.STRESS_ENABLED_PROPERTY, "maybe")
+			setProperty(ModConfig.STRESS_STEPS_PROPERTY, "lots")
+		}
+
+		val config = StressConfig.from(properties)
+
+		assertFalse(config.enabled)
+		assertEquals(24, config.steps)
+	}
+
+	@Test
+	fun `the reconstruction sign is a property rather than a rebuild`() {
+		val flipped = Properties().apply { setProperty(ModConfig.STRESS_FLIP_Y_PROPERTY, "true") }
+
+		assertEquals(1.0f, StressConfig.from(Properties()).ndcYSign)
+		assertEquals(-1.0f, StressConfig.from(flipped).ndcYSign)
+	}
+}

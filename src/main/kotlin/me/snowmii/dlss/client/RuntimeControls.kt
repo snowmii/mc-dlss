@@ -1,10 +1,10 @@
 package me.snowmii.dlss.client
 
-import me.snowmii.McDlss
-import me.snowmii.dlss.fg.FgSurfacePolicy
+import me.snowmii.dlss.ModEntry
+import me.snowmii.dlss.render.FgSurfacePolicy
 import me.snowmii.dlss.render.RenderRuntime
-import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.session.SRModelPreset
+import me.snowmii.dlss.SRMode
+import me.snowmii.dlss.SRModelPreset
 import me.snowmii.dlss.readout.SessionReadout
 import org.slf4j.LoggerFactory
 
@@ -166,7 +166,7 @@ class RuntimeControls(
 	}
 
 	private companion object {
-		private val LOGGER = LoggerFactory.getLogger(McDlss.MOD_ID)
+		private val LOGGER = LoggerFactory.getLogger(ModEntry.MOD_ID)
 	}
 
 	private fun applyConfiguration(mode: SRMode, preset: SRModelPreset) {

@@ -6,8 +6,8 @@ import me.snowmii.dlss.readout.SessionFacts
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.StreamlineSession
-import me.snowmii.dlss.mrt.MotionVectorPipeline
-import me.snowmii.dlss.mrt.MotionVectorRoute
+import me.snowmii.dlss.render.mrt.MotionVectorPipeline
+import me.snowmii.dlss.render.mrt.MotionVectorRoute
 import net.minecraft.client.renderer.entity.state.EntityRenderState
 import org.joml.Matrix4f
 import org.joml.Vector3f

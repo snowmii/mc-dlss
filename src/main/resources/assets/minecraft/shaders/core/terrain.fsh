@@ -1,4 +1,4 @@
-#version 330
+q#version 330
 
 #moj_import <minecraft:fog.glsl>
 #moj_import <minecraft:chunksection.glsl>

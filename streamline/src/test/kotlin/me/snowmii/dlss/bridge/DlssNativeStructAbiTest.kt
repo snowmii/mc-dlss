@@ -22,7 +22,7 @@ import java.nio.file.Path
 @NativeBridge
 class DlssNativeStructAbiTest {
 	@Test
-	fun compiledFfmBindingMatchesTheNativeStructLayout() {
+	fun `compiled FFM binding matches the native struct layout`() {
 		val request = request().renderDimensions(Dimensions(1280, 720)).build()
 		assertTrue(Files.isRegularFile(Path.of("build", "native", "mc_dlss.dll")))
 

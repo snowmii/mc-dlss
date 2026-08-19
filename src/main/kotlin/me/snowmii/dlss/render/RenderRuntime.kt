@@ -1,28 +1,26 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.session.DlssFrameDecision
-import me.snowmii.dlss.session.DlssFrameRoute
+import me.snowmii.dlss.DlssFrameDecision
+import me.snowmii.dlss.DlssFrameRoute
 import me.snowmii.streamline.StreamlineSession
-import me.snowmii.dlss.readout.AcceptanceRecord
 import me.snowmii.dlss.readout.FramePacingProbe
 import me.snowmii.streamline.VulkanContextRegistry
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.streamline.Dimensions
-import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.session.SRModelPreset
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssSessionState
-import me.snowmii.dlss.session.DlssStartupConfig
+import me.snowmii.dlss.SRMode
+import me.snowmii.dlss.SRModelPreset
+import me.snowmii.dlss.DlssSession
+import me.snowmii.dlss.DlssSessionState
+import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.client.ModConfig
-import me.snowmii.dlss.mrt.MotionVectorCompatibility
-import me.snowmii.dlss.mrt.MotionVectorPipeline
-import me.snowmii.dlss.mrt.MotionVectorRoute
-import me.snowmii.dlss.mrt.ObjectMotionState
+import me.snowmii.dlss.render.mrt.MotionVectorCompatibility
+import me.snowmii.dlss.render.mrt.MotionVectorPipeline
+import me.snowmii.dlss.render.mrt.MotionVectorRoute
+import me.snowmii.dlss.render.mrt.ObjectMotionState
 import net.minecraft.client.renderer.entity.state.EntityRenderState
 import org.joml.Matrix4f
 import java.util.IdentityHashMap
-import me.snowmii.dlss.session.LifecycleAdapter
-import me.snowmii.dlss.session.SessionBridge
-import me.snowmii.dlss.fg.FgSurfacePolicy
+import me.snowmii.dlss.streamline.LifecycleAdapter
+import me.snowmii.dlss.streamline.SessionBridge
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.screens.LoadingOverlay
 import com.mojang.blaze3d.pipeline.RenderTarget
@@ -450,7 +448,6 @@ class RenderRuntime(
 		// so it moves before the invalidation that recreates the swapchain: a higher multiplier
 		// presents more frames per app frame and needs the images to hold them.
 		frameGeneration.numFramesToGenerate = numFramesToGenerate
-		AcceptanceRecord.activeFgMultiplier = numFramesToGenerate
 		invalidateSurfaceConfiguration()
 		return true
 	}

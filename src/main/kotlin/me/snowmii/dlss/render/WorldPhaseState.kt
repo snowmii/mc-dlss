@@ -2,7 +2,7 @@ package me.snowmii.dlss.render
 
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.streamline.Dimensions
-import me.snowmii.dlss.mrt.ObjectMotionState
+import me.snowmii.dlss.render.mrt.ObjectMotionState
 
 /**
  * The two sequences a DLSS frame accumulates against its predecessor, and the values this frame

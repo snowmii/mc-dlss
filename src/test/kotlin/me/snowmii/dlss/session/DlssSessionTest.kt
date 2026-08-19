@@ -1,4 +1,12 @@
 package me.snowmii.dlss.session
+import me.snowmii.dlss.DlssFrameRoute
+import me.snowmii.dlss.DlssNativeFailure
+import me.snowmii.dlss.DlssNativeStage
+import me.snowmii.dlss.DlssSession
+import me.snowmii.dlss.DlssSessionState
+import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.SRMode
+import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
@@ -23,7 +31,7 @@ class DlssSessionTest {
 	private val output = Dimensions(2560, 1440)
 
 	@Test
-	fun disabledConfigurationAlwaysUsesVanilla() {
+	fun `disabled configuration always uses vanilla`() {
 		val session = DlssSession(config(enabled = false))
 		val native = FakeNative()
 
@@ -34,7 +42,7 @@ class DlssSessionTest {
 	}
 
 	@Test
-	fun nativeMustBeReadyBeforeNormalWorldFrameUsesDlss() {
+	fun `native must be ready before a normal world frame uses DLSS`() {
 		val session = DlssSession(config())
 
 		assertEquals(DlssSessionState.WAITING_FOR_VULKAN, session.state)
@@ -52,7 +60,7 @@ class DlssSessionTest {
 	}
 
 	@Test
-	fun unsupportedFramesAndOutputSizesStayVanilla() {
+	fun `unsupported frames and output sizes stay vanilla`() {
 		val session = DlssSession(config())
 		assertTrue(
 			LifecycleAdapter(session, FakeNative()).initialize(
@@ -72,7 +80,7 @@ class DlssSessionTest {
 	}
 
 	@Test
-	fun firstNativeFailureLatchesVanillaFallbackAndDiagnostic() {
+	fun `first native failure latches vanilla fallback and emits a diagnostic`() {
 		val diagnostics = mutableListOf<String>()
 		val session = DlssSession(config(), diagnostics::add)
 		val failure = DlssNativeFailure(
@@ -92,7 +100,7 @@ class DlssSessionTest {
 	}
 
 	@Test
-	fun closedSessionStaysVanilla() {
+	fun `closed session stays vanilla`() {
 		val session = DlssSession(config())
 		val native = FakeNative()
 		session.close()
@@ -127,7 +135,7 @@ class DlssSessionTest {
 	}
 
 	@Test
-	fun aFailedQueryNeverReachesConfigure() {
+	fun `a failed query never reaches configure`() {
 		val native = FakeNative(queryResult = 23)
 		val adapter = LifecycleAdapter(DlssSession(config()), native)
 
@@ -137,7 +145,7 @@ class DlssSessionTest {
 	}
 
 	@Test
-	fun evaluateForwardsCompleteResourceMetadata() {
+	fun `evaluate forwards complete resource metadata`() {
 		val native = FakeNative()
 		val session = DlssSession(config())
 		val adapter = LifecycleAdapter(session, native)

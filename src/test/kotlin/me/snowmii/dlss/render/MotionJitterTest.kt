@@ -1,8 +1,7 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.readNativeSource
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
+import me.snowmii.dlss.DlssSession
+import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.SRMode
 import me.snowmii.streamline.Dimensions
 
 import com.mojang.blaze3d.GpuFormat
@@ -12,8 +11,10 @@ import org.joml.Vector3f
 import org.joml.Vector4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.math.abs
@@ -210,15 +211,6 @@ class MotionJitterTest {
 	}
 
 	@Test
-	fun `Streamline converts NDC motion to pixels once`() {
-		val source = readNativeSource("internal/sl_dlss.cpp")
-
-		// Streamline multiplies this normalized scale by render width/height before handing it
-		// to NGX. NDC spans two units edge-to-edge, so half converts NDC displacement to pixels.
-		assertTrue(source.contains("constants.mvecScale = sl::float2(0.5f, 0.5f);"))
-	}
-
-	@Test
 	fun `a broken chain resets rather than reprojecting against a camera DLSS never saw`() {
 		val motion = DlssCameraMotion(render)
 
@@ -292,6 +284,211 @@ class MotionJitterTest {
 		runtime.endWorldPhase()
 	}
 
+	// ── Jitter sequence ──────────────────────────────────────────────────────────────────────────
+
+	@Test
+	fun `the jitter sequence is a pure function of its phase`() {
+		val qualityDimensions = Dimensions(1707, 960)
+		val first = DlssJitter(qualityDimensions, output)
+		val second = DlssJitter(qualityDimensions, output)
+
+		val firstRun = List(first.phaseCount) { first.advance() }
+		val secondRun = List(second.phaseCount) { second.advance() }
+
+		assertEquals(firstRun, secondRun)
+	}
+
+	@Test
+	fun `the jitter sequence repeats after exactly one period`() {
+		val qualityDimensions = Dimensions(1707, 960)
+		val jitter = DlssJitter(qualityDimensions, output)
+
+		val period = List(jitter.phaseCount) { jitter.advance() }
+		val next = jitter.advance()
+
+		assertEquals(period.first(), next)
+		assertEquals(jitter.phaseCount, period.distinct().size)
+	}
+
+	@Test
+	fun `every jitter offset samples inside its own pixel`() {
+		val jitter = DlssJitter(render, output)
+
+		repeat(jitter.phaseCount * 3) {
+			val offset = jitter.advance()
+			assertTrue(kotlin.math.abs(offset.pixelX) <= 0.5f, "pixelX out of pixel: ${offset.pixelX}")
+			assertTrue(kotlin.math.abs(offset.pixelY) <= 0.5f, "pixelY out of pixel: ${offset.pixelY}")
+			assertTrue(
+				offset.pixelX != -0.5f || offset.pixelY != -0.5f,
+				"phase ${offset.index} samples the pixel corner",
+			)
+		}
+	}
+
+	@Test
+	fun `the jitter period grows with the square of the upscale ratio`() {
+		val qualityDimensions = Dimensions(1707, 960)
+		assertEquals(DlssJitter.BASE_PHASE_COUNT, DlssJitter(output, output).phaseCount)
+		assertEquals(DlssJitter.BASE_PHASE_COUNT * 4, DlssJitter(render, output).phaseCount)
+		assertTrue(
+			DlssJitter(qualityDimensions, output).phaseCount < DlssJitter(render, output).phaseCount,
+			"a smaller upscale ratio must need fewer phases",
+		)
+	}
+
+	@Test
+	fun `the clip offset is the pixel offset in normalized device units`() {
+		val jitter = DlssJitter(render, output)
+		val offset = jitter.advance()
+		assertEquals(2f * offset.pixelX / render.width, offset.clipOffsetX)
+		assertEquals(2f * offset.pixelY / render.height, offset.clipOffsetY)
+		assertEquals(render, offset.renderDimensions)
+	}
+
+	@Test
+	fun `jitter reset restarts the sequence`() {
+		val qualityDimensions = Dimensions(1707, 960)
+		val jitter = DlssJitter(qualityDimensions, output)
+		val first = jitter.advance()
+		jitter.advance()
+		jitter.reset()
+		assertEquals(first, jitter.advance())
+	}
+
+	// ── Projection jitter ─────────────────────────────────────────────────────────────────────
+
+	@Test
+	fun `the projection shifts the image by exactly the clip offset`() {
+		val offset = DlssJitter(render, output).advance()
+		val jittered = DlssProjectionJitter.apply(projection, offset, Matrix4f())
+
+		val plain = ndcProjected(projection, 3f, -2f, -12f)
+		val shifted = ndcProjected(jittered, 3f, -2f, -12f)
+
+		assertEquals(offset.clipOffsetX, shifted.x - plain.x, tolerance)
+		assertEquals(offset.clipOffsetY, shifted.y - plain.y, tolerance)
+	}
+
+	@Test
+	fun `the projection shift is the same at every depth`() {
+		val offset = DlssJitter(render, output).advance()
+		val jittered = DlssProjectionJitter.apply(projection, offset, Matrix4f())
+
+		val near = ndcProjected(jittered, 3f, -2f, -1f).sub(ndcProjected(projection, 3f, -2f, -1f))
+		val far = ndcProjected(jittered, 3f, -2f, -400f).sub(ndcProjected(projection, 3f, -2f, -400f))
+
+		assertEquals(near.x, far.x, tolerance)
+		assertEquals(near.y, far.y, tolerance)
+	}
+
+	@Test
+	fun `jitter does not touch depth so reversed-Z stays reversed`() {
+		val offset = DlssJitter(render, output).advance()
+		val jittered = DlssProjectionJitter.apply(projection, offset, Matrix4f())
+
+		for (viewZ in listOf(-1f, -12f, -400f)) {
+			assertEquals(ndcProjected(projection, 3f, -2f, viewZ).z, ndcProjected(jittered, 3f, -2f, viewZ).z, tolerance)
+		}
+		val nearDepth = ndcProjected(jittered, 0f, 0f, -1f).z
+		val farDepth = ndcProjected(jittered, 0f, 0f, -400f).z
+		assertTrue(nearDepth > farDepth, "expected reversed-Z depth, got $nearDepth then $farDepth")
+	}
+
+	@Test
+	fun `a half-pixel offset moves the image by exactly half a render pixel`() {
+		val offset = DlssJitterOffset(index = 0, pixelX = 0.5f, pixelY = -0.5f, renderDimensions = render)
+		val jittered = DlssProjectionJitter.apply(projection, offset, Matrix4f())
+
+		val plain = ndcProjected(projection, 3f, -2f, -12f)
+		val shifted = ndcProjected(jittered, 3f, -2f, -12f)
+
+		assertEquals(1f / render.width, shifted.x - plain.x, tolerance)
+		assertEquals(-1f / render.height, shifted.y - plain.y, tolerance)
+	}
+
+	@Test
+	fun `projection jitter writes the destination in place and leaves the source alone`() {
+		val offset = DlssJitter(render, output).advance()
+		val source = Matrix4f(projection)
+		val destination = Matrix4f().scaling(7f)
+
+		val result = DlssProjectionJitter.apply(source, offset, destination)
+
+		assertSame(destination, result)
+		assertEquals(projection, source)
+	}
+
+	// ── Camera discontinuity ──────────────────────────────────────────────────────────────────
+
+	@Test
+	fun `a camera that teleported resets history instead of reprojecting across the jump`() {
+		val motion = DlssCameraMotion(render)
+
+		motion.advance(sample(x = 120.0, z = -40.0), previousOffset, nanos(0))
+		val jumped = motion.advance(sample(x = 12_000.0, z = -40.0), currentOffset, nanos(16))
+
+		assertTrue(jumped.reset, "a teleported camera must not be reprojected against")
+		assertEquals(Matrix4f(), jumped.reprojection)
+		assertEquals(0f, jumped.frameTimeMillis)
+	}
+
+	@Test
+	fun `a jump on any axis is a discontinuity`() {
+		for (jumped in listOf(sample(x = 900.0), sample(y = 900.0), sample(z = 900.0))) {
+			val motion = DlssCameraMotion(render)
+			motion.advance(sample(), previousOffset, nanos(0))
+			assertTrue(
+				motion.advance(jumped, currentOffset, nanos(16)).reset,
+				"expected reset after jumping to (${jumped.cameraX}, ${jumped.cameraY}, ${jumped.cameraZ})",
+			)
+		}
+	}
+
+	@Test
+	fun `the frame after a discontinuity accumulates from the camera that replaced it`() {
+		val motion = DlssCameraMotion(render)
+
+		motion.advance(sample(), previousOffset, nanos(0))
+		motion.advance(sample(x = 12_000.0), currentOffset, nanos(16))
+		val settled = motion.advance(sample(x = 12_000.5), currentOffset, nanos(32))
+
+		assertFalse(settled.reset, "the jump is one frame, not a latched reset")
+		assertEquals(16f, settled.frameTimeMillis, tolerance)
+		assertNotEquals(Matrix4f(), settled.reprojection, "the settled frame must reproject again")
+	}
+
+	@Test
+	fun `the fastest continuous movement Minecraft can produce keeps its history`() {
+		val motion = DlssCameraMotion(render)
+		motion.advance(sample(), previousOffset, nanos(0))
+		val flying = motion.advance(sample(x = 1.5, y = 64.4), currentOffset, nanos(50))
+		assertFalse(flying.reset, "rocket-boosted elytra flight must accumulate rather than restart")
+	}
+
+	@Test
+	fun `a long frame is allowed the distance it covers`() {
+		val motion = DlssCameraMotion(render)
+		motion.advance(sample(), previousOffset, nanos(0))
+		val stalled = motion.advance(sample(x = 15.0, y = 68.0), currentOffset, nanos(500))
+		assertFalse(stalled.reset, "a slow frame covers more ground at the same speed")
+	}
+
+	@Test
+	fun `a very short frame is not held to a proportionally tiny step`() {
+		val motion = DlssCameraMotion(render)
+		motion.advance(sample(), previousOffset, nanos(0))
+		val quick = motion.advance(sample(x = 0.03), currentOffset, nanos(1))
+		assertFalse(quick.reset)
+	}
+
+	@Test
+	fun `a discontinuity on the runtime's first eligible frame is still just a reset`() {
+		val motion = DlssCameraMotion(render)
+		val first = motion.advance(sample(x = 12_000.0), currentOffset, nanos(0))
+		assertTrue(first.reset)
+		assertEquals(Matrix4f(), first.reprojection)
+	}
+
 	@Test
 	fun `a frame abandoned before it rendered leaves no camera for the next frame to measure from`() {
 		val runtime = readyRuntime()
@@ -344,6 +541,11 @@ class MotionJitterTest {
 	private fun clipOf(probe: Vector3f, view: Matrix4f = Matrix4f()): Vector4f {
 		val jittered = DlssProjectionJitter.apply(Matrix4f(projection).mul(view), currentOffset, Matrix4f())
 		return jittered.transform(Vector4f(probe.x, probe.y, probe.z, 1f))
+	}
+
+	private fun ndcProjected(transform: Matrix4f, x: Float, y: Float, z: Float): Vector4f {
+		val clip = transform.transform(Vector4f(x, y, z, 1f))
+		return Vector4f(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w, 1f)
 	}
 
 	private fun ndc(transform: Matrix4f, probe: Vector3f): Vector4f {

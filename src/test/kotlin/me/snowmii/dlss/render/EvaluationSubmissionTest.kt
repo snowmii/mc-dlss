@@ -1,9 +1,9 @@
 package me.snowmii.dlss.render
 
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.LifecycleAdapter
-import me.snowmii.dlss.session.SRMode
+import me.snowmii.dlss.DlssSession
+import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.streamline.LifecycleAdapter
+import me.snowmii.dlss.SRMode
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
@@ -18,7 +18,9 @@ import me.snowmii.streamline.VulkanContext
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -177,5 +179,155 @@ class EvaluationSubmissionTest {
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int = unreachable()
 
 		private fun unreachable(): Nothing = throw AssertionError("native must not be reached")
+	}
+
+	@Test
+	fun `camera motion keeps caller data and stamps configured render dimensions`() {
+		val native = WritingNative()
+		val adapter = LifecycleAdapter(
+			DlssSession(
+				DlssStartupConfig(
+					enabled = true,
+					qualityMode = SRMode.QUALITY,
+					outputDimensions = Dimensions(2560, 1440),
+					sdkPath = Path.of("sdk"),
+					nativeLibraryPath = null,
+					dataPath = Path.of("data"),
+					warnings = emptyList(),
+				),
+			),
+			native,
+		)
+		assertTrue(adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) != null)
+		val request = MotionRequest(77L, ImageBinding(11L, 12L, 13), FloatArray(16) { it.toFloat() }, Dimensions(1, 1))
+
+		assertTrue(adapter.writeMotion(request))
+		assertEquals(
+			MotionRequest(77L, ImageBinding(11L, 12L, 13), FloatArray(16) { it.toFloat() }, Dimensions(1280, 720)),
+			native.lastMotion,
+		)
+	}
+
+	@Test
+	fun `evaluation barriers keep mod barriers on caller buffer across frames`(@TempDir dataPath: Path) {
+		val native = BarrierNative()
+		val session = DlssSession(
+			DlssStartupConfig(
+				enabled = true,
+				qualityMode = SRMode.QUALITY,
+				outputDimensions = Dimensions(2560, 1440),
+				sdkPath = dataPath,
+				nativeLibraryPath = dataPath,
+				dataPath = dataPath,
+				warnings = emptyList(),
+			),
+		)
+		val adapter = LifecycleAdapter(session, native)
+		assertEquals(Dimensions(1280, 720), adapter.initialize(1L, 2L, 3L, dataPath, dataPath))
+
+		val color = ImageBinding(0x102L, 0x101L, 37)
+		val depth = ImageBinding(0x202L, 0x201L, 126)
+		for (commandBuffer in longArrayOf(11L, 12L)) {
+			assertTrue(adapter.tagSrResources(SrTagRequest(commandBuffer, color, depth)))
+			assertTrue(
+				adapter.evaluate(
+					EvaluationRequest.builder()
+						.commandBuffer(commandBuffer)
+						.color(color)
+						.depth(depth)
+						.frameTimeMilliseconds(16.6f)
+						.resetHistory(true)
+						.build(),
+				),
+			)
+		}
+		assertEquals(listOf(11L, 12L), native.taggedBuffers)
+		assertEquals(listOf(11L, 12L), native.evaluated.map(EvaluationRequest::commandBuffer))
+		assertEquals(listOf(color, color), native.evaluated.map(EvaluationRequest::color))
+		assertEquals(listOf(depth, depth), native.evaluated.map(EvaluationRequest::depth))
+	}
+
+	@Test
+	fun `ready session reuses and rebuilds evaluation images`() {
+		val native = ImageNative()
+		val session = DlssSession(
+			DlssStartupConfig(
+				enabled = true,
+				qualityMode = SRMode.QUALITY,
+				outputDimensions = Dimensions(2560, 1440),
+				sdkPath = Path.of("sdk"),
+				nativeLibraryPath = Path.of("native"),
+				dataPath = Path.of("data"),
+				warnings = emptyList(),
+			),
+		)
+		val adapter = LifecycleAdapter(session, native)
+		assertEquals(Dimensions(1280, 720), adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")))
+
+		val images = adapter.acquireImages()
+		assertNotNull(images)
+		assertEquals(images, adapter.acquireImages())
+		assertEquals(2, native.acquireCalls)
+		assertTrue(adapter.releaseImages())
+		assertTrue(adapter.releaseImages())
+		assertEquals(2, native.releaseCalls)
+		val rebuilt = adapter.acquireImages()
+		assertNotNull(rebuilt)
+		assertNotEquals(images, rebuilt)
+		assertTrue(adapter.releaseImages())
+		assertNull(session.failure)
+	}
+
+	@Test
+	fun `not-ready session does not acquire evaluation images`() {
+		val native = ImageNative()
+		val session = DlssSession(
+			DlssStartupConfig(
+				enabled = true,
+				qualityMode = SRMode.QUALITY,
+				outputDimensions = Dimensions(2560, 1440),
+				sdkPath = Path.of("sdk"),
+				nativeLibraryPath = Path.of("native"),
+				dataPath = Path.of("data"),
+				warnings = emptyList(),
+			),
+		)
+		assertNull(LifecycleAdapter(session, native).acquireImages())
+		assertEquals(0, native.acquireCalls)
+	}
+
+	private class WritingNative : StreamlineSessionTestDouble() {
+		var lastMotion: MotionRequest? = null
+		override fun initialize(vkInstance: Long, vkPhysicalDevice: Long, vkDevice: Long, sdkPath: Path, dataPath: Path) = StreamlineSession.SUCCESS_RESULT
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) = Dimensions(1280, 720)
+		override fun configureSuperResolution(outputWidth: Int, outputHeight: Int, renderWidth: Int, renderHeight: Int, qualityMode: Int, renderPreset: Int) = StreamlineSession.SUCCESS_RESULT
+		override fun writeMotion(request: MotionRequest): Int { lastMotion = request; return StreamlineSession.SUCCESS_RESULT }
+	}
+
+	private inner class BarrierNative : StreamlineSessionTestDouble() {
+		val taggedBuffers = mutableListOf<Long>()
+		val evaluated = mutableListOf<EvaluationRequest>()
+		override fun initialize(vkInstance: Long, vkPhysicalDevice: Long, vkDevice: Long, sdkPath: Path, dataPath: Path) = StreamlineSession.SUCCESS_RESULT
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) = Dimensions(1280, 720)
+		override fun configureSuperResolution(outputWidth: Int, outputHeight: Int, renderWidth: Int, renderHeight: Int, qualityMode: Int, renderPreset: Int) = StreamlineSession.SUCCESS_RESULT
+		override fun tagSrResources(request: SrTagRequest): Int { taggedBuffers += request.commandBuffer; return StreamlineSession.SUCCESS_RESULT }
+		override fun evaluateSuperResolution(request: EvaluationRequest): Int { evaluated += request; return StreamlineSession.SUCCESS_RESULT }
+	}
+
+	private class ImageNative : StreamlineSessionTestDouble() {
+		var acquireCalls = 0
+		var releaseCalls = 0
+		private var images: EvaluationImages? = null
+		override fun initialize(vkInstance: Long, vkPhysicalDevice: Long, vkDevice: Long, sdkPath: Path, dataPath: Path) = StreamlineSession.SUCCESS_RESULT
+		override fun queryOptimalDimensions(outputWidth: Int, outputHeight: Int, qualityMode: Int) = Dimensions(1280, 720)
+		override fun configureSuperResolution(outputWidth: Int, outputHeight: Int, renderWidth: Int, renderHeight: Int, qualityMode: Int, renderPreset: Int) = StreamlineSession.SUCCESS_RESULT
+		override fun acquireImages(): EvaluationImages {
+			acquireCalls++
+			return images ?: EvaluationImages(
+				ImageBinding(100L + acquireCalls, 200L + acquireCalls, 83),
+				ImageBinding(300L + acquireCalls, 400L + acquireCalls, 37),
+			).also { images = it }
+		}
+		override fun releaseImages(): Int { releaseCalls++; images = null; return StreamlineSession.SUCCESS_RESULT }
 	}
 }

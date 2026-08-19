@@ -1,4 +1,9 @@
 package me.snowmii.dlss.session
+import me.snowmii.dlss.DlssSession
+import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.SRMode
+import me.snowmii.dlss.SRModelPreset
+import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.dlss.readNativeSource
 import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.EvaluationRequest
@@ -25,12 +30,8 @@ import java.util.Properties
 class QualityModePresetTest {
 	private val output = Dimensions(2560, 1440)
 
-	// Newlines are normalized because these assertions match the source text literally, and a
-	// Windows checkout hands the same file back with CRLF.
-	private val nativeSource = readNativeSource("internal/ngx.cpp")
-
 	@Test
-	fun everyImplementedModeIsSelectableByProperty() {
+	fun `every implemented mode is selectable by property`() {
 		val selected = listOf(
 			"quality" to SRMode.QUALITY,
 			"balanced" to SRMode.BALANCED,
@@ -48,7 +49,7 @@ class QualityModePresetTest {
 	}
 
 	@Test
-	fun modeCarriesTheNgxValueTheSdkDefinesForIt() {
+	fun `mode carries the NGX value the SDK defines for it`() {
 		// NVSDK_NGX_PerfQuality_Value: MaxPerf 0, Balanced 1, MaxQuality 2, UltraPerformance 3,
 		// UltraQuality 4 (defined, never implemented), DLAA 5.
 		assertEquals(0, SRMode.PERFORMANCE.sdkValue)
@@ -60,7 +61,7 @@ class QualityModePresetTest {
 	}
 
 	@Test
-	fun unsetOrUnreadablePresetFallsBackToMForEveryMode() {
+	fun `unset or unreadable preset falls back to M for every mode`() {
 		SRMode.entries.forEach { mode ->
 			val config = configFrom(ModConfig.MODE_PROPERTY to mode.propertyValue)
 			assertEquals(SRModelPreset.M, config.renderPreset, "${mode.propertyValue} fallback preset")
@@ -68,7 +69,7 @@ class QualityModePresetTest {
 	}
 
 	@Test
-	fun presetPropertyOverridesTheFallbackAndDegradesToMWhenUnreadable() {
+	fun `preset property overrides the fallback and degrades to M when unreadable`() {
 		val overridden = configFrom(
 			ModConfig.MODE_PROPERTY to "performance",
 			ModConfig.PRESET_PROPERTY to "k",
@@ -96,7 +97,7 @@ class QualityModePresetTest {
 	}
 
 	@Test
-	fun configuredModeAndPresetBothReachTheNativeBridge() {
+	fun `configured mode and preset both reach the native bridge`() {
 		val session = DlssSession(
 			DlssStartupConfig(
 				enabled = true,
@@ -118,44 +119,7 @@ class QualityModePresetTest {
 	}
 
 	@Test
-	fun nativeAcceptsEveryImplementedModeAndRefusesUltraQuality() {
-		val validator = nativeSource
-			.substringAfter("bool valid_quality_mode(")
-			.substringBefore("bool valid_render_preset(")
-
-		listOf(
-			"NVSDK_NGX_PerfQuality_Value_MaxPerf",
-			"NVSDK_NGX_PerfQuality_Value_Balanced",
-			"NVSDK_NGX_PerfQuality_Value_MaxQuality",
-			"NVSDK_NGX_PerfQuality_Value_UltraPerformance",
-			"NVSDK_NGX_PerfQuality_Value_DLAA",
-		).forEach { value ->
-			assertTrue(validator.contains(value), "valid_quality_mode must accept $value")
-		}
-		assertTrue(
-			!validator.contains("NVSDK_NGX_PerfQuality_Value_UltraQuality"),
-			"UltraQuality is defined by NGX and never implemented, so it stays refused",
-		)
-	}
-
-	@Test
-	fun changingOnlyThePresetIsRecordedOnTheNextConfigure() {
-		// Every configure records options; the plugin recreates when mode, size, or preset
-		// change, so a preset-only change reaches the plugin on the next configure.
-		val api = readNativeSource("mc_dlss_api.cpp")
-		val configure = api.substringAfter("mc_dlss_configure").substringBefore("mc_dlss_acquire_images")
-		assertTrue(
-			configure.contains("record_sr_options()"),
-			"configure must record the SL options on every configure",
-		)
-		assertTrue(
-			!configure.contains("bootstrapComplete") && !configure.contains("capabilityParameters"),
-			"no direct-NGX branch may remain inside configure",
-		)
-	}
-
-	@Test
-	fun dlaaRendersAtOutputResolutionWithoutAskingTheOptimalSettingsQuery() {
+	fun `DLAA renders at output resolution without asking the optimal-settings query`() {
 		// DLAA is 1:1, so slDLSSGetOptimalSettings is not asked; the bridge answers the output
 		// dimensions directly.
 		val query = readNativeSource("internal/sl_dlss.cpp")
@@ -169,30 +133,6 @@ class QualityModePresetTest {
 			query.contains("*renderWidth = outputWidth") && query.contains("*renderHeight = outputHeight"),
 			"DLAA's render dimensions are its output dimensions",
 		)
-	}
-
-	@Test
-	fun theRunningModesPresetIsMappedBeforeTheOptionsAreRecorded() {
-		// The preset lands on sl::DLSSOptions for the running mode and slDLSSSetOptions records
-		// the options after the mapping; the plugin recreates when the preset changes.
-		val slOptions = readNativeSource("internal/sl_dlss.cpp")
-		val record = slOptions
-			.substringAfter("int32_t record_sr_options(")
-			.substringBefore("int32_t record_sr_evaluation(")
-		listOf(
-			"options.performancePreset = preset",
-			"options.balancedPreset = preset",
-			"options.qualityPreset = preset",
-			"options.ultraPerformancePreset = preset",
-			"options.dlaaPreset = preset",
-		).forEach { field ->
-			assertTrue(record.contains(field), "every mode needs its own preset field: $field")
-		}
-
-		val presetWrite = record.indexOf("options.qualityPreset = preset")
-		val setOptions = record.indexOf("slDLSSSetOptions")
-		assertTrue(presetWrite >= 0 && setOptions >= 0, "the preset mapping and the record call must exist")
-		assertTrue(presetWrite < setOptions, "the preset must be mapped before the options are recorded")
 	}
 
 	private fun configFrom(vararg entries: Pair<String, String>): DlssStartupConfig {

@@ -1,13 +1,13 @@
 package me.snowmii.dlss.render
-import me.snowmii.dlss.session.TestSessionBridge
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
+import me.snowmii.dlss.TestSessionBridge
+import me.snowmii.dlss.DlssSession
+import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.SRMode
 import me.snowmii.streamline.Dimensions
-import me.snowmii.dlss.session.DlssSessionState
-import me.snowmii.dlss.session.DlssFrameRoute
-import me.snowmii.dlss.session.DlssNativeStage
-import me.snowmii.dlss.session.DlssNativeFailure
+import me.snowmii.dlss.DlssSessionState
+import me.snowmii.dlss.DlssFrameRoute
+import me.snowmii.dlss.DlssNativeStage
+import me.snowmii.dlss.DlssNativeFailure
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget

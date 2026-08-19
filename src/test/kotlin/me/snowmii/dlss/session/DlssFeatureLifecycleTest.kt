@@ -8,7 +8,7 @@ class DlssFeatureLifecycleTest {
 	private val api = readNativeSource("mc_dlss_api.cpp")
 
 	@Test
-	fun closeAndResetReleaseOnlyModuleOwnedResources() {
+	fun `close and reset release only module-owned resources`() {
 		// Reset releases the module-owned images and the retained frame token and keeps the
 		// session ready. What invalidation actually drops is proved device-free by
 		// native/test/frame_eligibility_test.cpp; this scan pins that reset routes through it

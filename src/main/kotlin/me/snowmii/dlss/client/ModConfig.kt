@@ -1,8 +1,8 @@
 package me.snowmii.dlss.client
 
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.session.SRModelPreset
+import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.SRMode
+import me.snowmii.dlss.SRModelPreset
 import me.snowmii.streamline.Dimensions
 import net.fabricmc.loader.api.FabricLoader
 import java.io.IOException
@@ -21,7 +21,7 @@ import java.util.Properties
  * The raw property namespace and its parsing live nowhere else. The two domain configs derive
  * from this single parse: [startupConfig] is the DLSS contract the session runs under (assembled
  * here, because it is the mod's front door), while the stress instrument keeps its own
- * `mc.dlss.stress-*` keys here only as raw knobs - the instrument builds [me.snowmii.dlss.pass.StressConfig]
+ * `mc.dlss.stress-*` keys here only as raw knobs - the instrument builds [me.snowmii.dlss.stress.StressConfig]
  * itself from this handle, so a measurement scaffold never leaks into the session contract.
  *
  * File-backed user choices live on [user]. They share this type's mode and preset parsing, and

@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render
 import me.snowmii.streamline.Dimensions
-import me.snowmii.dlss.session.DlssFrameRoute
-import me.snowmii.dlss.session.DlssFrameDecision
+import me.snowmii.dlss.DlssFrameRoute
+import me.snowmii.dlss.DlssFrameDecision
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget

@@ -7,14 +7,14 @@ import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.dlss.session.DlssSession
-import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.session.SRMode
+import me.snowmii.dlss.DlssSession
+import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.SRMode
 import me.snowmii.streamline.Dimensions
-import me.snowmii.dlss.session.DlssSessionState
-import me.snowmii.dlss.session.DlssFrameRoute
-import me.snowmii.dlss.session.DlssNativeStage
-import me.snowmii.dlss.session.LifecycleAdapter
+import me.snowmii.dlss.DlssSessionState
+import me.snowmii.dlss.DlssFrameRoute
+import me.snowmii.dlss.DlssNativeStage
+import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.dlss.readout.SessionReadout
 
 import com.mojang.blaze3d.GpuFormat

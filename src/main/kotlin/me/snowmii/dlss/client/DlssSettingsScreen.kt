@@ -1,7 +1,7 @@
 package me.snowmii.dlss.client
 
-import me.snowmii.dlss.session.SRMode
-import me.snowmii.dlss.session.SRModelPreset
+import me.snowmii.dlss.SRMode
+import me.snowmii.dlss.SRModelPreset
 import net.minecraft.client.gui.components.Button
 import net.minecraft.client.gui.components.StringWidget
 import net.minecraft.client.gui.screens.Screen
