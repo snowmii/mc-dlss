@@ -1,8 +1,10 @@
 # mc-dlss
 
-DLSS for Minecraft Java Edition powered by NVIDIA [Streamline](https://github.com/NVIDIA-RTX/Streamline).
+DLSS for Minecraft Java Edition powered by NVIDIA [Streamline](https://github.com/NVIDIA-RTX/Streamline). 
 
 ![Stress-pass framerate with DLSS off vs on](assets/comparison.png)
+
+Works on Minecraft 26.2 with Fabric loader and vulkan backend.
 
 Made with compatibility in mind. mc-dlss is expected to work with any modification that doesn't
 fully replace minecraft's game renderer (sodium, immediately fast, entity culling, shader loaders 
