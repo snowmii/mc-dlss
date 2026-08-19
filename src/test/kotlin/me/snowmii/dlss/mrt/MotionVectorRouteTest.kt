@@ -38,23 +38,15 @@ import java.nio.file.Path
 import kotlin.io.path.readText
 
 /**
- * The velocity-route gate: the velocity-MRT frame merges the scene's RG16_FLOAT velocity companion
- * into the native motion image through the sentinel fill, and tags only that image, while the
- * camera-only frame preserves the existing compute writer and the native motion image path
- * byte for byte.
+ * Velocity-route gate: the velocity-MRT frame merges the scene's RG16_FLOAT velocity companion
+ * into the native motion image through the sentinel fill, then tags; the camera-only frame
+ * keeps the compute writer and the native motion image path.
  *
- * On VELOCITY_MRT the frame's motion source is the native motion image - the sole Streamline
- * motion source: [FrameEvaluation] records the post-scene fill with the velocity view before
- * the tag, and direct companion tagging is retired, so the tag request is route-independent.
- * This test pins the activation: the route decided by [WorldPhase] is handed into the
- * evaluation with the velocity view, [FrameEvaluation] records the fill on the velocity route
- * and the compute writer on the camera-only route, and the native tag call always selects the
- * module's motion image as the motion-vector buffer.
- *
- * The whole test is pure JVM: the frame path runs against a recording [StreamlineSession] fake and the
- * native behaviour is pinned by source text, exactly like the other route tests. The
- * live Streamline tests stay on the camera-only default, so nothing here changes what they
- * exercise.
+ * On VELOCITY_MRT the frame's motion source is the native motion image. [FrameEvaluation]
+ * records the post-scene fill with the velocity view before the tag. The tag request carries
+ * only engine colour and depth; McDlssTagInfo does not carry the engine's velocity image, so
+ * the tag is route-independent. The native tag call always selects the module's motion image
+ * as the motion-vector buffer.
  */
 class MotionVectorRouteTest {
 	private val mainTarget = fakeMainTarget()
@@ -90,8 +82,6 @@ class MotionVectorRouteTest {
 		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val evaluation = evaluation(calls)
 
-		// The default route and absent velocity are exactly what the live Streamline tests and
-		// the SR evaluation seam exercise today.
 		assertTrue(evaluation.evaluateFrame(scene(), jitter(), motion()))
 		assertEquals(1, calls.writeMotion.size, "the camera-only route must keep the compute writer")
 		assertTrue(calls.fills.isEmpty(), "the camera-only route must record no fill")
@@ -263,9 +253,8 @@ class MotionVectorRouteTest {
 			"the camera-only frame must open the timing chain through the compute writer",
 		)
 
-		// The writer keeps opening the chain and closing the motion stage, and the evaluate and
-		// present marks that complete the slot are unchanged: the repair must not move the
-		// camera-only timing path.
+		// Camera-only timing opens through the compute writer; evaluate and present marks that
+		// complete the slot are unchanged.
 		val api = readNativeSource("mc_dlss_api.cpp")
 		val motion = api.substringAfter("mc_dlss_write_motion(").substringBefore("mc_dlss_evaluate")
 		assertTrue(motion.contains("begin_frame_timing"), "the camera-only writer must keep opening the chain")
@@ -299,11 +288,8 @@ class MotionVectorRouteTest {
 	}
 
 	/**
-	 * A [VkCommandBuffer] instance whose address() answers without any Vulkan device.
-	 *
-	 * [VkCommandBuffer]'s constructor dereferences a live device's capabilities, which the
-	 * pure-JVM route tests do not have; the frame path only reads `address()`, so an instance
-	 * allocated past the constructor is all this fake needs.
+	 * A [VkCommandBuffer] whose `address()` answers without a Vulkan device. The constructor
+	 * dereferences a live device; the frame path only reads `address()`.
 	 */
 	private fun fakeCommandBuffer(): VkCommandBuffer {
 		val unsafeField = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe")
@@ -339,7 +325,6 @@ class MotionVectorRouteTest {
 
 	private fun motion() = DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, true)
 
-	/** Records every per-frame native call so the route gate is assertable off the render thread. */
 	private class RecordingNativeApi(
 		private val renderDimensions: Dimensions,
 	) : StreamlineSessionTestDouble() {
@@ -410,6 +395,4 @@ class MotionVectorRouteTest {
 			return StreamlineSession.SUCCESS_RESULT
 		}
 	}
-
-	/** Render target with a fake view over a fake texture, so the handoff is testable off the render thread. */
 }

@@ -9,16 +9,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Measures how long {@code VulkanGpuSurface.acquireNextTexture} takes, for the pacing probe.
- *
- * Streamline's DLSS-G intercepts {@code vkAcquireNextImageKHR} along with the queue present and
- * runs both asynchronously, holding generated frames back for even spacing. When the swapchain
- * has fewer images than the multiplier needs, the app does not fail - it blocks here, at the top
- * of the next frame, and the interval DLSS-G then divides is the blocked one. That is invisible
- * in a frame-rate number and unmistakable in this span.
- *
- * Purely observational: no marker, no native call, no behaviour. The mixin exists because this
- * call is Minecraft's own and there is no other seam around it.
+ * Observational span around {@code acquireNextTexture}. FG can block here when it holds
+ * swapchain images; that stall is invisible in FPS and visible in this span.
  */
 @Mixin(VulkanGpuSurface.class)
 public class VulkanGpuSurfaceAcquireMixin {

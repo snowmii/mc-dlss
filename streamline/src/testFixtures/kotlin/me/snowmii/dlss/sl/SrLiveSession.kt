@@ -15,30 +15,24 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 
 /**
- * Shared live Streamline SR session: bootstrap, proxy activation, and
- * the initialize surface, against a headless device holding the merged queue layout.
+ * Shared live Streamline SR session: bootstrap, proxy activation, and initialize against a
+ * headless device holding the merged queue layout.
  *
- * The bridge lifetimes mirror production: a query bridge (bootstrap + requirements) closes
- * before the device exists, an activation bridge (bootstrap + proxy activation) closes before
- * initialize, and a separate runtime bridge initializes and runs the scenario. The native
- * module is pinned for the JVM lifetime, so the Streamline bootstrap state and the proxy
- * tuple recorded by the closed bridges survive their closes and are exactly what the runtime
- * bridge's initialize requires - a lookup tied to a bridge's arena would unload the module
- * with the activation bridge and initialize would be refused for a lost proxy tuple.
+ * Bridge lifetimes match production: a query bridge closes before the device exists, an
+ * activation bridge closes before initialize, and a runtime bridge runs the scenario. The
+ * native module is pinned for the JVM lifetime, so bootstrap state and the proxy tuple
+ * survive those closes; an arena-scoped lookup would unload the module and initialize would
+ * refuse a lost proxy tuple.
  *
- * The fixture OUTLIVES the runtime bridge: Native.close runs mc_dlss_close, which destroys
- * the module's images and motion pass and then shuts the Streamline runtime down - all while
- * the Vulkan device is still alive. That ordering is the lifecycle contract: Streamline's
- * plugins keep their worker threads running until slShutdown, and shutting the runtime down
- * before the device dies is what keeps the fork's JVM exit from crashing in sl.common.dll or
- * nvcuda64.dll. The queue requirements come from the query bridge, closed before the device
- * exists, when its close path is a no-op.
+ * The fixture outlives the runtime bridge: `mc_dlss_close` destroys module GPU objects and
+ * shuts Streamline down while the Vulkan device is still alive. Streamline plugins keep
+ * worker threads until slShutdown; shutting the runtime down after the device dies crashes
+ * the fork in sl.common.dll / nvcuda64.dll. Queue requirements come from the query bridge,
+ * whose close is a no-op before a session is ready.
  *
- * Each device-backed scenario stays in one test method (and therefore one test
- * fork): the fork's close-path slShutdown is what makes its exit clean, and a fork that
- * followed an unclean exit comes up with the plugin manager already initialized, which makes
- * slSetVulkanInfo answer eErrorInvalidIntegration. Splitting a scenario across two forks
- * makes the second fork's activation fail on this workstation no matter what it does.
+ * Each device-backed scenario stays in one test method (one fork). An unclean exit leaves
+ * the plugin manager initialized, so the next fork's slSetVulkanInfo answers
+ * eErrorInvalidIntegration.
  */
 object SrLiveSession {
 
@@ -103,9 +97,8 @@ object SrLiveSession {
 
 			// Runtime bridge: bootstrap, then mc_dlss_initialize validates the tuple against
 			// the proxy tuple the closed activation bridge recorded (pinned module) and
-			// records it for the module-owned images and motion pass. The sdk/data paths are
-			// compatibility inputs the retired direct-NGX path used to consume; the temp
-			// directory stands in for them.
+			// records it for the module-owned images and motion pass. sdkPath/dataPath are
+			// unused; only well-formedness is checked.
 			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
 					StreamlineSession.SUCCESS_RESULT,
@@ -128,18 +121,12 @@ object SrLiveSession {
 	}
 
 	/**
-	 * Records the already-activated Vulkan tuple through the existing mc_dlss_initialize so the
-	 * bridge's close path shuts the Streamline runtime down while the fixture's device is still
-	 * alive.
+	 * Records the already-activated Vulkan tuple through mc_dlss_initialize so the bridge's
+	 * close runs slShutdown while the fixture's device is still alive.
 	 *
-	 * The activation-only live forks (options, requirements-merge, proxy-activation) activate
-	 * the proxies but run no session work, so their close was a no-op and the fork exited with
-	 * the runtime up and the device gone - the sl.common.dll / nvcuda64.dll exit-crash family.
-	 * Calling this after the fixture's assertions arms the close path: initialize validates the
-	 * tuple against the recorded proxy tuple and marks the session ready, and the bridge's
-	 * close (inside the fixture's scope) then runs the orderly slShutdown before the device is
-	 * destroyed. The sdk/data paths are the same compatibility inputs every live session
-	 * passes; only well-formedness is checked.
+	 * Activation-only forks never open a session, so close is otherwise a no-op and the
+	 * process exits with the runtime up and the device gone. sdkPath/dataPath are unused;
+	 * only well-formedness is checked.
 	 */
 	fun recordActivatedSession(
 		bridge: Native,
@@ -160,14 +147,12 @@ object SrLiveSession {
 	}
 
 	/**
-	 * Asserts that the validation oracle was running, then that the
-	 * Khronos validation layer reported no errors naming any of the frame's four images (the
-	 * engine's two and the module's two).
+	 * Asserts the Khronos validation layer is running and reported no errors naming the
+	 * frame's four images (engine colour/depth, module motion/output).
 	 *
 	 * Validation is the only oracle for image layouts: a wrong oldLayout is undefined
-	 * behaviour to the driver and silent without it, so a session whose layer could not be
-	 * enabled has no evidence worth asserting on and the check fails rather than silently
-	 * skipping the clean check.
+	 * behaviour to the driver and silent without it. A session whose layer could not be
+	 * enabled has no evidence worth asserting, so the check fails instead of skipping.
 	 */
 	fun assertFrameValidationClean(
 		fixture: HeadlessVulkanFixture,

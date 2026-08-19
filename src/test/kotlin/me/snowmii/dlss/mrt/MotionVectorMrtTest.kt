@@ -62,23 +62,18 @@ import java.util.OptionalDouble
 import java.util.function.Supplier
 
 /**
- * The composed motion-vector suite proves entity, moving-block, and cloud vectors survive
- * the velocity-MRT world path while sentinel pixels receive camera motion.
+ * Entity, moving-block, and cloud vectors go through the velocity-MRT world path; sentinel
+ * pixels receive camera motion from the fill.
  *
- * Each retained object writer is proven through its mod-owned public seam - the entity
- * render-state boundary and [EntityVelocityUniforms.writeFrame] payload, the
- * [MovingBlockVelocityRender] offset-delta reprojection and payload, and the
- * [CloudVelocityRender] drift state machine - and the velocity-route fill is proven through the
- * [FrameEvaluation] VELOCITY_MRT boundary that hands the sentinel-merge its camera motion.
- * One wiring proof then drives all four seams through a single real world phase: the entity
- * and moving-block histories and the cloud clock advance on the same open VELOCITY_MRT phase
- * whose close hands the scene velocity companion and the exact camera motion the vectors were
- * composed against to the frame's evaluation (the fill's sentinel reconstruction input).
+ * Object writers use the entity render-state boundary and [EntityVelocityUniforms.writeFrame],
+ * [MovingBlockVelocityRender] offset-delta reprojection, and [CloudVelocityRender] drift
+ * state. The velocity-route fill goes through [FrameEvaluation] on VELOCITY_MRT. One world
+ * phase drives all four: entity and moving-block histories and the cloud clock advance on
+ * the same open phase whose close hands the scene velocity companion and the camera motion
+ * to evaluation.
  *
- * The test JVM applies no Fabric transformation and owns no live device, so the payload
- * writes are recorded on a fake command encoder and the fill is recorded on a fake native ABI;
- * the live merged-pixel semantics of the fill are covered by its dedicated evidence and are not
- * re-proven here.
+ * The test JVM applies no Fabric transformation and owns no live device, so payload writes
+ * are recorded on a fake command encoder and the fill on a fake native ABI.
  */
 class MotionVectorMrtTest {
 	private val mainTarget = fakeMainTarget()
@@ -227,8 +222,8 @@ class MotionVectorMrtTest {
 			assertTrue(payload.invalid, "the first observation has no predecessor: the sentinel")
 
 			// A continuous clock advance composes the drift-composed reprojection - exactly the
-			// object reprojection of the 1.25-tick drift, surviving on the same open phase the
-			// The velocity-route fill samples at close.
+			// object reprojection of the 1.25-tick drift - on the same open phase whose close
+			// hands the fill its camera motion.
 			payload = CloudVelocityRender.buildCloudVelocityPayload(phase, gameTime = 101L, partialTicks = 0.75f, meshRebuilt = false)
 			assertFalse(payload.invalid, "a continuous clock advance composes the drift")
 			assertMatrixEquals(
@@ -312,7 +307,6 @@ class MotionVectorMrtTest {
 		)
 		assertTrue(resetCalls.fills.single().reset, "a reset frame must carry the reset flag to the fill")
 
-		// The camera-only route keeps the compute writer and never fills.
 		val cameraCalls = RecordingNativeApi(RENDER_DIMENSIONS)
 		val cameraEvaluation = evaluation(cameraCalls)
 		assertTrue(cameraEvaluation.evaluateFrame(scene(), jitter(), motion()))
@@ -397,7 +391,6 @@ class MotionVectorMrtTest {
 		}
 	}
 
-	/** One closed frame's evaluation handoff, as the production wiring drives it. */
 	private data class ClosedFrame(
 		val route: MotionVectorRoute,
 		val velocityView: GpuTextureView?,
@@ -445,7 +438,6 @@ class MotionVectorMrtTest {
 		}
 	}
 
-	/** The recording encoder the payload writes run on: records each std140 block verbatim. */
 	private class PayloadRecordingEncoder(val backend: PayloadBackend) :
 		CommandEncoder(null, PayloadGpuDeviceBackend(), backend) {
 
@@ -558,7 +550,10 @@ class MotionVectorMrtTest {
 		return FrameEvaluation(adapter, { context })
 	}
 
-	/** A [VkCommandBuffer] instance whose address() answers without any Vulkan device. */
+	/**
+	 * A [VkCommandBuffer] whose `address()` answers without a Vulkan device. The constructor
+	 * dereferences a live device; the frame path only reads `address()`.
+	 */
 	private fun fakeCommandBuffer(): VkCommandBuffer {
 		val unsafeField = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe")
 		unsafeField.isAccessible = true
@@ -576,7 +571,6 @@ class MotionVectorMrtTest {
 	private fun motion(reset: Boolean = false) =
 		DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, reset)
 
-	/** Records every per-frame native call so the fill boundary is assertable off the render thread. */
 	private class RecordingNativeApi(
 		private val renderDimensions: Dimensions,
 	) : StreamlineSessionTestDouble() {

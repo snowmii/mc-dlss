@@ -36,17 +36,11 @@ import org.lwjgl.vulkan.VkCommandBuffer
 import java.nio.file.Path
 
 /**
- * Present-lifetime behavior after the MFG latency change: production no longer waits on
- * `DLSSGState::inputsProcessingCompletionFence` at the frame's start, so neither FG-active nor
- * FG-off frames make that wait. The recorded call order checks the wiring.
+ * Frames do not wait on `DLSSGState::inputsProcessingCompletionFence`. This suite pins that
+ * wiring through [StreamlineSessionTestDouble]. The reason lives at
+ * [RenderRuntime.beginWorldPhase].
  *
- * The wait was removed at [RenderRuntime.beginWorldPhase] because it cost 10-11ms of every
- * 13ms FG frame; it is required only under `eBlockNoClientQueues`, and the recorded options
- * are `eBlockPresentingClientQueue`, under which the guide makes it recommended rather than
- * required for a single-queue application. That reasoning lives at the production seam.
- *
- * Native ABI and timeline-semaphore behavior are covered by streamline integration tests; this
- * class covers only mod-owned production wiring through [StreamlineSessionTestDouble].
+ * Native ABI and timeline-semaphore behavior belong to streamline integration tests.
  */
 class FgPresentLifetimeTest {
 
@@ -97,10 +91,9 @@ class FgPresentLifetimeTest {
 	}
 
 	/**
-	 * Builds the production present-lifetime seam over a recording fake: a READY session
-	 * through the real [LifecycleAdapter], the runtime's beginWorldPhase wired to the
-	 * adapter's wait exactly like [RenderRuntime.forMinecraft], and the composed frame
-	 * evaluation over the same adapter.
+	 * Wired like [RenderRuntime.forMinecraft]: a READY session through the real
+	 * [LifecycleAdapter], beginWorldPhase on that adapter, and composed-frame evaluation over
+	 * the same adapter.
 	 */
 	private fun harness(
 		calls: RecordingNativeApi,

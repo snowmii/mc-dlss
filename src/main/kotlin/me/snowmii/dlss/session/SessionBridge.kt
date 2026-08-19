@@ -5,25 +5,11 @@ import me.snowmii.streamline.FgMultiplier
 import me.snowmii.streamline.FgState
 
 /**
- * Every native call [me.snowmii.dlss.render.RenderRuntime] makes on a running session, and
- * nothing else.
+ * Every native call [me.snowmii.dlss.render.RenderRuntime] makes on a running session.
  *
- * The runtime used to take these as seven separate constructor lambdas, each defaulted to a
- * no-op and each wired in `forMinecraft` as `{ adapter.someCall() }` over one
- * [LifecycleAdapter]. That shape described the mocking strategy rather than the collaborator:
- * "which native calls does a frame make, and in what order" had to be reassembled from seven
- * scattered defaults, a test could stub one call and silently take the no-op default for the
- * rest, and adding a native call meant a parameter, a doc comment, a wiring line, and an edit
- * at every construction site.
- *
- * As one interface it is the runtime's whole native conversation in one place, and the compiler
- * can see it. [LifecycleAdapter] is the production implementation; a runtime constructed
- * without a bridge (target-only routing, tests that never reach the native side) passes null,
- * which is the same "does nothing / answers nothing" the old defaults gave.
- *
- * Deliberately *not* here: startup, the surface invalidation, the frame-support classifier, and
- * the diagnostics sink. Those are adapters over Minecraft and its configuration rather than
- * calls on the session, and they stay injected functions so this module keeps no engine import.
+ * [LifecycleAdapter] is the production implementation. Null means no-op (target-only routing,
+ * tests that never reach native). Startup, surface invalidation, frame-support classification,
+ * and diagnostics stay injected so this module keeps no engine import.
  */
 interface SessionBridge {
 	/**

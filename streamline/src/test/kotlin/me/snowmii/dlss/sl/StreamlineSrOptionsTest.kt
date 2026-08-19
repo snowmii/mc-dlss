@@ -16,29 +16,21 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * Verifies DLSS SR options and resource tagging DLSS SR options and resource tagging through the native Streamline bridge.
+ * DLSS SR options and resource tagging through the native Streamline bridge.
  *
- * The optimal render dimensions answer from slDLSSGetOptimalSettings, configure records the
- * ABI's NGX-valued mode/preset on sl::DLSSOptions through slDLSSSetOptions, and the frame's
- * SR resources tag on the caller's live command buffer via slGetNewFrameToken +
- * slSetTagForFrame.
+ * Optimal render dimensions come from slDLSSGetOptimalSettings. Configure records the ABI's
+ * NGX-valued mode/preset on sl::DLSSOptions through slDLSSSetOptions. The frame's SR resources
+ * tag on the caller's live command buffer via slGetNewFrameToken + slSetTagForFrame.
  *
- * The tag call deliberately does not require the module's motion/output images: there is no
- * NGX initialize in the SL path to acquire them before the first frame, so the engine's colour
- * and depth tag from the start and the module images join the tags once acquired for the
- * configured size. The live test therefore tags engine images only, and the buffer must still
- * submit clean.
+ * The tag call does not require the module's motion/output images: engine colour and depth
+ * tag from the start, and module images join once acquired for the configured size. This live
+ * test tags engine images only; the buffer must still submit clean.
  *
- * The whole device-backed scenario runs in ONE test method (and therefore one test fork),
- * and the fixture OUTLIVES the bridge: after the assertions the test records the
- * already-activated tuple through mc_dlss_initialize, so the bridge's close runs the orderly
- * slShutdown while the device is still alive. That close-path shutdown is what makes the
- * fork's exit clean (Streamline's runtime crashes its teardown when a process that called
- * DLSS plugin functions exits, sl.common.dll, the same known exit-crash family as
- * nvcuda64.dll), and a fork that followed such a crash comes up with the plugin manager
- * already initialized, which makes slSetVulkanInfo answer eErrorInvalidIntegration.
- * Splitting the scenario across two forks makes the second fork's activation fail on this
- * workstation no matter what it does.
+ * The whole device-backed scenario runs in one test method (one fork). The fixture outlives
+ * the bridge: after assertions the test records the activated tuple through
+ * mc_dlss_initialize so close runs slShutdown while the device is still alive. An unclean
+ * exit leaves the plugin manager initialized, so the next fork's slSetVulkanInfo answers
+ * eErrorInvalidIntegration.
  */
 @NativeBridge
 class StreamlineSrOptionsTest {
@@ -133,7 +125,7 @@ class StreamlineSrOptionsTest {
 	 * finally records the activated tuple through mc_dlss_initialize so the bridge's close
 	 * shuts the Streamline runtime down.
 	 *
-	 * The fixture OUTLIVES the bridge: Native.close runs mc_dlss_close, which shuts Streamline
+	 * The fixture outlives the bridge: Native.close runs mc_dlss_close, which shuts Streamline
 	 * down, and that must happen while the Vulkan device is still alive. The queue
 	 * requirements come from a throwaway bridge closed before the device exists, when its
 	 * close path is a no-op.
@@ -177,9 +169,7 @@ class StreamlineSrOptionsTest {
 					"activation must succeed against the merged queue layout",
 				)
 				block(bridge, fixture)
-				// Arm the close path: the already-activated tuple is recorded through the
-				// existing initialize, so this bridge's close runs the orderly slShutdown while
-				// the device is still alive instead of leaving the fork to crash at exit.
+				// initialize so close runs slShutdown while the device is still alive.
 				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}

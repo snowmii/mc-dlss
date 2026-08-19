@@ -24,12 +24,9 @@ class FgOptionsContractTest {
 		val session = DlssSession(config(outputDimensions))
 		val adapter = LifecycleAdapter(session, native)
 
-		// Not ready yet: the record must not reach the bridge.
 		assertFalse(adapter.configureFg(3), "a session that is not READY must not record FG options")
 		assertEquals(0, native.configureFgCalls)
 
-		// Ready: initialize arms the session, and the record passes the back-buffer count
-		// through to the bridge.
 		assertTrue(
 			adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) != null,
 			"initialize must bring the session to READY",

@@ -14,19 +14,17 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * FG surface policy: the FG surface policy and the seams that apply it.
- *
  * DLSS-G must run on a swapchain that is recreated on every FG mode transition, presents
  * non-FIFO while FG is active, and has at least the declared back-buffer count. Minecraft owns
  * all of that machinery - the reconfigure happens in `Minecraft.renderFrame` after
  * `invalidateSurfaceConfiguration`, the present mode is chosen from the vsync read, and the
- * swapchain is created by `VulkanGpuSurface.configure` - so what this test proves is the
- * mod-owned policy object those seams delegate to: transitions invalidate exactly once, the
- * reconfigure reads vsync false without touching the stored option, and the minimum image
- * count covers the declared back buffers.
+ * swapchain is created by `VulkanGpuSurface.configure` - so this test pins the mod-owned
+ * policy object those seams delegate to: transitions invalidate exactly once, the reconfigure
+ * reads vsync false without touching the stored option, and the minimum image count covers
+ * the declared back buffers.
  *
- * The mixins that read the policy are thin handlers by design and are not unit tested; what is
- * proven here is the object they delegate to, plus the controls toggle that drives it.
+ * The mixins that read the policy are thin handlers by design and are not unit tested; this
+ * pins the object they delegate to, plus the controls toggle that drives it.
  */
 class FgSwapchainReconfigureTest {
 	@Test

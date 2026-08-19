@@ -15,12 +15,9 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
 /**
- * Keeps the stable extracted entity id on the thread while that entity's CPU pose is submitted.
- *
- * ModelFeatureRenderer stages geometry after all entity submit calls return, so a dispatcher-local
- * HEAD/TAIL flag would not survive to the batching seam. Wrapping the renderer invocation gives
- * the whole submit call a try/finally identity bracket: ModelFeatureRenderer.Submit constructors
- * can copy the id, while flames/shadows and subsequent entities stay outside that association.
+ * Keep extracted entity id on the thread while that entity's CPU pose is submitted.
+ * Wrap the renderer invoke: HEAD/TAIL on the dispatcher would not survive ModelFeatureRenderer
+ * staging after all submits return.
  */
 @Mixin(EntityRenderDispatcher.class)
 public class EntityRenderDispatcherMotionMixin {

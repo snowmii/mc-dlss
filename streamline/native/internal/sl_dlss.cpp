@@ -43,7 +43,18 @@ void refresh_pcl_stats_message() noexcept {
     sl::PCLState state{};
     if (slPCLGetState(state) == sl::Result::eOk) {
         g_pclStatsMessage.store(state.statsWindowMessage, std::memory_order_relaxed);
+        const uint32_t statsMessage = state.statsWindowMessage;
+        if (g_pclWindow != nullptr && statsMessage != 0) {
+            ChangeWindowMessageFilterEx(g_pclWindow, statsMessage, MSGFLT_ALLOW, nullptr);
+        }
     }
+}
+
+void configure_pcl_stats() noexcept {
+    sl::PCLOptions options{};
+    options.virtualKey = sl::PCLHotKey::eUsePingMessage;
+    slPCLSetOptions(options);
+    refresh_pcl_stats_message();
 }
 
 } // namespace
@@ -361,13 +372,15 @@ int32_t record_present_handoff() noexcept {
 
 int32_t present_start() noexcept {
     if (!sl_session_ready()) return kNotInitialized;
-    // An unarmed present - an SR-only or skipped frame, or any present of a session that
-    // never handed off - has no bracket to open: the marker is a no-op success rather than
-    // a refusal, because the present seam fires on every present and a refusal would latch
-    // the session on a frame that simply did not compose. An already-open bracket (a
+    // A present with no retained token - skipped input sample, or a frame whose present_end
+    // already consumed it - has no bracket to open: the marker is a no-op success rather
+    // than a refusal, because the present seam fires on every present and a refusal would
+    // latch the session on a frame that simply did not compose. An already-open bracket (a
     // present that threw between START and END) is the same no-op: its START already
     // reached the plugin, and a second START for the same frame would corrupt the
-    // correlation. The START emits only under a bracket a successful handoff armed.
+    // correlation. The START emits under any retained token, not only an FG-armed handoff:
+    // NVIDIA overlay FPS and latency correlate presents through these markers, so an
+    // SR-only or vanilla-routed frame still has to report the queue present.
     if (!g_state.frameEligibility.presentStartPending()) {
         return kSuccess;
     }
@@ -381,8 +394,11 @@ int32_t present_start() noexcept {
 
 int32_t present_end() noexcept {
     if (!sl_session_ready()) return kNotInitialized;
-    // An unarmed present has no bracket to close: same no-op success as the START.
-    if (!g_state.frameEligibility.presentArmed()) {
+    // A present with neither a token nor a leftover FG-armed bracket has nothing to close:
+    // same no-op success as the START. A token-only SR-only frame still has to emit END and
+    // consume, or the overlay never sees the present and the next frame's input sample would
+    // replace a token whose present markers never closed.
+    if (!g_state.frameEligibility.hasToken() && !g_state.frameEligibility.presentArmed()) {
         return kSuccess;
     }
     // The END marker closes only a bracket a START actually opened: without a successful
@@ -477,12 +493,10 @@ int32_t reflex_input_sample() noexcept {
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
-    // Reflex sleep is mandatory every frame even with low-latency mode off, and frame start
-    // is where the app should sleep: the tag calls used to run the sleep when they obtained
-    // the token, and with the input seam obtaining it first, this is the call that keeps the
-    // sleep in the production path. The tag calls keep their own obtain-and-sleep for
-    // callers that never run an input sample, and never sleep twice on one frame because
-    // they only sleep when they themselves obtain the token.
+    // Reflex sleep is mandatory every frame even with low-latency mode off. Frame start is
+    // the production sleep: this seam obtains the token first. Tag calls keep their own
+    // obtain-and-sleep for callers that never run an input sample, and never sleep twice on
+    // one frame because they only sleep when they themselves obtain the token.
     result = slReflexSleep(*g_state.frameEligibility.token());
     if (result != sl::Result::eOk) {
         g_state.frameEligibility.invalidate();
@@ -490,6 +504,10 @@ int32_t reflex_input_sample() noexcept {
     }
     // PCL sends a private Win32 message periodically. The window procedure records it and
     // this first post-poll seam associates it with the frame that consumes that input.
+    // install_pcl_window can run before PCL is ready, so a still-zero id is retried here.
+    if (g_pclStatsMessage.load(std::memory_order_relaxed) == 0) {
+        refresh_pcl_stats_message();
+    }
     if (!g_pclPingPending.exchange(false, std::memory_order_acq_rel)) return kSuccess;
     result = slPCLSetMarker(sl::PCLMarker::ePCLatencyPing, *g_state.frameEligibility.token());
     if (result != sl::Result::eOk) return static_cast<int32_t>(result);
@@ -552,6 +570,9 @@ int32_t record_reflex_options() noexcept {
     }
     g_state.reflexOptionsRecorded = true;
     g_state.reflexMode = static_cast<uint32_t>(sl::ReflexMode::eLowLatency);
+    // PCL stats (NVIDIA overlay FPS / latency) become queryable once Reflex options exist.
+    // install_pcl_window often runs before READY and would have stored a zero message id.
+    configure_pcl_stats();
     return kSuccess;
 }
 
@@ -960,13 +981,9 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
 
     sl::Result result = slSetConstants(constants, *frameToken, sl::ViewportHandle{kSrViewportId});
     if (result != sl::Result::eOk) {
-        // A failed frame has no history the next one could reuse, so the SR-only frame
-        // consumes its token here. The composed frame keeps it instead: its FG tag
-        // re-declares the shared inputs in the engine-resting layout after the evaluation,
-        // and the present handoff consumes the token when it accepts the frame.
-        if (!g_state.frameEligibility.fgArmed()) {
-            g_state.frameEligibility.releaseToken();
-        }
+        // The token stays until present_end even on a failed constants record: the frame
+        // still presents, and render-submit / PRESENT_START/END have to emit under it. The
+        // next input sample replaces a token whose present never ran.
         // The evaluation never recorded, but the caller's transitions above still moved the
         // motion image into the read state before this call; the image goes back to the
         // engine-resting layout the motion pass and the SR path expect it in, rather than
@@ -1045,15 +1062,11 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // void*. Applying address-of here would pass the address of this local handle variable; SL
     // would forward that stack address to NGX as a VkCommandBuffer and corrupt the process.
     result = slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, 1, commandBuffer);
-    // The SR-only frame consumed its token whether the evaluation succeeded or failed: a
-    // failed frame has no history the next one could reuse, and the next tag must obtain a
-    // fresh token. The composed frame keeps it instead: its FG tag re-declares the shared
-    // depth and motion slots in the engine-resting layout after the evaluation (the
-    // declaration the present path reads), and the present handoff consumes the token when
-    // it accepts the frame.
-    if (!g_state.frameEligibility.fgArmed()) {
-        g_state.frameEligibility.releaseToken();
-    }
+    // The token stays until present_end: render-submit and PRESENT_START/END still have to
+    // emit under the same index the evaluation recorded, and dropping it here is what left
+    // the NVIDIA overlay at 0 FPS / N/A latency on SR-only frames. A failed evaluation keeps
+    // it for the same reason - the frame still presents - and the next input sample replaces
+    // a token whose present never ran.
     // The motion image returns to the engine-resting layout it lives in between frames, on
     // the success path exactly as on the constants-failure path above.
     restore_motion_to_engine_resting_layout(commandBuffer);
@@ -1090,10 +1103,8 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // The engine's colour and depth are the frame's inputs, so they tag from the first frame
     // on. The motion source is always the module's own motion image - filled by the compute
     // writer on the camera-only route and by the sentinel fill on the velocity route - so
-    // direct companion tagging is retired and no engine velocity image crosses the ABI. The
-    // module's output image can only tag once it exists at the configured size - there is no
-    // NGX initialize in the SL path to acquire it early - so it is added when (and only
-    // when) images_match_configuration holds.
+    // no engine velocity image crosses the ABI. The module's output image tags only once it
+    // exists at the configured size, so it is added when images_match_configuration holds.
     const bool moduleImagesReady = images_match_configuration();
     // Four slots when the module's images exist at the configured size (the two engine
     // inputs, the module motion image, the module output image), two otherwise.
@@ -1278,8 +1289,7 @@ int32_t tag_fg_resources(const McDlssFgTagInfo& info) noexcept {
     // copied this frame's upscaled output into it, which is the previous frame's finished image
     // with its whole HUD composited in - a HUD-less tag that is neither this frame's nor
     // HUD-less. Run here, after the output copy, the target holds this frame's world alone.
-    // The blits are recorded once per frame either way; a third call within one frame would
-    // skip them, as the second used to.
+    // The blits are recorded once per frame; a later call within the same frame skips them.
     //
     // The two calls are told apart by the SR side of this frame's record: the SR tag sits
     // between them, so its index matches the retained token only from the post-evaluation call

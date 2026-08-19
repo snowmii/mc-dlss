@@ -161,8 +161,7 @@ class AcceptanceChecklistTest {
 
 	@Test
 	fun `checklist retains the SR checklist`() {
-		// The FG checklist is additional items in the same pass/fail list: the SR coverage this
-		// document already carried must survive the FG addition.
+		// FG items sit in the same pass/fail list as the SR items.
 		assertCovers(
 			"SR retention",
 			listOf("Super Resolution", "internal scene resolution", "visibly upscaled", "native rendering"),

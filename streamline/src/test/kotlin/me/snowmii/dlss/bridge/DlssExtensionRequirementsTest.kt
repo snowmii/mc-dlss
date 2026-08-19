@@ -13,12 +13,11 @@ import org.junit.jupiter.api.Test
 /**
  * Pre-creation Streamline extension requirements through the real compiled DLL and Java 25 FFM.
  *
- * Mirrors the fix the native bridge exposes: query the exact Streamline-required Vulkan
- * instance and device extension names before the application's instance/device are created, so
- * they can be enabled by the bootstrap mixins. Instance query needs no Vulkan objects; device
- * query needs a live instance + physical device (which exist before device creation). The
- * retired direct-NGX discovery fallback no longer answers a query that ran before bootstrap,
- * so the bridge bootstraps Streamline first, exactly as the production seams do.
+ * Queries the exact Streamline-required Vulkan instance and device extension names before the
+ * application's instance/device are created, so the bootstrap mixins can enable them. Instance
+ * query needs no Vulkan objects; device query needs a live instance + physical device. The
+ * bridge bootstraps Streamline first, as the production seams do: a query before bootstrap is
+ * refused.
  */
 @NativeBridge
 class DlssExtensionRequirementsTest {

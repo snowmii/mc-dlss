@@ -3,18 +3,11 @@ package me.snowmii.streamline
 import java.nio.file.Path
 
 /**
- * Base class for a [StreamlineSession] test double: extend it and override only the calls the test
- * exercises.
+ * [StreamlineSession] test double: override only the calls the test exercises.
  *
- * `StreamlineSession` used to carry 27 `default` bodies that threw, for exactly this purpose - so a
- * double could implement three calls and inherit the rest. That shaped the production interface,
- * now the public surface of a Fabric library mod, around its test doubles: an external
- * implementer got no compiler diagnostic for the 27 calls they missed, only a runtime throw. The
- * interface is all-abstract, and the accommodation lives here on the test side, where it belongs.
- *
- * Every call this class answers throws `UnsupportedOperationException` naming it, exactly as the
- * deleted defaults did, so a double that forgets a call it depends on fails the way it always did
- * rather than passing on a silent no-op.
+ * The production interface is all-abstract. Unoverridden calls throw
+ * `UnsupportedOperationException` naming the call, so a forgotten stub fails instead of
+ * silently no-oping.
  */
 open class StreamlineSessionTestDouble : StreamlineSession {
 	override fun close() = Unit
@@ -56,8 +49,7 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 
 	override fun waitDeviceIdle(): Int = notStubbed("waitDeviceIdle")
 
-	// Nullable because the ABI itself is: Native.frameTimings answers null for "no measurement
-	// yet", which is not a failure the session latches.
+	// Native.frameTimings answers null for "no measurement yet"; that is not a latched failure.
 	override fun frameTimings(): FrameTimings? = notStubbed("frameTimings")
 
 	override fun writeMotion(request: MotionRequest): Int = notStubbed("writeMotion")

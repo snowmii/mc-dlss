@@ -17,9 +17,7 @@ import java.util.Objects;
  * the engine's two.
  */
 public record EvaluationImages(
-	/** The native motion image, at render size. */
 	ImageBinding motion,
-	/** The native output image, at output size. */
 	ImageBinding output
 ) {
 	public EvaluationImages {

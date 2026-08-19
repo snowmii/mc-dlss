@@ -14,22 +14,18 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Proves the stress pass writes the velocity MRT: while
- * an open VELOCITY_MRT world phase offers its RG16_FLOAT velocity view, the stress pass binds a
- * two-target twin of its own pipeline and writes jitter-free NDC camera motion derived from the
- * published reprojection and the reversed-Z depth; on vanilla or camera-only frames it keeps the
- * one-target pipeline and never throws.
+ * While an open VELOCITY_MRT world phase offers its RG16_FLOAT velocity view, the stress
+ * pass binds a two-target twin of its own pipeline and writes jitter-free NDC camera motion
+ * derived from the published reprojection and the reversed-Z depth; on vanilla or camera-only
+ * frames it keeps the one-target pipeline.
  *
- * The pipeline- and shader-level claims are descriptor and source proofs, exactly like the rest
- * of the MRT suite, plus one compiled proof: the stress fragment shader is compiled through the
- * same LWJGL Shaderc + spirv-cross path `GlslCompiler` and `IntermediaryShaderModule` use, and
- * the reflected output order is pinned to fragColor-then-velocityColor - the order Minecraft's
- * location rewrite turns into color attachments 0 and 1. The two-target twin and the
- * two-attachment render pass must agree on count and format, because that is the one check
- * `RenderPass.setPipeline` performs on first bind. The sentinel choice is pinned here as shader
- * source; the camera-motion math behind it - the still-camera invariant and the per-pixel
- * collapse of invalid reprojections - is proved against the real `DlssCameraMotion` by the
- * motion-vector suite.
+ * The stress fragment shader is compiled through the same LWJGL Shaderc + spirv-cross path
+ * `GlslCompiler` and `IntermediaryShaderModule` use, and the reflected output order is pinned
+ * to fragColor-then-velocityColor - the order Minecraft's location rewrite turns into color
+ * attachments 0 and 1. The two-target twin and the two-attachment render pass must agree on
+ * count and format, because that is the one check `RenderPass.setPipeline` performs on first
+ * bind. The sentinel choice is pinned here as shader source; the still-camera invariant and
+ * the per-pixel collapse of invalid reprojections live on `DlssCameraMotion`.
  */
 class StressPassVelocityTest {
 
@@ -48,7 +44,6 @@ class StressPassVelocityTest {
 		assertEquals(GpuFormat.RGBA8_UNORM, pipeline.colorTargetStates[0]!!.format())
 		assertSame(pipeline, StressPass.pipelineForVelocityRoute(null), "the one-target pipeline is never rebuilt or mutated")
 
-		// The exact one-attachment shape the pass binds on the vanilla route.
 		val descriptor = RenderPassDescriptor.create { "DLSS stress" }
 			.withColorAttachment(FakeView(FakeTexture(GpuFormat.RGBA8_UNORM)))
 		assertEquals(1, descriptor.colorAttachments().size)
@@ -58,7 +53,7 @@ class StressPassVelocityTest {
 	/**
 	 * A velocity context selects a two-target twin at a distinct mc-dlss location that preserves
 	 * the source shaders and target zero, adds exactly the unblended RG16_FLOAT velocity target
-	 * at index 1, and is cached per source pipeline exactly like the terrain twins.
+	 * at index 1, and is cached per source pipeline.
 	 */
 	@Test
 	fun `the velocity route binds a two-target twin with the unblended RG16 velocity target`() {
@@ -133,14 +128,12 @@ class StressPassVelocityTest {
 	}
 
 	/**
-	 * The compiled seam, exercising the true mechanism: the shader is compiled through the same
-	 * LWJGL Shaderc + spirv-cross path `GlslCompiler.createIntermediary` and
-	 * `IntermediaryShaderModule.createFromSpirv` use, the stage-output reflection list must come
-	 * back fragColor-first (that list's index is what the location rewrite writes), and applying
-	 * the rewrite must leave fragColor on Location 0 (the scene attachment) and velocityColor on
-	 * Location 1 (the velocity attachment). The terrain shader cannot be compiled here - it needs
-	 * Minecraft's import/resource preprocessor - so it stays a source-order control in the
-	 * deterministic test above.
+	 * The compiled seam: the shader is compiled through the same LWJGL Shaderc + spirv-cross
+	 * path `GlslCompiler.createIntermediary` and `IntermediaryShaderModule.createFromSpirv`
+	 * use. The stage-output reflection list must come back fragColor-first (that list's index
+	 * is what the location rewrite writes), and applying the rewrite must leave fragColor on
+	 * Location 0 (the scene attachment) and velocityColor on Location 1 (the velocity
+	 * attachment).
 	 */
 	@Test
 	fun `the stress shader reflects outputs in fragColor-then-velocityColor order through Minecraft's compile path`() {

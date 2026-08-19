@@ -10,8 +10,6 @@ package me.snowmii.streamline;
  * advanced the frame instead would record a strictly later index under its slot.
  */
 public record TaggedFrameIndexes(
-	/** The frame index the last {@code mc_dlss_tag_sr_resources} call tagged under. */
 	int lastSrTagFrameIndex,
-	/** The frame index the last {@code mc_dlss_tag_fg_resources} call tagged under. */
 	int lastFgTagFrameIndex
 ) {}

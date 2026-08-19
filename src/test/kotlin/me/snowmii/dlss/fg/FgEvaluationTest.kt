@@ -29,11 +29,9 @@ class FgEvaluationTest {
 		val session = DlssSession(config(outputDimensions))
 		val adapter = LifecycleAdapter(session, native)
 
-		// Not ready yet: the handoff must not reach the bridge.
 		assertFalse(adapter.presentHandoff(), "a session that is not READY must not hand off")
 		assertEquals(0, native.presentHandoffCalls)
 
-		// Ready: initialize arms the session, and the handoff crosses to the bridge.
 		assertTrue(
 			adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data")) != null,
 			"initialize must bring the session to READY",

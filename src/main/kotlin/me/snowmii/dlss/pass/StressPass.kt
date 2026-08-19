@@ -1,5 +1,5 @@
 package me.snowmii.dlss.pass
-import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.client.ModConfig
 import me.snowmii.dlss.mrt.VelocityContext
 import me.snowmii.dlss.mrt.velocityTwin
 import me.snowmii.dlss.render.DlssCameraSample

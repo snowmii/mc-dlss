@@ -26,15 +26,11 @@ import java.util.Objects;
  * for the same reason as in {@link EvaluationRequest}.
  */
 public record FillVelocityRequest(
-	/** The caller's shared Vulkan command buffer the fill is recorded on. */
 	long commandBuffer,
-	/** The engine's render-sized depth image. */
 	ImageBinding depth,
-	/** The engine's sparse RG16_FLOAT velocity companion. */
+	/** Sparse RG16_FLOAT companion: object vectors plus the invalid sentinel. */
 	ImageBinding velocity,
-	/** 16 column-major reprojection floats, the same step the camera-only writer uses. */
 	float[] reprojection,
-	/** A frame with no valid predecessor writes the invalid sentinel everywhere. */
 	boolean reset,
 	/** Stamped by the session adapter; see the class comment. */
 	Dimensions renderDimensions
@@ -46,9 +42,7 @@ public record FillVelocityRequest(
 	}
 
 	/**
-	 * Compares the reprojection payload, not the array identity the generated {@code equals}
-	 * would compare - the Kotlin data class this record replaces did the same, or two
-	 * requests holding the same step in different arrays would answer unequal.
+	 * Compares the reprojection payload, not array identity.
 	 */
 	@Override
 	public boolean equals(Object other) {
@@ -74,19 +68,11 @@ public record FillVelocityRequest(
 		return result;
 	}
 
-	/**
-	 * Kotlin's all-defaults construction: zero command buffer, zeroed bindings, fresh 16
-	 * reprojection floats, no reset, null dimensions.
-	 */
 	public FillVelocityRequest() {
 		this(0L, new ImageBinding(0L, 0L, 0), new ImageBinding(0L, 0L, 0), new float[16], false, null);
 	}
 
-	/**
-	 * Kotlin's trailing-default form: dimensions and reset left null/false for the adapter
-	 * to stamp. Each construction still gets a fresh reprojection array, as the Kotlin
-	 * default did.
-	 */
+	/** Dimensions left null for the adapter to stamp. Fresh reprojection array each call. */
 	public FillVelocityRequest(long commandBuffer, ImageBinding depth, ImageBinding velocity, float[] reprojection, boolean reset) {
 		this(commandBuffer, depth, velocity, reprojection, reset, null);
 	}

@@ -10,12 +10,9 @@ class DlssFeatureLifecycleTest {
 	@Test
 	fun closeAndResetReleaseOnlyModuleOwnedResources() {
 		// Reset releases the module-owned images and the retained frame token and keeps the
-		// session ready; it owns no NGX object to release. The shutdown_state teardown order
-		// itself is pinned by SrOnStreamlineTest, which owns the SL retirement.
-		//
-		// What invalidation actually drops is proved device-free by
-		// native/test/frame_eligibility_test.cpp; this scan only pins that reset routes through
-		// it rather than releasing images and leaving the frame's records standing.
+		// session ready. What invalidation actually drops is proved device-free by
+		// native/test/frame_eligibility_test.cpp; this scan pins that reset routes through it
+		// rather than releasing images and leaving the frame's records standing.
 		val reset = api.substringAfter("mc_dlss_reset").substringBefore("mc_dlss_close")
 		assertTrue(reset.contains("release_images()"))
 		assertTrue(reset.contains("g_state.frameEligibility.invalidate()"))

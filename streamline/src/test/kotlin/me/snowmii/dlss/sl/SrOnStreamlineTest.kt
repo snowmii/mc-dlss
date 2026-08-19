@@ -21,26 +21,25 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * Canonical live Streamline SR path: DLSS Super Resolution runs entirely on the signed Streamline 2.12.0
- * stack, and the direct-NGX implementation is retired with no fallback.
+ * Canonical live Streamline SR path: DLSS Super Resolution runs on the signed Streamline 2.12.0
+ * stack, with no direct-NGX fallback.
  *
  * The live frame drives the whole SL path on a headless device: bootstrap, proxy activation,
- * initialize, optimal-dimension query, configure, module-image acquisition, and then per frame
- * the engine's colour and depth tag (slGetNewFrameToken + slSetTagForFrame) and the evaluation
- * (slSetConstants + slEvaluateFeature) on ONE allocated command buffer that must submit clean
- * under the Khronos validation layer - for two consecutive frames, the second one building on
+ * initialize, optimal-dimension query, configure, module-image acquisition, then per frame
+ * engine colour/depth tag (slGetNewFrameToken + slSetTagForFrame) and evaluation
+ * (slSetConstants + slEvaluateFeature) on one allocated command buffer that must submit
+ * clean under the Khronos validation layer — two consecutive frames, the second building on
  * the first frame's history.
  *
- * The source assertions close the retirement: no NVSDK_NGX_VULKAN init/query/create/evaluate/
- * release/shutdown call exists anywhere in the native code, no capability-parameter surface
- * remains, buildNativeDlss does not link nvsdk_ngx_s.lib, and mc_dlss_initialize only
- * validates and records the Vulkan tuple the mod already activated through slSetVulkanInfo.
+ * Source assertions pin the native surface: no NVSDK_NGX_VULKAN init/query/create/evaluate/
+ * release/shutdown call, no capability-parameter surface, buildNativeDlss does not link
+ * nvsdk_ngx_s.lib, and mc_dlss_initialize only validates and records the Vulkan tuple already
+ * activated through slSetVulkanInfo.
  *
- * Methods are ordered because the fork is one process and the live session's close shuts the
- * Streamline runtime down (slShutdown, while the fixture device is still alive - the fix that
- * keeps the fork's JVM exit from crashing in sl.common.dll / nvcuda64.dll). On SL 2.12.0 a
+ * Methods are ordered because the fork is one process and the live session's close shuts
+ * Streamline down (slShutdown, while the fixture device is still alive). On SL 2.12.0 a
  * bootstrap after that shutdown re-runs slInit but cannot serve the DLSS feature again in the
- * same process (slGetFeatureRequirements answers eErrorFeatureMissing), so the bootstrap-
+ * same process (slGetFeatureRequirements answers eErrorFeatureMissing), so bootstrap-
  * dependent methods must run before the live session, and nothing bootstraps after it.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
@@ -186,8 +185,8 @@ class SrOnStreamlineTest {
 	@Order(2)
 	@Test
 	fun `native code contains no direct NGX runtime calls and the build links no NGX library`() {
-		// Every native translation unit and header, walked rather than enumerated so a new
-		// unit cannot silently reintroduce the retired path.
+		// Walk every native translation unit and header so a new file cannot reintroduce the
+		// direct-NGX runtime surface.
 		val nativeFiles = Files.walk(Path.of("native"))
 			.filter { Files.isRegularFile(it) }
 			.filter { it.toString().endsWith(".cpp") || it.toString().endsWith(".h") }

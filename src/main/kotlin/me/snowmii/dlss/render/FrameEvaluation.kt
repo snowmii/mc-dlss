@@ -24,14 +24,8 @@ import kotlin.math.abs
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
- * The engine-owned half of one evaluation: the colour and depth the world phase just rendered.
- *
- * Handles are raw `VkImage` and `VkImageView` values and the formats are raw `VkFormat` values,
- * in the same units the flat native ABI takes them. The motion and output images are the bridge's
- * own and never appear here, which is the whole reason only these two cross.
- *
- * Every image Minecraft's Vulkan backend creates is a single-level, single-layer 2D image, so the
- * subresource ranges are not carried: they are always mip 0, layer 0, one of each.
+ * Engine colour and depth from the world phase. Motion and output are the bridge's own and
+ * never appear here.
  */
 data class SceneResources(
 	val color: ImageBinding,
@@ -39,13 +33,8 @@ data class SceneResources(
 )
 
 /**
- * One frame's DLSS-G inputs, in the flat ABI units [SceneResources] already uses.
- *
- * [hudless] is the output-sized HUD-less colour and [ui] the output-sized UI colour+alpha
- * target the frame's FG tags name; the render-sized depth and the motion source come from the
- * scene and the bridge's own images, so only these two cross. Resolved per frame by the
- * runtime's supplier, which names the production main target and UI target - and only when
- * FG is active and both exist at the output size; a null resolution records an SR-only frame.
+ * One frame's DLSS-G inputs. Depth and motion come from the scene and the bridge, so only
+ * these two cross. Null resolution records SR-only.
  */
 data class FgFrameInputs(
 	val hudless: ImageBinding,
@@ -85,50 +74,32 @@ internal fun dlssFrustum(projection: Matrix4f): FloatArray {
 }
 
 /**
- * Records one frame's DLSS work onto Minecraft's own graphics submission.
+ * Records one frame's DLSS work onto Minecraft's graphics submission. The only place in the
+ * mod that touches a command buffer.
  *
- * Everything beneath this class existed and nothing called it: the native bridge could allocate
- * its images, fill the motion image, and evaluate DLSS, and the renderer could route the world
- * into a low-resolution target with coherent jitter and motion - with no path between the two.
- * This is that path, and it is deliberately the only place in the mod that touches a command
- * buffer.
+ * Ordering is the contract. All calls go on **one** buffer: motion, then resource tags, then
+ * evaluation. Evaluation reads the image the motion pass writes (the pass ends with the
+ * barrier) and consumes the Streamline frame token the tag obtained. An FG-active frame wraps
+ * that chain on the same buffer and token — FG options and FG tag before the SR tag, SR
+ * evaluation, FG re-tag, present handoff. Inactive: SR only. Buffer comes from Minecraft's
+ * shared encoder and goes straight back; nothing here submits, fences, or idles.
  *
- * The ordering is the contract. All calls go on **one** buffer, motion first, then the frame's
- * resource tags, then the evaluation: the evaluation reads the image the motion pass
- * writes (the pass ends with the barrier that makes those writes visible) and consumes the
- * Streamline frame token the tag call obtained. An FG-active frame composes its DLSS-G
- * record around that chain on the same buffer and token - FG options and FG tag before the
- * SR tag, the SR evaluation, the FG re-tag, and one present handoff - while an inactive
- * frame records SR only and makes no FG calls. The buffer comes from Minecraft's shared
- * command encoder and goes straight back to it, so the work lands behind the world render it
- * consumes and in front of whatever the frame does next. Nothing here submits a queue, signals
- * a fence, or idles the device: the encoder's existing timeline is what orders all of it.
- *
- * A failed stage still hands the buffer back. The native side records its layout restorations
- * whether or not NGX succeeded, so a buffer dropped on the floor is the one outcome that would
- * leave Minecraft an image in a layout its next pass does not expect.
+ * A failed stage still hands the buffer back. Native restores layouts whether evaluation
+ * succeeded or not; dropping the buffer would leave Minecraft an image in a layout its next
+ * pass does not expect.
  */
 class FrameEvaluation(
 	private val adapter: LifecycleAdapter,
 	private val context: () -> VulkanContext?,
-	/**
-	 * The session readout the first-evaluation line is fed to, or null when the evaluation has
-	 * no reporting seam - tests and target-only runtimes.
-	 */
 	private val readout: SessionReadout? = null,
 	/**
-	 * The FG-mode policy this runtime's swapchain seams read and the controls toggle: an
-	 * active policy makes the frame's recording compose DLSS-G around the SR evaluation, and
-	 * an inactive one keeps the recording SR-only with no FG calls at all.
+	 * Active policy wraps SR with DLSS-G; inactive keeps the recording SR-only.
 	 */
 	private val frameGeneration: FgSurfacePolicy = FgSurfacePolicy(),
 	/**
-	 * The frame's DLSS-G inputs, resolved per frame at recording time, or null to record an
-	 * SR-only frame. Production resolves the main target and the UI phase's held target at
-	 * the output size; a frame whose UI target does not exist yet - the first frame, or a
-	 * resize frame whose held target is stale-sized - resolves null and stays SR-only, which
-	 * is safe because a tag naming an image the frame is about to destroy is worse than one
-	 * frame without FG.
+	 * Null records SR-only. Production resolves main + UI at output size; a missing or
+	 * stale-sized UI target stays SR-only — tagging an image the frame is about to destroy
+	 * is worse than one frame without FG.
 	 */
 	private val fgInputs: () -> FgFrameInputs? = { null },
 ) : AutoCloseable {
@@ -138,12 +109,6 @@ class FrameEvaluation(
 	fun presentStart(): Boolean = adapter.presentStart()
 	fun presentEnd(): Boolean = adapter.presentEnd()
 
-	// Reflex/PCL frame markers delegate straight to the adapter like the present bracket: the
-	// input sample at the GLFW poll seam is its own call because it
-	// starts the frame, and the simulation and render-submit markers travel as a value, so
-	// this seam has one method rather than one per marker. The mixin handlers never touch the
-	// adapter directly - they call the world phase, which reaches this object - so the whole
-	// marker surface is verifiable off the render thread through this class.
 	fun reflexInputSample(): Boolean = adapter.reflexInputSample()
 	fun reflexMarker(type: StreamlineSession.ReflexMarkerType): Boolean = adapter.reflexMarker(type)
 
@@ -152,25 +117,11 @@ class FrameEvaluation(
 		get() = nativeEvaluationImages
 
 	/**
-	 * Records and submits this frame's motion pass and DLSS evaluation.
+	 * Records motion then evaluation. True only when both recorded; false latches the failure.
 	 *
-	 * Returns true only when both stages recorded successfully. False means the frame produced no
-	 * DLSS output and the session has latched whatever failure caused it.
-	 *
-	 * [route] is the session's world-motion route and [velocity] the scene velocity companion
-	 * binding behind it. On [MotionVectorRoute.VELOCITY_MRT] the frame's motion source is that
-	 * companion: the post-scene compute fill samples it and the scene depth, merges the
-	 * complete field into the native motion image - object vectors copied, camera motion
-	 * reconstructed for sentinels - and that image is tagged as the motion source, so a frame
-	 * without a companion is skipped rather than evaluated against no motion at all. On
-	 * [MotionVectorRoute.CAMERA_ONLY] the existing compute writer and native motion image path
-	 * stay exactly as they were, and any carried velocity is ignored.
-	 *
-	 * [camera] is the frame's camera as the world projection seam sampled it, threaded into
-	 * the evaluation's `slSetConstants` so the DLSS-G plugin interpolates the generated
-	 * frame's camera from the real one. A null camera records a zero-filled camera; production
-	 * always carries one (a frame whose camera was never observed publishes no motion, so
-	 * evaluation is skipped before it is reached).
+	 * [camera] threads into `slSetConstants` for DLSS-G. Null records a zero-filled camera;
+	 * production always carries one (unobserved camera publishes no motion, so evaluation is
+	 * skipped first).
 	 */
 	fun evaluateFrame(
 		scene: SceneResources,
@@ -189,7 +140,8 @@ class FrameEvaluation(
 		// policy is active AND the runtime resolved this frame's FG inputs. An inactive frame or
 		// one without both output-sized targets records SR-only: no FG options, no FG tags, no
 		// handoff. Resolved here rather than inside [record] because the record's two halves
-		// straddle the output copy - see [openFgRecord] and [closeFgRecord].
+		// straddle the output copy — see [recordFrameGenerationStart] and
+		// [recordFrameGenerationEnd].
 		val fg = if (frameGeneration.effective) fgInputs() else null
 		val handle = buffer.address()
 		// The motion stage opens the recording, ahead of the FG record: it fills the module's
@@ -256,10 +208,8 @@ class FrameEvaluation(
 	): Boolean {
 		val handle = buffer.address()
 
-		// The frame's SR resources tag between the motion stage and the evaluation, on the same
-		// buffer: the tag call obtains the Streamline frame token the evaluation consumes, and
-		// the DLSS plugin reads the tagged resources at evaluate time. The motion source is
-		// always the native motion image - direct companion tagging is retired - so the tag
+		// Tag between motion and evaluation on the same buffer: obtains the Streamline frame
+		// token the evaluation consumes. Motion is always the native motion image, so the tag
 		// request is route-independent.
 		val tagged = adapter.tagSrResources(
 			SrTagRequest(
@@ -294,12 +244,11 @@ class FrameEvaluation(
 	/**
 	 * Records the frame's motion stage, the route's choice, and reports whether it took.
 	 *
-	 * On VELOCITY_MRT the post-scene fill merges the scene velocity companion into the native
-	 * motion image - the sole Streamline motion source - while the compute camera-motion writer
-	 * stays retired from this path; on CAMERA_ONLY the compute writer stays exactly as before. A
-	 * VELOCITY_MRT frame that reached here without a velocity companion has no motion source at
-	 * all and is refused: evaluating with no motion vectors is worse than one frame of the
-	 * low-resolution present.
+	 * VELOCITY_MRT: post-scene fill merges the scene velocity companion into the native motion
+	 * image (the sole Streamline motion source) and does not run the compute camera-motion
+	 * writer. CAMERA_ONLY: compute writer as usual. A VELOCITY_MRT frame without a velocity
+	 * companion has no motion source and is refused: evaluating with no motion vectors is
+	 * worse than one frame of the low-resolution present.
 	 */
 	private fun recordMotion(
 		handle: Long,
@@ -373,22 +322,11 @@ class FrameEvaluation(
 	 * also where `tag_fg_resources` records the frame's orientation blits, which is why it sits
 	 * after `present` rather than before it.
 	 *
-	 * Those blits are the frame's DLSS-G snapshot, not a reference the plugin resolves later:
-	 * the depth, HUD-less colour, and UI are copied into module-owned images and the plugin
-	 * reads the copies at present. So the blit's *timing* decides what DLSS-G interpolates. It
-	 * used to run on the opening tag, before `present` copied the SR output into the main
-	 * target - so the HUD-less blit captured the main target as it stood at frame start, which
-	 * is the *previous* frame's finished image with its whole HUD composited in. DLSS-G was
-	 * handed a HUD-less colour that was both a frame stale and not HUD-less, so it read the HUD
-	 * as world content, interpolated it, and then recomposited the clean UI over the result.
-	 * The crosshair is where that showed first: high contrast, screen-locked, over the
-	 * fastest-moving background, and doubled on every generated frame.
-	 *
-	 * After the output copy the main target holds this frame's world and nothing else - the
-	 * screen effects, the 3D crosshair, and the GUI all draw later - so the blit captures
-	 * genuine HUD-less colour. `mc_dlss_present_output` returns the main target to the
-	 * engine-resting GENERAL layout the blit reads it in, so the copy and the blit compose in
-	 * one recording.
+	 * Those blits are DLSS-G's snapshot: depth, HUD-less colour, and UI copied into
+	 * module-owned images the plugin reads at present. Timing decides what interpolates.
+	 * After the output copy the main target holds this frame's world only (HUD draws later),
+	 * so the blit is genuinely HUD-less. `mc_dlss_present_output` returns the main target to
+	 * GENERAL, the layout the blit reads.
 	 *
 	 * The handoff is then the frame's terminal act, consuming the retained token exactly once so
 	 * the next frame's tags advance it.
@@ -396,7 +334,6 @@ class FrameEvaluation(
 	private fun recordFrameGenerationEnd(handle: Long, scene: SceneResources, fg: FgFrameInputs?): Boolean =
 		fg == null || (tagFg(handle, scene, fg) && adapter.presentHandoff())
 
-	/** The frame's four FG tags: shared depth, HUD-less colour, and the UI colour+alpha pair. */
 	private fun tagFg(handle: Long, scene: SceneResources, fg: FgFrameInputs): Boolean =
 		adapter.tagFgResources(
 			FgTagRequest(

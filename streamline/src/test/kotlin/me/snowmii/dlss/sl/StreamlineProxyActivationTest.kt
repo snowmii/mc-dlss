@@ -20,18 +20,16 @@ import org.lwjgl.vulkan.VkPhysicalDevice
 import org.lwjgl.vulkan.VkQueueFamilyProperties
 
 /**
- * Verifies Streamline's manual-hook Vulkan integration Streamline's manual-hook Vulkan integration activates against a live device.
+ * Streamline's manual-hook Vulkan integration activates against a live device.
  *
- * Two halves: (1) the real native activation - mc_dlss_activate_vulkan_proxies hands the
- * live instance / physical device / device / graphics queue layout of a real headless Vulkan
- * context to slSetVulkanInfo through the real bridge, and repeats success on the same layout;
- * (2) the redirect seam - org.lwjgl.vulkan.libname is pointed at the staged sl.interposer.dll,
- * which is how Minecraft's Vulkan loading routes through SL's proxies.
+ * Two halves: (1) native activation - mc_dlss_activate_vulkan_proxies hands the live instance
+ * / physical device / device / graphics queue layout of a headless Vulkan context to
+ * slSetVulkanInfo and repeats success on the same layout; (2) the redirect seam -
+ * org.lwjgl.vulkan.libname is pointed at the staged sl.interposer.dll, which is how
+ * Minecraft's Vulkan loading routes through SL's proxies.
  *
- * The test arms the bridge's close path before the fixture dies: after the activation
- * assertions it records the already-activated tuple through mc_dlss_initialize, so the close
- * runs the orderly slShutdown while the device is still alive - the fix that keeps the fork's
- * JVM exit from crashing in sl.common.dll / nvcuda64.dll.
+ * After the activation assertions the test records the activated tuple through
+ * mc_dlss_initialize so close runs slShutdown while the device is still alive.
  */
 @NativeBridge
 class StreamlineProxyActivationTest {
@@ -75,11 +73,8 @@ class StreamlineProxyActivationTest {
 				// Idempotent: the same seven values must not re-call slSetVulkanInfo.
 				assertEquals(StreamlineSession.SUCCESS_RESULT, layout(), "repeated activation must succeed")
 
-				// Arm the close path: the already-activated tuple is recorded through the
-				// existing initialize, so this bridge's close runs the orderly slShutdown
-				// while the device is still alive instead of leaving the fork to crash at
-				// exit. The bridge closes inside the fixture's scope, so the device survives
-				// the shutdown.
+				// Record the activated tuple so close runs slShutdown while the device is
+				// still alive. The bridge closes inside the fixture's scope.
 				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}

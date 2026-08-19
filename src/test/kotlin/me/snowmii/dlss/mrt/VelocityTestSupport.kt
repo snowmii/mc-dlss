@@ -32,9 +32,9 @@ import org.lwjgl.util.spvc.SpvcReflectedResource
  * builders every writer drives its seams through, and the Shaderc + spirv-cross path Minecraft
  * itself compiles fragment shaders with.
  *
- * The test JVM applies no Fabric transformation and owns no live device, so a writer suite proves
- * what is reachable without one: descriptors against the mapped 26.2 classes, seams driven at the
- * same entry points the mixin calls, and shaders compiled through the real toolchain.
+ * The test JVM applies no Fabric transformation and owns no live device, so a writer suite
+ * reaches descriptors against the mapped 26.2 classes, seams at the same entry points the
+ * mixin calls, and shaders compiled through the real toolchain.
  */
 
 internal val repositoryRoot: Path = Path.of("").toAbsolutePath()
@@ -111,7 +111,6 @@ internal fun renderFrame(phase: WorldPhase, target: RenderTarget) {
 	phase.end()
 }
 
-/** The DLSS motion-vector payload target: unblended RG16_FLOAT with every channel writable. */
 internal fun assertVelocityTarget(target: ColorTargetState) {
 	assertTrue(target.blendFunction().isEmpty, "the velocity payload is never blended")
 	assertEquals(GpuFormat.RG16_FLOAT, target.format())

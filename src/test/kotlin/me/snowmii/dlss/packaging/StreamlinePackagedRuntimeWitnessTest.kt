@@ -43,7 +43,6 @@ class StreamlinePackagedRuntimeWitnessTest {
 			val nativeLibrary = bootstrap.getMethod("nativeLibrary")
 			val streamlinedRuntimeDirectory = bootstrap.getMethod("streamlineRuntimeDirectory")
 
-			// A fresh class has no injected path; reset is belt-and-braces all the same.
 			setNativeLibraryPath.invoke(null, null as Path?)
 			val library = nativeLibrary.invoke(null) as Path
 			val runtime = streamlinedRuntimeDirectory.invoke(null) as Path

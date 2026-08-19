@@ -23,46 +23,9 @@ import java.util.OptionalDouble;
 import java.util.function.Supplier;
 
 /**
- * Adds the scene-sized velocity attachment to the cloud pass, selects the cloud writer twin
- * at the pipeline-boundary seam, and guards the writer pass's close, while the DLSS world
- * phase is open on the velocity-MRT route.
- *
- * {@code CloudRenderer.render} is the one remaining bespoke world pass before the protected
- * hand seam: it creates one pass over the clouds target (or the main target without the
- * transparency chain) with {@code CLOUDS} or {@code FLAT_CLOUDS} and draws the CPU-baked cloud
- * cells through the {@code CloudFaces} texel buffer, the {@code CloudInfo}/
- * {@code DynamicTransforms} uniforms, and one QUADS index draw. The pass is created inline on
- * the shared command encoder, so the pass-creation handler is the seam that carries the
- * attachment, the payload write, and the pass shape together. While the phase offers the scene
- * velocity view, {@link CloudVelocityRender} runs its failure-atomic interception: the
- * preflight (payload computation, payload-buffer allocation, twin construction and device
- * precompile, payload write) happens before the two-attachment pass is constructed, and any
- * failure falls through to the exact vanilla one-attachment creation with the source pipeline
- * binding unchanged. When the preflight succeeded, the pass is created with the RG16_FLOAT
- * attachment at color index 1 and this frame's CloudVelocityConfig payload bound on the same
- * encoder (the cloud-offset drift composed into the camera reprojection, with the exact
- * invalid sentinel on a mesh rebuild, a clock discontinuity, or a frame without a
- * predecessor), and the pipeline bound into the pass is swapped for its cached cloud writer
- * twin - the two-target shape agrees with the pass, and the twin's velocity fragment shader
- * reproduces the source cloud color output byte-identically and writes NDC motion into color
- * target 1. The {@code CloudInfo}/{@code CloudFaces} binds, the fog and depth behavior, and
- * the draw count are all untouched: only the pass shape and the bound pipeline change. The
- * source render's try-with-resources close of the writer's pass runs through the owned close
- * seam, which absorbs a device-level close failure and drops the pass latch.
- *
- * The mesh-rebuild observation lives on the one {@code MappableRingBuffer.rotate} call inside
- * {@code render} - the rebuild block that regenerates the {@code CloudFaces} mesh after a cell
- * change, a camera-plane crossing, a cloud-status change, or a texture reload - and is cleared
- * at the head of every {@code render} call, so a rebuild invalidates exactly the frame it
- * happened on. The cloud clock (the game time and partial tick the render call derives
- * {@code cloudOffset} from) is read by the writer from the same sources
- * {@code LevelRenderer.render} passes down: the level's game time and
- * {@code Minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false)}.
- *
- * Outside the eligible phase or on the latched camera-only route, the velocity view is null
- * and every handler falls through to the exact vanilla calls: the pass keeps one attachment,
- * the source cloud pipeline binds unchanged, and the source close is untouched - so nothing
- * this mixin does can throw, on any route.
+ * Cloud pass: velocity attachment + writer twin while velocity-MRT is open.
+ * Preflight before the two-attachment pass; any failure falls through to vanilla
+ * one-attachment. Mesh-rebuild observation is per-frame (cleared at render HEAD).
  */
 @Mixin(CloudRenderer.class)
 public class CloudRendererMotionMixin {
@@ -70,9 +33,8 @@ public class CloudRendererMotionMixin {
 	private static final ThreadLocal<Boolean> CLOUD_MESH_REBUILT = ThreadLocal.withInitial(() -> false);
 
 	/**
-	 * Clears the mesh-rebuild observation before every render call, so a rebuild left over
-	 * from a frame that drew no clouds (the rebuilt mesh had zero quads) can never invalidate
-	 * a later frame's cloud velocity.
+	 * Clears the mesh-rebuild flag at render HEAD so a rebuild on a zero-quad frame cannot
+	 * invalidate the next one.
 	 */
 	@Inject(method = "render", at = @At("HEAD"))
 	private void mcDlssCloudRenderHead(
@@ -103,14 +65,8 @@ public class CloudRendererMotionMixin {
 	}
 
 	/**
-	 * The pass-creation interception, delegated to the writer's failure-atomic
-	 * {@code createPass}: the writer preflights every fallible operation before the
-	 * two-attachment pass exists and answers the exact vanilla one-attachment pass on any
-	 * failure, so an eligible failure never throws and never leaves the source render with a
-	 * pass the source pipeline cannot bind.
-	 * The writer owns the vanilla fallback, so this handler does not call the operation
-	 * through. Give CloudVelocityRender's three seams an Operation (or a fallback lambda) if
-	 * another mod ever needs to wrap these calls inside CloudRenderer.render.
+	 * Failure-atomic pass: preflight before the two-attachment pass exists. Any failure
+	 * answers vanilla one-attachment. Does not call {@code original} — the writer owns fallback.
 	 */
 	@SuppressWarnings("OptionalUsedAsFieldOrParameterType")
 	@WrapOperation(
@@ -135,15 +91,8 @@ public class CloudRendererMotionMixin {
 	}
 
 	/**
-	 * The pipeline-boundary handler: the source render call binds its {@code CLOUDS} or
-	 * {@code FLAT_CLOUDS} selection exactly once into the cloud pass, and the writer swaps
-	 * that selection for its cached two-target writer twin only when the pass-creation
-	 * handler built the two-attachment shape and the preflight covered the selection. The
-	 * twin keeps every source descriptor field, so the {@code CloudInfo}/{@code CloudFaces}
-	 * uniforms the render call binds next resolve exactly as before; the CloudVelocityConfig
-	 * block was bound by the pass-creation handler into the writer's shared buffer this pass
-	 * reads, so the cloud draw reads this frame's reprojection. Every other pass or pipeline
-	 * binds the source pipeline unchanged.
+	 * Swap CLOUDS/FLAT_CLOUDS for the two-target twin only when pass-creation built that
+	 * shape. Other binds stay source.
 	 */
 	@WrapOperation(
 		method = "render",
@@ -158,10 +107,8 @@ public class CloudRendererMotionMixin {
 	}
 
 	/**
-	 * The owned close seam: the source render's try-with-resources closes the writer's pass
-	 * through the writer's guard, which absorbs a device-level close failure on the latched
-	 * pass and drops the latch. Every other pass (including the vanilla fallback pass) closes
-	 * exactly as the source render closes it.
+	 * Writer's close guard: absorbs a device-level close failure on the latched pass.
+	 * Vanilla fallback pass closes as source.
 	 */
 	@WrapOperation(
 		method = "render",

@@ -81,11 +81,10 @@ int32_t present_end() noexcept;
 // seams, all under the retained Streamline frame token. The input-sample seam obtains the
 // token for the frame (slGetNewFrameToken is called again even when a token is retained,
 // because a retained token at frame start belongs to a previous frame that never reached
-// its present end - the same stale-token edge the tag calls already tolerate) and runs the
-// unconditional slReflexSleep against it, so the sleep that used to live at the tag's
-// token-obtain point stays once per frame at frame start; the tag calls keep their own
-// obtain-and-sleep for the callers that never run an input sample (tests, direct tag
-// sequences), and because they only sleep when they themselves obtain the token, a frame
+// its present end - the same stale-token edge the tag calls already tolerate) and runs
+// unconditional slReflexSleep against it, so sleep is once per frame at frame start. Tag
+// calls keep their own obtain-and-sleep for callers that never run an input sample (tests,
+// direct tag sequences); they only sleep when they themselves obtain the token, so a frame
 // that ran its input sample sleeps exactly once. The input seam emits ePCLatencyPing only
 // after the installed window hook receives PclState::statsWindowMessage, not once per frame.
 // The simulation and render-submit markers travel as a value rather than as an entry point

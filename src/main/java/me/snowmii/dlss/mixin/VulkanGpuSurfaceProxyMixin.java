@@ -22,23 +22,12 @@ import org.spongepowered.asm.mixin.injection.At;
 /**
  * Routes Minecraft's Vulkan present chain through Streamline's interposer wrappers.
  *
- * <p>Streamline is initialized with {@code eUseManualHooking}, so it installs no global
- * interception: the host must call the proxies for the mandatory present-chain entry points
- * itself. Minecraft calls LWJGL's driver-resolved functions, which SL never sees - so DLSS-G's
- * {@code slHookVkCreateSwapchainKHR} never fires, the common plugin's {@code presentCommon()}
- * never runs, SL's frame index never leaves 1, and frame generation reports
- * {@code presented=0 status=0 fence=0} no matter how correct the tagging, constants, options,
- * and markers around it are.
+ * Streamline is initialized with {@code eUseManualHooking}: no global intercept, host must
+ * call the proxies. Minecraft otherwise hits LWJGL's driver-resolved functions; SL never sees
+ * them, {@code presentCommon()} never runs, and FG reports {@code presented=0}.
  *
- * <p>Each call is wrapped rather than the enclosing method overwritten, so Minecraft keeps
- * ownership of the whole swapchain lifecycle and only the dispatch target changes. When the
- * staged runtime is absent the proxies are unavailable and every wrapper calls the original
- * operation, leaving vanilla behaviour exactly intact - which is also what makes these
- * chainable with another mod wrapping the same call sites.
- *
- * <p>Routing is unconditional rather than gated on frame generation: the manual-hooking contract
- * requires {@code presentCommon()} every frame, and the wrappers forward to the driver when no
- * feature is active.
+ * Wrap the call, do not overwrite the method. Routing is unconditional: manual-hooking
+ * requires {@code presentCommon()} every frame; wrappers forward to the driver when idle.
  */
 @Mixin(VulkanGpuSurface.class)
 public class VulkanGpuSurfaceProxyMixin {
@@ -156,19 +145,17 @@ public class VulkanGpuSurfaceProxyMixin {
 		StreamlineVulkanProxies.destroySwapchain(device.address(), swapchain, address(pAllocator));
 	}
 
-	/** Vulkan's null pointer for an absent optional struct, its address otherwise. */
+	/** Vulkan null pointer when the optional is absent. */
 	@Unique
 	private static long address(final Struct<?> struct) {
 		return struct == null ? 0L : struct.address();
 	}
 
-	/** Vulkan's null pointer for an absent optional out-buffer, its address otherwise. */
 	@Unique
 	private static long address(final IntBuffer buffer) {
 		return buffer == null ? 0L : MemoryUtil.memAddress(buffer);
 	}
 
-	/** Vulkan's null pointer for an absent optional out-buffer, its address otherwise. */
 	@Unique
 	private static long address(final LongBuffer buffer) {
 		return buffer == null ? 0L : MemoryUtil.memAddress(buffer);

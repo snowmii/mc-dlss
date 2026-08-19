@@ -18,29 +18,20 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Proves the known-world velocity pipeline surface: every world pipeline the terrain
- * pass can bind forms a two-target velocity twin through [velocityTwin], that twin agrees with
- * the two-attachment render-pass shape, owned pipelines stay on the velocity-MRT route, and
- * the first foreign shader latches camera-only exactly once without throwing and without
- * disabling the eligible DLSS world route or its camera motion.
+ * Known-world velocity pipeline surface: owned world pipelines stay on the velocity-MRT
+ * route, and the first foreign shader latches camera-only exactly once without throwing and
+ * without disabling the eligible DLSS world route or its camera motion.
  *
- * The known-world enumeration is the actual source of truth for what the terrain pass binds:
+ * The known-world enumeration is the source of truth for what the terrain pass can bind:
  * the three [ChunkSectionLayer] pipelines (SOLID, CUTOUT, TRANSLUCENT) plus the WIREFRAME
- * debug override. Every one of them is a descriptor-level proof: [velocityTwin] returns a
- * [RenderPipeline] description and nothing here compiles a pipeline on a device, which is
- * exactly the lazy-compile risk this descriptor test does not discharge — the twin's
- * color-target shape is what a two-attachment pass would compile against on its first
- * `RenderPass.setPipeline`.
- *
- * The terrain camera-motion writers are retired, so the terrain pass itself no longer binds
- * these twins; the twin surface survives for the retained object-motion writers (entity,
- * moving block, cloud) and the stress pass, which is where [velocityTwin] still lives.
+ * debug override. The terrain pass does not bind velocity twins; camera motion belongs to
+ * the fill on VELOCITY_MRT and the compute writer on CAMERA_ONLY. [velocityTwin] remains
+ * for the object-motion writers (entity, moving block, cloud) and the stress pass.
  */
 class MotionVectorPipelineTest {
 	private val mainTarget = fakeMainTarget()
 
 
-	/** The real known world descriptors classify owned: Minecraft shaders stay velocity-MRT eligible. */
 	@Test
 	fun `known world descriptors classify owned and remain velocity-mrt eligible`() {
 		val diagnostics = mutableListOf<String>()
@@ -112,25 +103,18 @@ class MotionVectorPipelineTest {
 			phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = firstFrame)
 			val resolved = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 
-			// The route is still DLSS: the world renders into the low-resolution scene target,
-			// not the vanilla main target, and the session stays READY.
 			assertNotSame(mainTarget, resolved)
 			assertSame(runtime.worldRenderTarget, resolved)
 			assertEquals(DlssFrameRoute.DLSS, runtime.worldTargetRoute?.frame?.route)
 			assertEquals(DlssSessionState.READY, runtime.sessionState)
 
-			// Camera motion is retained on the camera-only route: this frame publishes motion
-			// from the camera sample. The velocity attachment is gone, so terrain passes stay
-			// vanilla.
+			// The velocity attachment is gone, so terrain passes stay vanilla.
 			val firstMotion = checkNotNull(runtime.activeMotion)
 			assertTrue(firstMotion.reset, "the first frame has no predecessor")
 			assertNull(phase.terrainVelocityView)
 
 			phase.end()
 
-			// The next frame keeps advancing the camera-motion chain: a small camera move is a
-			// continuous continuation, not a reset, so the fallback writer still produces
-			// usable per-frame motion for DLSS.
 			advanceClock()
 			phase.prepare(
 				normalInWorldFrame = true,
@@ -149,8 +133,7 @@ class MotionVectorPipelineTest {
 	/**
 	 * The full known-world enumeration: the three terrain pipelines [ChunkSectionLayer] can
 	 * bind, plus the [RenderPipelines.WIREFRAME] debug override the terrain mixin selects in
-	 * wireframe mode. This is the exact set `VulkanChunkSectionsToRenderMixin` classifies and
-	 * twins, so it is the enumeration a twin-construction defect would surface in.
+	 * wireframe mode. This is the set `VulkanChunkSectionsToRenderMixin` classifies.
 	 */
 
 	private fun knownWorldPipelines(): List<RenderPipeline> =

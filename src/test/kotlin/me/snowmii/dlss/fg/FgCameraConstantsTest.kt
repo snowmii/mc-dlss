@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** Matrix payload contract used by mc-dlss camera constants. */
 class FgCameraConstantsTest {
 
 	@Test

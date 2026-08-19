@@ -41,12 +41,8 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private static final Map<Path, SymbolLookup> PINNED_LOOKUPS = new ConcurrentHashMap<>();
 
 	/**
-	 * {@code McDlssImage}: two 8-byte handles and a 4-byte format.
-	 *
-	 * <p>The trailing padding is declared rather than left implicit. The fields are 20 bytes and
-	 * the struct is 24, because its 8-byte alignment rounds the size up; a layout that omitted
-	 * the padding would describe a 20-byte struct and silently misplace every field of any
-	 * enclosing struct that follows one.
+	 * Trailing padding declared: 20 bytes of fields, 24-byte struct (8-byte alignment).
+	 * Omitting it would describe a 20-byte layout and misplace every following field.
 	 */
 	private static final StructLayout IMAGE_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("view"),
@@ -99,11 +95,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	).withName("McDlssMotionInfo");
 
 	/**
-	 * {@code McDlssFillVelocityInfo}: command buffer, depth, velocity companion, reprojection
-	 * pointer, render size, and the reset flag.
-	 *
-	 * <p>76 bytes of fields in 80 bytes of struct: the 8-byte alignment of the pointer rounds
-	 * the size up, and the trailing padding is declared explicitly like the image struct's.
+	 * Trailing padding declared: 76 bytes of fields, 80-byte struct (pointer alignment).
 	 */
 	private static final StructLayout FILL_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
@@ -124,9 +116,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	).withName("McDlssPresentInfo");
 
 	/**
-	 * {@code McDlssTagInfo}: the caller's command buffer followed by two {@code McDlssImage}
-	 * structs, 56 bytes with no padding of its own. The motion source is never carried: the
-	 * native side always tags the module's own motion image.
+	 * Motion is never carried: native always tags the module's own motion image.
 	 */
 	private static final StructLayout TAG_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
@@ -135,10 +125,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	).withName("McDlssTagInfo");
 
 	/**
-	 * {@code McDlssFgTagInfo}: the caller's command buffer followed by three {@code McDlssImage}
-	 * structs - depth, HUD-less colour, UI colour+alpha - 80 bytes with no padding of its own.
-	 * The motion source is never carried: the native side always tags the module's own motion
-	 * image, like the SR tag does.
+	 * Depth, HUD-less colour, UI colour+alpha. Motion is never carried, same as the SR tag.
 	 */
 	private static final StructLayout FG_TAG_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
@@ -171,18 +158,10 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private static final VarHandle EVALUATE_FRAME_TIME = field(EVALUATE_LAYOUT, "frame_time_milliseconds");
 	private static final VarHandle EVALUATE_RESET_HISTORY = field(EVALUATE_LAYOUT, "reset_history");
 
-	/**
-	 * The byte offset of the camera struct inside {@link #EVALUATE_LAYOUT}, for the
-	 * offset-addressed float writes of the camera's six fields.
-	 */
 	private static final long EVALUATE_CAMERA_OFFSET = EVALUATE_LAYOUT.byteOffset(
 		MemoryLayout.PathElement.groupElement("camera")
 	);
 
-	/**
-	 * The byte offset of one float inside a camera field, relative to the camera struct start:
-	 * the field name followed by its index in the field's float sequence.
-	 */
 	private static long cameraFloatOffset(final String field, final long index) {
 		return CAMERA_LAYOUT.byteOffset(
 			MemoryLayout.PathElement.groupElement(field),
@@ -190,12 +169,10 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		);
 	}
 
-	/** The byte offset of a camera field's first float inside {@link #EVALUATE_LAYOUT}. */
 	private static long evaluateCameraFieldOffset(final String field) {
 		return EVALUATE_CAMERA_OFFSET + cameraFloatOffset(field, 0);
 	}
 
-	/** The byte offset of one scalar camera field inside {@link #EVALUATE_LAYOUT}. */
 	private static long evaluateCameraScalarOffset(final String field) {
 		return EVALUATE_CAMERA_OFFSET + CAMERA_LAYOUT.byteOffset(
 			MemoryLayout.PathElement.groupElement(field)
@@ -282,13 +259,8 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private final MethodHandle releaseImages;
 	private final MethodHandle waitDeviceIdle;
 	private final MethodHandle queryFrameTimings;
-	/** Per-frame reprojection staging, owned by {@link #nativeArena} so no call allocates one. */
+	/** Per-frame staging, owned by {@link #nativeArena} so no call allocates a confined arena. */
 	private final MemorySegment reprojectionScratch;
-	/**
-	 * Per-frame request staging, owned by {@link #nativeArena} for the same reason as the
-	 * reprojection: these are written and read once per frame on the render thread, so the
-	 * struct lives in one segment rather than a confined Arena allocated per call.
-	 */
 	private final MemorySegment evaluateScratch;
 	private final MemorySegment motionScratch;
 	private final MemorySegment fillScratch;
@@ -356,17 +328,11 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_query_queue_requirements",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
-		// Optional like tagFgResources: the ABI-probe DLL the layout tests compile stubs the
-		// historical ABI surface and does not export the frame-index oracle yet, while every
-		// real build since this symbol exists carries it.
 		this.queryTaggedFrameIndexes = bindOptional(
 			lookup,
 			"mc_dlss_query_tagged_frame_indexes",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
-		// Optional like queryTaggedFrameIndexes: the ABI-probe DLL does not export the
-		// present-marker oracle either, while every real build since this symbol exists
-		// carries it.
 		this.queryPresentMarkers = bindOptional(
 			lookup,
 			"mc_dlss_query_present_markers",
@@ -379,8 +345,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				JAVA_INT // events_capacity
 			)
 		);
-		// Optional like queryPresentMarkers: the ABI-probe DLL does not export the PCL window
-		// hook or marker entries, while real builds carry them.
 		this.installPclWindow = bindOptional(
 			lookup,
 			"mc_dlss_install_pcl_window",
@@ -399,8 +363,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 				JAVA_INT // events_capacity
 			)
 		);
-		// Optional like queryReflexMarkers: the ABI-probe DLL does not export the reflex
-		// options oracle either, while every real build since this symbol exists carries it.
 		this.queryReflexOptions = bindOptional(
 			lookup,
 			"mc_dlss_query_reflex_options",
@@ -421,31 +383,21 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_configure",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT)
 		);
-		// Optional like bootstrapStreamline: the ABI-probe DLL the layout tests compile stubs
-		// the historical ABI surface and does not export the FG record yet, while every real
-		// build since this symbol exists carries it.
 		this.configureFg = bindOptional(
 			lookup,
 			"mc_dlss_configure_fg",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // num_back_buffers
 		);
-		// Optional like configureFg: the ABI-probe DLL the layout tests compile stubs
-		// the historical ABI surface and does not export the FG mode record yet, while
-		// every real build since this symbol exists carries it.
 		this.setFgMode = bindOptional(
 			lookup,
 			"mc_dlss_set_fg_mode",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // fg_enabled
 		);
-		// Optional like setFgMode: the ABI-probe DLL does not export the multiplier record
-		// either, while every real build since this symbol exists carries it.
 		this.setFgMultiplier = bindOptional(
 			lookup,
 			"mc_dlss_set_fg_multiplier",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // num_frames_to_generate
 		);
-		// Optional like setFgMultiplier: the ABI-probe DLL does not export the multiplier
-		// oracle either, while every real build since this symbol exists carries it.
 		this.queryFgMultiplier = bindOptional(
 			lookup,
 			"mc_dlss_query_fg_multiplier",
@@ -498,17 +450,11 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_tag_sr_resources",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssTagInfo*
 		);
-		// Optional like configureFg: the ABI-probe DLL the layout tests compile stubs the
-		// historical ABI surface and does not export the FG tag yet, while every real build
-		// since this symbol exists carries it.
 		this.tagFgResources = bindOptional(
 			lookup,
 			"mc_dlss_tag_fg_resources",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssFgTagInfo*
 		);
-		// Optional like configureFg: the ABI-probe DLL the layout tests compile stubs the
-		// historical ABI surface and does not export the present-handoff record yet, while
-		// every real build since this symbol exists carries it.
 		this.presentHandoff = bindOptional(
 			lookup,
 			"mc_dlss_present_handoff",
@@ -516,30 +462,21 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		);
 		this.presentStart = bindOptional(lookup, "mc_dlss_present_start", FunctionDescriptor.of(JAVA_INT));
 		this.presentEnd = bindOptional(lookup, "mc_dlss_present_end", FunctionDescriptor.of(JAVA_INT));
-		// Optional like presentHandoff: the ABI-probe DLL the layout tests compile stubs the
-		// historical ABI surface and does not export the input-completion wait yet, while
-		// every real build since this symbol exists carries it.
 		this.waitFgInputsIdle = bindOptional(
 			lookup,
 			"mc_dlss_wait_fg_inputs_idle",
 			FunctionDescriptor.of(JAVA_INT)
 		);
-		// Optional like waitFgInputsIdle: the ABI-probe DLL does not export the Reflex
-		// frame-limit record either, while every real build since this symbol exists carries it.
 		this.recordReflexFrameLimit = bindOptional(
 			lookup,
 			"mc_dlss_record_reflex_frame_limit",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT)
 		);
-		// Optional like waitFgInputsIdle: the ABI-probe DLL does not export the wait oracle
-		// either, while every real build since this symbol exists carries it.
 		this.waitFgInputsValue = bindOptional(
 			lookup,
 			"mc_dlss_wait_fg_inputs_value",
 			FunctionDescriptor.of(JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG)
 		);
-		// Optional like waitFgInputsValue: the ABI-probe DLL does not export the DLSS-G state
-		// read either, while every real build since this symbol exists carries it.
 		this.queryFgState = bindOptional(
 			lookup,
 			"mc_dlss_query_fg_state",
@@ -550,23 +487,16 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_query_motion_probe",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
-		// Optional like queryFgState: the ABI-probe DLL does not export the camera-constants
-		// read either, while every real build since this symbol exists carries it.
 		this.queryCameraConstants = bindOptional(
 			lookup,
 			"mc_dlss_query_camera_constants",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // McDlssCameraConstants*
 		);
-		// Optional like queryCameraConstants: the ABI-probe DLL does not export the FG
-		// camera-constants read either, while every real build since this symbol exists
-		// carries it.
 		this.queryFgCameraConstants = bindOptional(
 			lookup,
 			"mc_dlss_query_fg_camera_constants",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // McDlssCameraConstants*
 		);
-		// Optional like queryFgCameraConstants: the ABI-probe DLL does not export the FG
-		// images read either, while every real build since this symbol exists carries it.
 		this.queryFgImages = bindOptional(
 			lookup,
 			"mc_dlss_query_fg_images",
@@ -704,11 +634,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		return queryFeatureNames(this.queryDeviceFeature13);
 	}
 
-	/**
-	 * Count-then-name walk over one of the native feature-name queries, the same two-call
-	 * pattern as the extension queries: first call with a null name returns the count, then one
-	 * call per index copies that name.
-	 */
+	/** Count-then-name: first call with a null name returns the count. */
 	private List<String> queryFeatureNames(final MethodHandle query) {
 		try (Arena callArena = Arena.ofConfined()) {
 			final MemorySegment count = callArena.allocate(JAVA_INT);
@@ -1020,7 +946,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		}
 	}
 
-	/** Reads one {@code McDlssImage} the bridge filled in. */
 	private static ImageBinding readImage(final MemorySegment image) {
 		return new ImageBinding(
 			(long)IMAGE_VIEW.get(image, 0L),
@@ -1029,7 +954,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		);
 	}
 
-	/** Writes one {@code McDlssImage} nested at {@code path} inside {@code target}. */
 	private static void writeImage(
 		final MemorySegment target,
 		final VarHandle view,
@@ -1421,7 +1345,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		}
 	}
 
-	/** Reads one McDlssCameraConstants segment back into the bridge type. */
 	private static CameraConstants readCameraConstants(final MemorySegment out) {
 		return new CameraConstants(
 			readCameraFloats(out, 0, 16),
@@ -1447,14 +1370,12 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		);
 	}
 
-	/** Copies one camera field's floats into the evaluate struct at [base]. */
 	private static void writeCameraFloats(final MemorySegment segment, final long base, final float[] values) {
 		for (int i = 0; i < values.length; i++) {
 			segment.set(JAVA_FLOAT, base + i * 4L, values[i]);
 		}
 	}
 
-	/** Reads [count] floats starting at [base] out of a camera struct segment. */
 	private static float[] readCameraFloats(final MemorySegment segment, final long base, final int count) {
 		final float[] values = new float[count];
 		for (int i = 0; i < count; i++) {
@@ -1503,6 +1424,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		);
 	}
 
+	/** Null when the loaded DLL does not export {@code symbol}. ABI-probe stubs omit later entries. */
 	private static MethodHandle bindOptional(
 		final SymbolLookup lookup,
 		final String symbol,

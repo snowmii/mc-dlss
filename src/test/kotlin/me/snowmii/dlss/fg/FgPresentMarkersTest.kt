@@ -29,8 +29,8 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
- * Checks mod-owned FG present wiring. Streamline owns marker ABI and marker ordering; this test
- * only proves that one composed mod frame reaches present handoff after its final FG tag.
+ * Streamline owns marker ABI and marker ordering; this test pins that one composed mod frame
+ * reaches present handoff after its final FG tag.
  */
 class FgPresentMarkersTest {
 

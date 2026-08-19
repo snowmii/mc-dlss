@@ -12,12 +12,10 @@
  * knows, which is why it sits above all of them - putting it in the state unit would make
  * state depend on its own dependents.
  *
- * The direct-NGX feature and capability parameters no longer exist to be released. Close and
- * reset release the module-owned Vulkan resources and the retained Streamline frame state;
- * close additionally shuts the process-wide Streamline runtime down - after the module's own
- * resources, while the caller's device is still alive - and reset_state forgets the bootstrap
- * and proxy bookkeeping, so a later bootstrap re-runs slInit and a fresh device can be
- * activated.
+ * Close and reset release module-owned Vulkan resources and retained Streamline frame
+ * state; close also shuts the process-wide Streamline runtime down - after those resources,
+ * while the caller's device is still alive - and reset_state forgets bootstrap/proxy
+ * bookkeeping so a later bootstrap re-runs slInit.
  */
 namespace mc_dlss {
 

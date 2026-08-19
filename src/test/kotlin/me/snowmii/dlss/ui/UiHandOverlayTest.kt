@@ -37,21 +37,13 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * The hand window: while `GameRenderer.renderItemInHand` is bracketed, draw-time
- * `OutputTarget.MAIN_TARGET` resolution answers the transparent full-resolution UI target, and
- * the frame's UI clear happens exactly once across the hand window and the GUI window that
- * follows it.
+ * Hand window: while `GameRenderer.renderItemInHand` is bracketed (HEAD→TAIL), draw-time
+ * `OutputTarget.MAIN_TARGET` answers the transparent full-resolution UI target; screen
+ * effects and the 3D crosshair after in `renderLevel` stay on vanilla main.
  *
- * The hand window is a second window on [UiPhase], opened by the hand mixin's HEAD inject and
- * closed by its TAIL inject - the same getter override the GUI window uses, so
- * `mainRenderTarget()` answers the UI target while hand features draw and the vanilla main
- * target for the screen effects and 3D crosshair that run right after the hand in
- * `GameRenderer.renderLevel`. Hand drawing is gated inside vanilla's method on HUD visibility,
- * camera type, and game mode, so a window whose draw gate closed is just an empty clear.
- *
- * The frame's clear ownership: the hand window always clears (it is the frame's first UI
- * window), the GUI window clears only when no hand window ran first, and the GUI window
- * consumes the handoff so the next frame clears again.
+ * Hand always clears (first UI window); GUI clears only if hand did not, and consumes the
+ * handoff so the next frame clears again. A window whose vanilla draw gate closed is an
+ * empty clear.
  */
 class UiHandOverlayTest {
 	private val outputWidth = 2560
@@ -145,7 +137,6 @@ class UiHandOverlayTest {
 		assertEquals(1, harness.recording.clears.size, "the GUI window reuses the hand window's frame clear")
 	}
 
-	/** The phase under test plus every resource it allocates, releases, or clears. */
 	private class Harness {
 		val allocated = mutableListOf<HeadlessRenderTarget>()
 		val released = mutableListOf<HeadlessRenderTarget>()
@@ -192,7 +183,6 @@ class UiHandOverlayTest {
 		override fun isClosed() = false
 	}
 
-	/** Records every clear the production code drives. */
 	private class Recording {
 		data class Clear(val color: GpuTexture, val colorValue: Vector4fc, val depth: GpuTexture, val depthValue: Double)
 

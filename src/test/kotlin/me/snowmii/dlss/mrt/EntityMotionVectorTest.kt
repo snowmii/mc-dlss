@@ -20,14 +20,14 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Entity-model motion-vector coverage.
+ * Entity-model motion vectors.
  *
- * Descriptor tests exercise every supported core/entity pipeline family. Behavior tests drive the
- * CPU identity/batch state and safe no-identity draw fallback directly; reflection checks bind the
- * mapped 26.2 methods, callback descriptors, and JSON registration. The shader itself is compiled
- * and its output locations verified by `VelocityWriterContractTest`, which owns that proof for
- * every writer. The test JVM does not apply Fabric mixins or own a live Blaze3D RenderPass, so
- * this suite makes no live transformed/GPU draw claim.
+ * Descriptor tests exercise every supported core/entity pipeline family. Behavior tests drive
+ * the CPU identity/batch state and safe no-identity draw fallback directly; reflection checks
+ * bind the mapped 26.2 methods, callback descriptors, and JSON registration. The shader itself
+ * is compiled and its output locations verified by `VelocityWriterContractTest`, which owns
+ * that proof for every writer. The test JVM does not apply Fabric mixins or own a live
+ * Blaze3D RenderPass, so this suite makes no live transformed/GPU draw claim.
  */
 class EntityMotionVectorTest {
 	private val mainTarget = fakeMainTarget()

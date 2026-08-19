@@ -3,10 +3,8 @@
 #include <nvsdk_ngx.h>
 
 /*
- * The retired direct-NGX implementation used to live here: feature discovery, the
- * optimal-settings callback, capability parameters, and feature release. All of it is gone;
- * the unit now holds only the quality-mode and render-preset vocabulary the ABI still speaks
- * in, and the Streamline unit maps those values onto sl:: types.
+ * Quality-mode and render-preset vocabulary the ABI speaks in. Streamline maps these onto
+ * sl:: types.
  */
 namespace mc_dlss {
 

@@ -14,8 +14,8 @@ import org.junit.jupiter.api.Test
  * Every other break in the chain is already visible from outside the camera: a vanilla frame, a
  * frame routed without a camera, an abandoned phase. A teleport, a respawn, or a dimension change
  * is not - every frame stays eligible and carries a camera, and only the camera itself says the
- * scene it describes is a different one. Reprojecting across that jump points NGX at geometry that
- * no longer exists anywhere in the frame, which is exactly what `reset` exists to prevent.
+ * scene it describes is a different one. After reset, the jumped camera is not in the history the
+ * next frame reprojects against.
  *
  * The threshold is a speed, not a distance, because the same displacement means different things
  * in a 4 ms frame and a 400 ms one. Below it every continuous movement Minecraft can produce must

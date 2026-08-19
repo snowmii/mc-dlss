@@ -32,9 +32,6 @@ import java.util.OptionalDouble
  * the fragment shader and adds this block. A missing object predecessor, a reset camera/object
  * history, or a missing active world context sets [INVALID_VELOCITY] through `VelocityParams.x`;
  * the fragment shader classifies every pixel before dividing its previous homogeneous coordinate.
- *
- * The static block-entity camera-motion writer is retired: static block-entity geometry keeps
- * the exact vanilla route and its pixels stay sentinel for the post-scene fill.
  */
 object EntityVelocityUniforms {
 	const val INVALID_VELOCITY = 10000.0f
@@ -129,12 +126,9 @@ object EntityVelocityUniforms {
  * geometry is staged. The draw and ExecuteInfo maps then preserve the one-to-one id through the
  * batching and upload boundary, where a per-draw uniform is finally available.
  *
- * The static block-entity camera-motion writer is retired: block-entity renderers are invoked
- * exactly as vanilla invokes them, with no bracket and no token, so their staged geometry is
- * identity-less and keeps the exact source route - its pixels stay sentinel for the post-scene
- * fill. An identity-less submit (a block entity, or an entity renderer invoked with no id) can
+ * An identity-less submit (a block entity, or an entity renderer invoked with no id) can
  * never inherit an adjacent entity's identity, because every entity bracket removes the
- * context on exit.
+ * context on exit. Block-entity renderers have no bracket and no token.
  */
 object EntityVelocityWriterBindings {
 	private val entityContext = ThreadLocal<Int?>()

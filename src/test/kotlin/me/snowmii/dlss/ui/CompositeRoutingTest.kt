@@ -9,13 +9,11 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Consumer routing — the mod-side source evidence for the invariant that every final-frame
- * consumer reads the vanilla main target and never the transparent UI target.
+ * Every final-frame consumer reads the vanilla main target, never the transparent UI target.
  *
  * The consumers are vanilla 26.2 and run only inside a live client — GLFW window, GPU device,
- * render thread — so none of them can be invoked headlessly, and simulating them (as an earlier
- * revision of this suite did with a fake "consumer read" helper) proves nothing the production
- * code actually runs. The mapped 26.2 sources place the consumers as follows, in frame order:
+ * render thread — so none of them can be invoked headlessly. This is a source-text scan. The
+ * mapped 26.2 sources place the consumers as follows, in frame order:
  *
  *  1. **Dev world icon** - `GameRenderer.render` calls `tryTakeScreenshotIfNeeded` between
  *     `renderLevel` and `guiRenderer.render`, and `takeAutoScreenshot` hands the private
@@ -33,29 +31,17 @@ import org.junit.jupiter.api.Test
  *     reads `minecraft.gameRenderer.mainRenderTarget()`; the press is polled between frames, so
  *     it reads the main target holding the last frame's bake.
  *
- * The mod owns the other half of the invariant, and it is already proven behaviorally: the
- * window lifecycle — the override is null outside every window, `endFrame` closes the window
- * before the composite runs, and the bake lands in the main target — is covered by
- * [UiPhaseTest], [UiHandOverlayTest], and [UiCompositeFrameWiringTest]. Those suites exercise
- * the mod-owned seams the production mixins call; this suite covers the part no headless JVM
- * can reach: that no mixin ever reaches for a consumer.
+ * A mixin on a final-frame consumer (Screenshot, Tracy) or a second `mainRenderTarget` routing
+ * point would change captured outputs — stale HUD-less or pre-composite content, or the empty
+ * transparent UI target — without failing the green suite: on-screen presentation stays
+ * correct, and no headless test can run a consumer mixin.
  *
- * This is a source-text policy ratchet, the sanctioned exception to
- * `docs/agents/testing.md` § "Mixins are not unit tested at all". The invisible bug it names: a
- * mixin redirecting a final-frame capture (Screenshot, Tracy) or adding a second
- * `mainRenderTarget` routing point would silently change what captured outputs contain — stale
- * HUD-less or pre-composite content, or the empty transparent UI target — while the on-screen
- * presentation stays correct. That is invisible to the green suite (no test can run a consumer
- * mixin) and to a clean single-machine run (only captured outputs differ, and nobody
- * screenshots every frame) — exactly the failure this source check protects.
- *
- * A consumer is reachable from either side: by targeting the consumer class itself
- * (`Screenshot`, `TracyFrameCapture`) or by owning the caller seam that feeds it -
- * `KeyboardHandler.keyPress` for the F2 grab is ratcheted here, while the reads inside
- * `Minecraft.renderFrame` (the present blit and the Tracy capture) are covered by the
- * `mainRenderTarget` routing-point ratchet below. The parsing recognizes every `@Mixin`
- * target form and every injector's `method` attribute regardless of formatting or
- * attribute order, so a differently formatted annotation is not a blind spot.
+ * A consumer is reachable by targeting the class (`Screenshot`, `TracyFrameCapture`) or by
+ * owning the caller seam that feeds it. `KeyboardHandler.keyPress` for the F2 grab is
+ * ratcheted here; the present blit and Tracy capture in `Minecraft.renderFrame` are covered
+ * by the `mainRenderTarget` routing-point ratchet. Parsing recognizes every `@Mixin` target
+ * form and every injector `method` attribute regardless of formatting, so a differently
+ * formatted annotation is not a blind spot.
  */
 class CompositeRoutingTest {
 	/** The final-frame capture consumers, by simple class name. */
@@ -147,8 +133,6 @@ class CompositeRoutingTest {
 	/**
 	 * The `(class, method)` caller-seam hits of a file: one entry per injector whose target
 	 * class is a consumer caller seam and whose `method` attribute names that seam's method.
-	 * Sanctioned files still report their reviewed hit, so the expected value below proves both
-	 * that no new owner appeared and that the sanctioned one stayed exactly as reviewed.
 	 */
 	private fun consumerSeamHits(source: String): List<Pair<String, String>> {
 		val targets = mixinTargets(source).toSet()
@@ -176,7 +160,6 @@ class CompositeRoutingTest {
 		}.toList()
 	}
 
-	/** The index of the parenthesis closing the one opened before [from], or null if unbalanced. */
 	private fun closingParen(source: String, from: Int): Int? {
 		var depth = 1
 		var i = from

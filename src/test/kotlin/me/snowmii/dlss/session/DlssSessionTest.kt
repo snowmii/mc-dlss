@@ -104,12 +104,9 @@ class DlssSessionTest {
 	}
 
 	/**
-	 * Every native stage latches the same way, so the stage is the parameter rather than the test:
-	 * the exact stage and result code reach the session, the route falls back to vanilla, and the
-	 * failed stage is never called a second time.
-	 *
-	 * The stage before the failing one still ran (initialize before query, query before configure),
-	 * which is what [FailureCase.calls] counts: exactly one attempt, never a retry.
+	 * Every native stage latches the same way: the exact stage and result code reach the session,
+	 * the route falls back to vanilla, and the failed stage is never called a second time. The
+	 * stage before the failing one still ran (initialize before query, query before configure).
 	 */
 	@ParameterizedTest
 	@MethodSource("failureCases")

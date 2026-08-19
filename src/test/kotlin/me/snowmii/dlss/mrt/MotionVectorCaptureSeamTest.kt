@@ -44,7 +44,6 @@ class MotionVectorCaptureSeamTest {
 
 		renderDlssFrame(phase)
 
-		// The exact doubles the extraction produced, keyed by each entity's own stable id.
 		assertEquals(position(10.0, 64.0, 5.0), runtime.objectMotion.previousPosition(7))
 		assertEquals(position(-3.5, 72.25, 11.125), runtime.objectMotion.previousPosition(9))
 	}
@@ -237,7 +236,4 @@ class MotionVectorCaptureSeamTest {
 	}
 
 	private fun position(x: Double, y: Double, z: Double) = ObjectPosition(x, y, z)
-
-
-	/** Render target with a fake view over a fake texture, so the frame lifecycle is testable off the render thread. */
 }

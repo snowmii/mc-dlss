@@ -16,10 +16,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Makes CPU-baked entity and piston moving-block geometry one draw per object before
- * RenderTypeFeatureRenderer's normal same-render-type consolidation can merge it. A draw-wide
- * object uniform is only correct after this boundary; non-entity, identity-less moving-block
- * (falling block), and ineligible submits keep vanilla consolidation untouched.
+ * One draw per entity/piston moving-block object before same-render-type consolidation.
+ * Falling-block and ineligible submits keep vanilla merge.
  */
 @Mixin(targets = "net.minecraft.client.renderer.feature.RenderTypeFeatureRenderer$Group")
 public class RenderTypeFeatureRendererMotionMixin {

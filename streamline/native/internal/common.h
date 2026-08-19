@@ -73,12 +73,8 @@ bool valid_dimensions(uint32_t outputWidth, uint32_t outputHeight, uint32_t rend
 // options, enforces those formats at its own call site.
 bool valid_image(const McDlssImage& image) noexcept;
 
-// Engine images are single-level, single-layer 2D images - Minecraft's Vulkan backend creates
-// nothing else - and the module's own images are full-range, so every subresource range the
-// evaluation touches is the same constant {0, 1, 0, 1}. The only thing that varies is the
-// aspect, which follows from the image's role: colour, motion, and output are colour images,
-// depth is a depth image. The ABI used to carry all five fields per image and every producer
-// sent these exact values; deriving them here is what keeps the invariant in one place.
+// Engine images are single-level, single-layer 2D; module images are full-range. Every
+// subresource range is {0, 1, 0, 1}. Aspect follows role: colour/motion/output vs depth.
 VkImageSubresourceRange image_range_of(bool isDepth) noexcept;
 
 } // namespace mc_dlss

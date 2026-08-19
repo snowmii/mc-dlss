@@ -45,14 +45,9 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.PointerBuffer
 
 /**
- * The UI split substrate: a transparent full-resolution RGBA8 UI target with depth that
- * allocates at output size and releases on close, and an injectable premultiplied
- * UI-over-hudless composite that writes its destination.
- *
- * Everything is driven off the render thread: the target lifecycle through injected
- * allocate/release pairs, the transparent clear and both composite passes through a recording
- * command encoder whose passes run their real bodies against recording backends, and the
- * premultiplied blend at the pipeline-descriptor seam.
+ * Transparent full-resolution RGBA8 UI target with depth, and a premultiplied UI-over-hudless
+ * composite that writes its destination. Lifetime and both passes are driven off the render
+ * thread.
  */
 class UiTargetCompositeTest {
 	private val outputWidth = 2560
@@ -232,7 +227,6 @@ class UiTargetCompositeTest {
 		override fun close() = Unit
 	}
 
-	/** Records every clear, pass, pipeline, bind, and draw the production code drives. */
 	private class Recording {
 		data class Clear(val color: GpuTexture, val colorValue: Vector4fc, val depth: GpuTexture, val depthValue: Double)
 
@@ -264,7 +258,6 @@ class UiTargetCompositeTest {
 		}
 	}
 
-	/** Records the pass-body calls the composite makes. */
 	private class RecordingPassBackend(private val recording: Recording) : RenderPassBackend {
 		override fun pushDebugGroup(label: Supplier<String>) = Unit
 		override fun popDebugGroup() = Unit

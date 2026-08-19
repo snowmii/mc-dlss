@@ -59,8 +59,7 @@ import org.lwjgl.vulkan.VkSubmitInfo;
  *
  * Mirrors what Minecraft's VulkanDevice exposes to the mod: a live VkInstance, VkDevice,
  * VkQueue, and a command-buffer source (Minecraft's is the shared VulkanCommandEncoder;
- * here it is a self-owned pool). The path and each LWJGL quirk below were proven working
- * on this workstation by the scout probe.
+ * here it is a self-owned pool).
  */
 public final class HeadlessVulkanFixture implements AutoCloseable {
 	private final VkInstance instance;
@@ -81,7 +80,7 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 	}
 
 	/**
-	 * Builds a real headless Vulkan instance and device injecting the supplied NGX-required
+	 * Builds a real headless Vulkan instance and device injecting the supplied Streamline-required
 	 * extensions at creation, mirroring the production bootstrap mixins. Instance extensions are
 	 * known before instance creation; device extensions are queried against the live instance and
 	 * physical device (the same order Minecraft 26.2 uses), supplied by the provider before device
@@ -139,7 +138,7 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				.applicationVersion(1)
 				.pEngineName(stack.UTF8("mc-dlss"))
 				.engineVersion(1)
-				// Minecraft 26.2 asks for Vulkan 1.2 and refuses any device below it, and NGX's
+				// Minecraft 26.2 asks for Vulkan 1.2 and refuses any device below it, and DLSS
 				// internals lean on 1.2 features (buffer device address, storage-image writes
 				// without a format) that a 1.0 device silently cannot serve.
 				.apiVersion(VK12.VK_API_VERSION_1_2);
@@ -262,9 +261,10 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 			}
 
 			// Enable every feature this physical device reports, the way a real client enables the
-			// set its renderer needs: NGX's own shaders and allocations require 1.1/1.2 features
+			// set its renderer needs: DLSS shaders and allocations require 1.1/1.2 features
 			// (buffer device address, storage-image writes without a format) that an extension
-			// name alone does not turn on, and without them NGX records work the driver cannot run.
+			// name alone does not turn on, and without them the plugin records work the driver
+			// cannot run.
 			VkPhysicalDeviceVulkan11Features supported11 = VkPhysicalDeviceVulkan11Features.calloc(stack).sType$Default();
 			VkPhysicalDeviceVulkan12Features supported12 = VkPhysicalDeviceVulkan12Features.calloc(stack).sType$Default();
 			supported11.pNext(supported12.address());

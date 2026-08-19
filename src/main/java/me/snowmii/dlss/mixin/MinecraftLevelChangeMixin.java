@@ -12,19 +12,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Breaks the DLSS history when Minecraft swaps the level out from under the renderer.
- *
- * DLSS accumulates across frames on the assumption that consecutive frames show the same world
- * seen from a camera that moved. A world load, a dimension change, and a disconnect all break that
- * assumption without necessarily moving the camera at all: the coordinates can be identical while
- * every surface in the frame is a different one. {@code DlssCameraMotion} catches the
- * discontinuities that move the camera; this catches the ones that do not.
- *
- * {@code setLevel} covers joining a world and every dimension change, both of which construct a new
- * {@code ClientLevel}; {@code clearClientLevel} covers leaving one. Neither creates the world phase
- * - {@code Minecraft.setLevel} runs on the client thread outside the render loop, and only
- * {@code LevelRenderer.render} is allowed to start the DLSS path - so a session that never rendered
- * a DLSS frame stays untouched.
+ * Reset DLSS history when Minecraft swaps the level. Coordinates can match while every
+ * surface is new (world load, dimension change, disconnect). Camera-motion catch does not
+ * cover that. Never creates the world phase.
  */
 @Mixin(Minecraft.class)
 public class MinecraftLevelChangeMixin {

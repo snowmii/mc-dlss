@@ -23,7 +23,6 @@ import me.snowmii.streamline.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
-import me.snowmii.streamline.Streamline
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.VulkanContext
@@ -36,19 +35,13 @@ import org.lwjgl.vulkan.VkCommandBuffer
 import java.nio.file.Path
 
 /**
- * Production composition: an active FG frame's production recording composes the
- * DLSS-G record around the SR evaluation - FG options and FG tag before the SR tag, the SR
- * evaluation, the FG re-tag, and one present handoff, all on one command buffer under one
- * retained frame token - while an inactive frame, or an active frame without FG inputs,
- * records SR only and makes no FG calls at all.
+ * An active FG frame records the DLSS-G record around the SR evaluation: FG options and FG
+ * tag before the SR tag, the SR evaluation, the FG re-tag, and one present handoff, all on
+ * one command buffer under one retained frame token. An inactive frame, or an active frame
+ * without FG inputs, records SR only and makes no FG calls.
  *
- * Live Streamline coverage proves the native composition. This test proves the production caller
- * records that exact sequence:
- * [FrameEvaluation] is the mod's only command-buffer owner, and until this wiring nothing in
- * production called configureFg, tagFgResources, or presentHandoff - the intercepted Present
- * had no FG-tagged frame to consume. What is asserted here is the recording order and the
- * requests it hands the adapter, on a fake adapter and context, so the whole sequence is
- * verifiable off the render thread.
+ * Live Streamline coverage proves the native composition. This test pins the production
+ * recording order and the requests it hands the adapter, off the render thread.
  */
 class FgFrameCompositionTest {
 
@@ -212,8 +205,6 @@ class FgFrameCompositionTest {
 			"the frame's camera must travel with the evaluation exactly as the production wiring sends it",
 		)
 
-		// The production wiring proof: the camera sample that reached the evaluation is the
-		// one the adapter handed the bridge, converted into the flat ABI constants.
 		val constants = calls.evaluateRequests.single().camera
 		requireNotNull(constants)
 		// JOML names its elements m<column><row>, so the view rotation's column c is
@@ -232,9 +223,9 @@ class FgFrameCompositionTest {
 			constants.fwd.contentEquals(floatArrayOf(-rotation.m02(), -rotation.m12(), -rotation.m22())),
 			"cameraFwd must be the negated view rotation's column 2 (view-space +Z is behind)",
 		)
-		// The yawed rotation discriminates the two readings: the row extraction the fix
-		// replaced would flip the z sign of right and the x sign of fwd - the transpose,
-		// which only coincides with the basis for the identity.
+		// A yawed rotation discriminates columns from rows: extracting rows would flip the z
+		// sign of right and the x sign of fwd - the transpose, which only coincides with the
+		// basis for the identity.
 		assertTrue(
 			contentEqualsTolerant(
 				constants.right,
@@ -253,8 +244,7 @@ class FgFrameCompositionTest {
 		)
 		// The ABI payload carries the engine's own projection, unaltered: no Y flip, no
 		// transpose. FgCameraConstantsCompletenessTest pins the rest of the non-optional
-		// sl::Constants surface - the clip-to-prev-clip pair and the frustum scalars - which is
-		// what was actually missing when generated frames ghosted upside down.
+		// sl::Constants surface - the clip-to-prev-clip pair and the frustum scalars.
 		assertTrue(
 			constants.viewToClip.contentEquals(CameraConstants.rowMajorOf(projection)),
 			"viewToClip must be the sample's unjittered projection in row-major ABI layout",

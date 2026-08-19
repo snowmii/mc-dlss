@@ -1,11 +1,16 @@
-package me.snowmii.dlss.config
+package me.snowmii.dlss.client
 
-import me.snowmii.streamline.Dimensions
+import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
-import me.snowmii.dlss.session.DlssStartupConfig
+import me.snowmii.streamline.Dimensions
+import net.fabricmc.loader.api.FabricLoader
+import java.io.IOException
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.Locale
 import java.util.Properties
 
@@ -18,6 +23,12 @@ import java.util.Properties
  * here, because it is the mod's front door), while the stress instrument keeps its own
  * `mc.dlss.stress-*` keys here only as raw knobs - the instrument builds [me.snowmii.dlss.pass.StressConfig]
  * itself from this handle, so a measurement scaffold never leaks into the session contract.
+ *
+ * File-backed user choices live on [user]. They share this type's mode and preset parsing, and
+ * [fromSystemProperties] fills those two knobs from the file only when the command line left them
+ * unnamed. [UserSettings.enabled] and [UserSettings.frameGeneration] apply after the session is
+ * built, so a settings-screen toggle cannot suppress construction the way `-Dmc.dlss.enabled=false`
+ * can.
  *
  * Parsing is pure: [from] re-reads the properties on every call, so the early Java bootstrap
  * seam can call [fromSystemProperties] before the mod entrypoint exists and agree with the
@@ -82,14 +93,14 @@ class ModConfig(
 
 		private const val DEFAULT_OUTPUT_WIDTH = 2560
 		private const val DEFAULT_OUTPUT_HEIGHT = 1440
-		// Retuned down from 64 when the stress march stopped branching on density: every step now
-		// pays the secondary sun march that used to run on dense samples only, so a step costs
-		// roughly three times what an average one did and the same total load needs about a third
-		// of the count. Re-tune with mc.dlss.stress-steps; the cost is flat in it now, which is
-		// what makes it a usable dial.
+		// Every step pays the secondary sun march, so cost is flat in step count. Re-tune with
+		// mc.dlss.stress-steps.
 		private const val DEFAULT_STRESS_STEPS = 24
 		private const val DEFAULT_STRESS_OCTAVES = 5
 		private const val DEFAULT_STRESS_GODRAY_TAPS = 24
+
+		/** File-backed user settings. JVM properties remain explicit overrides. */
+		val user: UserSettings = UserSettings(configFile())
 
 		/**
 		 * The same parse as [from], callable from Java before the mod entrypoint has run. The
@@ -97,7 +108,7 @@ class ModConfig(
 		 * through a Kotlin object.
 		 */
 		@JvmStatic
-		fun fromSystemProperties(): ModConfig = from(ClientConfig.INSTANCE.withSystemOverrides(System.getProperties()))
+		fun fromSystemProperties(): ModConfig = from(user.withSystemOverrides(System.getProperties()))
 
 		fun from(properties: Properties = System.getProperties()): ModConfig {
 			val warnings = mutableListOf<String>()
@@ -130,17 +141,13 @@ class ModConfig(
 		}
 
 		private fun readMode(properties: Properties, warnings: MutableList<String>): SRMode {
-			return when (val modeValue = properties.getProperty(MODE_PROPERTY)?.trim()?.lowercase(Locale.ROOT)) {
-				null, "" -> SRMode.QUALITY
-				"quality", "max-quality" -> SRMode.QUALITY
-				"balanced" -> SRMode.BALANCED
-				"performance", "max-performance" -> SRMode.PERFORMANCE
-				"ultra-performance", "ultra-perf", "max-performance-ultra" -> SRMode.ULTRA_PERFORMANCE
-				"dlaa" -> SRMode.DLAA
-				else -> {
-					warnings += "$MODE_PROPERTY=$modeValue is invalid; using quality"
-					SRMode.QUALITY
-				}
+			val modeValue = properties.getProperty(MODE_PROPERTY)?.trim()?.lowercase(Locale.ROOT)
+			if (modeValue.isNullOrEmpty()) {
+				return SRMode.QUALITY
+			}
+			return parseMode(modeValue) ?: run {
+				warnings += "$MODE_PROPERTY=$modeValue is invalid; using quality"
+				SRMode.QUALITY
 			}
 		}
 
@@ -156,7 +163,7 @@ class ModConfig(
 			if (value.isNullOrEmpty() || value == "default") {
 				return SRModelPreset.M
 			}
-			return SRModelPreset.fromPropertyValue(value) ?: run {
+			return parsePreset(value) ?: run {
 				warnings += "$PRESET_PROPERTY=$value is invalid; using ${SRModelPreset.M.propertyValue}"
 				SRModelPreset.M
 			}
@@ -208,6 +215,167 @@ class ModConfig(
 				warnings += "$name=$value is invalid; ignoring path"
 				null
 			}
+		}
+
+		private fun configFile(): Path? = try {
+			FabricLoader.getInstance().configDir.resolve("mc-dlss").resolve("config.json")
+		} catch (_: RuntimeException) {
+			// Plain unit tests have no Fabric game directory; persistence is unavailable there.
+			null
+		}
+	}
+}
+
+/**
+ * File-backed user settings. JVM properties remain explicit overrides.
+ *
+ * [enabled] and [frameGeneration] apply after the session is built. [qualityMode] and
+ * [renderPreset] fill in only when those knobs were not named on the command line.
+ */
+class UserSettings internal constructor(private val file: Path?) {
+	private var _enabled = true
+	private var _qualityMode = SRMode.QUALITY
+	private var _renderPreset = SRModelPreset.M
+	private var _frameGeneration = false
+
+	var enabled: Boolean
+		get() = _enabled
+		set(value) {
+			_enabled = value
+			save()
+		}
+
+	var qualityMode: SRMode
+		get() = _qualityMode
+		set(value) {
+			_qualityMode = value
+			save()
+		}
+
+	var renderPreset: SRModelPreset
+		get() = _renderPreset
+		set(value) {
+			_renderPreset = value
+			save()
+		}
+
+	var frameGeneration: Boolean
+		get() = _frameGeneration
+		set(value) {
+			_frameGeneration = value
+			save()
+		}
+
+	init {
+		load()
+	}
+
+	/** Adds file-backed startup mode/preset without replacing launch-time overrides. */
+	fun withSystemOverrides(overrides: Properties): Properties {
+		val merged = Properties()
+		merged.putAll(overrides)
+		merged.putIfAbsent(ModConfig.MODE_PROPERTY, qualityMode.propertyValue)
+		merged.putIfAbsent(ModConfig.PRESET_PROPERTY, renderPreset.propertyValue)
+		return merged
+	}
+
+	private fun load() {
+		if (file == null || !Files.isRegularFile(file)) {
+			return
+		}
+		try {
+			val fields = readUserSettingsJson(Files.readString(file, StandardCharsets.UTF_8))
+			_enabled = jsonBoolean(fields["enabled"]) != false
+			_qualityMode = fields["qualityMode"]?.let(::parseMode) ?: SRMode.QUALITY
+			_renderPreset = fields["renderPreset"]?.let(::parsePreset) ?: SRModelPreset.M
+			_frameGeneration = jsonBoolean(fields["frameGeneration"]) == true
+		} catch (_: IOException) {
+			// Keep safe defaults when an older or manually edited file is invalid.
+		} catch (_: RuntimeException) {
+			// Keep safe defaults when an older or manually edited file is invalid.
+		}
+	}
+
+	private fun save() {
+		if (file == null) {
+			return
+		}
+		val temporary = file.resolveSibling("${file.fileName}.tmp")
+		try {
+			Files.createDirectories(file.parent)
+			Files.writeString(
+				temporary,
+				writeUserSettingsJson(
+					enabled = _enabled,
+					qualityMode = _qualityMode.propertyValue,
+					renderPreset = _renderPreset.propertyValue,
+					frameGeneration = _frameGeneration,
+				),
+				StandardCharsets.UTF_8,
+			)
+			Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING)
+		} catch (_: IOException) {
+			// Values remain effective for this session if persistence fails.
+		} finally {
+			try {
+				Files.deleteIfExists(temporary)
+			} catch (_: IOException) {
+			}
+		}
+	}
+}
+
+private fun parseMode(value: String): SRMode? =
+	when (value.trim().lowercase(Locale.ROOT)) {
+		"quality", "max-quality" -> SRMode.QUALITY
+		"balanced" -> SRMode.BALANCED
+		"performance", "max-performance" -> SRMode.PERFORMANCE
+		"ultra-performance", "ultra-perf", "max-performance-ultra" -> SRMode.ULTRA_PERFORMANCE
+		"dlaa" -> SRMode.DLAA
+		else -> null
+	}
+
+private fun parsePreset(value: String): SRModelPreset? {
+	val trimmed = value.trim().lowercase(Locale.ROOT)
+	if (trimmed.isEmpty() || trimmed == "default") {
+		return SRModelPreset.M
+	}
+	return SRModelPreset.fromPropertyValue(trimmed)
+}
+
+private fun jsonBoolean(value: String?): Boolean? =
+	when (value?.trim()?.lowercase(Locale.ROOT)) {
+		null -> null
+		"true" -> true
+		"false" -> false
+		else -> null
+	}
+
+private val USER_SETTINGS_FIELD = Regex(""""(\w+)"\s*:\s*(true|false|null|"([^"\\]*)")""")
+
+private fun writeUserSettingsJson(
+	enabled: Boolean,
+	qualityMode: String,
+	renderPreset: String,
+	frameGeneration: Boolean,
+): String = buildString {
+	append("{\n")
+	append("  \"enabled\": ").append(enabled).append(",\n")
+	append("  \"qualityMode\": \"").append(qualityMode).append("\",\n")
+	append("  \"renderPreset\": \"").append(renderPreset).append("\",\n")
+	append("  \"frameGeneration\": ").append(frameGeneration).append('\n')
+	append("}\n")
+}
+
+private fun readUserSettingsJson(text: String): Map<String, String?> {
+	val trimmed = text.trim()
+	check(trimmed.startsWith('{') && trimmed.endsWith('}')) { "not a json object" }
+	return USER_SETTINGS_FIELD.findAll(trimmed).associate { match ->
+		val raw = match.groupValues[2]
+		match.groupValues[1] to when {
+			raw == "null" -> null
+			raw.startsWith('"') -> match.groupValues[3]
+			else -> raw
 		}
 	}
 }

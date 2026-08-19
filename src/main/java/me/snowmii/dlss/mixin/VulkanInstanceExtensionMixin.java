@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.Set;
 
-/** Adds NGX requirements after GLFW extensions are collected and before vkCreateInstance. */
+/** Adds Streamline instance extensions after GLFW's, before vkCreateInstance. */
 @Mixin(VulkanInstance.class)
 public class VulkanInstanceExtensionMixin {
 	@Shadow @Final private Set<String> enabledExtensions;

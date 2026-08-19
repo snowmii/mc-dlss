@@ -50,37 +50,28 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.PointerBuffer
 
 /**
- * Cloud velocity-writer proof.
+ * Cloud velocity writer.
  *
- * `CloudRenderer.render` is the last bespoke world pass before the protected hand seam: it
- * creates one pass over the clouds target (or the main target without the transparency chain)
- * with `RenderPipelines.CLOUDS` or `RenderPipelines.FLAT_CLOUDS` and draws the CPU-baked cloud
- * cells through the `CloudFaces` texel buffer, `CloudInfo`/`DynamicTransforms` uniforms, and a
- * QUADS index draw. This test redirects only that pass creation while an open VELOCITY_MRT
- * world phase offers the scene velocity view: the pass gets the scene-sized RG16_FLOAT velocity
- * attachment at color index 1, the pipeline-boundary seam swaps in a cached cloud twin that
- * preserves the source cloud descriptors (translucent blended target zero, no vertex format
- * bindings - the geometry comes from CloudFaces and gl_VertexID - quads, depth, and the flat
- * variant's cull-off state) plus the mc-dlss cloud velocity fragment shader and the
- * CloudVelocityConfig layout, and the writer fills that payload with this frame's cloud-offset
- * drift composed into the camera reprojection - the invalid sentinel on a mesh rebuild, a clock
- * discontinuity, a reset frame, or a frame without a predecessor. Vanilla and CAMERA_ONLY
- * routes keep the exact source pass: the control seam answers false and the redirect falls
- * through to the vanilla one-attachment creation, never throwing.
+ * `CloudRenderer.render` creates one pass over the clouds target (or the main target without
+ * the transparency chain) with `RenderPipelines.CLOUDS` or `RenderPipelines.FLAT_CLOUDS` and
+ * draws the CPU-baked cloud cells through the `CloudFaces` texel buffer,
+ * `CloudInfo`/`DynamicTransforms` uniforms, and a QUADS index draw. While an open VELOCITY_MRT
+ * world phase offers the scene velocity view, the pass gets the scene-sized RG16_FLOAT
+ * velocity attachment at color index 1, the pipeline-boundary seam swaps in a cached cloud
+ * twin that preserves the source cloud descriptors (translucent blended target zero, no
+ * vertex format bindings - the geometry comes from CloudFaces and gl_VertexID - quads, depth,
+ * and the flat variant's cull-off state) plus the mc-dlss cloud velocity fragment shader and
+ * the CloudVelocityConfig layout, and the writer fills that payload with this frame's
+ * cloud-offset drift composed into the camera reprojection - the invalid sentinel on a mesh
+ * rebuild, a clock discontinuity, a reset frame, or a frame without a predecessor. Vanilla
+ * and CAMERA_ONLY routes keep the source pass: the control seam answers false and the
+ * redirect falls through to the vanilla one-attachment creation.
  *
  * The test JVM does not apply Fabric mixins or own a live Blaze3D device, so this suite makes
- * no live transformed/GPU draw claim: descriptors are proven against the mapped 26.2 classes,
- * the control seam and the cloud-clock state machine are driven at the same seams the mixin
- * uses, passthrough is proven by the control seam answering false (vanilla keeps control), and
- * the eligible pass setup is executed end to end on a recording fake command backend with
- * injected failures at every fallible point - the payload-buffer allocation, the payload
- * write, the MRT pass creation, the uniform bind, the twin compile, and the pass close -
- * asserting each degrades to the exact vanilla pass (or is absorbed) without throwing. The
- * cloud shader compiles through the same LWJGL Shaderc + spirv-cross path
- * `GlslCompiler` and `IntermediaryShaderModule` use - it inlines the fog include it needs, so
- * unlike the terrain shader it is self-contained - and the reflected output order is pinned to
- * fragColor-then-velocityColor, the order Minecraft's location rewrite turns into color
- * attachments 0 and 1.
+ * no live transformed/GPU draw claim. Eligible pass setup runs on a recording fake command
+ * backend with injected failures at every fallible point - payload-buffer allocation, payload
+ * write, MRT pass creation, uniform bind, twin compile, and pass close - and each degrades to
+ * the vanilla pass (or is absorbed) without throwing.
  */
 class MotionVectorCloudTest {
 
@@ -340,10 +331,10 @@ class MotionVectorCloudTest {
 	 * interception answers the exact vanilla one-attachment pass - the source pipeline binds
 	 * into it unchanged - without ever throwing out of the writer.
 	 *
-	 * The failure classes are the ones the review named: the payload-buffer allocation, the
-	 * payload write, the MRT pass creation, and the uniform bind. Each is preflighted or
-	 * guarded before the pass is handed to the source render, so a failure can never leave the
-	 * source render with a two-attachment pass its one-target pipeline cannot bind.
+	 * The failure classes: payload-buffer allocation, payload write, MRT pass creation, and
+	 * uniform bind. Each is preflighted or guarded before the pass is handed to the source
+	 * render, so a failure can never leave the source render with a two-attachment pass its
+	 * one-target pipeline cannot bind.
 	 */
 	@Test
 	fun `eligible cloud pass setup preflights allocation write pass-creation and uniform-bind failures to the exact vanilla pass`() {
@@ -643,7 +634,7 @@ class MotionVectorCloudTest {
 		}
 	}
 
-	/** The fake device: the payload buffer, and the precompile that stands in for the twin bind's lazy compile. */
+	/** The fake device: the payload buffer, and the precompile that stands in for lazy compile. */
 	private class CloudDevice(
 		private val backend: CloudFakeBackend,
 		private val encoder: CommandEncoder,

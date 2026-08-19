@@ -32,11 +32,9 @@ import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
 /**
- * Exercises live DLSS controls without restarting the session.
- *
- * The test drives controls, runtime, lifecycle adapter, session, and world phase with a native
- * double. It verifies configuration changes reach every dependent resource, refused changes are
- * atomic, and the readout reports the state actually in use.
+ * Controls, runtime, lifecycle adapter, session, and world phase change configuration without
+ * restarting the session: dependent resources update, refused changes are atomic, and the
+ * readout reports the state actually in use.
  */
 class RuntimeControlsTest {
 	private val output = Dimensions(2560, 1440)
@@ -196,7 +194,7 @@ class RuntimeControlsTest {
 
 	private fun fixture() = Fixture()
 
-	/** The production stack, wired the way `RenderRuntime.forMinecraft` wires it. */
+	/** Wired the way `RenderRuntime.forMinecraft` wires it. */
 	private inner class Fixture {
 		val diagnostics = mutableListOf<String>()
 		val announced = mutableListOf<String>()
@@ -247,7 +245,6 @@ class RuntimeControlsTest {
 			readout = SessionReadout(diagnostics::add),
 		)
 
-		/** One world frame through both seams: the projection upload, then the phase itself. */
 		fun frame(target: RenderTarget = mainTarget): RenderTarget {
 			phase.prepare(true, target, camera())
 			val resolved = phase.begin(true, target)
@@ -280,8 +277,6 @@ class RuntimeControlsTest {
 	}
 
 	/**
-	 * The native bridge as dimensions and results.
-	 *
 	 * The render size answers per mode the way NGX does, because a mode change that returned the
 	 * same size would let a runtime that rebuilt nothing pass.
 	 */

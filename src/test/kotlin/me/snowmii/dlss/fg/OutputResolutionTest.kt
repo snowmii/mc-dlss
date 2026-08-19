@@ -33,18 +33,13 @@ import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
 /**
- * Output-size adoption: the output size follows the client's main render target.
+ * Output size follows the client's main render target: the first world frame adopts the size
+ * the client is rendering into; a later change reconfigures; a drag-resize does not reconfigure
+ * per intermediate size; FG suspends across the change and resumes; an explicitly configured
+ * size still pins.
  *
- * The session used to be pinned at startup to `mc.dlss.output-width/height`, so every frame at
- * any other size routed vanilla with reason `unsupported-output-size` and FG suspended for the
- * same reason - which is what a maximized windowed client on a 2560x1440 monitor is, 23 pixels
- * of taskbar short of the configured size, and it reads as a broken mod.
- *
- * What is proven here: the first world frame adopts whatever size the client is actually
- * rendering into, a later change reconfigures the session against the new size rather than
- * degrading it, a drag-resize does not spend a reconfigure per intermediate size, FG suspends
- * across the change and resumes after it, and an explicitly configured size still pins the
- * session exactly as before.
+ * A maximized windowed client is typically a few pixels short of the monitor, so a startup pin
+ * would route those frames vanilla.
  */
 class OutputResolutionTest {
 	private val configured = Dimensions(2560, 1440)
@@ -155,7 +150,6 @@ class OutputResolutionTest {
 		bridge: me.snowmii.dlss.session.SessionBridge? = null,
 	) = Fixture(outputPinned, bridge)
 
-	/** The production stack: world phase, runtime, lifecycle adapter, and a native double. */
 	private inner class Fixture(outputPinned: Boolean, overrideBridge: me.snowmii.dlss.session.SessionBridge?) {
 		val diagnostics = mutableListOf<String>()
 		val native = FakeNative()
@@ -201,7 +195,6 @@ class OutputResolutionTest {
 
 		private var now = 0L
 
-		/** One world frame at [target]'s size, through both production seams. */
 		fun frame(target: RenderTarget): RenderTarget {
 			phase.prepare(true, target, camera())
 			val resolved = phase.begin(true, target)

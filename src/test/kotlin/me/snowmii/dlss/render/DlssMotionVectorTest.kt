@@ -14,10 +14,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
-/**
- * Proves mod-owned camera-motion wiring without re-testing Streamline's native motion shader.
- * Native behavior is covered by the live tests in :streamline.
- */
 class DlssMotionVectorTest {
 	@Test
 	fun `camera motion keeps caller data and stamps configured render dimensions`() {

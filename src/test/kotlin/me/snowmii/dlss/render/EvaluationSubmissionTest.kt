@@ -25,11 +25,6 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VkCommandBuffer
 import java.nio.file.Path
 
-/**
- * Verifies mod-owned frame submission: motion, evaluation, and output handoff share one engine
- * command buffer, and evaluation never submits it itself. Streamline's native behavior belongs to
- * its live tests.
- */
 class EvaluationSubmissionTest {
 	private val output = Dimensions(1280, 720)
 

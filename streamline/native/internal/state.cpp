@@ -46,7 +46,7 @@ void FrameEligibility::consumeForHandoff() noexcept {
 }
 
 bool FrameEligibility::presentStartPending() const noexcept {
-    return presentArmed_ && !presentStartEmitted_ && token_ != nullptr;
+    return !presentStartEmitted_ && token_ != nullptr;
 }
 
 void FrameEligibility::consumePresent() noexcept {

@@ -11,21 +11,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Feeds every visible entity's interpolated render position into the object-motion history.
- *
- * {@code LevelExtractor.extractVisibleEntities} is the visible-entity extraction pass: it runs
- * from {@code GameRenderer.extract} before {@code LevelRenderer.render} opens the DLSS world
- * phase. Its one call to {@code extractEntity(Entity, float)} already pairs the live
- * {@code Entity} (whose {@code getId()} is the stable history key) with the returned
- * {@code EntityRenderState} (whose {@code x}/{@code y}/{@code z} doubles are the partial-tick
- * interpolated pose the geometry will actually draw, not the tick position). Injecting at that
- * private helper's return avoids depending on the caller's long, version-fragile local-variable
- * table; the handler needs only target arguments and return value, so Sponge captures no locals.
- *
- * The capture delegates read-only through {@link ClientRuntime#active()}, never creating the
- * world phase: building the DLSS path is reserved to {@code LevelRenderer.render} HEAD. A phase
- * that does not exist yet - the first frame of a session, or a session that never enabled DLSS -
- * receives no capture, which history treats as a first observation rather than stale state.
+ * Capture interpolated entity pose into object-motion history at
+ * {@code LevelExtractor.extractEntity} RETURN — before the world phase opens.
+ * Pose is the partial-tick interpolated state, not tick position. Never creates the runtime.
  */
 @Mixin(LevelExtractor.class)
 public class LevelExtractorCaptureMixin {

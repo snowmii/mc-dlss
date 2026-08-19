@@ -11,21 +11,12 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
 /**
- * Emits Reflex/PCL render-submit markers around Minecraft's real render submission:
- * the {@code CommandEncoder.submit()} call at the tail of {@code Minecraft.renderFrame}.
+ * Reflex/PCL render-submit markers around {@code CommandEncoder.submit()} at the tail of
+ * {@code Minecraft.renderFrame}.
  *
- * <p>The bracket wraps the {@code submit()} invocation itself rather than injecting before and
- * after it, so it can never resolve onto a different call and stays chainable with another mod
- * wrapping the same call site ({@code @WrapOperation} chains, an {@code @Inject} on the same
- * instruction would not). The END marker fires in a {@code finally}, so a submit that throws -
- * which propagates out of renderFrame into the crash path - still closes the bracket the START
- * opened: an open simulation/render bracket is exactly the kind of stale marker that makes
- * latency evidence misleading.
- *
- * <p>The handler stays thin: it reads the active world phase - the render loop's handle to the
- * runtime, null before the DLSS path was built - and delegates; all gating lives in the adapter
- * and the native side. This is the only submission seam in renderFrame: the blit to the
- * surface hands its own encoder to {@code blitFromTexture} and never submits it.
+ * Wrap the invoke (not HEAD/TAIL injects) so the site stays unique and chainable. END in
+ * {@code finally} so a throwing submit still closes the bracket. Blit encoder is never
+ * submitted; this is the only submit in {@code renderFrame}.
  */
 @Mixin(Minecraft.class)
 public class MinecraftReflexMarkersMixin {

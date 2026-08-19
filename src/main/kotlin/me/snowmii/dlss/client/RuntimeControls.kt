@@ -5,8 +5,6 @@ import me.snowmii.dlss.fg.FgSurfacePolicy
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
-import me.snowmii.dlss.config.ClientConfig
-import me.snowmii.dlss.config.ModConfig
 import me.snowmii.dlss.readout.SessionReadout
 import org.slf4j.LoggerFactory
 
@@ -17,7 +15,7 @@ import org.slf4j.LoggerFactory
  * fallback without restarting the client.
  *
  * Fabric key mappings and the video-settings screen delegate here. User-facing choices persist in
- * [ClientConfig]; launch properties remain explicit overrides for development and diagnostics.
+ * [ModConfig.user]; launch properties remain explicit overrides for development and diagnostics.
  *
  * Every action answers with the state that is actually in effect afterwards, not the one that was
  * asked for: a native side that refuses a mode change leaves the session rendering exactly as it
@@ -67,7 +65,7 @@ class RuntimeControls(
 			surfacePolicy.effective,
 			runtime.fgMultiplier,
 		)
-		ClientConfig.INSTANCE.setFrameGeneration(surfacePolicy.userEnabled)
+		ModConfig.user.frameGeneration = surfacePolicy.userEnabled
 		emitStatus(readout())
 	}
 
@@ -90,7 +88,7 @@ class RuntimeControls(
 
 	fun setEnabled(enabled: Boolean) {
 		runtime.setDlssEnabled(enabled)
-		ClientConfig.INSTANCE.setEnabled(runtime.dlssEnabled)
+		ModConfig.user.enabled = runtime.dlssEnabled
 		emitStatus(readout())
 	}
 
@@ -157,14 +155,9 @@ class RuntimeControls(
 	/**
 	 * The FG half of the readout: the user's mode, and whether it is composing right now.
 	 *
-	 * These are two different facts and the line used to print only the second one, as if it were
-	 * the first. Composition suspends for a frame on every reconfigure - which cycling the
-	 * multiplier causes itself, by invalidating the surface configuration - so a keypress announced
-	 * inside that window reported "fg off" about a session that resumed generating on the next
-	 * frame. The log then disagreed with itself: `fg off at 6x`, followed by a frame-rate line
-	 * whose `presented` was six times the app rate.
-	 *
-	 * "off" is now reserved for the mode the user actually set, and a suspension says so.
+	 * User mode vs whether composition is running this frame. "off" is only the user's mode;
+	 * a reconfigure suspends composition for a frame (cycling the multiplier invalidates the
+	 * surface), so announcing inside that window must not report "off".
 	 */
 	private fun frameGenerationStatus(): String = when {
 		!surfacePolicy.userEnabled -> "off"
@@ -179,8 +172,8 @@ class RuntimeControls(
 	private fun applyConfiguration(mode: SRMode, preset: SRModelPreset) {
 		val applied = runtime.applyConfiguration(mode, preset)
 		if (applied) {
-			ClientConfig.INSTANCE.setQualityMode(runtime.qualityMode.propertyValue)
-			ClientConfig.INSTANCE.setRenderPreset(runtime.renderPreset.propertyValue)
+			ModConfig.user.qualityMode = runtime.qualityMode
+			ModConfig.user.renderPreset = runtime.renderPreset
 			emitStatus(readout())
 		} else {
 			// Naming the refusal matters more than naming the request: the session kept rendering,

@@ -21,35 +21,9 @@ import java.util.OptionalDouble;
 import java.util.function.Supplier;
 
 /**
- * Keeps the terrain chunk passes' velocity-companion clear lifecycle on the velocity-MRT
- * route while leaving every pass shape and pipeline selection exactly vanilla.
- *
- * The terrain camera-motion writers are retired: {@code ChunkSectionsToRender.renderGroup} -
- * the one method that draws both terrain groups, OPAQUE (solid and cutout layers) and
- * TRANSLUCENT - no longer adds the RG16_FLOAT velocity attachment at color index 1 and no
- * longer swaps bound pipelines for velocity twins. The pass is created exactly as vanilla
- * creates it (one source attachment, source depth, full render area) and the source pipeline
- * binds unchanged, on every route.
- *
- * What the terrain seam still owns is the companion's clear lifecycle, delegated to
- * {@link TerrainVelocityPass}: while the DLSS world phase is open on the velocity-MRT route
- * and the scene target holds a velocity companion, the pass-creation redirect clears the
- * companion to the invalid sentinel before the opaque group's pass exists (an encoder
- * command, never a pass clear), so every pixel no retained object writer covers reads
- * invalid rather than stale motion from an earlier frame. The translucent group loads the
- * companion instead of clearing it, preserving what the opaque group's clear and the object
- * writers left. Outside the eligible phase or on the latched camera-only route the velocity
- * view is null and the handler calls the operation through without clearing, so nothing
- * this mixin does can throw.
- *
- * The session's pipeline-compatibility latch is still observed at Vulkan's lazy-compile seam
- * ({@code VulkanPipelineCompatibilityMixin}): a first-encounter foreign pipeline latches the
- * camera-only route at its first bind, after which the velocity view reads null and every
- * pass and writer falls back to vanilla.
- *
- * Chaining is preserved: the handler calls the wrapped operation through with the original
- * arguments, so another mod's wrap around this call site still runs. TerrainVelocityPass
- * only owns the conditional clear, never pass creation.
+ * Terrain chunk passes stay vanilla one-attachment. This seam owns the velocity companion
+ * clear: opaque group encoder-clears to the invalid sentinel (not a pass clear) before the
+ * pass exists; translucent loads. Null velocity view → passthrough, never throws.
  */
 @Mixin(ChunkSectionsToRender.class)
 public class VulkanChunkSectionsToRenderMixin {

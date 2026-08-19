@@ -10,12 +10,14 @@ import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.StreamlineSessionTestDouble
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Present boundary wiring: production delegates handoff to its native seam only while ready,
- * and latches a refused handoff instead of allowing a frame to present as eligible.
+ * Production delegates present handoff to its native seam only while ready, and latches a
+ * refused handoff instead of allowing a frame to present as eligible.
  *
  * Live Streamline composition belongs to focused streamline tests. Frame composition belongs to
  * [FgFrameCompositionTest]; this test keeps only mod-owned lifecycle behavior.
@@ -48,9 +50,34 @@ class PresentIntegrationTest {
 		assertEquals(2, native.handoffs)
 	}
 
+	@Test
+	fun `present markers never latch a failed call`() {
+		val native = RecordingNativeApi()
+		val session = DlssSession(
+			DlssStartupConfig(
+				enabled = true,
+				qualityMode = SRMode.QUALITY,
+				outputDimensions = Dimensions(2560, 1440),
+				sdkPath = null,
+				nativeLibraryPath = null,
+				dataPath = null,
+				warnings = emptyList(),
+			),
+		)
+		val adapter = LifecycleAdapter(session, native)
+		adapter.initialize(1L, 2L, 3L, Path.of("."), Path.of("."))
+
+		native.presentMarkerResult = FAIL_INVALID_PARAMETER
+		assertFalse(adapter.presentStart(), "a failed PRESENT_START must report false")
+		assertFalse(adapter.presentEnd(), "a failed PRESENT_END must report false")
+		assertEquals(DlssSessionState.READY, session.state, "a failed present marker must never latch")
+		assertNull(session.failure, "a failed present marker must record no latched failure")
+	}
+
 	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		var handoffs = 0
 		var handoffResult = StreamlineSession.SUCCESS_RESULT
+		var presentMarkerResult = StreamlineSession.SUCCESS_RESULT
 
 		override fun initialize(
 			vkInstance: Long,
@@ -79,6 +106,10 @@ class PresentIntegrationTest {
 			handoffs++
 			return handoffResult
 		}
+
+		override fun presentStart(): Int = presentMarkerResult
+
+		override fun presentEnd(): Int = presentMarkerResult
 	}
 
 	private companion object {

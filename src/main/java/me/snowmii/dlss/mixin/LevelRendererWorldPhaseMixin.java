@@ -18,14 +18,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Scopes the DLSS world phase to {@code LevelRenderer.render}.
- *
- * Everything inside this method belongs to the world scene. Hand and item rendering happens
- * later in {@code GameRenderer.renderLevel}, after this phase has evaluated DLSS, and therefore
- * stays on vanilla's full-resolution path.
- *
- * The main target is read at HEAD, while the redirect is still inactive, so the phase always
- * measures the real full-size target and never sees its own override.
+ * World phase = {@code LevelRenderer.render}. Hand/item draw after this method, so they stay
+ * full-res. Read main at HEAD before the redirect is active.
  */
 @Mixin(LevelRenderer.class)
 public class LevelRendererWorldPhaseMixin {

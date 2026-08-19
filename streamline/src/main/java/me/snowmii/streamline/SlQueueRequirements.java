@@ -11,10 +11,8 @@ package me.snowmii.streamline;
  * optional, and DLSS-G falls back to interop mode when the host creates none.
  */
 public record SlQueueRequirements(
-	/** Extra queues to create in the graphics queue family. */
 	int graphicsQueues,
-	/** Extra queues to create in the compute queue family. */
 	int computeQueues,
-	/** Extra optical-flow queues the loaded features would use; not created by this mod. */
+	/** Reported but not created; DLSS-G falls back to interop without a host optical-flow family. */
 	int opticalFlowQueues
 ) {}

@@ -12,9 +12,8 @@ import org.junit.jupiter.api.Tag
  * worse, passes against the previous test's state.
  *
  * `build.gradle.kts` runs everything carrying this in `nativeBridgeTest`, one JVM per class, and
- * everything else in `test`, sharing one. That split is worth marking for: a fork costs about
- * fifteen seconds of Minecraft/Loom classpath loading, and the suite used to fork for every class -
- * seventy-odd of them, to execute under two seconds of tests.
+ * everything else in `test`, sharing one. A fork costs about fifteen seconds of Minecraft/Loom
+ * classpath loading, so unmarked tests stay in the shared worker.
  *
  * Nothing enforces the marker: a test that loads the bridge without it lands in the shared worker
  * and fails loudly there, which is the same signal a policy test would have given.

@@ -22,10 +22,6 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.vulkan.VkCommandBuffer
 import java.nio.file.Path
 
-/**
- * Verifies mod-owned composition order: evaluation records before the output copy, and both use
- * one engine-owned command buffer. Streamline's native copy behavior belongs to live tests.
- */
 class CompositionOrderTest {
 
 	@Test

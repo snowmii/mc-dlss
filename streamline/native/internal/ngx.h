@@ -4,13 +4,9 @@
 #include "internal/state.h"
 
 /*
- * The NGX vocabulary the public ABI keeps: the quality-mode and render-preset values the
- * callers pass in and the bridge maps onto sl:: types in the Streamline unit.
- *
- * The direct-NGX implementation is retired. Nothing here talks to the NGX runtime: there is
- * no initialization, extension query, feature creation, evaluation, release, or shutdown, and
- * the only NGX symbols left are the enums and result codes the ABI contract names. The DLSS
- * 310.7.0 headers stay on the include path as reference vocabulary and nothing else.
+ * NGX quality-mode and render-preset values the ABI speaks in. This unit does not talk to
+ * the NGX runtime; Streamline maps these onto sl:: types. DLSS 310.7.0 headers are
+ * reference vocabulary only.
  */
 namespace mc_dlss {
 

@@ -37,22 +37,18 @@ public final class ExtensionBootstrap {
 	private static final Path RELATIVE_STREAMLINE = Path.of("build", "resources", "main", "assets", "streamline-api", "native");
 
 	/**
-	 * The knob the mod's config reads for the native-library path, kept so the error message
-	 * names the knob users set. Reading it is the mod's job: the mod parses it in its config and
-	 * injects the result through {@link #setNativeLibraryPath}, because this seam runs before
-	 * the mod's own config handle can be built.
+	 * Knob name for error messages. The mod reads {@code -Dmc.dlss.native-library} in its
+	 * config and injects via {@link #setNativeLibraryPath}; this seam runs first.
 	 */
 	private static final String NATIVE_LIBRARY_PROPERTY = "mc.dlss.native-library";
 
 	private static volatile Path configuredNativeLibrary;
-	/** The temp directory holding the extracted colocated flat runtime once extracted, else null. */
 	private static volatile Path extracted;
 	private static volatile boolean streamlineRuntimeLoaded;
 
 	private ExtensionBootstrap() {
 	}
 
-	/** Opens one Java session over the packaged native implementation. */
 	public static StreamlineSession openSession() {
 		loadStreamlineRuntime();
 		return Native.open(nativeLibrary());
@@ -78,11 +74,7 @@ public final class ExtensionBootstrap {
 		}
 	}
 
-	/**
-	 * The deduplicated Vulkan 1.2 feature names Streamline's loaded features require the device
-	 * to enable, merged into the game's enabled feature set at the createDevice seam. Opens a
-	 * fresh bridge like the other queries; bootstrap is idempotent.
-	 */
+	/** Fresh bridge each call; bootstrap is idempotent. */
 	public static List<String> queryDeviceFeatures12() {
 		loadStreamlineRuntime();
 		try (Native nativeBridge = Native.open(nativeLibrary())) {
@@ -91,10 +83,6 @@ public final class ExtensionBootstrap {
 		}
 	}
 
-	/**
-	 * The deduplicated Vulkan 1.3 feature names Streamline's loaded features require, merged
-	 * into the game's enabled feature set at the createDevice seam.
-	 */
 	public static List<String> queryDeviceFeatures13() {
 		loadStreamlineRuntime();
 		try (Native nativeBridge = Native.open(nativeLibrary())) {
@@ -104,10 +92,8 @@ public final class ExtensionBootstrap {
 	}
 
 	/**
-	 * The summed extra graphics / compute / optical-flow queues Streamline's loaded features
-	 * require the host to create, added to the game's queue-family create map at the
-	 * createDevice seam. Optical flow is reported but never created: without a host optical-flow
-	 * family, DLSS-G runs in interop mode.
+	 * Extra graphics/compute/optical-flow queues Streamline requires. Optical flow is
+	 * reported but never created: without a host family, DLSS-G runs interop.
 	 */
 	public static SlQueueRequirements queryQueueRequirements() {
 		loadStreamlineRuntime();
@@ -118,11 +104,8 @@ public final class ExtensionBootstrap {
 	}
 
 	/**
-	 * Activates Streamline's manual-hook Vulkan proxies against the live device, right after
-	 * the VulkanDevice is constructed. Opens a fresh bridge like the other seams (bootstrap is
-	 * idempotent and the Streamline state survives the bridge close) and throws
-	 * {@link StreamlineException} if slSetVulkanInfo fails, so a device that Streamline cannot hook
-	 * fails loudly at the same seam where bootstrap already throws.
+	 * After VulkanDevice construction. Streamline state survives this bridge close.
+	 * Throws {@link StreamlineException} if slSetVulkanInfo fails.
 	 */
 	public static void activateVulkanProxies(final VulkanContext context) {
 		Objects.requireNonNull(context, "context");
@@ -164,11 +147,9 @@ public final class ExtensionBootstrap {
 	}
 
 	/**
-	 * The staged Streamline runtime directory: where sl.common.dll, sl.interposer.dll, and the
-	 * feature plugins were copied by processResources. A loose file on the classpath is returned
-	 * in place; a packaged resource (plain jar or nested jar:jar: URL, which the JVM serves
-	 * transparently) is extracted once, as part of the whole colocated flat directory. Walks up
-	 * from the working directory for plain {@code :streamline} runs with no staged resource.
+	 * Loose classpath file: load in place. Packaged (plain or nested jar:jar:): extract once
+	 * as the colocated flat directory. No staged resource: walk up from cwd for {@code :streamline}
+	 * processResources output.
 	 */
 	public static Path streamlineRuntimeDirectory() {
 		final URL resource = ExtensionBootstrap.class.getResource(STREAMLINE_RESOURCE_PATH);
@@ -194,21 +175,16 @@ public final class ExtensionBootstrap {
 	}
 
 	/**
-	 * Injection seam for the workstation-local native bridge: the mod set the path once, at
-	 * {@code onInitialize}, strictly before any query seam runs, from its own config. Passing
-	 * null resets to packaged-resource resolution.
+	 * Injected by the mod at {@code onInitialize}, before any query. Null resets to packaged
+	 * resolution. This seam runs before the mod's config handle exists.
 	 */
 	public static void setNativeLibraryPath(final Path path) {
 		configuredNativeLibrary = path;
 	}
 
 	/**
-	 * Locates the workstation-local native bridge: the injected path first (absolute), then the
-	 * packaged namespaced resource. The mod reads its {@code -Dmc.dlss.native-library} knob in
-	 * its config and injects the result, so resolution does not depend on the working directory:
-	 * the dev client's working directory is {@code run/} while tests run from the repository
-	 * root. A bridge that exists only as build output has to be a staged resource first; there
-	 * is no build-directory walk-up to fall back on.
+	 * Injected path first, then packaged resource. No working-directory or build-directory
+	 * walk-up: the dev client cwd is {@code run/}, tests run from the repo root.
 	 */
 	public static Path nativeLibrary() {
 		final Path configured = configuredNativeLibrary;
@@ -231,10 +207,8 @@ public final class ExtensionBootstrap {
 	}
 
 	/**
-	 * Resolves the packaged resource to a real filesystem path, because
-	 * {@link java.lang.foreign.SymbolLookup#libraryLookup(Path, Arena)} cannot load from inside a jar.
-	 * A loose file on the classpath is loaded in place; a packaged resource is extracted, once,
-	 * as part of the whole colocated flat directory.
+	 * {@link java.lang.foreign.SymbolLookup#libraryLookup(Path, Arena)} cannot load from a jar.
+	 * Loose classpath file: in place. Packaged: extract once with the colocated flat directory.
 	 */
 	private static Path packagedLibrary() {
 		final URL resource = ExtensionBootstrap.class.getResource(RESOURCE_PATH);
@@ -258,11 +232,9 @@ public final class ExtensionBootstrap {
 	}
 
 	/**
-	 * Materializes the colocated flat runtime once, into a JVM-lifetime temp directory: the
-	 * bridge plus all nine Streamline/NGX runtime dlls that must sit beside it on disk for
-	 * Windows dependency resolution. Protocol-agnostic — every entry is read off the
-	 * classloader, which serves plain jar and nested jar:jar: URLs alike — so the same
-	 * extraction serves the SDK jar on a test classpath and the Fabric-nested jar in production.
+	 * JVM-lifetime temp dir: bridge plus colocated Streamline/NGX dlls (Windows load-from-same-
+	 * directory). Classloader-served, so the same extract covers a test classpath jar and the
+	 * Fabric-nested jar.
 	 */
 	private static Path extractedDirectory() throws IOException {
 		final Path cached = extracted;

@@ -21,23 +21,18 @@ import java.util.Objects;
  * observed) still evaluates, and the module records whatever the struct carried.
  */
 public record EvaluationRequest(
-	/** The caller's shared Vulkan command buffer the evaluation is recorded on. */
 	long commandBuffer,
-	/** The engine's render-sized colour image. */
 	ImageBinding color,
-	/** The engine's render-sized depth image. */
 	ImageBinding depth,
-	/** Sub-pixel offset of this frame, in render pixels - the unit NGX takes it in. */
+	/** Sub-pixel offset in render pixels — the unit NGX takes. */
 	Vec2 jitter,
-	/** The scale that normalizes the motion buffer onto [-1, 1]. */
+	/** Scale that normalizes the motion buffer onto [-1, 1]. */
 	Vec2 motionScale,
-	/** This frame's duration, in milliseconds. */
 	float frameTimeMilliseconds,
-	/** Whether DLSS should discard its history and accumulate fresh. */
 	boolean resetHistory,
 	/** Stamped by the session adapter; see the class comment. */
 	Dimensions renderDimensions,
-	/** The frame's real camera, or null to record a zero-filled camera. */
+	/** Null records a zero-filled camera. */
 	CameraConstants camera
 ) {
 	public EvaluationRequest {
@@ -48,24 +43,20 @@ public record EvaluationRequest(
 	}
 
 	/**
-	 * An all-defaults request, mirroring the Kotlin constructor this type replaced:
-	 * zeroed command buffer and images, zero jitter and motion scale, no reset, no
-	 * dimensions, no camera.
+	 * All-defaults: zeroed handles, zero jitter/scale, no reset, no dimensions, no camera.
 	 */
 	public EvaluationRequest() {
 		this(0L, new ImageBinding(0, 0, 0), new ImageBinding(0, 0, 0), new Vec2(0f, 0f), new Vec2(0f, 0f), 0f, false, null, null);
 	}
 
 	/**
-	 * Fluent constructor for a nine-field request whose adjacent same-typed pairs would
-	 * otherwise be transposed by either side without any diagnostic - the reason the Kotlin
-	 * contract named its arguments, which Java constructors cannot.
+	 * Fluent constructor: adjacent same-typed pairs cannot be transposed without a named
+	 * setter. Java constructors cannot name arguments.
 	 */
 	public static Builder builder() {
 		return new Builder();
 	}
 
-	/** One method per field, naming each argument; {@link #build()} validates like the ctor. */
 	public static final class Builder {
 		private long commandBuffer;
 		private ImageBinding color = new ImageBinding(0, 0, 0);

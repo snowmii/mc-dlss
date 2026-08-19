@@ -12,19 +12,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Installs one piston moving block's identity on the thread while its quads are staged into the
- * moving-block render types.
- *
- * {@code MovingBlockFeatureRenderer.buildGroup} tesselates one {@code MovingBlockFeatureRenderer.Submit}
- * at a time - each carrying the exact {@code MovingBlockRenderState} object the block-entity
- * dispatcher's capture seam bound to a block-position id. This installs that id at the start of
- * each submit's iteration and clears it when the group ends, so the shared
- * {@code RenderTypeFeatureRenderer$Group} draw boundary (see {@code RenderTypeFeatureRendererMotionMixin})
- * sees the current moving block while its solid and cutout draws are created and binds the
- * draw -> id -> ExecuteInfo chain the prepared-draw writer reads. A render state with no bound
- * id - a falling block, which rides the same feature renderer but never goes through the piston
- * capture seam, or an outline submit - keeps the exact source tesselation with no context and
- * no identity, so its draws stay vanilla.
+ * One piston moving block's identity while its quads stage. Falling blocks ride the same
+ * renderer but never go through piston capture — identity-less, vanilla tesselation.
  */
 @Mixin(MovingBlockFeatureRenderer.class)
 public class MovingBlockFeatureRendererMotionMixin {

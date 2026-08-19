@@ -32,9 +32,9 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
- * Verifies mc-dlss's FG wiring at its testable boundary: composed frames record FG before SR,
- * retain one shared frame token, and pass camera constants through the evaluation request.
- * Native viewport-orientation behavior belongs to Streamline's live boundary tests.
+ * Composed frames record FG before SR, retain one shared frame token, and pass camera
+ * constants through the evaluation request. Native viewport-orientation behavior belongs to
+ * Streamline's live boundary tests.
  */
 class FgViewportSplitTest {
 

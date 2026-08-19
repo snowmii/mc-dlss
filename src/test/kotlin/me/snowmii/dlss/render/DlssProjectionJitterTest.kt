@@ -9,12 +9,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Proves the jittered projection shifts the image by exactly the frame's offset, at every
- * depth, without disturbing reversed-Z depth.
- *
  * The matrix is built the way Minecraft 26.2 builds the world projection: `Projection.getMatrix`
  * passes `near = zFar, far = zNear` into JOML with zero-to-one depth, which is what makes the
- * the projection's depth reversed.
+ * projection's depth reversed.
  */
 class DlssProjectionJitterTest {
 	private val render = Dimensions(1280, 720)

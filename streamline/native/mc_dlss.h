@@ -17,8 +17,8 @@ extern "C" {
 
 /**
  * Flat ABI used by Java 25 FFM. NVIDIA NGX headers remain reference-only vocabulary: the
- * quality-mode, preset, and result values the ABI speaks in keep their NGX names, and no
- * direct-NGX runtime call exists behind them. Streamline owns every feature path.
+ * quality-mode, preset, and result values the ABI speaks in keep their NGX names. Streamline
+ * owns every feature path.
  *
  * Every function returns 1 on success and an NGX-valued result code otherwise. The bridge
  * owns its images and motion pass; the Streamline runtime is process-wide and outlives the
@@ -38,8 +38,7 @@ extern "C" {
  * The subresource range is deliberately absent. Every image Minecraft's Vulkan backend
  * creates is a single-level, single-layer 2D image, and the module's own images are
  * full-range, so the range is derived natively - and the aspect with it, from the role the
- * image plays in the call that carries it. The ABI used to carry all five range fields per
- * image and every producer sent the same values.
+ * image plays in the call that carries it.
  *
  * Layout is 20 bytes of fields in 24 bytes of struct: the trailing padding is what keeps
  * `format` 8-byte aligned inside arrays and enclosing structs, and any binding on the other
@@ -108,8 +107,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
  * Returns the deduplicated Vulkan instance (mc_dlss_query_instance_extension) or device
  * (mc_dlss_query_device_extension) extension names the loaded features require, drawn from
  * slGetFeatureRequirements across every enabled feature. Must be called after
- * mc_dlss_bootstrap_streamline: the retired direct-NGX discovery fallback no longer answers
- * a query that ran before bootstrap.
+ * mc_dlss_bootstrap_streamline: a query before bootstrap fails.
  *
  * Two-call shape: first call with index==0 && name==NULL && name_capacity==0 returns the
  * count in *extension_count; subsequent calls with a valid name buffer copy the i-th
@@ -189,15 +187,16 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_tagged_frame_indexes(
 
 /*
  * Validates and records the live Vulkan tuple the module's own images and motion pass are
- * allocated against, and nothing else: the retired direct-NGX initialization no longer runs
- * behind it. Must be called after mc_dlss_bootstrap_streamline and
+ * allocated against. Must be called after mc_dlss_bootstrap_streamline and
  * mc_dlss_activate_vulkan_proxies with the same handles that were handed to slSetVulkanInfo.
  * An initialize that ran before bootstrap or proxy activation - or with a tuple that
  * disagrees with the activated one - fails and records nothing.
  *
- * `sdk_path` and `data_path` are compatibility inputs: the retired direct-NGX path used them
- * to locate its feature DLL and data, and nothing in the Streamline stack consumes them. They
- * are validated as well-formed paths and otherwise ignored.
+ * `sdk_path` and `data_path` are unused: validated as well-formed paths and otherwise ignored.
+ *
+ * First success also records Reflex options (`slReflexSetOptions` with
+ * `sl::ReflexMode::eLowLatency`). A failed registration does not fail initialize; the oracle
+ * `mc_dlss_query_reflex_options` reports whether it succeeded.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(
     uint64_t vk_instance,
@@ -205,28 +204,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(
     uint64_t vk_device,
     const char* sdk_path,
     const char* data_path);
-
-/*
- * Validates and records the live Vulkan tuple the module-owned images and motion pass are
- * allocated against.
- *
- * Must be called after mc_dlss_bootstrap_streamline and mc_dlss_activate_vulkan_proxies with
- * the same instance / physical device / device that was handed to slSetVulkanInfo: a tuple
- * that disagrees with the recorded proxy tuple is refused. Repeating the same three handles
- * returns success without re-recording; a different tuple cannot replace the recorded one
- * without close.
- *
- * `sdk_path` and `data_path` are compatibility inputs. The retired direct-NGX implementation
- * used them to locate its feature DLL and data; nothing in the Streamline stack consumes
- * them, so they are validated as well-formed paths and otherwise ignored.
- *
- * The first successful transition also records the Reflex options registration the pinned
- * Reflex guide requires: one slReflexSetOptions call with sl::ReflexMode::eLowLatency. A
- * failed registration does not fail the transition - the marker surface never latches the
- * session, and Reflex registration must not gate the SR/FG session either - the oracle
- * mc_dlss_query_reflex_options reports whether it succeeded. Repeating the recorded tuple
- * re-records neither the tuple nor the Reflex options.
- */
 
 /*
  * Queries the DLSS optimal render dimensions for an output size and quality mode, answered by
@@ -587,7 +564,7 @@ typedef struct McDlssCameraConstants {
  * Must be called after mc_dlss_tag_sr_resources for the same frame on the same command buffer:
  * the evaluation records Streamline's per-frame constants and the feature evaluation against
  * the frame token the tag call obtained and retained, and evaluating with no retained token
- * fails. The direct-NGX feature lifecycle this call used to drive is retired.
+ * fails.
  */
 typedef struct McDlssEvaluateInfo {
     uint64_t command_buffer;
@@ -654,7 +631,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_camera_constants(McDlssCameraC
  * scaling-input colour and the depth. The motion source is always the module's own motion
  * image - filled by mc_dlss_write_motion on the camera-only route and by
  * mc_dlss_fill_velocity on the velocity-MRT route - so no engine velocity companion is
- * carried or tagged; direct companion tagging is retired. When the module's own output image
+ * carried or tagged. When the module's own output image
  * has been acquired for the configured dimensions (mc_dlss_acquire_images), it is tagged as
  * the scaling-output colour as well; until then the call still succeeds with just the
  * engine's inputs, so tagging can run from the first frame on.
@@ -789,14 +766,13 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_handoff(void);
  * the index carried by the common constants, and the plugin correlates the presented frame
  * with its constants through PRESENT_START - a frame presented without it never generates.
  * The marker call reaches the plugin directly and is recorded in the present-marker log
- * immediately; the frame's tag set was already consumed by the handoff, so the bracket's
- * half is the token armed by mc_dlss_present_handoff and consumed by mc_dlss_present_end.
- * Answers FAIL_NotInitialized while the Streamline session is not ready. A present without
- * an armed bracket - an SR-only or skipped frame, or any present of a session that never
- * handed off - is a no-op success: the present seam fires on every present, and a refusal
- * would fail a frame that simply did not compose. A second START for an already-open
- * bracket (a present that threw between START and END) is the same no-op, so one frame
- * can never receive two START markers.
+ * immediately. Answers FAIL_NotInitialized while the Streamline session is not ready. A
+ * present with no retained token is a no-op success: the present seam fires on every present,
+ * and a refusal would fail a frame that simply did not compose. NVIDIA overlay FPS and
+ * latency correlate presents through these markers, so an SR-only or vanilla-routed frame
+ * that still presents emits START under its token rather than waiting for an FG handoff.
+ * A second START for an already-open bracket (a present that threw between START and END)
+ * is the same no-op, so one frame can never receive two START markers.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_start(void);
 
@@ -913,8 +889,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_options(uint32_t* mode,
  * the bracket is the composed frame's terminal act: the frame is consumed exactly like a
  * successful one, so a retry cannot emit a second START for the same frame, and the next
  * frame's tags obtain a fresh token under a fresh index. Answers FAIL_NotInitialized
- * while the Streamline session is not ready; a present without an armed bracket is a
- * no-op success like the START.
+ * while the Streamline session is not ready; a present with no token and no leftover
+ * FG-armed bracket is a no-op success like the START.
  */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_end(void);
 

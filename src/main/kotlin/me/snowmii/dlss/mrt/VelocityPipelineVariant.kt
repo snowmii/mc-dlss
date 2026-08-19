@@ -44,9 +44,8 @@ fun velocityTwin(source: RenderPipeline): RenderPipeline =
  * [segment] is the twin's location segment, so a writer twin can never collide with the plain
  * twin's `velocity/pipeline/<name>` location or with another writer's.
  *
- * The camera-motion-only writer families (terrain, weather, particle, breaking block) are
- * retired: those passes keep the exact vanilla one-attachment route and their pixels stay
- * sentinel for the post-scene fill.
+ * Terrain, weather, particle, and breaking-block passes keep the vanilla one-attachment
+ * route; their pixels stay sentinel for the post-scene fill.
  */
 enum class VelocityWriter(
 	val segment: String,

@@ -20,12 +20,8 @@ import java.util.Collection;
 import java.util.Set;
 
 /**
- * Merges Streamline's device requirements into Minecraft 26.2's device creation, immediately
- * before vkCreateDevice: the SL-required device extensions and Vulkan 1.2/1.3 features join
- * the enabled sets, and the SL-required extra graphics/compute queues join the queue-family
- * create map. The interposer's own vkCreateDevice proxy merges the same requirements when the
- * client loads Vulkan through it, so this merge is the mod claiming the seam directly - the
- * device is correct even if that proxy path ever changes.
+ * Merge Streamline device extensions/features/extra queues immediately before vkCreateDevice.
+ * Interposer would merge the same if Vulkan loaded through it; this claims the seam directly.
  */
 @Mixin(VulkanBackend.class)
 public abstract class VulkanBackendExtensionMixin {
@@ -61,14 +57,9 @@ public abstract class VulkanBackendExtensionMixin {
 	}
 
 	/**
-	 * The queue-family create map createDevice iterates is unmodifiable, so Streamline's extra
-	 * queues cannot be merged in place. Copy it and add the SL counts to the graphics and compute
-	 * families - the count of queues the host must create in each, so Streamline's own queues
-	 * start right after them. Optical-flow queues are reported but never added: without a native
-	 * optical-flow family, DLSS-G runs in interop mode.
-	 *
-	 * The handler's first parameter is the target instance: the wrapped call is an instance
-	 * method, so its receiver leads the operation arguments.
+	 * Queue-family create map is unmodifiable. Copy, add SL graphics/compute counts (host
+	 * queues Streamline's own start after). Optical-flow reported, never added: no host
+	 * family → DLSS-G interop. Receiver is the first wrap-operation parameter.
 	 */
 	@WrapOperation(
 		method = "createDevice(Ljava/util/Collection;Lcom/mojang/blaze3d/vulkan/VulkanPhysicalDevice;Ljava/util/Set;)Lorg/lwjgl/vulkan/VkDevice;",

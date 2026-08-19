@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** Verifies mc-dlss forwards SR and FG resource tags on one recording. */
 class FgResourceContractTest {
 
 	@Test

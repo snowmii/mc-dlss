@@ -9,19 +9,15 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Guards the mod's mixin compatibility policy: injections coexist with other mods, exclusive
- * injectors do not. `@Overwrite` and `@Redirect` are both banned outright - a second mod
- * redirecting the same call site is a hard launch failure for whichever mixin loses the tie,
- * exactly the fabric-renderer-api-v1 crash on `ModelBlockRenderer.tesselateBlock` that removed
- * the moving-block redirect.
+ * Injections coexist with other mods; exclusive injectors do not. `@Overwrite` and `@Redirect`
+ * are both banned: a second mod redirecting the same call site is a hard launch failure for
+ * whichever mixin loses the tie.
  *
  * Use `@Inject`, or MixinExtras `@WrapOperation` / `@ModifyExpressionValue` when a value or call
  * has to change: those compose, so two mods wrapping one call site nest instead of colliding.
  *
- * This is a source-text policy ratchet, not a behavior test - the one exception to
- * `docs/agents/testing.md` § "Mixins are not unit tested at all", because the bug it catches (an
- * exclusive injector that crashes only when another mod claims the same seam) is invisible to a
- * green suite and to a clean single-mod launch alike.
+ * This is a source-text scan: an exclusive injector crashes only when another mod claims the
+ * same seam, which a green single-mod suite never sees.
  */
 class MixinCompatibilityPolicyTest {
 	private val mixinDir = Path.of("src/main/java/me/snowmii/dlss/mixin")

@@ -33,8 +33,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Verifies the in-game FG multiplier cycle through controls, runtime, adapter, and readout.
- *
  * The cycle walks from 2x to the device ceiling and wraps. Each accepted change records one
  * native multiplier and invalidates the surface once; refusals leave multiplier, reconfigure
  * count, and readout unchanged.
@@ -51,28 +49,24 @@ class FgMultiplierToggleTest {
 		controls.toggleFrameGeneration()
 		assertTrue(announced.last().contains("fg on at 2x"), "the armed readout names the 2x default: ${announced.last()}")
 
-		// 2x -> 3x: one native record carrying numFramesToGenerate=2, one reconfigure.
 		controls.cycleFgMultiplier()
 		assertEquals(2, harness.runtime.fgMultiplier, "the runtime must land on 3x")
 		assertEquals(listOf(2), calls.setValues, "3x records numFramesToGenerate=2")
 		assertEquals(1, invalidations, "a real change invalidates the surface configuration exactly once")
 		assertTrue(announced.last().contains("fg on at 3x"), "the readout names the multiplier now in effect: ${announced.last()}")
 
-		// 3x -> 4x: the next value above, one record, one reconfigure.
 		controls.cycleFgMultiplier()
 		assertEquals(3, harness.runtime.fgMultiplier, "the runtime must land on 4x")
 		assertEquals(listOf(2, 3), calls.setValues, "4x records numFramesToGenerate=3")
 		assertEquals(2, invalidations, "each real change invalidates exactly once more")
 		assertTrue(announced.last().contains("fg on at 4x"), "the readout names the multiplier now in effect: ${announced.last()}")
 
-		// At the ceiling the cycle wraps back to 2x: never an unsupported value.
 		controls.cycleFgMultiplier()
 		assertEquals(1, harness.runtime.fgMultiplier, "at the ceiling the cycle must wrap to 2x")
 		assertEquals(listOf(2, 3, 1), calls.setValues, "the wrap records numFramesToGenerate=1, nothing above the ceiling")
 		assertEquals(3, invalidations, "the wrap is a real change and invalidates exactly once")
 		assertTrue(announced.last().contains("fg on at 2x"), "the readout names the wrapped multiplier: ${announced.last()}")
 
-		// The whole walk offered only values the device supports: 1..max, each recorded once.
 		assertEquals(
 			3,
 			calls.setValues.distinct().size,
@@ -141,11 +135,9 @@ class FgMultiplierToggleTest {
 		val harness = harness(calls)
 		val controls = RuntimeControls(harness.runtime, announced::add)
 
-		// Explicit record: the field carries whatever multiplier it is handed.
 		val explicit = record(fgMultiplier = 3)
 		assertTrue(explicit.contains("fg-multiplier=4x"), explicit)
 
-		// The cycle updates the record's active multiplier, so the default record follows it.
 		controls.cycleFgMultiplier()
 		val active = record()
 		assertTrue(active.contains("fg-multiplier=3x"), active)
@@ -161,7 +153,6 @@ class FgMultiplierToggleTest {
 		val session = session()
 		val adapter = LifecycleAdapter(session, native)
 
-		// Not READY yet: neither call may reach the bridge.
 		assertFalse(adapter.setFgMultiplier(2), "a session that is not READY must not record a multiplier")
 		assertNull(adapter.queryFgMultiplier(), "a session that is not READY must not answer the query")
 		assertEquals(emptyList<Int>(), native.setValues)
@@ -178,7 +169,6 @@ class FgMultiplierToggleTest {
 		assertEquals(DlssSessionState.READY, session.state, "a refused record must not latch the SR session")
 	}
 
-	/** Builds the controls boundary over a recording fake and the multiplier seams. */
 	private fun harness(
 		calls: MultiplierNative,
 		invalidateSurfaceConfiguration: () -> Unit = {},
@@ -312,7 +302,6 @@ class FgMultiplierToggleTest {
 		override fun tagSrResources(request: SrTagRequest): Int = error("unexpected tagSrResources")
 	}
 
-	/** Records the multiplier seams and answers the three calls [LifecycleAdapter.initialize] drives. */
 	private class AdapterNative : StreamlineSessionTestDouble() {
 		var setResult = StreamlineSession.SUCCESS_RESULT
 		val setValues = mutableListOf<Int>()

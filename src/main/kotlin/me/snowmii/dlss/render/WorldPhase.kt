@@ -38,58 +38,39 @@ typealias EvaluateFrame = (
 ) -> Boolean
 
 /**
- * Scopes one world render phase, which is the only window in which the mod's low-resolution
- * scene target stands in for Minecraft's main target.
+ * Only window where the low-resolution scene target stands in for Minecraft's main target.
  *
- * [RenderRuntime] decides *whether* a frame is eligible and *what size* its target is.
- * This class decides *when* that target is visible to the renderer: the phase is opened at the
- * head of `LevelRenderer.render` and closed at its tail, and while it is open
- * [worldTargetOverride] is what `GameRenderer.mainRenderTarget()` answers. The world scene and
- * stress pass land in the low-resolution target; hand and item, screen effects, the 3D crosshair,
- * post chains, GUI clear, screenshots, and presentation happen after evaluation against the
- * full-size main target.
+ * [RenderRuntime] decides eligibility and size. This class decides *when* that target is
+ * visible: open at `LevelRenderer.render` head, close at its tail; while open,
+ * [worldTargetOverride] is what `GameRenderer.mainRenderTarget()` answers. World scene and
+ * stress pass land in the low-res target; hand/item, screen effects, crosshair, post, GUI,
+ * screenshots, and present run after evaluation against the full-size main target.
  *
- * Closing an eligible phase evaluates DLSS and composes the upscaled result into the main target,
- * which is what everything drawn afterwards renders on top of at output resolution. A frame whose
- * evaluation produced nothing falls back to the nearest-neighbour blit of the low-resolution scene
- * instead: deliberately *not* an upscale, so a failed frame is visibly the internal scene
- * resolution rather than a black screen.
+ * Close evaluates DLSS into the main target. Failed evaluation: nearest-neighbour blit of the
+ * low-res scene, not an upscale — a failed frame is visibly internal resolution, not black.
  *
- * Presentation and the sky-renderer reset are injected so the whole phase is verifiable off the
- * render thread; [forMinecraft] supplies the production wiring.
+ * [present] and [onWorldTargetChanged] are injected so the phase is testable off the render
+ * thread; [forMinecraft] is production wiring.
  */
 class WorldPhase(
 	private val runtime: RenderRuntime,
 	private val present: (RenderTarget, RenderTarget) -> Unit,
 	private val onWorldTargetChanged: () -> Unit,
 	/**
-	 * Records this frame's DLSS work against the scene it just rendered and composes the result
-	 * into the destination, returning true when the destination now holds the upscaled frame.
-	 *
-	 * Injected because reaching the raw Vulkan handles behind a target needs Minecraft's backend
-	 * types, and everything else here is verifiable off the render thread. The route parameter is
-	 * the session's world-motion route and the velocity view the scene velocity companion behind
-	 * it, captured at close time so the evaluation can feed the velocity MRT to Streamline on
-	 * the velocity route and keep the compute writer on the camera-only route. The camera is the
-	 * frame's camera as the projection seam sampled it, snapshotted when [prepare] stored it
-	 * (the seam's matrices are reused across frames) and read at close time: the phase clears
-	 * its own field as it closes, so the sample travels as a parameter rather than as a field
-	 * the production wiring would read after the clear.
+	 * Injected: Vulkan handles need Minecraft backend types; everything else here is testable
+	 * off the render thread. Camera is a parameter because [end] clears the field before
+	 * production wiring would read it.
 	 */
 	private val evaluateFrame: EvaluateFrame = { _, _, _, _, _, _, _ -> false },
-	/**
-	 * Formats and emits the session's reporting lines, fed by this phase and by the evaluation.
-	 */
 	private val readout: SessionReadout = SessionReadout.NOOP,
 ) : AutoCloseable {
 	private var sceneTarget: RenderTarget? = null
 	private var mainRenderTarget: RenderTarget? = null
 	private var projectionPrepared = false
 	private var lastResolvedTarget: RenderTarget? = null
-	/** The frame's camera as the projection seam sampled it, snapshotted at [prepare] and carried to [end]. */
+	/** Snapshotted at [prepare]; Minecraft reuses the seam's live matrices across frames. */
 	private var cameraSample: DlssCameraSample? = null
 
-	/** True between [begin] and [end]. */
 	var isOpen: Boolean = false
 		private set
 
@@ -100,17 +81,6 @@ class WorldPhase(
 	val worldTargetOverride: RenderTarget?
 		get() = if (isOpen) sceneTarget else null
 
-	/**
-	 * Observes a pipeline whose ownership can change the session's world-motion route.
-	 *
-	 * Two callers use this seam, both inside the open world phase: the Vulkan lazy-compile
-	 * mixin observes every pipeline entering compile as a backstop, and the terrain mixin's
-	 * {@code renderGroup} HEAD inject classifies a group's source pipelines before the pass
-	 * shape is chosen, so a first-encounter foreign pipeline keeps exact vanilla passthrough
-	 * instead of binding into a two-attachment pass. Shader reload, GUI, post-processing, and
-	 * presentation pipelines run outside this window and cannot change the session's
-	 * world-motion route.
-	 */
 	fun presentStart(): Boolean {
 		runtime.pacing.begin(FramePacingProbe.Span.QUEUE_PRESENT)
 		return runtime.frameEvaluation?.presentStart() == true
@@ -122,32 +92,19 @@ class WorldPhase(
 		return emitted
 	}
 
-	// The swapchain acquire, measured on every frame rather than only FG-active ones: an acquire
-	// that blocks is the pacer holding every image, and the comparison that says so is the same
-	// call's cost with FG off. No marker and no native call - unlike the present bracket this
-	// seam exists only to be measured.
+	// Measured every frame: a blocking acquire is the pacer holding images. Compare with FG off.
 	fun acquireStart() = runtime.pacing.begin(FramePacingProbe.Span.SWAPCHAIN_ACQUIRE)
 	fun acquireEnd() = runtime.pacing.end(FramePacingProbe.Span.SWAPCHAIN_ACQUIRE)
 
-	// The frame's command submission, measured from the seam that already brackets it with the
-	// render-submit Reflex markers.
 	fun submitStart() = runtime.pacing.begin(FramePacingProbe.Span.RENDER_SUBMIT)
 	fun submitEnd() = runtime.pacing.end(FramePacingProbe.Span.RENDER_SUBMIT)
 
-	// The Reflex/PCL frame markers use the same active-world-phase route as the present
-	// bracket: the Minecraft run/runTick/renderFrame mixins call the active world phase
-	// (the render loop's handle to the runtime, null before the DLSS path was built), and this
-	// object passes the call through to the evaluation and its adapter. The marker itself is a
-	// value, so a mixin naming a new seam adds an enum constant rather than a method here.
-	// The input and simulation seams fire outside the world phase's own window - before
-	// LevelRenderer.render opens it - which is fine: the phase object exists for the whole
-	// session once the render loop built the path, and the markers themselves are gated on
-	// the READY session inside the adapter, not on the phase being open.
+	// Mixins call the active world phase (null before DLSS starts). Markers are values, so a
+	// new seam is an enum constant. Input/simulation fire before LevelRenderer.render; the
+	// adapter gates on READY, not on the phase being open.
 	fun reflexInputSample(): Boolean {
-		// This marker runs slReflexSleep on the native side before it emits, so it is the frame's
-		// only blocking call outside the render seams - and the first measurement left 56ms of a
-		// 57ms frame outside every span the probe had. Bracketed here rather than in the adapter
-		// so the span covers the sleep even when the marker itself is refused.
+		// slReflexSleep runs before the marker emits. Bracket here so the span covers the
+		// sleep even when the marker is refused.
 		runtime.pacing.begin(FramePacingProbe.Span.REFLEX_SLEEP)
 		try {
 			return runtime.frameEvaluation?.reflexInputSample() == true
@@ -158,6 +115,13 @@ class WorldPhase(
 	fun reflexMarker(type: StreamlineSession.ReflexMarkerType): Boolean =
 		runtime.frameEvaluation?.reflexMarker(type) == true
 
+	/**
+	 * Observes a pipeline whose ownership can change the session's world-motion route.
+	 * Only while [isOpen]: shader reload, GUI, post, and present pipelines must not latch.
+	 *
+	 * Two callers: Vulkan lazy-compile (backstop) and terrain `renderGroup` HEAD (classifies
+	 * before pass shape), so a first foreign pipeline keeps vanilla passthrough.
+	 */
 	fun observePipeline(pipeline: MotionVectorPipeline) {
 		if (isOpen) {
 			runtime.observeWorldPipeline(pipeline)
@@ -165,15 +129,8 @@ class WorldPhase(
 	}
 
 	/**
-	 * Records one visible entity's interpolated render position for the frame in flight, keyed
-	 * by the entity's stable id.
-	 *
-	 * The capture mixes in from `LevelExtractor.extractVisibleEntities`, which runs before
-	 * [begin] opens the phase, so - unlike [observePipeline] - this is deliberately not gated on
-	 * [isOpen]: the in-flight captures must land while the phase is still closed, and only a
-	 * DLSS frame's own open keeps them. A vanilla frame's open, an abandoned phase, a world
-	 * change, a release, and a close all reset the history instead; a successful world-phase
-	 * completion publishes the frame's captures exactly once at the boundary.
+	 * Not gated on [isOpen]: `extractVisibleEntities` runs before [begin]. Only a completed
+	 * DLSS frame publishes; vanilla/abandoned/replaced-world/release/close reset instead.
 	 */
 	fun captureEntity(id: Int, x: Double, y: Double, z: Double) {
 		runtime.captureEntity(id, x, y, z)
@@ -185,59 +142,39 @@ class WorldPhase(
 	}
 
 	/**
-	 * Records one moving block's absolute render position for the frame in flight, keyed by the
-	 * packed long block-position identity of its baked position.
-	 *
-	 * The piston capture seam calls this at the block-entity dispatcher, before [begin] opens
-	 * the phase, so - like [captureEntity] - this is deliberately not gated on [isOpen]: the
-	 * in-flight captures must land while the phase is still closed, and only a DLSS frame's own
-	 * open keeps them. The key is a long in the moving-block domain, resolved by the long
-	 * overload of the shared object history, so an entity id with the same numeric value can
-	 * never read or write this block's slot.
+	 * Same [isOpen] rule as [captureEntity]. Key is a long in the moving-block domain, so an
+	 * entity id with the same numeric value cannot share this slot.
 	 */
 	fun captureBlock(id: Long, x: Double, y: Double, z: Double) {
 		runtime.captureBlock(id, x, y, z)
 	}
 
-	/** Resolves the stable id paired with one extracted state while this phase is open. */
 	fun entityId(state: EntityRenderState): Int? = if (isOpen) runtime.entityId(state) else null
 
-	/** Whether an entity-model draw may use the scene velocity attachment. */
+	/** Entity-model draws may bind the scene velocity attachment. */
 	val entityVelocityActive: Boolean
 		get() = isOpen && runtime.motionVectorRoute == MotionVectorRoute.VELOCITY_MRT && terrainVelocityView != null
 
-	/** Jitter used by this open world's projection, for object reprojection composition. */
 	val activeJitter: DlssJitterOffset?
 		get() = if (isOpen) runtime.activeJitter else null
 
-	/** Unjittered current view-projection captured at the world projection seam. */
 	val currentViewProjection: Matrix4f?
 		get() = if (isOpen) runtime.currentViewProjection else null
 
-	/** Current captured-minus-previous displacement for one entity, or null without a predecessor. */
 	fun objectMotionDisplacement(entityId: Int): Vector3f? =
 		if (entityVelocityActive) runtime.objectMotion.objectDisplacement(entityId) else null
 
 	/**
-	 * Current captured-minus-previous displacement for one moving block, or null without a
-	 * predecessor. Gated by the same shared velocity-active condition as
-	 * [objectMotionDisplacement] - an open velocity-MRT phase with a scene velocity view -
-	 * and resolved in the moving-block domain of the shared object history.
+	 * Same velocity-active gate as [objectMotionDisplacement]; resolved in the moving-block
+	 * (long-key) domain of the shared history.
 	 */
 	fun blockMotionDisplacement(blockId: Long): Vector3f? =
 		if (entityVelocityActive) runtime.objectMotion.objectDisplacement(blockId) else null
 
 	/**
-	 * The scene-sized RG16_FLOAT velocity view terrain chunk passes must render into, or null
-	 * when those passes stay vanilla.
-	 *
-	 * Non-null only inside an open world phase that latched the velocity-MRT route and holds a
-	 * scene target with a velocity companion: exactly the frames on which
-	 * `ChunkSectionsToRender.renderGroup` may add the velocity attachment at color index 1 and
-	 * bind velocity twins. A closed phase, the camera-only fallback route, or a frame without a
-	 * companion all answer null, which keeps pass creation and source-pipeline binding exactly
-	 * vanilla - and because every read here is a plain field or enum read, the fallback path
-	 * cannot throw.
+	 * Scene-sized RG16_FLOAT velocity view terrain `renderGroup` may attach, or null to stay
+	 * vanilla. Non-null only while open on VELOCITY_MRT with a companion. Plain field/enum
+	 * reads — the vanilla path cannot throw.
 	 */
 	val terrainVelocityView: GpuTextureView?
 		get() = if (isOpen && runtime.motionVectorRoute == MotionVectorRoute.VELOCITY_MRT) {
@@ -247,48 +184,30 @@ class WorldPhase(
 		}
 
 	/**
-	 * Depth of the target the world actually rendered into this frame, or null when the phase
-	 * is closed or that target has no depth view. Cloud velocity borrows this to depth-test
-	 * Fabulous clouds, whose own target depth does not contain the terrain in front of them.
-	 *
-	 * An eligible DLSS frame renders into [sceneTarget], not [mainRenderTarget]; reading the
-	 * vanilla main here would either miss (full-res vs scene-sized clouds) or test against a
-	 * buffer that never received the terrain.
+	 * Depth of the target the world actually rendered into, for Fabulous cloud depth-test.
+	 * Clouds' own target depth does not contain terrain in front of them. An eligible DLSS
+	 * frame renders into [sceneTarget]; reading vanilla main would miss (full-res vs scene)
+	 * or test a buffer that never received terrain.
 	 */
 	val sceneDepthView: GpuTextureView?
 		get() = if (isOpen) (sceneTarget ?: mainRenderTarget)?.getDepthTextureView() else null
 
 	/**
-	 * This frame's published camera motion while the phase is open, or null outside one.
-	 *
-	 * Read by the stress pass at the tail of the world phase, before [end] consumes the value:
-	 * the reprojection it derives velocity from is the same jitter-stripped current-to-previous
-	 * clip reprojection the evaluation receives, so the velocity buffer and the DLSS evaluation
-	 * describe the same camera motion. A closed phase, a vanilla route, or a frame whose camera
-	 * was never observed all answer null; every read here is a plain field read, so the fallback
-	 * path cannot throw.
+	 * Published camera motion while open. Stress pass reads this at the tail of the world
+	 * phase, before [end] consumes it, so the velocity buffer and the DLSS evaluation share
+	 * the same jitter-stripped reprojection.
 	 */
 	val activeMotion: DlssFrameMotion?
 		get() = if (isOpen) runtime.activeMotion else null
 
 	/**
-	 * Decides this frame's route and jitter without opening the phase, and returns the jitter
-	 * an eligible DLSS frame must apply to its world projection, or null for a vanilla frame.
-	 *
-	 * Minecraft uploads the world projection in `GameRenderer.renderLevel`, before
-	 * `LevelRenderer.render` runs, so the route has to be known earlier than the phase can be
-	 * open - the window starts at the head of `LevelRenderer.render` and ends right after the
-	 * hand draw, and nothing before the world scene renders under the low-resolution override.
-	 * Splitting the decision from the window is what keeps both true, and the route is still
-	 * decided exactly once per frame because [begin] consumes this preparation rather than
+	 * Decides route and jitter without opening the phase. Minecraft uploads the world
+	 * projection in `GameRenderer.renderLevel` before `LevelRenderer.render`, so the route
+	 * must be known before the override window exists. [begin] consumes this rather than
 	 * repeating it.
 	 *
-	 * [camera] is the frame's camera as the projection seam sees it, and is what the runtime
-	 * derives camera-only motion from. The phase snapshots the sample's matrices before
-	 * storing it, because Minecraft reuses them across frames: the caller's original may keep
-	 * changing after [prepare] returns without reaching the evaluation. It is null only when
-	 * the phase is opened without the projection seam having run, which publishes no motion
-	 * for that frame.
+	 * Snapshots [camera] matrices: Minecraft reuses the seam's live ones across frames.
+	 * Null camera (projection seam never ran) publishes no motion for that frame.
 	 */
 	fun prepare(
 		normalInWorldFrame: Boolean,
@@ -302,9 +221,6 @@ class WorldPhase(
 		discardUnfinishedFrame()
 
 		this.mainRenderTarget = mainTarget
-		// Minecraft reuses the sample's matrices across frames, so the stored sample must not
-		// reference the seam's live ones: snapshot before storing, and the evaluation reads
-		// this frame's camera no matter what the renderer rewrites before the phase closes.
 		val snapshot = camera?.let {
 			DlssCameraSample(
 				projection = Matrix4f(it.projection),
@@ -329,12 +245,8 @@ class WorldPhase(
 	}
 
 	/**
-	 * Opens the world phase against Minecraft's real main target and returns the target the
-	 * world must render into: the low-resolution scene target for an eligible DLSS frame, or
-	 * [mainTarget] itself for a vanilla frame.
-	 *
-	 * Consumes a matching [prepare] when one exists, so a frame that went through the
-	 * projection seam routes once rather than twice.
+	 * Opens the phase and returns the target the world must render into. Consumes a matching
+	 * [prepare] so a projection-seam frame routes once, not twice.
 	 */
 	fun begin(normalInWorldFrame: Boolean, mainTarget: RenderTarget): RenderTarget {
 		if (!projectionPrepared || this.mainRenderTarget !== mainTarget) {
@@ -371,10 +283,6 @@ class WorldPhase(
 		return resolved
 	}
 
-	/**
-	 * Closes the world phase, restoring the vanilla main target for the rest of the frame, then
-	 * presents an eligible frame's low-resolution scene into it.
-	 */
 	fun end() {
 		if (!isOpen) {
 			return
@@ -411,26 +319,16 @@ class WorldPhase(
 			runtime.endWorldPhase(completedDlssFrame)
 		}
 
-		// Present only after the phase is closed, so the destination is the vanilla target.
+		// Present only after close, so the destination is the vanilla target.
 		if (rendered != null && destination != null && !completedDlssFrame) {
-			// No DLSS image reached the target, so the frame still has to show something: the
-			// low-resolution scene, un-upscaled, exactly as it looked before composition existed.
+			// Failed evaluation: nearest-neighbour blit, not an upscale.
 			present(rendered, destination)
 		}
 	}
 
 	/**
-	 * Records this frame's DLSS work against the scene the world just rendered, and composes the
-	 * upscaled result into [destination]. Returns true when the destination holds it.
-	 *
-	 * Recorded when the phase closes at the tail of `LevelRenderer.render`, after world geometry
-	 * and the stress pass but before hand submission. Everything after this point (hand, screen
-	 * effects, the 3D crosshair, HUD, and GUI) renders into the destination at output resolution
-	 * on top of the DLSS image.
-	 *
-	 * A frame missing its jitter, its motion, or the handles behind its targets is skipped: it went
-	 * through the phase without everything an evaluation needs, and DLSS reading a stale or absent
-	 * input is worse than one frame of the low-resolution present.
+	 * After world geometry and the stress pass, before hand submission. Missing jitter, motion,
+	 * or handles: skip. DLSS reading a stale/absent input is worse than one low-res present.
 	 */
 	private fun evaluateAndCompose(
 		rendered: RenderTarget,
@@ -449,12 +347,9 @@ class WorldPhase(
 	}
 
 	/**
-	 * Breaks the accumulated history because the scene was replaced rather than because a frame
-	 * was lost: a world load, a dimension change, or a disconnect.
-	 *
-	 * Called from the client thread outside the render loop, so it also drops any phase that was
-	 * prepared and never rendered - the frame that prepared it belongs to the previous world and
-	 * must not be closed against the new one.
+	 * Scene replaced (world load, dimension change, disconnect), not a lost frame. Client
+	 * thread, outside the render loop: also drops a prepared-never-rendered phase belonging
+	 * to the previous world.
 	 */
 	fun resetHistory() {
 		discardUnfinishedFrame()
@@ -468,9 +363,7 @@ class WorldPhase(
 	}
 
 	/**
-	 * Drops a prepared or open phase without presenting it, and breaks the motion history the
-	 * dropped frame would otherwise have left behind. The scene target itself stays owned by the
-	 * runtime.
+	 * Drops a prepared or open phase without presenting. Scene target stays with the runtime.
 	 */
 	private fun discardUnfinishedFrame() {
 		if (!isOpen && !projectionPrepared) {
@@ -489,13 +382,10 @@ class WorldPhase(
 	}
 
 	companion object {
-		/** Production wiring: a real blit, a real sky-renderer reset, and the session readout. */
 		@JvmStatic
 		fun forMinecraft(runtime: RenderRuntime, readout: SessionReadout): WorldPhase {
-			// The frame's camera travels as a lambda parameter: [end] captures the sample before
-			// it clears the phase's field and passes the captured value through [evaluate] into
-			// this lambda, so the production evaluation always reads the frame's own camera
-			// rather than a field the close already nulled.
+			// [end] clears cameraSample before this lambda runs; the captured parameter is
+			// this frame's camera, not the nulled field.
 			return WorldPhase(
 				runtime = runtime,
 				present = ::blitSceneToMainTarget,
@@ -527,21 +417,11 @@ class WorldPhase(
 		}
 
 		/**
-		 * Production resolution of one frame's DLSS-G inputs, read by the evaluation at world
-		 * phase close: the main target as the output-sized HUD-less colour and the UI phase's
-		 * held target as the output-sized UI colour+alpha, with the UI target's size checked
-		 * against the main target's.
-		 *
-		 * The main target is the image the frame's SR output copy and the frame's UI composite
-		 * both write into, so it is the frame's HUD-less colour until Present consumes it; the
-		 * UI target is the frame's transparent overlay with its alpha. The world phase is
-		 * closed by the time this runs, so the getters answer the vanilla main target and no
-		 * override; the UI phase exists by then because the world phase's own initialization
-		 * built it. A frame whose UI target does not exist yet - the first frame, or a resize
-		 * frame whose held target is stale-sized against the recreated main target - resolves
-		 * null and records SR-only, because a DLSS-G tag naming an image the frame is about to
-		 * destroy is worse than one frame without FG. Returns null when either target is
-		 * missing, mismatched in size, or not a Vulkan view.
+		 * Main target = HUD-less colour (SR copy and UI composite both write it; Present
+		 * consumes it). UI target = transparent overlay. Runs after world-phase close, so
+		 * getters answer vanilla main. Null if either target is missing, size-mismatched, or
+		 * not Vulkan: tagging an image the frame is about to destroy is worse than one
+		 * SR-only frame.
 		 */
 		internal fun resolveFrameGenerationInputs(): FgFrameInputs? {
 			val main = Minecraft.getInstance().gameRenderer.mainRenderTarget()
@@ -555,12 +435,8 @@ class WorldPhase(
 		}
 
 		/**
-		 * Reads the `VkImage` / `VkImageView` handles and format out of a scene target.
-		 *
-		 * Every target the mod allocates is a [com.mojang.blaze3d.pipeline.TextureTarget] with
-		 * colour and depth, so both views are present and both are Vulkan views - but the backend
-		 * can be OpenGL, and a target can be destroyed between frames, so nothing here assumes it.
-		 * A null result skips the frame's evaluation rather than crashing the render thread.
+		 * Null skips evaluation rather than crashing: backend can be OpenGL, and a target can
+		 * be destroyed between frames.
 		 */
 		private fun sceneResourcesOf(target: RenderTarget): SceneResources? {
 			val color = colorBindingOf(target) ?: return null
@@ -575,11 +451,7 @@ class WorldPhase(
 			)
 		}
 
-		/**
-		 * Reads the colour `VkImage` / `VkImageView` handles and format out of a target's colour
-		 * view, the way [sceneResourcesOf] reads the scene target's colour. Null for a
-		 * non-Vulkan view (an OpenGL backend, or a test target).
-		 */
+		/** Null for a non-Vulkan view (OpenGL backend, or a test target). */
 		internal fun colorBindingOf(target: RenderTarget): ImageBinding? {
 			val color = target.colorTextureView as? VulkanGpuTextureView ?: return null
 			return ImageBinding(
@@ -590,12 +462,8 @@ class WorldPhase(
 		}
 
 		/**
-		 * Reads the `VkImage` / `VkImageView` handles and format out of a scene-sized velocity
-		 * view, the same way [sceneResourcesOf] reads the scene target.
-		 *
-		 * Null for a non-Vulkan view (an OpenGL backend, or a test view): the velocity-MRT route
-		 * then hands no velocity binding to the evaluation, which skips the frame rather than
-		 * evaluating against no motion source.
+		 * Null for a non-Vulkan view: evaluation then skips rather than running with no
+		 * motion source.
 		 */
 		private fun velocityBindingOf(view: GpuTextureView?): ImageBinding? {
 			val vulkan = view as? VulkanGpuTextureView ?: return null
@@ -607,12 +475,8 @@ class WorldPhase(
 		}
 
 		/**
-		 * Draws the scene color over the whole main target with the full-screen blit pipeline.
-		 *
-		 * `TRACY_BLIT` is the un-blended sibling of `ENTITY_OUTLINE_BLIT`: same screen-quad and
-		 * blit shaders, no blend function, so the world replaces the main target's cleared color
-		 * instead of compositing over it. The sampler is NEAREST on purpose - no filtering means
-		 * the presented image shows the render resolution exactly as DLSS will receive it.
+		 * Unblended full-screen blit (`TRACY_BLIT`). NEAREST on purpose: presented image is
+		 * exactly the render resolution DLSS receives.
 		 */
 		private fun blitSceneToMainTarget(scene: RenderTarget, main: RenderTarget) {
 			val source = scene.colorTextureView ?: return

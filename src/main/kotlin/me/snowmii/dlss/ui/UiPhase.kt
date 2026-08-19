@@ -5,69 +5,41 @@ import com.mojang.blaze3d.systems.CommandEncoder
 import com.mojang.blaze3d.systems.RenderSystem
 
 /**
- * Scopes the in-world UI windows - the first-person hand and the GUI - in which the
- * transparent full-resolution [UiTarget] stands in for Minecraft's main target.
+ * First-person hand and GUI windows where the transparent full-resolution [UiTarget] stands
+ * in for Minecraft's main target.
  *
- * The hand window opens at the head of `GameRenderer.renderItemInHand` and closes at its tail,
- * so `OutputTarget.MAIN_TARGET`'s draw-time resolution answers the UI target while hand and
- * item features draw, and the screen effects and 3D crosshair that run right after in
- * `GameRenderer.renderLevel` fall outside the window and keep the vanilla main target. The GUI
- * window opens at the head of `GuiRenderer.render`; its tail closes the window and runs the
- * frame's composite - one [UiComposite] that overlays the held UI target over the HUD-less
- * world still in the main target, handed in as both the source and the destination so the
- * composite skips its redundant base copy - so present, screenshots,
- * and every post-GUI consumer read the getter after the last window closes and keep the vanilla
- * main target with the frame's UI already baked in.
+ * Hand: `GameRenderer.renderItemInHand` HEAD→TAIL. Screen effects and the 3D crosshair run
+ * after in `renderLevel` and stay on vanilla main. GUI: `GuiRenderer.render` HEAD; TAIL
+ * closes and composites UI over the HUD-less world already in the main target (same target
+ * as source and dest, so the base copy is skipped).
  *
- * Both windows share one held UI target, and the frame's transparent clear belongs to exactly
- * one of them: the hand window always clears - it is the frame's first UI window - and the GUI
- * window clears only when no hand window ran first, because the two windows never overlap in
- * the real frame. Hand drawing itself is gated inside vanilla's method on HUD visibility,
- * camera type, and game mode, so a hand window whose draw gate closed is just an empty clear.
- * The hand window closes through [end] without compositing: the world, the screen effects, and
- * the GUI still have to land in the main target after it.
+ * One held UI target. Hand always clears (first UI window); GUI clears only if hand did not.
+ * Hand [end] does not composite — world, effects, and GUI still write the main target after.
+ * Getter: open world phase wins; else UI window; else vanilla. Real frames never overlap
+ * those windows; world-before-UI is defensive.
  *
- * The getter seam resolves world before UI: an open world phase's scene target wins over both
- * windows, and outside all three the caller gets the vanilla main target. The windows never
- * overlap in the real frame - the world phase closes at the tail of `LevelRenderer.render`, the
- * hand window closes at the tail of `renderItemInHand`, both long before `GuiRenderer.render`
- * runs - so the ordering is defensive.
- *
- * Opening a window acquires the UI target at the main target's size and clears it to
- * transparent black and the reversed-Z far plane, so a frame nothing draws on composites the
- * world untouched. The encoder is injected so the whole window is verifiable off the render
- * thread; [forMinecraft] supplies the production pair.
+ * Acquire at main-target size; clear to transparent black + reversed-Z far. Encoder injected
+ * for headless; [forMinecraft] is production.
  */
 class UiPhase(
 	private val target: UiTarget,
-	/**
-	 * Supplies the encoder the frame's transparent clear is recorded with. Injected so the
-	 * window is drivable headless; production opens the render loop's device.
-	 */
+	/** Injected so the window is drivable headless; production uses the render-loop device. */
 	private val encoder: () -> CommandEncoder = { RenderSystem.getDevice().createCommandEncoder() },
-	/**
-	 * Supplies the composite [endFrame] bakes the frame's UI with. Injected so the frame wiring
-	 * is verifiable off the render thread; production resolves the render loop's sampler cache.
-	 */
+	/** Injected so composite wiring is testable off the render thread. */
 	private val composite: () -> UiComposite = { UiComposite() },
 ) : AutoCloseable {
-	/** True between a window's [begin]/[beginHand] and [end]. */
 	var isOpen: Boolean = false
 		private set
 
 	/**
-	 * True once the frame's first UI window cleared the target, until the GUI window consumes
-	 * the handoff: the clear-once-per-frame ownership. The hand window sets it, the GUI window
-	 * reads it to decide whether its own clear is needed and consumes it, so the next frame's
-	 * hand window clears again. The hand window ignores it and always clears, which also
-	 * self-heals a handoff stranded by a frame that crashed between windows.
+	 * Clear-once-per-frame: hand sets it; GUI reads then clears it. Hand always clears, which
+	 * also heals a handoff stranded by a crash between windows.
 	 */
 	private var clearedThisFrame = false
 
 	/**
-	 * The frame's real main target, stashed when a window opens and read back by [endFrame]
-	 * after the window closes, when the getter no longer answers the UI target. Read at HEAD,
-	 * while the redirect is still inactive, so it never sees the window's own override.
+	 * Real main target, stashed at window open. Read at HEAD while the redirect is still
+	 * inactive, so it never sees the window's own override. [endFrame] reads it after close.
 	 */
 	private var frameMainTarget: RenderTarget? = null
 
@@ -79,30 +51,17 @@ class UiPhase(
 		get() = if (isOpen) target.currentUiTarget else null
 
 	/**
-	 * The held UI target, or null before the frame's first window allocated it.
-	 *
-	 * Read by the frame's DLSS-G composition at world-phase close, before the hand window
-	 * runs: the target persists across frames once a window allocated it, so a steady-state
-	 * frame's composition names the image the frame's own UI will be drawn into. A frame
-	 * whose target does not exist yet - the first frame, or a resize frame whose held target
-	 * is stale-sized - stays SR-only instead. Read-only and allocation-free, like every
-	 * accessor here.
+	 * Held UI target, or null before the first window allocated it. Read at world-phase close
+	 * (before the hand window): the target persists across frames, so composition names the
+	 * image this frame's UI will draw into. Missing or stale-sized: SR-only.
 	 */
 	val uiTarget: RenderTarget?
 		get() = target.currentUiTarget
 
 	/**
-	 * Opens the hand window against the frame's main target: acquires the UI target at its size,
-	 * always clears it for the frame, and makes the override visible.
-	 *
-	 * The hand window is the frame's first UI window - `renderItemInHand` runs inside
-	 * `GameRenderer.renderLevel`, before `GuiRenderer.render` - so its clear is unconditional and
-	 * marks the frame as cleared for the GUI window behind it. A main target with no measurable
-	 * size never opens the window, so a degenerate frame keeps the vanilla target. An open
-	 * window left behind by a failed frame - an exception between `renderItemInHand`'s head and
-	 * tail skips the close, and a leaked window would answer the UI target for every later
-	 * caller, present included - is dropped here rather than thrown on, exactly as
-	 * [me.snowmii.dlss.render.WorldPhase] discards a stale world phase.
+	 * First UI window: always clears. Drops a window left open by a failed frame (exception
+	 * between renderItemInHand HEAD/TAIL) rather than leaking the override to present.
+	 * Zero-size main target never opens.
 	 */
 	fun beginHand(mainTarget: RenderTarget) {
 		if (openWindow(mainTarget, clear = true)) {
@@ -111,16 +70,8 @@ class UiPhase(
 	}
 
 	/**
-	 * Opens the GUI window against the frame's main target: acquires the UI target at its size,
-	 * clears it only when no hand window cleared it for this frame, and makes the override
-	 * visible.
-	 *
-	 * The GUI window is the frame's last UI window, so it consumes the hand window's clear
-	 * handoff: a frame whose hand drew starts the GUI with an already-cleared target, and a
-	 * frame without a hand window - spectator, sleeping, hidden HUD, or any other frame where
-	 * vanilla drew no hand - clears here. A main target with no measurable size never opens the
-	 * window, so a degenerate frame keeps the vanilla target. An open window left behind by a
-	 * failed frame is dropped here rather than thrown on, exactly as [beginHand] does.
+	 * Last UI window: clears only if hand did not. Consumes the handoff so the next frame's
+	 * hand clears again. Drops a stale open window like [beginHand].
 	 */
 	fun begin(mainTarget: RenderTarget) {
 		openWindow(mainTarget, clear = !clearedThisFrame)
@@ -128,9 +79,8 @@ class UiPhase(
 	}
 
 	/**
-	 * Opens one UI window: drops a window left open by a failed frame, acquires the UI target
-	 * at the main target's size, clears it for the frame when this window owns the clear, and
-	 * makes the override visible. Returns whether the window opened.
+	 * Drops a stale open window, acquires at main-target size, clears when this window owns
+	 * the clear. Zero-size never opens.
 	 */
 	private fun openWindow(mainTarget: RenderTarget, clear: Boolean): Boolean {
 		isOpen = false
@@ -153,23 +103,12 @@ class UiPhase(
 	}
 
 	/**
-	 * Closes the GUI window and bakes the frame's UI over the HUD-less world, in that order: the
-	 * window closes first, so the getter answers the vanilla main target again before the
-	 * composite writes and no post-GUI consumer can read the UI target on a frame whose
-	 * composite failed.
+	 * Close the window first, then bake UI over HUD-less world. Close-first so a failed
+	 * composite cannot leave post-GUI consumers reading the UI target.
 	 *
-	 * The composite is handed the frame's main target - stashed when the window opened and
-	 * still holding the HUD-less world, GUI blur included, that the GUI drew over - as both
-	 * the HUD-less source and the destination. Aliasing the two makes the base copy
-	 * redundant: a pass that samples the very target it writes into is invalid on every
-	 * backend, and the destination already holds the world. The composite therefore overlays
-	 * the held UI target over the world already in the main target, so the vanilla main
-	 * target becomes the permanent presentation source before present, screenshots, and
-	 * Tracy read the getter. The held UI target survives the bake.
-	 *
-	 * A frame whose window never opened - the menu, a null phase - or whose window failed to
-	 * open has nothing to composite and leaves the main target untouched, as does a missing UI
-	 * target or color view, which passes through the composite's own no-write guard.
+	 * Main target (stashed at open) is both HUD-less source and dest: destination already
+	 * holds the world, and sampling the target a pass writes is invalid. Overlay only.
+	 * Held UI target survives. No-op if the window never opened.
 	 */
 	fun endFrame() {
 		val windowWasOpen = isOpen
@@ -185,15 +124,13 @@ class UiPhase(
 	}
 
 	override fun close() {
-		// A close during an open window drops the window first, so no caller can keep answering
-		// the UI target after its own target is gone.
+		// Drop the window before releasing the target so no caller keeps answering the UI target.
 		isOpen = false
 		clearedThisFrame = false
 		target.close()
 	}
 
 	companion object {
-		/** Production wiring: the Minecraft-allocated UI target, cleared through the device encoder. */
 		@JvmStatic
 		fun forMinecraft(): UiPhase = UiPhase(
 			target = UiTarget.forMinecraft(),

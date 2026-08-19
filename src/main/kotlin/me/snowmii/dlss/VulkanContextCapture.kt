@@ -6,17 +6,12 @@ import me.snowmii.streamline.VulkanContext
 import org.lwjgl.vulkan.VK12
 
 /**
- * Mod-side capture factory: builds the SDK's [VulkanContext] from live Minecraft
- * [VulkanDevice] / [VulkanPhysicalDevice] internals, offloading the engine-touching part of the
- * capture out of the engine-free SDK.
+ * Builds the SDK's [VulkanContext] from live Minecraft [VulkanDevice] /
+ * [VulkanPhysicalDevice]. Invoked from ctor-TAIL in `VulkanDeviceContextMixin`. Lives
+ * outside `me.snowmii.dlss.mixin` because Mixin forbids referencing classes in a mixin package.
  *
- * Not a mixin: a plain static utility invoked from the ctor-TAIL injection in
- * `VulkanDeviceContextMixin`. Lives outside `me.snowmii.dlss.mixin` because Mixin forbids direct
- * references to classes in a declared mixin package. Relocated verbatim from the old
- * engine-coupled `fromVulkanDevice` factory; same null/zero-handle degradation semantics.
- *
- * [VulkanDevice] exposes no physical-device accessor, so the mixin passes the constructor argument
- * straight through. NGX initialization needs it.
+ * [VulkanDevice] exposes no physical-device accessor; the mixin passes the constructor
+ * argument through. Streamline initialization needs it.
  */
 object VulkanContextCapture {
 	/**

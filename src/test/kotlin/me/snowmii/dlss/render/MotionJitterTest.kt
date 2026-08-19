@@ -19,19 +19,16 @@ import org.junit.jupiter.api.Test
 import kotlin.math.abs
 
 /**
- * Verifies that camera-only motion, reversed-Z depth semantics, and deterministic jitter are
- * produced coherently for world rendering and for NGX.
- *
  * The two halves have to agree or DLSS collapses silently. The world is rendered through a
  * jittered projection, so a pixel's clip position carries this frame's offset; the motion vector
  * NGX reads must not, because NGX is told the jitter separately and would otherwise count it
- * twice. Every assertion below therefore reads motion the way the evaluation will -
+ * twice. Assertions read motion the way the evaluation will -
  * `ndc(reprojection * clip) - ndc(clip)` against clip positions taken from the *jittered*
  * projection - so any leak between the two shows up as motion where there is none.
  *
  * The projection is built the way Minecraft 26.2 builds the world projection: `Projection.getMatrix`
  * passes `near = zFar, far = zNear` into JOML with zero-to-one depth, which is what makes the
- * the projection's depth is reversed.
+ * projection's depth reversed.
  */
 class MotionJitterTest {
 	private val output = Dimensions(2560, 1440)
@@ -91,8 +88,8 @@ class MotionJitterTest {
 		for (probe in probes) {
 			val clip = current.transform(Vector4f(probe.x, probe.y, probe.z, 1f))
 			val mapped = frame.clipToPrevClip.transform(Vector4f(clip))
-			// Camera-relative: the camera moved +0.5 along x, so the point sat that much
-			// further along x measured from where the camera used to be.
+			// Camera-relative: the camera moved +0.5 along x, so the point sits that much
+			// further along x measured from the previous camera.
 			val expected = ndc(previous, Vector3f(probe).add(0.5f, 0f, 0f))
 			assertEquals(expected.x, mapped.x / mapped.w, tolerance, "x at $probe")
 			assertEquals(expected.y, mapped.y / mapped.w, tolerance, "y at $probe")
@@ -118,8 +115,8 @@ class MotionJitterTest {
 		val frame = motion.advance(sample(x = 0.5), currentOffset, nanos(16))
 
 		for (probe in probes) {
-			// Camera-relative: the camera moved +0.5 along x, so the same world point sat half a
-			// block further along x when measured from where the camera used to be.
+			// Camera-relative: the camera moved +0.5 along x, so the same world point sits half a
+			// block further along x when measured from the previous camera.
 			val expected = ndc(projection, Vector3f(probe).add(0.5f, 0f, 0f)).sub(ndc(projection, probe))
 			val actual = motionOf(frame, probe)
 			assertEquals(expected.x, actual.x, tolerance, "x motion at $probe")
@@ -168,8 +165,8 @@ class MotionJitterTest {
 			val depth = reprojected.z / reprojected.w
 			assertTrue(depth in 0f..1f, "depth at $probe left [0,1]: $depth")
 		}
-		// A camera that moved toward the geometry must report it nearer, which in reversed-Z
-		// means a larger depth value than the frame it is reprojected from.
+		// A camera that moved toward the geometry reports it nearer. In reversed-Z that is a
+		// larger current depth than the previous-frame depth the reprojection maps back to.
 		val probe = probes[1]
 		val clip = clipOf(probe)
 		val reprojected = frame.reprojection.transform(Vector4f(clip))
@@ -305,8 +302,8 @@ class MotionJitterTest {
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
 
-		// renderLevel threw between the projection upload and LevelRenderer.render: this frame
-		// decided a route and moved the predecessor, but produced no image.
+		// No begin: renderLevel threw between the projection upload and LevelRenderer.render.
+		// This frame decided a route and moved the predecessor, but produced no image.
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample(x = 3.0))
 
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample(x = 3.0))

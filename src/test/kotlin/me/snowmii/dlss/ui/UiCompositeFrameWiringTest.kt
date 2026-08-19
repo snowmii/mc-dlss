@@ -41,18 +41,11 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.PointerBuffer
 
 /**
- * The frame wiring at GUI render completion: the window closes and one composite bakes the
- * held UI target over the HUD-less world already in the main target. The phase hands the main
- * target in as both the HUD-less source and the destination, and the composite answers that
- * alias by skipping its redundant base copy - it must never sample the very target it renders
- * into - and overlaying the UI over the destination as it is, so the vanilla main target
- * becomes the permanent presentation source before present, screenshots, and Tracy read the
- * getter.
- *
- * The composite's distinct-input passes are proven in [UiTargetCompositeTest] and the window
- * lifecycle in [UiPhaseTest]; this suite proves the phase routes the two targets into one
- * composite at the close, that the close precedes the composite, and that a frame with no
- * open GUI window composites nothing.
+ * At GUI completion the window closes and one composite bakes the held UI over the HUD-less
+ * world already in the main target. The phase passes the main target as both HUD-less source
+ * and destination; the composite skips the base copy — it must never sample the target it
+ * renders into — so the vanilla main target is the presentation source before present,
+ * screenshots, and Tracy.
  */
 class UiCompositeFrameWiringTest {
 	private val outputWidth = 2560
@@ -144,7 +137,6 @@ class UiCompositeFrameWiringTest {
 		assertTrue(harness.recording.pipelines.isEmpty(), "a degenerate frame leaves the main target untouched")
 	}
 
-	/** The phase under test plus every target, pass, and composite invocation the frame drives. */
 	private class Harness {
 		val allocated = mutableListOf<HeadlessRenderTarget>()
 		val released = mutableListOf<HeadlessRenderTarget>()
@@ -212,7 +204,6 @@ class UiCompositeFrameWiringTest {
 		override fun close() = Unit
 	}
 
-	/** Records every clear, pass, pipeline, and bind the production code drives. */
 	private class Recording {
 		data class Clear(val color: GpuTexture, val colorValue: Vector4fc, val depth: GpuTexture, val depthValue: Double)
 
@@ -242,7 +233,6 @@ class UiCompositeFrameWiringTest {
 		}
 	}
 
-	/** Records the pass-body calls the composite makes. */
 	private class RecordingPassBackend(private val recording: Recording) : RenderPassBackend {
 		override fun pushDebugGroup(label: Supplier<String>) = Unit
 		override fun popDebugGroup() = Unit

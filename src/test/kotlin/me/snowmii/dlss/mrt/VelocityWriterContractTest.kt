@@ -16,22 +16,20 @@ import org.junit.jupiter.api.TestFactory
 import org.lwjgl.system.MemoryUtil
 
 /**
- * The contracts every velocity-MRT writer shares, proven once against the seam that owns them.
+ * Shared velocity-MRT writer contracts: [writerTwin] is a source pipeline's full descriptor
+ * plus one unblended RG16_FLOAT payload target, the writer's velocity fragment shader, and
+ * the writer's payload layout.
  *
- * A writer twin is a source pipeline's full descriptor plus one unblended RG16_FLOAT payload
- * target, the writer's velocity fragment shader, and the writer's payload layout. That shape is
- * one function - [writerTwin] - so it is proven here across every writer and every source
- * pipeline the writers bind, rather than re-proven inside each writer's own suite. The writer
- * suites keep only what is theirs: the payload they compute and the seam they route through.
+ * A descriptor field dropped in the clone silently changes how a world pass renders - a lost
+ * blend function, a lost depth-write state, a lost vertex binding. An output declared in the
+ * wrong order in a velocity shader puts the near-black motion payload on color attachment 0,
+ * because `IntermediaryShaderModule.createFromSpirv` rewrites each output's Location to its
+ * index in the reflection list.
  *
- * Two failure modes drive these tests. A descriptor field dropped in the clone silently changes
- * how a world pass renders - a lost blend function, a lost depth-write state, a lost vertex
- * binding. And an output declared in the wrong order in a velocity shader puts the near-black
- * motion payload on color attachment 0, because `IntermediaryShaderModule.createFromSpirv`
- * rewrites each output's Location to its index in the reflection list.
+ * This suite does not pin camera-only terrain writers: those passes keep the vanilla
+ * one-attachment route, and the fill owns their camera motion.
  */
 class VelocityWriterContractTest {
-	/** Every writer with the source pipelines it is bound for in production. */
 	private val writers: Map<VelocityWriter, List<RenderPipeline>> = mapOf(
 		VelocityWriter.ENTITY to listOf(
 			RenderPipelines.ARMOR_CUTOUT_NO_CULL,
@@ -80,7 +78,6 @@ class VelocityWriterContractTest {
 				assertSame(source.getVertexFormatBinding(index), twin.getVertexFormatBinding(index), "binding $index")
 			}
 
-			// Color target zero is the source's own, blend function intact; target one is the payload.
 			val twinTargets = twin.colorTargetStates
 			assertEquals(2, twinTargets.size, "a writer twin has exactly the source target plus the payload")
 			assertSame(source.colorTargetStates[0], twinTargets[0])
@@ -198,7 +195,6 @@ class VelocityWriterContractTest {
 								"each output's Location to its index in this list",
 						)
 
-						// Apply that rewrite and read the decorations back, exactly as the game does.
 						val intSpirv = spirv.asIntBuffer()
 						outputs.forEachIndexed { index, OUTPUT_DIMENSIONS -> intSpirv.put(OUTPUT_DIMENSIONS.locationOffset, index) }
 						assertEquals(
@@ -256,13 +252,6 @@ class VelocityWriterContractTest {
 					assertTrue(shader.contains("abs(motion.x) >= INVALID_VELOCITY"), "$name collapses out-of-range to the sentinel")
 				}
 			}
-
-	/**
-	 * The camera-motion-only writers (terrain, weather, particle, breaking block) are retired:
-	 * those passes keep the exact vanilla one-attachment route and their pixels stay sentinel
-	 * for the post-scene fill, so no writer surface remains for them to share a payload design
-	 * through. The retained object-motion writers keep their own payload blocks.
-	 */
 
 	private fun eachWriterPipeline(check: (VelocityWriter, RenderPipeline) -> Unit): List<DynamicTest> =
 		writers.flatMap { (writer, sources) ->

@@ -24,13 +24,12 @@ import org.lwjgl.vulkan.VkInstanceCreateInfo
 import org.lwjgl.vulkan.VkPhysicalDevice
 
 /**
- * Verifies the device-requirements merge. the device-requirements merge. Streamline's Vulkan 1.2/1.3 feature names and the
- * summed DLSS_G queue counts surface through the bridge, and proxy activation succeeds against
- * a device that actually holds the merged queue layout.
+ * Streamline's Vulkan 1.2/1.3 feature names and the summed DLSS_G queue counts surface
+ * through the bridge, and proxy activation succeeds against a device that holds the merged
+ * queue layout.
  *
- * Methods are ORDERED because the fork is one process: the live-device test's close shuts the
- * Streamline runtime down (slShutdown, while the fixture device is still alive - the fix that
- * keeps the fork's JVM exit from crashing in sl.common.dll / nvcuda64.dll), and the
+ * Methods are ordered because the fork is one process: the live-device test's close shuts
+ * Streamline down (slShutdown, while the fixture device is still alive), and the
  * bootstrap-dependent queries need the runtime up, so they run before it and nothing
  * bootstraps after it.
  */
@@ -118,7 +117,7 @@ class StreamlineRequirementsMergeTest {
 			false,
 			mapOf(graphicsFamily to extras),
 		).use { fixture ->
-			// The fixture OUTLIVES the bridge: the close's slShutdown must run while the
+			// The fixture outlives the bridge: close's slShutdown must run while the
 			// device is still alive.
 			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
@@ -166,11 +165,8 @@ class StreamlineRequirementsMergeTest {
 					"the device must not exceed the merged queue count",
 				)
 
-				// Arm the close path: the already-activated tuple is recorded through the
-				// existing initialize, so this bridge's close runs the orderly slShutdown
-				// while the device is still alive instead of leaving the fork to crash at
-				// exit. Runs last (Order 4) because nothing in this fork may bootstrap
-				// after the shutdown.
+				// Record the activated tuple so close runs slShutdown while the device is
+				// still alive. Last (Order 4): nothing in this fork may bootstrap after shutdown.
 				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}

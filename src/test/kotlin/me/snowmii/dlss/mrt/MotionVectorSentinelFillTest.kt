@@ -31,8 +31,8 @@ import java.nio.file.Path
 
 /**
  * The sentinel-fill gate: the velocity-MRT route records one fill before tagging and
- * evaluation, while camera-only routing keeps its compute writer. These tests exercise pure
- * frame routing against [StreamlineSessionTestDouble], including reset propagation and fill order.
+ * evaluation, while camera-only routing keeps its compute writer. These tests exercise frame
+ * routing against [StreamlineSessionTestDouble], including reset propagation and fill order.
  */
 class MotionVectorSentinelFillTest {
 	@Test
@@ -66,9 +66,9 @@ class MotionVectorSentinelFillTest {
 			"the fill must precede the tag in the frame's recording",
 		)
 		assertTrue(calls.writeMotion.isEmpty(), "the velocity route must not record the compute camera-motion writer")
-		// Direct companion tagging is retired: the tag request carries only the engine colour
-		// and depth, and the native side always tags the module's motion image as the motion
-		// source. The destination of the fill never crosses the ABI back in.
+		// The tag request carries only the engine colour and depth; McDlssTagInfo does not
+		// carry the engine's velocity image. The native side tags the module's motion image
+		// as the motion source, so the fill destination never crosses the ABI back in.
 		assertEquals(scene().color, calls.tags.single().color)
 		assertEquals(scene().depth, calls.tags.single().depth)
 		assertEquals(1, calls.evaluations.size, "the frame must still evaluate")
@@ -156,10 +156,8 @@ class MotionVectorSentinelFillTest {
 	}
 
 	/**
-	 * A [VkCommandBuffer] instance whose address() answers without any Vulkan device.
-	 *
-	 * See [MotionVectorRouteTest.fakeCommandBuffer] - the frame path only reads `address()`,
-	 * so an instance allocated past the constructor is all this fake needs.
+	 * A [VkCommandBuffer] whose `address()` answers without a Vulkan device. The constructor
+	 * dereferences a live device; the frame path only reads `address()`.
 	 */
 	private fun fakeCommandBuffer(): VkCommandBuffer {
 		val unsafeField = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe")
@@ -178,7 +176,6 @@ class MotionVectorSentinelFillTest {
 	private fun motion(reset: Boolean = false) =
 		DlssFrameMotion(Matrix4f(), RENDER_DIMENSIONS.width / 2f, RENDER_DIMENSIONS.height / 2f, 16.6f, reset)
 
-	/** Records every per-frame native call so the fill gate is assertable off the render thread. */
 	private class RecordingNativeApi(
 		private val renderDimensions: Dimensions,
 	) : StreamlineSessionTestDouble() {

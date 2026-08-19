@@ -40,36 +40,31 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.PointerBuffer
 
 /**
- * Camera-only writer retirement: on VELOCITY_MRT the five
- * camera-motion-only writer families - terrain, static block entity, weather, particle, and
- * breaking block - are gone from the writer surface, the mixin registration, the source tree,
- * and the shader assets, while the retained object-motion writers (entity, moving block,
- * cloud), the post-scene fill, and the terrain pass's sentinel clear stay. The hand
- * retirement rides the same ratchet: the first-person hand/item velocity writer, its mixin
- * hooks, its shaders, and its suite are absent too, while the vanilla post-DLSS hand route
- * outside the world phase stays untouched.
+ * Camera-only writer retirement: on VELOCITY_MRT the five camera-motion-only writer
+ * families - terrain, static block entity, weather, particle, and breaking block - are gone
+ * from the writer surface, the mixin registration, the source tree, and the shader assets,
+ * while the retained object-motion writers (entity, moving block, cloud), the post-scene
+ * fill, and the terrain pass's sentinel clear stay. The hand retirement rides the same
+ * ratchet: the first-person hand/item velocity writer, its mixin hooks, its shaders, and its
+ * suite are absent too, while the vanilla post-DLSS hand route outside the world phase stays
+ * untouched.
  *
- * Three seams carry the proof:
+ * Terrain pass creation on a recording backend: the mixin delegates the `renderGroup`
+ * pass-creation redirect's clear to [TerrainVelocityPass]; the handler routes the pass
+ * through the wrapped operation with the original arguments, so the pass keeps the shape
+ * the caller asked for. The opaque group's sentinel clear lands on the encoder before the
+ * pass exists, the translucent group (or a null velocity view) never clears, and the pass
+ * carries exactly the one attachment the caller requested - vanilla source color, no
+ * velocity attachment, no twin.
  *
- * 1. **Terrain pass creation on a recording backend.** The terrain mixin delegates the
- *    `renderGroup` pass-creation redirect's clear to [TerrainVelocityPass], a plain object
- *    the test JVM can drive; the handler routes the pass itself through the wrapped
- *    operation with the original arguments, so the pass keeps the exact shape the caller
- *    asked for. Driving the helper proves the clear lifecycle: the opaque group's sentinel
- *    clear lands on the encoder before the pass exists, the translucent group (or a null
- *    velocity view) never clears, and the pass that follows carries exactly the one
- *    attachment the caller requested - the vanilla one source color attachment, no velocity
- *    attachment, no twin.
+ * Writer and registration surface: [VelocityWriter] exposes only the retained object-motion
+ * families, and `mc-dlss.mixins.json` registers no retired motion mixin.
  *
- * 2. **Writer and registration surface.** [VelocityWriter] exposes only the retained
- *    object-motion families, and `mc-dlss.mixins.json` registers no retired motion mixin.
- *
- * 3. **Policy ratchet.** The retired camera-only mixins, writer classes, shaders, and their
- *    test suites are absent from the source tree while the retained writers and the fill
- *    remain present. This is the sanctioned source ratchet, not a change detector: a
- *    re-introduced camera-only writer would break nothing that a green suite drives (the
- *    writer mixins cannot run without a Fabric transformation), so only an absence check can
- *    catch that invisible bug.
+ * Policy ratchet: the retired camera-only mixins, writer classes, shaders, and their test
+ * suites are absent from the source tree while the retained writers and the fill remain. A
+ * re-introduced camera-only writer would break nothing a green suite drives (the writer
+ * mixins cannot run without a Fabric transformation), so only an absence check can catch
+ * that.
  */
 class MotionVectorCameraOnlyRetirementTest {
 
@@ -93,12 +88,10 @@ class MotionVectorCameraOnlyRetirementTest {
 		}
 		pass.close()
 
-		// The clear is one encoder command, recorded before the pass creation.
 		assertEquals(listOf("clear", "pass"), backend.events, "the clear must land before the pass exists")
 		assertEquals(listOf(velocity.texture() to TerrainVelocityPass.SENTINEL), backend.clears)
 		assertSame(TerrainVelocityPass.SENTINEL, backend.clears.single().second)
 
-		// The pass carries exactly the vanilla one source attachment: scene color, no velocity.
 		val descriptor = backend.passDescriptors.single()
 		assertEquals(1, descriptor.colorAttachments().size, "the terrain pass has exactly one color attachment")
 		assertSame(scene, descriptor.colorAttachments()[0]!!.textureView())
@@ -211,7 +204,6 @@ class MotionVectorCameraOnlyRetirementTest {
 		override fun isClosed() = false
 	}
 
-	/** The recording encoder: records the pass descriptors and hands back a real pass. */
 	private class RecordingEncoder(private val recording: RecordingBackend) :
 		CommandEncoder(null, RecordingGpuDeviceBackend(), recording) {
 
@@ -228,7 +220,6 @@ class MotionVectorCameraOnlyRetirementTest {
 		}
 	}
 
-	/** The recording backend: captures the sentinel clear and the event order. */
 	private class RecordingBackend : CommandEncoderBackend {
 		val events = mutableListOf<String>()
 		val clears = mutableListOf<Pair<GpuTexture, Vector4fc>>()

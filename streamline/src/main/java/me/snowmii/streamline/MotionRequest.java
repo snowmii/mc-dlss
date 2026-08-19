@@ -15,11 +15,9 @@ import java.util.Objects;
  * for the same reason as in {@link EvaluationRequest}.
  */
 public record MotionRequest(
-	/** The caller's shared Vulkan command buffer the pass is recorded on. */
 	long commandBuffer,
-	/** The engine's render-sized depth image. */
 	ImageBinding depth,
-	/** 16 column-major reprojection floats mapping this frame's clip to the previous one's. */
+	/** 16 column-major floats: this frame's jittered clip to previous unjittered clip. */
 	float[] reprojection,
 	/** Stamped by the session adapter; see the class comment. */
 	Dimensions renderDimensions
@@ -30,8 +28,8 @@ public record MotionRequest(
 	}
 
 	/**
-	 * Compares the reprojection payload, not the array identity the generated {@code equals}
-	 * would compare - the Kotlin data class this record replaces did the same.
+	 * Compares the reprojection payload, not array identity — two requests holding the same
+	 * step in different arrays must be equal.
 	 */
 	@Override
 	public boolean equals(Object other) {
@@ -51,15 +49,11 @@ public record MotionRequest(
 		return result;
 	}
 
-	/** Kotlin's all-defaults construction: zero command buffer, zeroed binding, fresh 16 reprojection floats, null dimensions. */
 	public MotionRequest() {
 		this(0L, new ImageBinding(0L, 0L, 0), new float[16], null);
 	}
 
-	/**
-	 * Kotlin's trailing-default form: dimensions left null for the adapter to stamp. Each
-	 * construction still gets a fresh reprojection array, as the Kotlin default did.
-	 */
+	/** Dimensions left null for the adapter to stamp. Fresh reprojection array each call. */
 	public MotionRequest(long commandBuffer, ImageBinding depth, float[] reprojection) {
 		this(commandBuffer, depth, reprojection, null);
 	}

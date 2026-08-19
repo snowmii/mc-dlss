@@ -28,13 +28,9 @@ public final class VulkanContext {
 	private final long physicalDeviceHandle;
 	private final long deviceHandle;
 	private final long graphicsQueueHandle;
-	/** Queue family the graphics queue lives in, for Streamline's manual-hook Vulkan info. */
 	private final int graphicsQueueFamily;
-	/** Index at which Streamline's own queues start: the number of queues the host created in {@link #graphicsQueueFamily}. */
 	private final int graphicsQueueIndex;
-	/** Queue family the compute queue lives in, for Streamline's manual-hook Vulkan info. */
 	private final int computeQueueFamily;
-	/** Index at which Streamline's own compute queues start: the number of queues the host created in {@link #computeQueueFamily}. */
 	private final int computeQueueIndex;
 	private final Supplier<VkCommandBuffer> recordingCommandBufferSource;
 	private final Consumer<VkCommandBuffer> submittedCommandBufferSink;
@@ -93,27 +89,25 @@ public final class VulkanContext {
 		return graphicsQueueHandle;
 	}
 
-	/** Queue family the graphics queue lives in, for Streamline's manual-hook Vulkan info. */
 	public int getGraphicsQueueFamily() {
 		return graphicsQueueFamily;
 	}
 
-	/** Index at which Streamline's own queues start: the number of queues the host created in the graphics family. */
+	/** Streamline's own queues start here: host-created count in the graphics family. */
 	public int getGraphicsQueueIndex() {
 		return graphicsQueueIndex;
 	}
 
-	/** Queue family the compute queue lives in, for Streamline's manual-hook Vulkan info. */
 	public int getComputeQueueFamily() {
 		return computeQueueFamily;
 	}
 
-	/** Index at which Streamline's own compute queues start: the number of queues the host created in the compute family. */
+	/** Streamline's own compute queues start here: host-created count in the compute family. */
 	public int getComputeQueueIndex() {
 		return computeQueueIndex;
 	}
 
-	/** Records a fresh command buffer from the injected source, returning its non-zero handle wrapper. */
+	/** Fresh recording buffer from the injected source; handle is non-zero. */
 	public VkCommandBuffer allocateRecordingCommandBuffer() {
 		return recordingCommandBufferSource.get();
 	}

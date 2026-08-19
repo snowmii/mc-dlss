@@ -18,10 +18,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
-/**
- * Proves mod-owned evaluation-image lifecycle through [LifecycleAdapter].
- * Native allocation and handle validity are covered by Streamline's live tests.
- */
 class EvaluationImagesTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1280, 720)

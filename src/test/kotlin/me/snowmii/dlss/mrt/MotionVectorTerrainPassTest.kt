@@ -16,13 +16,12 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
- * Proves the terrain pass seam of the velocity MRT after the camera-only writer retirement:
- * while an eligible DLSS world phase is open, `ChunkSectionsToRender.renderGroup` reads the
- * scene-sized RG16_FLOAT velocity view - the seam that emits the pre-object-write sentinel
- * clear ([TerrainVelocityPass], proven on the recording backend in
- * [MotionVectorCameraOnlyRetirementTest]) - and on the camera-only route, the vanilla session,
- * or a frame without a companion, pass creation and source-pipeline binding stay exactly
- * vanilla and never throw.
+ * Terrain pass seam of the velocity MRT: while an eligible DLSS world phase is open,
+ * `ChunkSectionsToRender.renderGroup` reads the scene-sized RG16_FLOAT velocity view - the
+ * seam that emits the pre-object-write sentinel clear ([TerrainVelocityPass]). The terrain
+ * pass does not bind velocity twins; the fill owns camera motion for those pixels. On the
+ * camera-only route, a vanilla session, or a frame without a companion, pass creation and
+ * source-pipeline binding stay vanilla.
  */
 class MotionVectorTerrainPassTest {
 	private val mainTarget = fakeMainTarget()
@@ -146,6 +145,4 @@ class MotionVectorTerrainPassTest {
 			warnings = emptyList(),
 		),
 	)
-
-	/** Render target with a fake view over a fake texture, so the velocity seam is testable off the render thread. */
 }

@@ -7,21 +7,9 @@ import com.mojang.blaze3d.systems.CommandEncoder
 import org.joml.Vector4f
 
 /**
- * Owns the mod's transparent full-resolution UI target.
- *
- * The permanent UI split renders every overlay - hand/item, chat, hotbar, tooltips, debug
- * screen, vignette - into this target and composites it over the HUD-less world afterwards.
- * Nothing here routes a draw or redirects a target: routing code owns those decisions, while
- * this class owns the target and its lifetime.
- *
- * The target is allocated at the output size - UI is drawn at display resolution, never at the
- * DLSS render resolution - in RGBA8_UNORM with depth, so the overlay alpha survives and the
- * hand can carry its own depth against the UI. It is transparent by construction: [clear]
- * resets the color to transparent black and the depth to the reversed-Z far plane at the start
- * of every frame, so a frame with nothing drawn on it composites the world untouched.
- *
- * Allocation and release are injected so the lifecycle is verifiable off the render thread;
- * [forMinecraft] supplies the production pair.
+ * Transparent full-resolution UI target. Output size, never DLSS render size. RGBA8 + depth
+ * (overlay alpha; hand depth against UI). [clear] → transparent black + reversed-Z far plane.
+ * Never owns two UI targets at once.
  */
 class UiTarget(
 	private val allocate: (Int, Int) -> RenderTarget,
@@ -33,9 +21,8 @@ class UiTarget(
 		get() = uiRenderTarget
 
 	/**
-	 * Returns the held UI target, allocating at [width]x[height] when nothing is held or the
-	 * dimensions changed. A resize releases the held target before allocating the new one, so
-	 * the mod never owns two UI targets at once.
+	 * Allocate at [width]x[height] if missing or resized. Resize releases first so the mod
+	 * never owns two UI targets.
 	 */
 	fun acquireUiTarget(width: Int, height: Int): RenderTarget {
 		val existing = uiRenderTarget
@@ -46,10 +33,7 @@ class UiTarget(
 		return allocate(width, height).also { uiRenderTarget = it }
 	}
 
-	/**
-	 * Empties the held target for the frame: color to transparent black, depth to the
-	 * reversed-Z far plane. A target without a color or depth attachment is left untouched.
-	 */
+	/** Transparent black + reversed-Z far. Missing color/depth: no-op. */
 	fun clear(encoder: CommandEncoder) {
 		val held = uiRenderTarget ?: return
 		val color = held.colorTexture ?: return
@@ -67,7 +51,7 @@ class UiTarget(
 	companion object {
 		const val LABEL = "DLSS UI"
 
-		/** The transparent full-resolution payload format: RGBA8 carries the overlay alpha. */
+		/** RGBA8 so overlay alpha survives. */
 		val FORMAT = GpuFormat.RGBA8_UNORM
 
 		/** Reversed-Z: the cleared depth reads the far plane, matching the world's clear. */
@@ -75,10 +59,7 @@ class UiTarget(
 
 		private val TRANSPARENT = Vector4f(0.0f, 0.0f, 0.0f, 0.0f)
 
-		/**
-		 * Production seam. [TextureTarget] allocates color plus depth with vanilla's usage
-		 * flags and asserts the render thread, matching how the mod's scene target is built.
-		 */
+		/** Production: color + depth, vanilla usage flags, render-thread assert. */
 		@JvmStatic
 		fun forMinecraft(): UiTarget = UiTarget(
 			allocate = { width, height -> TextureTarget(LABEL, width, height, true, FORMAT) },

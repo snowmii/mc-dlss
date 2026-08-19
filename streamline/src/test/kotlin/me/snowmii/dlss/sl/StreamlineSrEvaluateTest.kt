@@ -13,22 +13,19 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * Verifies DLSS SR evaluation through Streamline: DLSS SR evaluates through Streamline on the caller's command buffer.
+ * DLSS SR evaluates through Streamline on the caller's command buffer.
  *
  * The live frame drives the whole SL path on a headless device: bootstrap, proxy activation,
- * initialize, optimal-dimension query, configure, module-image acquisition, and then per frame
- * the engine's colour and depth tag (slGetNewFrameToken + slSetTagForFrame) and the evaluation
- * (slSetConstants + slEvaluateFeature) on ONE allocated command buffer that must submit clean
- * under the Khronos validation layer - the plugin transitions the tagged resources from the
- * declared states, and a stale declaration would surface there.
+ * initialize, optimal-dimension query, configure, module-image acquisition, then per frame
+ * engine colour/depth tag (slGetNewFrameToken + slSetTagForFrame) and evaluation
+ * (slSetConstants + slEvaluateFeature) on one allocated command buffer that must submit
+ * clean under the Khronos validation layer. The plugin transitions tagged resources from the
+ * declared states; a stale declaration surfaces there.
  *
- * The live scenario lives in [SrLiveSession], which the shared canonical test
- * ([SrOnStreamlineTest]) shares; this class asserts the evaluate seam itself and the frame
- * ordering around it. The whole device-backed scenario runs in ONE test method (and therefore
- * one test fork): the close-path slShutdown is what makes the fork's exit clean, and a fork
- * that followed an unclean exit comes up with the plugin manager already initialized, which
- * makes slSetVulkanInfo answer eErrorInvalidIntegration. Splitting the scenario across two
- * forks makes the second fork's activation fail on this workstation no matter what it does.
+ * The live scenario lives in [SrLiveSession], shared with [SrOnStreamlineTest]. This class
+ * asserts the evaluate seam and the frame ordering around it. One test method (one fork):
+ * close-path slShutdown makes the fork's exit clean; an unclean exit leaves the plugin
+ * manager initialized, so the next fork's slSetVulkanInfo answers eErrorInvalidIntegration.
  */
 @NativeBridge
 class StreamlineSrEvaluateTest {

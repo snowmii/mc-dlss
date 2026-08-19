@@ -38,11 +38,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * The GUI window: what `GameRenderer.mainRenderTarget()` answers while [UiPhase] is open, what
- * every other moment sees, and the lifecycle of the transparent full-resolution target behind
- * it. The getter seam's world-over-UI precedence is proven at the [ClientRuntime] resolver the
- * mixin delegates to; everything else is driven off the render thread through injected
- * allocate/release pairs and a recording command encoder whose clear calls record.
+ * GUI window: `GameRenderer.mainRenderTarget()` answers the transparent full-resolution UI
+ * target while [UiPhase] is open and the vanilla target otherwise. World-over-UI wins at
+ * [ClientRuntime.resolveActiveTarget]. One held target, allocated at main-target size.
  */
 class UiPhaseTest {
 	private val outputWidth = 2560
@@ -164,7 +162,6 @@ class UiPhaseTest {
 		assertNull(ClientRuntime.resolveActiveTarget(null, null), "outside both windows the vanilla target answers")
 	}
 
-	/** The phase under test plus every resource it allocates, releases, or clears. */
 	private class Harness {
 		val allocated = mutableListOf<HeadlessRenderTarget>()
 		val released = mutableListOf<HeadlessRenderTarget>()
@@ -211,7 +208,6 @@ class UiPhaseTest {
 		override fun isClosed() = false
 	}
 
-	/** Records every clear the production code drives. */
 	private class Recording {
 		data class Clear(val color: GpuTexture, val colorValue: Vector4fc, val depth: GpuTexture, val depthValue: Double)
 

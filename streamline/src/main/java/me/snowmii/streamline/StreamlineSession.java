@@ -7,11 +7,9 @@ import java.util.List;
 /**
  * Native lifecycle calls exposed to the session adapter and test doubles.
  *
- * <p>The per-frame recording calls take a request object rather than a long argument list,
- * because that is the shape the flat ABI itself now takes and because the alternative was a
- * signature in which two adjacent {@code long} handles could be transposed by either side
- * without any diagnostic. The request types are defined in this package for the same reason
- * this interface is: they are the vocabulary of the ABI, not of the renderer that fills them.
+ * <p>Per-frame recording calls take a request object so two adjacent {@code long} handles
+ * cannot be transposed without a diagnostic. Request types live here: they are ABI
+ * vocabulary, not renderer types.
  */
 public interface StreamlineSession extends AutoCloseable {
 	/** Flat ABI success result defined by native/mc_dlss.h. */
@@ -19,8 +17,7 @@ public interface StreamlineSession extends AutoCloseable {
 
 	/**
 	 * Validates and records the live Vulkan tuple the bridge's own images and motion pass are
-	 * allocated against, and nothing else: the retired direct-NGX initialization no longer runs
-	 * behind it.
+	 * allocated against.
 	 *
 	 * <p>Must be called after {@link Native#bootstrapStreamline(Path)} and
 	 * {@link Native#activateVulkanProxies(long, long, long, int, int, int, int)} with the same
@@ -28,9 +25,8 @@ public interface StreamlineSession extends AutoCloseable {
 	 * activation - or with a tuple that disagrees with the recorded proxy tuple - is refused and
 	 * records nothing.
 	 *
-	 * <p>{@code sdkPath} and {@code dataPath} are compatibility inputs. The retired direct-NGX
-	 * implementation used them to locate its feature DLL and data; nothing in the Streamline
-	 * stack consumes them, so they are validated as well-formed paths and otherwise ignored.
+	 * <p>{@code sdkPath} and {@code dataPath} are unused: validated as well-formed paths and
+	 * otherwise ignored.
 	 *
 	 * <p>The first successful transition also records the Reflex options registration the
 	 * pinned Reflex guide requires: one {@code slReflexSetOptions} call with
@@ -256,34 +252,34 @@ public interface StreamlineSession extends AutoCloseable {
 	int recordPresentHandoff();
 
 	/**
-	 * Emits the PRESENT_START Reflex marker of the armed present bracket under the frame's
-	 * retained token, immediately before the queue present. The DLSS-G plugin correlates the
-	 * presented frame with its common constants through this marker, so a frame presented
-	 * without it never generates.
+	 * Emits the PRESENT_START Reflex marker under the frame's retained token, immediately
+	 * before the queue present. The DLSS-G plugin correlates the presented frame with its
+	 * common constants through this marker, so a frame presented without it never generates.
+	 * NVIDIA overlay FPS and latency also correlate presents through this marker, so an
+	 * SR-only or vanilla-routed frame that still presents must emit it too.
 	 *
-	 * <p>An unarmed present is a no-op success: an SR-only or skipped frame, or any present
-	 * without a successful {@link #recordPresentHandoff()} arming the bracket, has no bracket to
-	 * open - and the present seam fires on every present, so a refusal would latch the
-	 * session on a frame that simply did not compose. Only a bracket a successful handoff
-	 * armed emits the START, and exactly once: a present that threw between START and END
-	 * leaves the bracket open, and a second START for the same frame is the same no-op.
-	 * Answers {@code FAIL_NotInitialized} while the session is not ready.
+	 * <p>A present with no retained token is a no-op success: the present seam fires on every
+	 * present, so a refusal would latch the session on a frame that simply did not compose.
+	 * Only a frame that still holds its token emits the START, and exactly once: a present
+	 * that threw between START and END leaves the bracket open, and a second START for the
+	 * same frame is the same no-op. Answers {@code FAIL_NotInitialized} while the session is
+	 * not ready.
 	 */
 	int presentStart();
 
 	/**
-	 * Emits the PRESENT_END Reflex marker of the armed present bracket under the frame's
-	 * retained token, immediately after the queue present returned, and consumes the
-	 * bracket: the retained token and the tag set's handoff eligibility clear whether the
-	 * marker succeeded or failed, so the next frame's tags obtain a fresh token under a
-	 * fresh index.
+	 * Emits the PRESENT_END Reflex marker under the frame's retained token, immediately after
+	 * the queue present returned, and consumes the bracket: the retained token and the tag
+	 * set's handoff eligibility clear whether the marker succeeded or failed, so the next
+	 * frame's tags obtain a fresh token under a fresh index.
 	 *
-	 * <p>An unarmed present has no bracket to close and is the same no-op success as the
-	 * START. The END marker closes only a bracket a START actually opened - a START that
-	 * failed never leaves an open bracket, and the log must never read an END without its
-	 * START - but an armed bracket whose START never emitted is consumed here exactly like
-	 * a successful one, so a failed START cannot leave a stale bracket for a later present
-	 * to open. Answers {@code FAIL_NotInitialized} while the session is not ready.
+	 * <p>A present with no token and no leftover FG-armed bracket has nothing to close and is
+	 * the same no-op success as the START. The END marker closes only a bracket a START
+	 * actually opened - a START that failed never leaves an open bracket, and the log must
+	 * never read an END without its START - but a frame whose START never emitted is consumed
+	 * here exactly like a successful one, so a failed START cannot leave a stale bracket for
+	 * a later present to open. Answers {@code FAIL_NotInitialized} while the session is not
+	 * ready.
 	 */
 	int presentEnd();
 

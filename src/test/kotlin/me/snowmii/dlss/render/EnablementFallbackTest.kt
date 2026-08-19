@@ -28,16 +28,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
-/**
- * Verifies frame eligibility, history resets, and safe native fallback. Supported in-world frames
- * use DLSS; discontinuities reset history; a failed native stage restores full-resolution rendering
- * and reports the exact stage and result.
- *
- * Everything below drives the production seams - the world phase, the runtime, the lifecycle
- * adapter, and the session - off the render thread. The native side is a double, and the failure
- * path goes through the adapter, which takes its command buffer and images as plain handles, so
- * nothing here needs a GPU.
- */
 class EnablementFallbackTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1280, 720)
@@ -68,7 +58,7 @@ class EnablementFallbackTest {
 
 	// A size the session is not configured against renders full-resolution *for that frame*. This
 	// runtime has no bridge, so there is no native side to reconfigure and the refusal is the
-	// whole story; the session's own adoption of the client's size is OutputResolutionTest's.
+	// whole story.
 	@Test
 	fun `a window the session is not configured against renders full-resolution`() {
 		val fixture = fixture()
@@ -139,8 +129,6 @@ class EnablementFallbackTest {
 		assertEquals(0xBAD00005.toInt(), fixture.session.failure?.resultCode)
 	}
 
-	// The vanilla-frame and level-change resets are MotionJitterTest's and LevelChangeResetTest's;
-	// this is the one wiring test that the discontinuity predicate reaches the production stack.
 	@Test
 	fun `a camera that jumped resets the history`() {
 		val fixture = fixture()
@@ -158,13 +146,11 @@ class EnablementFallbackTest {
 		initializeResult: Int = StreamlineSession.SUCCESS_RESULT,
 	) = Fixture(enabled, initializeResult)
 
-	/** The production stack, wired the way `RenderRuntime.forMinecraft` wires it. */
 	private inner class Fixture(enabled: Boolean, initializeResult: Int) {
 		val diagnostics = mutableListOf<String>()
 		val native = FakeNative(initializeResult, render)
 		var released = 0
 
-		/** This frame's route and motion, captured while the phase was still open. */
 		var route: WorldTargetRoute? = null
 		var motion: DlssFrameMotion? = null
 
@@ -224,7 +210,6 @@ class EnablementFallbackTest {
 		/** The fallback diagnostics alone; the phase reports its first decision on the same sink. */
 		fun latchDiagnostics() = diagnostics.filter { it.startsWith("DLSS fallback latched") }
 
-		/** One evaluation through the adapter, which takes every handle as a plain value. */
 		fun evaluate(): Boolean = adapter.evaluate(EvaluationRequest.builder()
 			.commandBuffer(0xF00DL)
 			.build())
@@ -252,7 +237,6 @@ class EnablementFallbackTest {
 		override fun destroyBuffers() = Unit
 	}
 
-	/** The native bridge as results, which is all the enablement and fallback paths read of it. */
 	private class FakeNative(private val initializeResult: Int, private val render: Dimensions) : StreamlineSessionTestDouble() {
 		var initializeCalls = 0
 		var evaluateCalls = 0

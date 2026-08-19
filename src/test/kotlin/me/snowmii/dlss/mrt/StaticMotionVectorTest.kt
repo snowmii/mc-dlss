@@ -11,25 +11,15 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 
 /**
- * Proves still-camera semantics: a continuous still camera produces zero NDC
- * motion at every depth through the shader's own per-pixel formula, whatever the jitter moved.
+ * Still-camera semantics: a continuous still camera produces zero NDC motion at every depth
+ * through the shader's own per-pixel formula, whatever the jitter moved.
  *
- * This is the camera-motion math the whole velocity surface shares: the stress pass derives its
- * vectors from the same published reprojection, the camera-only writer and the post-scene fill
- * reconstruct the same camera motion, and a static surface's correct velocity is exactly the
- * camera's. The terrain camera-motion writers are retired, so nothing here pins their shader or
- * uniform surface; the retained shader contract is proven in [VelocityWriterContractTest] and
- * the stress pass's own seam in [StressPassVelocityTest].
+ * The stress pass, the camera-only compute writer, and the post-scene fill reconstruct the
+ * same camera motion; a static surface's correct velocity is exactly the camera's. This suite
+ * does not pin camera-only terrain writers.
  */
 class StaticMotionVectorTest {
 
-	/**
-	 * A continuous still camera produces zero NDC motion at every depth through the shader's
-	 * own formula: the reprojection collapses to the identity, so
-	 * `ndc(Reprojection * clip) - ndc(clip)` is zero and the jitter never leaks into the
-	 * vector. This is the static-motion behavior: static geometry's
-	 * correct velocity is exactly the camera's, and a still camera must read zero everywhere.
-	 */
 	@Test
 	fun `a continuous still camera produces zero NDC motion at every depth`() {
 		val motion = DlssCameraMotion(RENDER_DIMENSIONS)

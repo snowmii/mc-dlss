@@ -35,33 +35,23 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Piston moving-block velocity-writer proof.
+ * Piston moving-block velocity writer.
  *
- * `PistonHeadRenderer` renders a moving piston block by submitting one or two
- * `MovingBlockRenderState`s (the moving block and the retracting piston base) into
- * `MovingBlockFeatureRenderer`, which tesselates each submit's block model into the
- * `solidMovingBlock` / `cutoutMovingBlock` / `translucentMovingBlock` render types - the
- * block-shaped `SOLID_BLOCK` / `CUTOUT_BLOCK` / `TRANSLUCENT_BLOCK` pipelines - and draws them
- * through the same `PreparedRenderType.drawFromBuffer` seam the entity writer uses. This test
- * binds each submitted render state to the collision-free packed long identity of its baked
- * block position at the block-entity dispatcher seam, captures its absolute render position (baked position plus the
- * piston's current interpolated offset) into the shared object-motion history, isolates one
- * staged draw per moving block at the feature-renderer boundary, and replaces the owned
- * main-target solid/cutout draws with a cached two-target twin whose fragment shader
- * reproduces the vanilla core/block color output byte-identically and writes the piston
- * offset-delta object reprojection into the RG16_FLOAT velocity attachment - with the exact
- * reset/unknown-history sentinel. Translucent `ITEM_ENTITY_TARGET` draws, identity-less
- * moving geometry (falling blocks ride the same feature renderer), vanilla, and CAMERA_ONLY
- * keep their exact source routes without throwing.
+ * `PistonHeadRenderer` submits one or two `MovingBlockRenderState`s (the moving block and
+ * the retracting piston base) into `MovingBlockFeatureRenderer`, which tesselates each
+ * submit's block model into the `solidMovingBlock` / `cutoutMovingBlock` /
+ * `translucentMovingBlock` render types - the block-shaped `SOLID_BLOCK` / `CUTOUT_BLOCK` /
+ * `TRANSLUCENT_BLOCK` pipelines - and draws them through `PreparedRenderType.drawFromBuffer`.
+ * Each submitted render state is bound to the packed long identity of its baked block
+ * position; capture records baked position plus the piston's interpolated offset. Owned
+ * main-target solid/cutout draws bind a two-target twin whose fragment shader reproduces
+ * vanilla core/block color and writes the offset-delta object reprojection into the
+ * RG16_FLOAT velocity attachment, with the reset/unknown-history sentinel. Translucent
+ * `ITEM_ENTITY_TARGET` draws, identity-less moving geometry (falling blocks), vanilla, and
+ * CAMERA_ONLY keep their source routes.
  *
- * The test JVM does not apply Fabric mixins or own a live Blaze3D device, so this suite makes
- * no live transformed/GPU draw claim: descriptors are proven against the mapped 26.2 classes,
- * the control seams are driven at the same seams the mixins use, and passthrough is proven by
- * the control seams answering false. The moving-block shader compiles through the same LWJGL
- * Shaderc + spirv-cross path `GlslCompiler` and `IntermediaryShaderModule` use - it inlines the
- * two vanilla includes it needs, so it is self-contained - and the reflected output order is
- * pinned to fragColor-then-velocityColor, the order Minecraft's location rewrite turns into
- * color attachments 0 and 1.
+ * The test JVM does not apply Fabric mixins or own a live Blaze3D device, so this suite
+ * makes no live transformed/GPU draw claim.
  */
 class MotionVectorMovingBlockTest {
 	private val mainTarget = fakeMainTarget()

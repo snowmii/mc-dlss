@@ -1,6 +1,6 @@
 package me.snowmii.dlss.session
 import me.snowmii.streamline.Dimensions
-import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.client.ModConfig
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -21,8 +21,7 @@ class DlssStartupConfigTest {
 		assertTrue(config.warnings.isEmpty())
 	}
 
-	// Mode selection by property and the NGX value each mode carries are QualityModePresetTest's,
-	// which covers all six modes rather than three.
+	// Mode selection and NGX values for all six modes are QualityModePresetTest's.
 
 	@Test
 	fun startupPropertiesSelectAllSupportedModesAndPaths() {

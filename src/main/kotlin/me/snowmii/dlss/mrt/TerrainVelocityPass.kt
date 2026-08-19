@@ -8,11 +8,10 @@ import org.joml.Vector4f
 /**
  * The terrain chunk passes' velocity-companion handling: the pre-object-write SENTINEL clear.
  *
- * The terrain writers are retired: the terrain chunk passes never carry the velocity
- * attachment and never bind a velocity twin, so their color output is byte-identical to
- * vanilla. What remains is the companion's clear lifecycle: on an open VELOCITY_MRT phase the
- * scene velocity companion must read the invalid sentinel before any retained object writer
- * draws, so every pixel no object writer covers - sky, discarded cutout texels, the cleared
+ * Terrain chunk passes never carry the velocity attachment and never bind a velocity twin,
+ * so their color output is byte-identical to vanilla. What remains is the companion's clear
+ * lifecycle: on an open VELOCITY_MRT phase the scene velocity companion must read the invalid
+ * sentinel before any retained object writer draws, so every pixel no object writer covers - sky, discarded cutout texels, the cleared
  * far plane, and every camera-only surface like terrain, weather, particles, static block
  * entities, and the breaking overlay - is classified as "no object motion" by the post-scene
  * fill, which reconstructs camera motion for it. [createPass] emits that clear (an encoder

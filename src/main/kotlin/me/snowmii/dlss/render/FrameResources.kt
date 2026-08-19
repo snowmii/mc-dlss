@@ -23,9 +23,6 @@ import me.snowmii.dlss.session.DlssFrameRoute
  */
 class FrameResources(
 	private val sceneTarget: SceneTarget,
-	/**
-	 * Records this frame's DLSS work, or null for a runtime that only routes targets.
-	 */
 	val frameEvaluation: FrameEvaluation?,
 	/**
 	 * Blocks until the device has finished every frame already submitted, or does nothing for a

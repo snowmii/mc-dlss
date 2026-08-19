@@ -42,8 +42,8 @@ import kotlin.math.abs
  * - mathematically the `DlssCameraMotion` composition with the object's camera-relative
  *   displacement folded into the camera's. A world-still object therefore reduces to the camera
  *   reprojection exactly, and a translating object reads its own NDC motion on top of the
- *   camera's. A reset frame composes nothing: the identity, exactly like the camera's own reset
- *   reprojection, so the velocity writer's reset flag keeps meaning what it meant.
+ *   camera's. A reset frame composes nothing: the identity, matching the camera's own reset
+ *   reprojection.
  */
 class MotionVectorObjectStateTest {
 	private val renderDimensions = Dimensions(1280, 720)

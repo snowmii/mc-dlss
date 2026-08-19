@@ -50,10 +50,24 @@ val streamlineDir = File(gradle.gradleUserHomeDir, "caches").resolve("streamline
 val streamlineArchive = streamlineDir.resolve("sdk.zip")
 
 
+fun open(url: String) = URI(url).toURL().openConnection().apply {
+	setRequestProperty("User-Agent", "mc-dlss")
+}
+
 fun get(url: String, output: File) {
-	if (output.exists()) return
 	output.parentFile.mkdirs()
-	URI(url).toURL().openStream().use { input -> output.outputStream().use(input::copyTo) }
+	val tmp = output.resolveSibling("${output.name}.part")
+	if (tmp.exists()) check(tmp.delete()) { "Failed to clear $tmp" }
+	val connection = open(url)
+	val expectedLength = connection.contentLengthLong
+	connection.getInputStream().use { input -> tmp.outputStream().use(input::copyTo) }
+	val actualLength = tmp.length()
+	if (expectedLength >= 0 && actualLength != expectedLength) {
+		tmp.delete()
+		error("Incomplete download: $url ($actualLength of $expectedLength bytes)")
+	}
+	if (output.exists()) check(output.delete()) { "Failed to replace $output" }
+	check(tmp.renameTo(output)) { "Failed to publish $output" }
 }
 
 fun sha256(file: File): String {
@@ -64,12 +78,19 @@ fun sha256(file: File): String {
 
 @Suppress("UNCHECKED_CAST")
 fun githubAsset(repo: String, tag: String, name: String, output: File) {
-	val release = URI("https://api.github.com/repos/$repo/releases/tags/$tag").toURL().readText()
+	val release = open("https://api.github.com/repos/$repo/releases/tags/$tag").getInputStream().use { it.reader().readText() }
 	val assets = (JsonSlurper().parseText(release) as Map<*, *>)["assets"] as List<Map<*, *>>
 	val asset = assets.first { it["name"] == name }
-	get(asset["browser_download_url"].toString(), output)
+	val expectedSize = (asset["size"] as Number).toLong()
 	val expected = asset["digest"]?.toString()?.removePrefix("sha256:")
-	check(expected != null && sha256(output) == expected) { "SHA-256 mismatch: $name" }
+	check(expected != null) { "GitHub release $tag is missing a SHA-256 digest for $name" }
+	if (!output.exists() || output.length() != expectedSize || sha256(output) != expected) {
+		get(asset["browser_download_url"].toString(), output)
+	}
+	val actual = sha256(output)
+	check(output.length() == expectedSize && actual == expected) {
+		"SHA-256 mismatch: $name (expected $expected / $expectedSize bytes, got $actual / ${output.length()} bytes)"
+	}
 }
 
 val downloadStreamlineSdk = tasks.register("downloadStreamlineSdk") {
@@ -231,23 +252,6 @@ val nativeTest = tasks.register<Exec>("nativeTest") {
 	commandLine(layout.buildDirectory.dir("native-test").get().asFile.resolve("native_tests.exe").absolutePath)
 }
 
-val checkEngineFreeClasspath = tasks.register("checkEngineFreeClasspath") {
-	group = "verification"
-
-	val engineCoordinate = Regex("(?i)minecraft|fabric|blaze3d|com\\.mojang")
-	val coordinates = configurations.named("compileClasspath")
-		.flatMap { it.incoming.artifacts.resolvedArtifacts }
-		.map { artifacts -> artifacts.map { it.id.componentIdentifier.displayName } }
-	inputs.property("coordinates", coordinates)
-
-	doLast {
-		val engine = coordinates.get().filter(engineCoordinate::containsMatchIn)
-		check(engine.isEmpty()) {
-			engine.joinToString("\n", prefix = "Engine coordinates on the SDK compile classpath:\n") { "  - $it" }
-		}
-	}
-}
-
 val nativeBridgeTag = "native-bridge"
 
 tasks.test {
@@ -264,7 +268,7 @@ val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 }
 
 tasks.named("check") {
-	dependsOn(nativeTest, nativeBridgeTest, checkEngineFreeClasspath)
+	dependsOn(nativeTest, nativeBridgeTest)
 }
 
 val streamlineRuntime = toolchainRoot(

@@ -12,7 +12,7 @@ import me.snowmii.dlss.session.SRModelPreset
 import me.snowmii.dlss.session.DlssSession
 import me.snowmii.dlss.session.DlssSessionState
 import me.snowmii.dlss.session.DlssStartupConfig
-import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.client.ModConfig
 import me.snowmii.dlss.mrt.MotionVectorCompatibility
 import me.snowmii.dlss.mrt.MotionVectorPipeline
 import me.snowmii.dlss.mrt.MotionVectorRoute
@@ -38,25 +38,16 @@ data class WorldTargetRoute(
 /**
  * Production owner of everything the render loop needs from DLSS.
  *
- * Until this class existed, [LifecycleAdapter] and [SceneTarget] each had a correct
- * contract and no caller. The runtime is the single
- * place that turns a captured Vulkan context into a READY session and then answers one
- * question per frame: *which target does the world phase render into?*
+ * Turns a captured Vulkan context into a READY session, then answers which target the world
+ * phase renders into. Startup is attempted once, on the first frame that asks for a world
+ * target — Streamline needs a live Vulkan device, so this cannot run at mod-init. Failed or
+ * skipped startup latches vanilla fallback; later frames are never retried.
  *
- * Startup is attempted exactly once. Streamline-backed startup needs a live Vulkan device, so it
- * cannot happen at mod-init time; the first frame that asks for a world target drives it.
- * A failed or skipped startup is never retried — the session latches vanilla fallback and
- * every later frame routes full-resolution.
+ * Does not own GPU objects ([FrameResources]) or jitter/motion/pose sequences
+ * ([WorldPhaseState]). What remains: startup latch, configuration in effect, routing.
  *
- * What it does *not* own is deliberate. The GPU objects a configuration holds, and the device
- * stall that makes freeing them safe, belong to [FrameResources]; the jitter, motion, and
- * object-pose sequences a frame accumulates against its predecessor belong to
- * [WorldPhaseState]. Both were
- * threaded through this class as loose fields and a release rule repeated at four call sites.
- * What is left here is the startup latch, the configuration in effect, and the routing decision.
- *
- * Everything is constructor-injected so the whole lifecycle is verifiable off the render
- * thread; [forMinecraft] supplies the production wiring.
+ * Constructor-injected so the lifecycle is testable off the render thread; [forMinecraft]
+ * is production wiring.
  */
 class RenderRuntime(
 	private val session: DlssSession,
@@ -64,17 +55,13 @@ class RenderRuntime(
 	private val startup: () -> Dimensions?,
 	private val clock: () -> Long = System::nanoTime,
 	/**
-	 * Records this frame's DLSS work, or null for a runtime that only routes targets. The world
-	 * phase owns *when* it runs; the runtime owns it because it is scoped to the same session.
+	 * Records this frame's DLSS work, or null to route targets only. World phase owns *when*;
+	 * runtime owns it because it is scoped to the same session.
 	 */
 	val frameEvaluation: FrameEvaluation? = null,
 	/**
-	 * Every native call this runtime makes on the running session - the reconfigure, the device
-	 * stall, the FG input wait, the status poll, the eOff record, and the multiplier pair - or
-	 * null for a runtime that only routes targets and never reaches the native side.
-	 *
-	 * One collaborator rather than seven lambdas over it: see [SessionBridge]. Separate from
-	 * [startup] because none of these may re-initialize the Streamline session.
+	 * Native calls on the running session, or null to route only. Separate from [startup]:
+	 * none of these may re-initialize Streamline.
 	 */
 	private val bridge: SessionBridge? = null,
 	/** Session compatibility latch populated by world-pipeline compilation. */
@@ -124,11 +111,9 @@ class RenderRuntime(
 	val outputDimensions: Dimensions
 		get() = session.outputDimensions
 
-	/** Quality mode this runtime is rendering at, which starts as the configured one. */
 	var qualityMode: SRMode = session.config.qualityMode
 		private set
 
-	/** Preset this runtime is rendering with, which starts as the configured one. */
 	var renderPreset: SRModelPreset = session.config.renderPreset
 		private set
 
@@ -154,10 +139,6 @@ class RenderRuntime(
 	val fgMultiplier: Int
 		get() = frameGeneration.numFramesToGenerate
 
-	/**
-	 * Where each app frame's wall time goes, sampled by the seams that can stall one and reported
-	 * on the frame-rate line. See [FramePacingProbe].
-	 */
 	val pacing = FramePacingProbe()
 
 	/**
@@ -168,7 +149,6 @@ class RenderRuntime(
 	var worldRenderTarget: RenderTarget? = null
 		private set
 
-	/** Route chosen for the current world phase, or null outside one. */
 	var worldTargetRoute: WorldTargetRoute? = null
 		private set
 
@@ -181,15 +161,12 @@ class RenderRuntime(
 	val activeVelocityView: GpuTextureView?
 		get() = frameResources.currentSceneVelocityView
 
-	/** Streamline-queried render dimensions, or null until a successful startup. */
 	var dlssRenderDimensions: Dimensions? = null
 		private set
 
-	/** Startup configuration this runtime's session resolved. */
 	val config: DlssStartupConfig
 		get() = session.config
 
-	/** Current session state, also used by the session readout. */
 	val sessionState: DlssSessionState
 		get() = session.state
 
@@ -318,38 +295,27 @@ class RenderRuntime(
 			adoptOutputDimensions(outputDimensions)
 		}
 
-		// No wait on DLSSGState::inputsProcessingCompletionFence here any more, and the measurement
-		// is why: it cost 10-11ms of every 13ms FG frame, which is the whole difference between
-		// ~450fps with FG off and ~75 with it on. The wait is required only under the
-		// eBlockNoClientQueues queue-parallelism mode, whose documented gains are for applications
-		// submitting from several queues; Minecraft renders and presents on one. The recorded
-		// options are eBlockPresentingClientQueue now, under which the guide makes the wait
-		// "recommended but not required" when the tagged inputs are modified on the presenting
-		// queue - the only queue this frame has - and the plugin blocks that queue itself for as
-		// long as it actually needs. [me.snowmii.streamline.StreamlineSession.waitFgInputsIdle] stays on
-		// the ABI: it is the mode's obligation, and the mode is one options field away.
-		// Polled on the user's mode rather than the effective one: an unhealthy status suspends
-		// composition, and gating the poll on composition would stop the polling that observes the
-		// status becoming healthy again - the suspension would never lift.
+		// No wait on DLSSGState::inputsProcessingCompletionFence. That wait is required only
+		// under eBlockNoClientQueues; Minecraft renders and presents on one queue, so options
+		// use eBlockPresentingClientQueue and the plugin blocks that queue itself.
+		// [me.snowmii.streamline.StreamlineSession.waitFgInputsIdle] stays on the ABI for the
+		// other mode. Poll the user's mode, not the effective one: an unhealthy status suspends
+		// composition, and gating the poll on composition would never observe recovery.
 		if (frameGeneration.userEnabled) {
 			pacing.begin(FramePacingProbe.Span.FG_STATUS_POLL)
 			updateFrameGenerationHealth()
 			pacing.end(FramePacingProbe.Span.FG_STATUS_POLL)
 		}
 
-		// FG composes only on supported in-world frames. The classifier runs after the
-		// FG-active wait and poll, so the frame that suspends has still waited out the
-		// previous FG frame's input processing and read its status; a supported->unsupported
-		// transition then records the retained eOff mode exactly once, the frames in between
-		// compose SR-only, and a supported frame resumes without a record - the next FG
-		// frame's per-frame options record re-records eOn.
+		// FG composes only on supported in-world frames. Classifier runs after the health poll
+		// so a suspending frame still read status. supported→unsupported records retained eOff
+		// once; in-between frames are SR-only; a supported frame resumes without a record
+		// (the next FG frame's per-frame options re-record eOn).
 		//
-		// A frame SR is not running is unsupported before the classifier is even asked: DLSS-G
-		// reads the scene depth, the bridge's motion image, and the output-sized HUD-less
-		// colour, and switching SR off releases exactly those. The classifier runs ahead of the
-		// not-started return for that reason - returning first left the mode eOn with tags
-		// naming released images, which the intercepted present turned into
-		// VK_ERROR_DEVICE_LOST.
+		// SR-off is unsupported before the classifier: DLSS-G reads scene depth, the bridge
+		// motion image, and output-sized HUD-less colour, and switching SR off releases those.
+		// Returning not-started first left mode eOn with tags naming released images, which
+		// intercepted present turned into VK_ERROR_DEVICE_LOST.
 		val frameSupported =
 			started && fgStatusHealthy && fgFrameSupported(normalInWorldFrame, outputDimensions)
 		frameGeneration.setCompositionSupported(frameSupported)
@@ -698,12 +664,9 @@ class RenderRuntime(
 	 * frame or two by construction: the reconfigure rebuilds the images and the resolution, and the
 	 * plugin reports on the frames in between.
 	 *
-	 * This used to latch FG off for the whole session on the first non-zero word, which also
-	 * restored vsync - so one transient bit during a settings change ended frame generation and put
-	 * the swapchain back on FIFO for good, with no way back short of a restart. It is routed
-	 * through the frame-support axis instead: composition suspends, the retained eOff record
-	 * attaches to the transition exactly as it does for a pause or a menu, the swapchain policy
-	 * deliberately does not move (see [FgSurfacePolicy]), and the first healthy frame resumes.
+	 * Routed through the frame-support axis: composition suspends, the retained eOff record
+	 * attaches to the transition as it does for a pause or menu, swapchain policy does not
+	 * move (see [FgSurfacePolicy]), and the first healthy frame resumes.
 	 */
 	private fun updateFrameGenerationHealth() {
 		val state = bridge?.queryFgState() ?: return

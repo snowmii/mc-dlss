@@ -36,39 +36,29 @@ import java.util.Objects;
  * it runs.
  */
 public record CameraConstants(
-	/** Row-major view-to-clip projection, 16 floats, jitter-free. */
 	float[] viewToClip,
-	/** Row-major clip-to-view inverse, 16 floats. */
 	float[] clipToView,
-	/** Camera position in world space, 3 floats. */
 	float[] pos,
-	/** World-space direction of view-space +X, 3 floats. */
+	/** World-space direction of view-space +X. */
 	float[] right,
-	/** World-space direction of view-space +Y, 3 floats. */
+	/** World-space direction of view-space +Y. */
 	float[] up,
-	/** World-space direction of view-space -Z, where the camera looks, 3 floats. */
+	/** World-space direction of view-space -Z (where the camera looks). */
 	float[] fwd,
 	/**
-	 * Row-major current-clip to previous-clip, 16 floats, jitter-free. Defaults to the
-	 * identity - a still camera - for the callers that describe only where the camera is,
-	 * never how it moved; the frame evaluation always supplies the real step.
+	 * Jitter-free current-clip to previous-clip. Defaults to identity (still camera) for
+	 * callers that describe pose only; the frame evaluation always supplies the real step.
 	 */
 	float[] clipToPrevClip,
-	/** Row-major previous-clip to current-clip, 16 floats - the inverse of {@link #clipToPrevClip}. */
 	float[] prevClipToClip,
-	/** Near view-plane distance. */
 	float near,
-	/** Far view-plane distance. */
 	float far,
-	/** Vertical field of view, in radians. */
 	float fovRadians,
-	/** View-space width divided by height. */
 	float aspectRatio,
 	/**
-	 * The pixel-space temporal-AA jitter offset the constants record carried, in render
-	 * pixels. The SR oracle reports it raw; the FG oracle reports it with y negated, matching
-	 * the FG viewport's y-flipped tags. Input cameras never carry it - the evaluation's jitter
-	 * travels separately as {@link EvaluationRequest#jitter()}.
+	 * Pixel-space TAA jitter in render pixels. SR oracle reports it raw; FG oracle reports
+	 * y negated, matching the FG viewport's y-flipped tags. Input cameras never carry it —
+	 * evaluation jitter travels as {@link EvaluationRequest#jitter()}.
 	 */
 	float jitterX,
 	float jitterY

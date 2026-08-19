@@ -78,14 +78,8 @@ class LifecycleAdapter(
 	}
 
 	/**
-	 * Re-queries and re-stores the native configuration for a mode and preset chosen while the
-	 * session is already running, returning the new render dimensions or null when it failed.
-	 *
-	 * This is [initialize] without the initialization: NGX is already up and the device is
-	 * unchanged, so what a mode change actually needs is the render size that mode implies and a
-	 * configuration the next feature creation will disagree with. A failure latches the session
-	 * exactly like any other native stage - a session whose mode change was refused knows nothing
-	 * about what it is now configured to.
+	 * Re-queries render size for a mode/preset while the session is already READY. Does not
+	 * re-initialize. Failure latches like any other native stage.
 	 */
 	override fun reconfigure(qualityMode: SRMode, renderPreset: SRModelPreset): Dimensions? {
 		if (session.state != DlssSessionState.READY) {
@@ -332,22 +326,14 @@ class LifecycleAdapter(
 		return invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.recordPresentHandoff() }
 	}
 
-	fun presentStart(): Boolean = session.state == DlssSessionState.READY &&
-		invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentStart() }
+	fun presentStart(): Boolean = emitMarker { native.presentStart() }
 
-	fun presentEnd(): Boolean = session.state == DlssSessionState.READY &&
-		invokeStatus(DlssNativeStage.PRESENT_HANDOFF) { native.presentEnd() }
+	fun presentEnd(): Boolean = emitMarker { native.presentEnd() }
 
-	// The five Reflex/PCL frame markers: the input sample at
-	// Minecraft's GLFW input poll, the simulation pair around runTick's simulation, and the
-	// render-submit pair around renderFrame's command-encoder submit. All five are gated on
-	// the READY session like the present bracket, and unlike the present bracket they never
-	// latch: a marker call failure is the PCL/Reflex diagnostic surface losing a sample,
-	// not a frame-route stage failure, and a session that rendered the frame anyway must
-	// not degrade because its ping did not reach the plugin. The native side emits each
-	// marker under the retained frame token and records it in the reflex-marker oracle only
-	// after slPCLSetMarker succeeded, so a refused or failed call is observable through the
-	// oracle rather than through the session state.
+	// Reflex/PCL markers: GLFW input sample, runTick simulation pair, renderFrame submit pair,
+	// and the present bracket around queue present. Gated on READY. Failures never latch — a
+	// missed overlay ping must not degrade a frame that already rendered. Oracle records only
+	// after slPCLSetMarker succeeds.
 	fun reflexInputSample(): Boolean = emitMarker { native.reflexInputSample() }
 
 	/**

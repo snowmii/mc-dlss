@@ -19,9 +19,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Covers mc-dlss's FG composition boundary without owning Streamline's live orientation proof.
- * Native image blits and FG viewport constants belong to native integration coverage; this test
- * keeps the mod-owned contract: FG tags and SR evaluation receive the same engine-space inputs.
+ * Native image blits and FG viewport constants belong to native integration coverage; this
+ * test keeps the mod-owned contract: FG tags and SR evaluation receive the same engine-space
+ * inputs.
  */
 class FgImageOrientationTest {
 

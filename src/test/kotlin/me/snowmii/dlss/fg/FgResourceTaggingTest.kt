@@ -17,7 +17,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** Verifies the mod-owned FG resource-tagging lifecycle seam. */
 class FgResourceTaggingTest {
 
 	@Test

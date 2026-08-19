@@ -14,12 +14,8 @@ package me.snowmii.streamline;
  * together. {@code inputsProcessingCompletionFence} is the semaphore handle itself.
  */
 public record FgState(
-	/** The raw {@code sl::DLSSGStatus} word; {@code eDLSSGStatusOk} is zero. */
 	int status,
-	/** Actual presentations per app frame; {@code 2} is 2x frame generation. */
 	int numFramesPresented,
-	/** The value the input-processing completion fence last reached for presented frames. */
 	long lastPresentInputsProcessingFenceValue,
-	/** The Vulkan timeline semaphore the plugin signals input processing with. */
 	long inputsProcessingCompletionFence
 ) {}

@@ -36,16 +36,9 @@ class WorldPhaseState {
 	 */
 	internal val objectMotion = ObjectMotionState()
 
-	/**
-	 * Sub-pixel jitter for the current world phase, or null outside an eligible DLSS phase.
-	 */
 	var activeJitter: DlssJitterOffset? = null
 		private set
 
-	/**
-	 * Camera-only motion for the current world phase, or null outside an eligible DLSS phase and
-	 * for an eligible phase that was routed without a camera sample.
-	 */
 	var activeMotion: DlssFrameMotion? = null
 		private set
 

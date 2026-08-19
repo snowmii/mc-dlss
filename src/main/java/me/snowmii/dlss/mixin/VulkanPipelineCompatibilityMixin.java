@@ -14,13 +14,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.util.List;
 
 /**
- * Observes every pipeline entering Vulkan's lazy compile/cache seam while the DLSS world phase is
- * open. Shader reload precompilation and non-world rendering happen outside that phase and are
- * deliberately ignored.
- *
- * Observation runs at HEAD, before compilation and binding can expose an attachment mismatch.
- * This observer establishes the session compatibility latch; velocity variants consume that
- * route when choosing the pipeline and world-pass attachment shape.
+ * Observe pipelines at Vulkan's lazy compile/cache HEAD while the world phase is open.
+ * Reload precompile and non-world rendering are outside that phase. Establishes the
+ * session compatibility latch before bind can expose an attachment mismatch.
  */
 @Mixin(VulkanDevice.class)
 public class VulkanPipelineCompatibilityMixin {

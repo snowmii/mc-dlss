@@ -14,19 +14,16 @@ package me.snowmii.streamline;
  * it is carried so the bridge can refuse a destination that is not it.
  */
 public record PresentTarget(
-	/** The caller's shared Vulkan command buffer the copy is recorded on. */
 	long commandBuffer,
-	/** The engine image the upscaled frame is copied into. */
 	long image,
 	/** Stamped by the session adapter; see the class comment. */
 	Dimensions outputDimensions
 ) {
-	/** An all-defaults target: zeroed handles and no stamped dimensions. */
 	public PresentTarget() {
 		this(0L, 0L, null);
 	}
 
-	/** A target whose dimensions the adapter will stamp on the way through. */
+	/** Dimensions left null for the adapter to stamp. */
 	public PresentTarget(long commandBuffer, long image) {
 		this(commandBuffer, image, null);
 	}

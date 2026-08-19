@@ -11,9 +11,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
  * Replaces supported main-target entity and piston moving-block draws with the two-attachment
- * velocity pass. The breaking-block crumbling camera-motion writer is retired: crumbling
- * overlay draws keep the exact vanilla one-target route and their pixels stay sentinel for the
- * post-scene fill.
+ * velocity pass. Crumbling overlay draws keep the vanilla one-target route; their pixels
+ * stay sentinel for the post-scene fill.
  */
 @Mixin(PreparedRenderType.class)
 public class PreparedRenderTypeMotionMixin {

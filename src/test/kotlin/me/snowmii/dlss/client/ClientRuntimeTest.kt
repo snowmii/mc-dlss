@@ -6,9 +6,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Proves the render-loop seam's contract: the [ActiveView] reads never build the DLSS
- * path, and [RenderLoopView] is the only side that does.
- *
  * The type system already makes a read-only call site unable to compile a creating call; this
  * test proves the runtime behavior behind it, off the render thread, where a real build would
  * not be allowed to run.
@@ -35,9 +32,8 @@ class ClientRuntimeTest {
 
 		assertTrue(ClientRuntime.isInitialized, "the render loop is the only builder")
 
-		// Shutdown runs from `Minecraft.close()`, ahead of the Vulkan device teardown, and has to
-		// leave the seam latched: a render call still in flight on the way out must not open the
-		// native bridge again against a device that is already going away.
+		// Shutdown latches the seam before Vulkan device teardown: a render call still in
+		// flight must not reopen the native bridge against a device that is going away.
 		ClientRuntime.shutdown()
 
 		assertTrue(ClientRuntime.isInitialized, "shutdown leaves the seam latched")

@@ -1,29 +1,15 @@
 package me.snowmii.dlss.readout
 
 /**
- * Where an app frame's wall time actually goes, sampled on the render thread.
+ * Render-thread wall-time spans for the calls an app frame can stall in.
  *
- * Frame generation above 2x reviewed as stuttering with a *base* frame rate far below the cap in
- * force, and nothing the mod already reports can say why: the frame-rate line names the rate, the
- * DLSS-G suffix names the plugin's status and presented count, and neither says which call the
- * frame spent its milliseconds inside. The candidates each blame a different call - the DLSS-G
- * input-completion wait, the plugin's status read, a swapchain acquire that blocks because the
- * pacer is holding the images, or the interposed queue present itself - so the measurement is one
- * span per candidate, and the largest one is the answer.
+ * [Span.QUEUE_PRESENT] is also the frame clock: its end is last, so the gap between consecutive
+ * ends is the app-frame interval DLSS-G subdivides. Mean is rate; max/mean >> 1 is stutter.
  *
- * [Span.QUEUE_PRESENT] doubles as the frame clock: its end is the last thing an app frame does, so
- * the gap between consecutive ends is the app frame interval, which is the interval DLSS-G divides
- * into its sub-intervals. The mean says what the rate is; the maximum says whether it is even, and
- * an interval whose maximum is several times its mean is the stutter itself rather than a report
- * about it.
- *
- * Render thread only, and deliberately allocation-free per frame: a probe that costs a frame its
- * evenness cannot measure evenness. A span whose start was never recorded contributes nothing, so
- * a seam that only fires on some frames (the FG-active-only wait) reports over the frames it ran
- * on rather than diluting itself across the window.
+ * Render thread only, allocation-free per frame. A span whose start was never recorded
+ * contributes nothing, so FG-only seams report over the frames they ran on.
  */
 class FramePacingProbe {
-	/** The four calls an app frame can stall inside, one span each. */
 	enum class Span {
 		/** `waitFgInputsIdle`: the DLSS-G input-processing completion fence, FG-active frames only. */
 		FG_INPUT_WAIT,
@@ -42,10 +28,8 @@ class FramePacingProbe {
 		SWAPCHAIN_ACQUIRE,
 
 		/**
-		 * `CommandEncoder.submit()` at the tail of `renderFrame`: where the frame's own work
-		 * reaches the queue DLSS-G blocks while it interpolates. The first measurement found an
-		 * app frame of 57ms with every other span at hundredths of a millisecond, so the stall
-		 * was somewhere the probe did not look; this is the largest call in that gap.
+		 * `CommandEncoder.submit()` at the tail of `renderFrame`: where the frame's work reaches
+		 * the queue DLSS-G blocks while it interpolates.
 		 */
 		RENDER_SUBMIT,
 

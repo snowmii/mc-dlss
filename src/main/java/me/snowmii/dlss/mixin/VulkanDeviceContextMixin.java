@@ -18,16 +18,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.Set;
 
 /**
- * Captures Minecraft 26.2's live Vulkan instance, physical device, device, and graphics
- * queue the moment the VulkanDevice is constructed. Runs at ctor TAIL when all fields are
- * final, so the instance / device / graphics queue / shared command encoder are all reachable.
+ * Captures live Vulkan handles at {@code VulkanDevice} ctor TAIL (fields are then final).
  *
- * VulkanDevice keeps no physical-device field and exposes no accessor for it, so the
- * physical device is taken from the constructor argument list. NGX initialization requires it.
+ * {@code VulkanDevice} has no physical-device field; take it from the constructor args.
+ * Streamline initialization needs it.
  *
- * Only STORES the command-buffer source (never invokes it): invoking Minecraft's shared
- * encoder outside a frame could disturb its command-buffer/submission state. Recording
- * happens later, from the render loop, via VulkanContext.recordCommandBuffer().
+ * Store the command-buffer source; do not invoke it here. Calling Minecraft's shared encoder
+ * outside a frame can disturb command-buffer/submission state. Recording happens later via
+ * {@code VulkanContext.allocateRecordingCommandBuffer()}.
  */
 @Mixin(VulkanDevice.class)
 public class VulkanDeviceContextMixin {

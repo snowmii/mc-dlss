@@ -17,10 +17,6 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * Proves the production owner drives startup exactly once, publishes NGX-queried render
- * dimensions, and hands the world phase the right target for every route.
- */
 class RenderRuntimeTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1707, 960)
@@ -127,9 +123,6 @@ class RenderRuntimeTest {
 		assertEquals(expected.advance(), second)
 		assertEquals(render, first!!.renderDimensions)
 	}
-
-	// A vanilla frame publishing no jitter and restarting the sequence is MotionJitterTest's
-	// `a vanilla frame between DLSS frames resets both the jitter sequence and the history`.
 
 	@Test
 	fun `ending a world phase drops the published jitter`() {

@@ -1,6 +1,5 @@
 package me.snowmii.dlss.client
 
-import me.snowmii.dlss.config.ClientConfig
 import me.snowmii.dlss.session.SRMode
 import me.snowmii.dlss.session.SRModelPreset
 import net.minecraft.client.gui.components.Button
@@ -49,7 +48,7 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 
 	private fun toggleEnabled() {
 		val controls = controls()
-		if (controls != null) controls.toggleEnabled() else config.setEnabled(!config.enabled())
+		if (controls != null) controls.toggleEnabled() else user.enabled = !user.enabled
 	}
 
 	private fun cycleMode() {
@@ -57,8 +56,8 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		if (controls != null) {
 			controls.cycleQualityMode()
 		} else {
-			val current = SRMode.entries.firstOrNull { it.propertyValue == config.qualityMode() } ?: SRMode.QUALITY
-			config.setQualityMode(SRMode.entries[(SRMode.entries.indexOf(current) + 1) % SRMode.entries.size].propertyValue)
+			val modes = SRMode.entries
+			user.qualityMode = modes[(modes.indexOf(user.qualityMode) + 1) % modes.size]
 		}
 	}
 
@@ -67,24 +66,22 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		if (controls != null) {
 			controls.cyclePreset()
 		} else {
-			val current = SRModelPreset.fromPropertyValue(config.renderPreset()) ?: SRModelPreset.M
-			config.setRenderPreset(
-				SRModelPreset.entries[(SRModelPreset.entries.indexOf(current) + 1) % SRModelPreset.entries.size].propertyValue,
-			)
+			val presets = SRModelPreset.entries
+			user.renderPreset = presets[(presets.indexOf(user.renderPreset) + 1) % presets.size]
 		}
 	}
 
 	private fun toggleFrameGeneration() {
 		val controls = controls()
-		if (controls != null) controls.toggleFrameGeneration() else config.setFrameGeneration(!config.frameGeneration())
+		if (controls != null) controls.toggleFrameGeneration() else user.frameGeneration = !user.frameGeneration
 	}
 
 	private fun refreshLabels() {
 		val controls = controls()
-		enabledButton.message = label("mc-dlss.options.enabled", controls?.enabled ?: config.enabled())
-		modeButton.message = valueLabel("mc-dlss.options.mode", controls?.qualityMode?.propertyValue ?: config.qualityMode())
-		presetButton.message = valueLabel("mc-dlss.options.preset", controls?.renderPreset?.propertyValue ?: config.renderPreset())
-		fgButton.message = label("mc-dlss.options.frame_generation", controls?.frameGenerationEnabled ?: config.frameGeneration())
+		enabledButton.message = label("mc-dlss.options.enabled", controls?.enabled ?: user.enabled)
+		modeButton.message = valueLabel("mc-dlss.options.mode", (controls?.qualityMode ?: user.qualityMode).propertyValue)
+		presetButton.message = valueLabel("mc-dlss.options.preset", (controls?.renderPreset ?: user.renderPreset).propertyValue)
+		fgButton.message = label("mc-dlss.options.frame_generation", controls?.frameGenerationEnabled ?: user.frameGeneration)
 		multiplierButton.message = valueLabel(
 			"mc-dlss.options.fg_multiplier",
 			controls?.let { "${it.frameGenerationMultiplier}x" } ?: Component.translatable("mc-dlss.options.in_world").string,
@@ -101,6 +98,6 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 
 	private companion object {
 		const val BUTTON_WIDTH = 220
-		val config: ClientConfig = ClientConfig.INSTANCE
+		val user = ModConfig.user
 	}
 }

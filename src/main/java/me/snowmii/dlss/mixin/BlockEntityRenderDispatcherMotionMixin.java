@@ -13,20 +13,8 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
 /**
- * Captures piston moving-block render states into the moving-block object-motion history at
- * the block-entity dispatcher seam.
- *
- * The static block-entity camera-motion writer is retired: ordinary block-entity renderers are
- * invoked exactly as vanilla invokes them, with no bracket and no identity token, so their
- * geometry keeps the exact source route and its pixels stay sentinel for the post-scene fill.
- *
- * What remains is the piston capture, the moving-block writer's seam: the mapped piston
- * renderer's render state carries the submitted moving-block states, their baked positions,
- * and the current piston offset. The capture seam binds each state to its block-position id
- * and records this frame's absolute position into the object-motion history before the submit
- * constructs the moving-block submits; with no eligible velocity phase it binds and captures
- * nothing, so vanilla, CAMERA_ONLY, and identity-less frames keep the exact source submit.
- * Every other block-entity renderer is invoked exactly as vanilla invokes it.
+ * Piston moving-block capture at the block-entity dispatcher. Ordinary block-entity
+ * renderers: no bracket, no identity, pixels stay sentinel. Eligible phase only.
  */
 @Mixin(net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher.class)
 public class BlockEntityRenderDispatcherMotionMixin {

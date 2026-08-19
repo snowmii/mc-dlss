@@ -108,11 +108,8 @@ struct MarkerLog {
 // tag records the present handoff reads as one set, the present bracket the handoff arms, and
 // the FG orientation copies recorded under that token.
 //
-// These nine values are one state machine, not nine flags. They were flat members of DlssState
-// enforced by hand at every call site plus one free invalidate helper each caller had to
-// remember, so a transition added anywhere else silently skipped invalidation and the plugin
-// kept interpolating on released or stale-tagged images. Every rule the call sites used to
-// state in comments is a method body here.
+// These nine values are one state machine. Methods own invalidation so a new transition
+// cannot skip it and leave the plugin interpolating on released or stale-tagged images.
 //
 // One lock, unchanged: this is a plain member of DlssState and takes no mutex of its own. Every
 // method assumes the caller already holds the single g_mutex.
@@ -126,8 +123,9 @@ public:
     // The slot slGetNewFrameToken writes into. The only non-const reach at the token, and the
     // reason it is a reference: the SL call takes sl::FrameToken*&.
     sl::FrameToken*& tokenSlot() noexcept { return token_; }
-    // Drops the retained token alone, leaving the tag records: the SR-only frame's evaluation
-    // consumes its token here, so the next tag obtains a fresh one.
+    // Drops the retained token alone, leaving the tag records. present_end is what consumes
+    // the token of a presented frame; this is the escape hatch a test uses to distinguish a
+    // complete tag set from a handoff-eligible one.
     void releaseToken() noexcept { token_ = nullptr; }
 
     // Marks one side of the tag set fresh under the index its successful slSetTagForFrame
@@ -160,9 +158,11 @@ public:
 
     bool presentArmed() const noexcept { return presentArmed_; }
     bool presentStartEmitted() const noexcept { return presentStartEmitted_; }
-    // Whether a PRESENT_START marker is this present's to emit: an armed bracket, no START
-    // already emitted for it, and a token to emit under. An unarmed or already-open bracket is
-    // a no-op success rather than a refusal - the present seam fires on every present.
+    // Whether a PRESENT_START marker is this present's to emit: a retained token and no START
+    // already emitted for it. NVIDIA overlay FPS and latency correlate presents through those
+    // markers, so an SR-only or vanilla-routed frame that still presents must open the bracket
+    // without an FG handoff. An already-open bracket (START emitted) or a present with no token
+    // is a no-op success rather than a refusal - the present seam fires on every present.
     bool presentStartPending() const noexcept;
     void markPresentStartEmitted() noexcept { presentStartEmitted_ = true; }
     // Closes the bracket and consumes the frame: the present is the composed frame's terminal

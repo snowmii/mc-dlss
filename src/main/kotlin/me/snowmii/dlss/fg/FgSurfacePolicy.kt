@@ -27,13 +27,6 @@ package me.snowmii.dlss.fg
  * effective one: a suspension is transient, and recreating the swapchain FIFO on every pause
  * and back on every resume would leave FG running on exactly the swapchain the guide forbids.
  *
- * There is deliberately no session latch. An earlier design let the first non-OK
- * `slDLSSGGetState` status end frame generation for the session, which also restored FIFO
- * vsync for good; but the status word is a bitmask about *this frame* - a quality-mode change
- * produces one for a frame or two by construction - so a transient bit killed FG with no way
- * back short of a restart. Every "FG must stop" condition is a suspension on the frame-support
- * axis instead, and every one of them is reversible.
- *
  * The declared back-buffer count is derived from [numFramesToGenerate], not fixed: it is the
  * number [me.snowmii.dlss.session.LifecycleAdapter.configureFg] records AND the swapchain
  * minimum, and both have to grow with the multiplier (see [backBuffersFor]).
@@ -45,19 +38,9 @@ class FgSurfacePolicy(
 	private var frameSupported = true
 
 	/**
-	 * Re-records the DLSS-G options in the eOff mode, run by this policy on every transition that
-	 * takes [effective] from true to false - the user toggle, the status suspension, and the
-	 * image-release suspension alike.
-	 *
-	 * The record used to sit at the three call sites that drove those transitions, each pairing a
-	 * mutator call with its own `if (...) recordFgModeOff()`. A fourth transition added anywhere
-	 * else silently skipped the record, and the plugin kept interpolating on released images -
-	 * the failure the release path is annotated for. The transitions all run through this class,
-	 * so the record belongs to them rather than to their callers.
-	 *
-	 * Bound by [me.snowmii.dlss.render.RenderRuntime] to its session bridge, which is what pairs
-	 * a policy with the session whose options it records; a policy nothing has wired reads as the
-	 * same "no session to record against" the null bridge always gave.
+	 * Re-records DLSS-G options as eOff on every [effective] true→false transition (user
+	 * toggle, status suspension, image-release). Bound here so a new transition cannot skip
+	 * the record. Unwired: no-op.
 	 */
 	var recordFrameGenerationOff: () -> Unit = {}
 

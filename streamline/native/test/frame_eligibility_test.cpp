@@ -132,11 +132,18 @@ TEST_CASE("an armed bracket whose START never emitted is consumed like a success
 	CHECK_FALSE(eligibility.presentStartPending());
 }
 
-TEST_CASE("an unarmed present has no bracket to open") {
+TEST_CASE("a retained token opens the present bracket without an FG handoff") {
 	FrameEligibility eligibility;
 	eligibility.tokenSlot() = fake_token();
 	eligibility.armSr(7);
-	// An SR-only frame never handed off, so the present seam finds nothing armed.
+	// NVIDIA overlay FPS and latency correlate presents through PRESENT_START/END. An
+	// SR-only or vanilla-routed frame still presents, so the token is enough to open the
+	// bracket; waiting for an FG handoff leaves the overlay at 0 FPS / N/A latency.
+	CHECK(eligibility.presentStartPending());
+
+	eligibility.markPresentStartEmitted();
+	eligibility.consumePresent();
+	CHECK_FALSE(eligibility.hasToken());
 	CHECK_FALSE(eligibility.presentStartPending());
 }
 
@@ -204,7 +211,6 @@ TEST_CASE("invalidate drops the whole in-flight frame") {
 
 TEST_CASE("releaseToken drops the token alone") {
 	FrameEligibility eligibility = composed_frame(7);
-	// The SR-only frame's evaluation consumes its token but leaves the tag records standing.
 	eligibility.releaseToken();
 	CHECK_FALSE(eligibility.hasToken());
 	CHECK(eligibility.srArmed());

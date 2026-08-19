@@ -6,10 +6,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.math.abs
 
-/**
- * Proves the jitter sequence is deterministic, stays inside the pixel, scales its period with
- * the upscale ratio, and expresses one offset in both the units its two consumers need.
- */
 class DlssJitterTest {
 	private val output = Dimensions(2560, 1440)
 	private val quality = Dimensions(1707, 960)
@@ -46,7 +42,7 @@ class DlssJitterTest {
 			val offset = jitter.advance()
 			assertTrue(abs(offset.pixelX) <= 0.5f, "pixelX out of pixel: ${offset.pixelX}")
 			assertTrue(abs(offset.pixelY) <= 0.5f, "pixelY out of pixel: ${offset.pixelY}")
-			// Halton index 0 is exactly 0 in every base; a sequence that used it would put one
+			// Halton index 0 is exactly 0 in every base; a sequence that includes it puts one
 			// sample on the pixel corner rather than inside the pixel.
 			assertTrue(
 				offset.pixelX != -0.5f || offset.pixelY != -0.5f,
@@ -58,7 +54,6 @@ class DlssJitterTest {
 	@Test
 	fun `the period grows with the square of the upscale ratio`() {
 		assertEquals(DlssJitter.BASE_PHASE_COUNT, DlssJitter(output, output).phaseCount)
-		// 2560/1280 is exactly 2x, so 8 * 2^2.
 		assertEquals(DlssJitter.BASE_PHASE_COUNT * 4, DlssJitter(performance, output).phaseCount)
 		assertTrue(
 			DlssJitter(quality, output).phaseCount < DlssJitter(performance, output).phaseCount,

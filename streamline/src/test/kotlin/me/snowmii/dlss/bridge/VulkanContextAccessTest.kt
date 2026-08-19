@@ -1,6 +1,4 @@
 package me.snowmii.dlss.bridge
-import java.util.function.Consumer
-import java.util.function.Supplier
 import me.snowmii.streamline.VulkanContext
 import me.snowmii.streamline.VulkanContextRegistry
 
@@ -39,7 +37,6 @@ class VulkanContextAccessTest {
 				{ },
 			)
 
-			// Handles present and are the real headless context's handles.
 			assertTrue(context.instanceHandle != 0L, "instance handle must be non-zero")
 			assertTrue(context.physicalDeviceHandle != 0L, "physical device handle must be non-zero")
 			assertTrue(context.deviceHandle != 0L, "device handle must be non-zero")
@@ -49,16 +46,13 @@ class VulkanContextAccessTest {
 			assertEquals(fixture.deviceAddress(), context.deviceHandle)
 			assertEquals(fixture.queueAddress(), context.graphicsQueueHandle)
 
-			// The recording command buffer is a real, non-zero VkCommandBuffer.
 			val first = context.allocateRecordingCommandBuffer()
 			assertTrue(first.address() != 0L, "recorded command buffer must be non-zero")
 
-			// A second recording also succeeds and yields a distinct buffer.
 			val second = context.allocateRecordingCommandBuffer()
 			assertTrue(second.address() != 0L, "second recorded command buffer must be non-zero")
 			assertNotEquals(first.address(), second.address(), "each recording must be a fresh command buffer")
 
-			// Mod-level registration keeps the captured context reachable.
 			VulkanContextRegistry.register(context)
 			assertSame(context, VulkanContextRegistry.getCurrent(), "the registry hands back the registered context")
 		}

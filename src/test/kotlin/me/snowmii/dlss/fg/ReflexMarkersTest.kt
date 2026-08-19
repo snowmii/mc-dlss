@@ -17,7 +17,6 @@ import me.snowmii.dlss.session.DlssSessionState
 import me.snowmii.dlss.session.DlssStartupConfig
 import me.snowmii.dlss.session.LifecycleAdapter
 import me.snowmii.dlss.session.SRMode
-import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -25,7 +24,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
-/** Reflex marker adapter and mod-owned world-phase wiring. */
+
 class ReflexMarkersTest {
 
 	@Test
@@ -33,7 +32,6 @@ class ReflexMarkersTest {
 		val calls = RecordingNativeApi()
 		val session = session()
 		val adapter = LifecycleAdapter(session, calls)
-		// Not READY yet: every marker is refused before it reaches the native side.
 		assertFalse(adapter.reflexInputSample(), "a non-READY session must refuse the input sample")
 		assertFalse(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_START), "a non-READY session must refuse the simulation start")
 		assertFalse(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.SIMULATION_END), "a non-READY session must refuse the simulation end")
@@ -41,7 +39,6 @@ class ReflexMarkersTest {
 		assertFalse(adapter.reflexMarker(StreamlineSession.ReflexMarkerType.RENDER_SUBMIT_END), "a non-READY session must refuse the render-submit end")
 		assertTrue(calls.reflexCalls.isEmpty(), "refused markers must never reach the native side")
 
-		// READY: every marker delegates and reports the native result.
 		adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data"))
 		assertEquals(DlssSessionState.READY, session.state)
 		assertTrue(adapter.reflexInputSample(), "a READY session must emit the input sample")

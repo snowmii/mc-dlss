@@ -1,5 +1,5 @@
 package me.snowmii.dlss.pass
-import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.client.ModConfig
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -8,11 +8,8 @@ import org.junit.jupiter.api.Test
 import java.util.Properties
 
 /**
- * The stress pass reads its own properties and never changes what a session renders by default.
- *
- * The load exists to make DLSS measurable, so the one thing that must not drift is that a build
- * carrying it renders exactly like a build without it until someone asks otherwise: a benchmark
- * whose baseline quietly includes the instrument measures nothing.
+ * The stress pass never changes what a session renders by default: a benchmark whose baseline
+ * includes the instrument measures nothing.
  */
 class StressConfigTest {
 	@Test
@@ -52,7 +49,7 @@ class StressConfigTest {
 		val config = StressConfig.from(properties)
 
 		// The shader's own loop bounds; a request past them would silently do less work than the
-		// number the reviewer wrote down, so the number is corrected here instead.
+		// requested number, so the number is clamped here instead.
 		assertEquals(192, config.steps)
 		assertEquals(8, config.octaves)
 		assertEquals(0, config.godrayTaps)

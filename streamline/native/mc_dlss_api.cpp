@@ -258,9 +258,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
     const uint32_t index, char* name, const uint32_t name_capacity,
     uint32_t* extension_count) {
     try {
-        // The pre-creation requirements come from Streamline and nowhere else: the direct-NGX
-        // discovery fallback is retired, so a query before bootstrap fails rather than
-        // answering from a runtime that is no longer part of the stack.
+        // Fails before bootstrap: Streamline is the only source.
         return collect_streamline_extensions(false, index, name, name_capacity,
                                              extension_count);
     } catch (...) { return kFailure; }
@@ -313,9 +311,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(const uint64_t vk_instance,
         if (vk_instance == 0 || vk_physical_device == 0 || vk_device == 0) {
             return kInvalidParameter;
         }
-        // sdk_path and data_path are compatibility inputs: the retired direct-NGX path used
-        // them to locate the feature DLL and its data, and nothing in the Streamline stack
-        // consumes them. They are still validated as well-formed paths and nothing else.
+        // Unused: validated as well-formed paths and otherwise ignored.
         std::wstring sdkPath;
         std::wstring dataPath;
         if (!utf8_to_wide(sdk_path, sdkPath) || !utf8_to_wide(data_path, dataPath)) {
@@ -380,8 +376,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
     uint32_t* render_width, uint32_t* render_height) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        // Streamline answers the optimal-settings query and nothing else answers it: the
-        // direct-NGX optimal-settings callback is retired with the rest of the NGX path.
         return query_optimal_dimensions_sl(output_width, output_height, quality_mode,
                                            render_width, render_height);
     } catch (...) {
@@ -417,9 +411,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
         // under - must not satisfy a handoff for frames recorded under the new one, so the
         // records and the token clear with the options.
         g_state.frameEligibility.invalidate();
-        // The SL session gate lives inside record_sr_options: configuring against a bootstrap
-        // without a recorded device stores nothing the recording calls could use and answers
-        // FAIL_NotInitialized, exactly where the retired direct-NGX ready gate used to sit.
+        // SL session gate is inside record_sr_options: bootstrap without a recorded device
+        // stores nothing and returns FAIL_NotInitialized.
         return record_sr_options();
     } catch (...) {
         return kFailure;
@@ -669,8 +662,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_fill_velocity(const McDlssFillVelocityI
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        // The SL session is the only evaluation path now: the direct-NGX feature lifecycle
-        // retired with it, and there is no fallback.
         if (!sl_session_ready()) {
             return kNotInitialized;
         }

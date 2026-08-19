@@ -8,8 +8,6 @@ import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.session.DlssNativeFailure
 import me.snowmii.dlss.session.DlssNativeStage
 import me.snowmii.dlss.ui.UiPhase
-import me.snowmii.dlss.config.ClientConfig
-import me.snowmii.dlss.config.ModConfig
 import me.snowmii.McDlss
 import net.minecraft.client.Minecraft
 import org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window
@@ -152,8 +150,8 @@ object ClientRuntime : RenderLoopView, ActiveView {
 			val readout = SessionReadout.forMinecraft(diagnostics)
 			val runtime = RenderRuntime.forMinecraft(session, native, diagnostics, readout)
 			runtimeControls = RuntimeControls(runtime, diagnostics).also { controls ->
-				if (!ClientConfig.INSTANCE.enabled()) controls.setEnabled(false)
-				if (ClientConfig.INSTANCE.frameGeneration()) controls.setFrameGenerationEnabled(true)
+				if (!ModConfig.user.enabled) controls.setEnabled(false)
+				if (ModConfig.user.frameGeneration) controls.setFrameGenerationEnabled(true)
 			}
 			WorldPhase.forMinecraft(runtime, readout)
 		} catch (error: Throwable) {

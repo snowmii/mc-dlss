@@ -19,13 +19,9 @@ import java.util.Objects;
  * failed reads as one START event and no END rather than as a pair that never happened.
  */
 public record PresentMarkerEvents(
-	/** How many PRESENT_START markers the module has actually emitted. */
 	int startCount,
-	/** How many PRESENT_END markers the module has actually emitted. */
 	int endCount,
-	/** How many marker events the module has actually emitted in total (start + end). */
 	int eventCount,
-	/** The most recent events in emission order, at most {@link #LOG_CAPACITY} of them. */
 	List<PresentMarkerEvent> events
 ) {
 	/**

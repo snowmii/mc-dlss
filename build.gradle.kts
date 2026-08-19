@@ -65,7 +65,7 @@ dependencies {
 	providers.gradleProperty("sodium_version").orNull?.let {
 		compileOnly("maven.modrinth:sodium:$it") { isTransitive = false }
 	}
-	//runtimeMod("sodium_version") { "maven.modrinth:sodium:$it" }
+	runtimeMod("sodium_version") { "maven.modrinth:sodium:$it" }
 	runtimeMod("devauth_version") { "me.djtheredstoner:DevAuth-fabric:$it" }
 
 	detektCli("io.gitlab.arturbosch.detekt:detekt-cli:$detektVersion")

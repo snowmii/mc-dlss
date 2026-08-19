@@ -16,11 +16,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 
-/**
- * Proves mod-owned evaluation wiring: tags and evaluation share caller's command buffer, and the
- * adapter stamps configured render dimensions. Vulkan layout transitions and native image state
- * belong to Streamline's live tests, not this test.
- */
 class DlssEvaluationBarrierTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1280, 720)

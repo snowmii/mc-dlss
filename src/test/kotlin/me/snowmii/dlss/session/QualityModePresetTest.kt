@@ -5,7 +5,7 @@ import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.Dimensions
-import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.client.ModConfig
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
@@ -18,10 +18,9 @@ import java.nio.file.Path
 import java.util.Properties
 
 /**
- * Ultra Performance and DLAA are selectable, and every session runs a preset it named.
- *
- * The test also guards the model identity: NGX selects a preset for every mode, so the native
- * configuration and readout must record the chosen preset rather than rely on a DLL default.
+ * Ultra Performance and DLAA are selectable, and every session runs a preset it named. NGX
+ * selects a preset for every mode, so native configuration and readout record the chosen
+ * preset rather than a DLL default.
  */
 class QualityModePresetTest {
 	private val output = Dimensions(2560, 1440)
@@ -83,8 +82,8 @@ class QualityModePresetTest {
 		)
 		assertEquals(SRModelPreset.M, explicitDefault.renderPreset)
 
-		// Preset E is deprecated and A through D were removed from the SDK, so naming one is a
-		// value the mod refuses rather than forwards.
+		// Preset E is deprecated and A through D are not in the SDK, so naming one is refused
+		// rather than forwarded.
 		val invalid = configFrom(
 			ModConfig.MODE_PROPERTY to "ultra-performance",
 			ModConfig.PRESET_PROPERTY to "e",
@@ -141,10 +140,8 @@ class QualityModePresetTest {
 
 	@Test
 	fun changingOnlyThePresetIsRecordedOnTheNextConfigure() {
-		// The SL plugin owns the recreation (it recreates when mode, size, or preset
-		// changed), so the module's side of that invariant is that every configure records the
-		// options again - a preset-only change reaches the plugin on the next configure. There
-		// is no direct-NGX branch left to skip the recording.
+		// Every configure records options; the plugin recreates when mode, size, or preset
+		// change, so a preset-only change reaches the plugin on the next configure.
 		val api = readNativeSource("mc_dlss_api.cpp")
 		val configure = api.substringAfter("mc_dlss_configure").substringBefore("mc_dlss_acquire_images")
 		assertTrue(
@@ -159,9 +156,8 @@ class QualityModePresetTest {
 
 	@Test
 	fun dlaaRendersAtOutputResolutionWithoutAskingTheOptimalSettingsQuery() {
-		// DLAA is 1:1 by definition, so the SL optimal-settings query (slDLSSGetOptimalSettings)
-		// must not be asked for it: the bridge answers the output dimensions directly, exactly
-		// as the retired NGX callback used to be skipped.
+		// DLAA is 1:1, so slDLSSGetOptimalSettings is not asked; the bridge answers the output
+		// dimensions directly.
 		val query = readNativeSource("internal/sl_dlss.cpp")
 			.substringAfter("int32_t query_optimal_dimensions_sl(")
 			.substringBefore("int32_t record_sr_options(")
@@ -177,11 +173,8 @@ class QualityModePresetTest {
 
 	@Test
 	fun theRunningModesPresetIsMappedBeforeTheOptionsAreRecorded() {
-		// The SL analogue of the preset-before-creation invariant: the preset lands on the
-		// sl::DLSSOptions field for the running mode and slDLSSSetOptions records the options
-		// after the mapping (StreamlineSrOptionsTest asserts the seam itself). The plugin
-		// recreates the model when the preset changes, so the mapping is what carries a preset
-		// change into the running model.
+		// The preset lands on sl::DLSSOptions for the running mode and slDLSSSetOptions records
+		// the options after the mapping; the plugin recreates when the preset changes.
 		val slOptions = readNativeSource("internal/sl_dlss.cpp")
 		val record = slOptions
 			.substringAfter("int32_t record_sr_options(")

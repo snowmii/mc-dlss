@@ -3,7 +3,7 @@ package me.snowmii
 import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.client.DlssDebugEntry
 import me.snowmii.dlss.client.DlssDebugSnapshot
-import me.snowmii.dlss.config.ModConfig
+import me.snowmii.dlss.client.ModConfig
 import me.snowmii.dlss.mixin.DebugScreenEntriesInvoker
 import me.snowmii.dlss.pass.StressRuntime
 import me.snowmii.dlss.session.DlssSession

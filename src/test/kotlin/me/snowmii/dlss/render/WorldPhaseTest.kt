@@ -15,10 +15,6 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * Proves the render-loop seam the mixins call: what the world renders into while the phase is
- * open, what every other seam sees, and what reaches the main target when it closes.
- */
 class WorldPhaseTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1707, 960)
