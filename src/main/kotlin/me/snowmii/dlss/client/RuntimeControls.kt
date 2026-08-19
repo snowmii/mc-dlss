@@ -1,12 +1,10 @@
 package me.snowmii.dlss.client
 
-import me.snowmii.dlss.ModEntry
 import me.snowmii.dlss.render.FgSurfacePolicy
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import me.snowmii.dlss.readout.SessionReadout
-import org.slf4j.LoggerFactory
 
 /**
  * The reviewer's hands on the running DLSS session.
@@ -56,14 +54,10 @@ class RuntimeControls(
 		val changed = runtime.setFrameGenerationEnabled(enabled)
 		// DIAGNOSTIC: the F3 readout reports state, not whether the key reached this method. This
 		// line separates a missed key event from a mode change the runtime refused.
-		LOGGER.info(
-			"DLSS fg toggle: armed {} -> {} (requested={} changed={} active={} multiplier={})",
-			before,
-			surfacePolicy.userEnabled,
-			enabled,
-			changed,
-			surfacePolicy.effective,
-			runtime.fgMultiplier,
+		SessionReadout.emit(
+			"DLSS fg toggle: armed $before -> ${surfacePolicy.userEnabled} " +
+				"(requested=$enabled changed=$changed active=${surfacePolicy.effective} " +
+				"multiplier=${runtime.fgMultiplier})",
 		)
 		ModConfig.user.frameGeneration = surfacePolicy.userEnabled
 		emitStatus(readout())
@@ -134,12 +128,15 @@ class RuntimeControls(
 			else -> runtime.sessionState.name.lowercase().replace('_', '-')
 		}
 		val internal = runtime.dlssRenderDimensions?.toString() ?: "not chosen yet"
-		return "DLSS $state" +
-			" | fg ${frameGenerationStatus()} at ${runtime.fgMultiplier + 1}x" +
-			" | mode ${runtime.qualityMode.propertyValue}" +
-			" | preset ${runtime.renderPreset.propertyValue}" +
-			" | internal $internal" +
-			" | output ${runtime.outputDimensions}"
+		return SessionReadout.statusLine(
+			state = state,
+			fg = frameGenerationStatus(),
+			multiplier = runtime.fgMultiplier + 1,
+			mode = runtime.qualityMode,
+			preset = runtime.renderPreset,
+			internal = internal,
+			output = runtime.outputDimensions,
+		)
 	}
 
 	fun fgPresentedFpsSuffix(appFps: Int): String {
@@ -150,7 +147,8 @@ class RuntimeControls(
 		return SessionReadout.fgPresentedFpsSuffix(appFps, fg)
 	}
 
-	fun motionProbeLine(): String? = runtime.frameEvaluation?.motionProbeLine()
+	/** Live pacing snapshot for F3 — does not reset the probe window. */
+	fun pacingLine(): String? = runtime.pacing.peek()?.removePrefix(", pacing=")
 
 	/**
 	 * The FG half of the readout: the user's mode, and whether it is composing right now.
@@ -159,15 +157,8 @@ class RuntimeControls(
 	 * a reconfigure suspends composition for a frame (cycling the multiplier invalidates the
 	 * surface), so announcing inside that window must not report "off".
 	 */
-	private fun frameGenerationStatus(): String = when {
-		!surfacePolicy.userEnabled -> "off"
-		surfacePolicy.effective -> "on"
-		else -> "on (suspended)"
-	}
-
-	private companion object {
-		private val LOGGER = LoggerFactory.getLogger(ModEntry.MOD_ID)
-	}
+	private fun frameGenerationStatus(): String =
+		SessionReadout.frameGenerationStatus(surfacePolicy.userEnabled, surfacePolicy.effective)
 
 	private fun applyConfiguration(mode: SRMode, preset: SRModelPreset) {
 		val applied = runtime.applyConfiguration(mode, preset)

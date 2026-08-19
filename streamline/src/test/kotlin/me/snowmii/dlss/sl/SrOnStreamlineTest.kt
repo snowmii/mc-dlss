@@ -126,6 +126,8 @@ class SrOnStreamlineTest {
 			)
 			fixture.endSubmitAndWait(frame)
 			SrLiveSession.assertFrameValidationClean(fixture, color, depth, images!!)
+			bridge.presentStart()
+			bridge.presentEnd()
 
 			// Frame two: the same images with accumulated history rather than a reset, starting
 			// from the layouts the first frame left behind.

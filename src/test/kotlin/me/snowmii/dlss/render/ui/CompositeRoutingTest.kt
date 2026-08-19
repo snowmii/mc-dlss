@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render.ui
 
+import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 import kotlin.io.path.readText
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -101,14 +101,16 @@ class CompositeRoutingTest {
 			.sorted()
 
 		assertEquals(
-			listOf("GameRendererWorldTargetMixin.java"),
+			listOf("GameRendererMixin.java"),
 			routingPoints,
 			"the phase-override routing must stay the only mainRenderTarget redirect",
 		)
 	}
 
 	private fun mixinSources(): List<Pair<String, String>> {
-		val files = mixinDir.listDirectoryEntries("*.java")
+		val files = Files.walk(mixinDir)
+			.filter { it.toString().endsWith(".java") }
+			.toList()
 		assertTrue(files.isNotEmpty(), "no mixin sources found under $mixinDir")
 		return files.map { it.name to it.readText() }
 	}

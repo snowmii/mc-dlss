@@ -2,6 +2,7 @@ import groovy.json.JsonSlurper
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.OutputStream
 import java.net.URI
+import java.net.URLConnection
 import java.security.DigestInputStream
 import java.security.MessageDigest
 
@@ -50,7 +51,7 @@ val streamlineDir = File(gradle.gradleUserHomeDir, "caches").resolve("streamline
 val streamlineArchive = streamlineDir.resolve("sdk.zip")
 
 
-fun open(url: String) = URI(url).toURL().openConnection().apply {
+fun open(url: String): URLConnection = URI(url).toURL().openConnection().apply {
 	setRequestProperty("User-Agent", "mc-dlss")
 }
 
@@ -261,7 +262,11 @@ tasks.test {
 val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 	group = "verification"
 	testClassesDirs = sourceSets.test.get().output.classesDirs
-	classpath = sourceSets.test.get().runtimeClasspath
+	// Prepend the loose processResources output so the native DLLs are found as plain
+	// file:// resources rather than inside a jar — ExtensionBootstrap loads them in place
+	// instead of extracting to a temp directory, avoiding temp-dir accumulation.
+	classpath = files(sourceSets.main.get().output.resourcesDir!!) +
+		sourceSets.test.get().runtimeClasspath
 	useJUnitPlatform { includeTags(nativeBridgeTag) }
 	forkEvery = 1
 	jvmArgs("--enable-native-access=ALL-UNNAMED")

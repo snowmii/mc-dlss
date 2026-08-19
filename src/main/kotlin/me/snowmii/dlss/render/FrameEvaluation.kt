@@ -104,6 +104,7 @@ class FrameEvaluation(
 ) : AutoCloseable {
 	private var nativeEvaluationImages: EvaluationImages? = null
 	private var firstEvaluationReported = false
+	private var lastConfiguredBackBuffers = 0
 
 	fun presentStart(): Boolean = adapter.presentStart()
 	fun presentEnd(): Boolean = adapter.presentEnd()
@@ -183,6 +184,7 @@ class FrameEvaluation(
 		}
 
 		nativeEvaluationImages = null
+		lastConfiguredBackBuffers = 0
 		adapter.releaseImages()
 	}
 
@@ -278,13 +280,7 @@ class FrameEvaluation(
 				null,
 			),
 		)
-	}.also { recorded ->
-		if (recorded) {
-			MotionProbe.recordFrame(motion)
-		}
 	}
-
-	fun motionProbeLine(): String = MotionProbe.line(adapter.queryMotionProbe())
 
 	/**
 	 * The composed frame's opening DLSS-G record: this frame's options, then its first FG tag.
@@ -308,9 +304,15 @@ class FrameEvaluation(
 	 * An SR-only frame passes straight through: no options, no tag, and the evaluation is then
 	 * free to consume the token itself.
 	 */
-	private fun recordFrameGenerationStart(handle: Long, scene: SceneResources, fg: FgFrameInputs?): Boolean =
-		fg == null ||
-			(adapter.configureFg(frameGeneration.requiredSwapchainImages) && tagFg(handle, scene, fg))
+	private fun recordFrameGenerationStart(handle: Long, scene: SceneResources, fg: FgFrameInputs?): Boolean {
+		if (fg == null) return true
+		val backBuffers = frameGeneration.requiredSwapchainImages
+		if (backBuffers != lastConfiguredBackBuffers) {
+			if (!adapter.configureFg(backBuffers)) return false
+			lastConfiguredBackBuffers = backBuffers
+		}
+		return tagFg(handle, scene, fg)
+	}
 
 	/**
 	 * The composed frame's closing DLSS-G record: the post-evaluation FG re-tag and the present

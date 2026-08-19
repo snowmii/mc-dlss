@@ -35,6 +35,26 @@ import java.util.Properties
  * config the session later builds. Every invalid value is collected into [warnings], which the
  * entrypoint logs, so a mistyped knob names itself instead of failing or defaulting silently.
  */
+/**
+ * Debug and stress-instrument knobs grouped so [ModConfig] stays under the parameter-count limit.
+ */
+data class DiagnosticsConfig(
+	/** Whether session readout lines are emitted to the log. */
+	val debugLog: Boolean = false,
+	/** Whether the stress measurement pass runs at all. */
+	val stressEnabled: Boolean = false,
+	/** Primary raymarch steps per pixel. The dominant cost. */
+	val stressSteps: Int = 24,
+	/** FBM octaves per density sample. Multiplies the cost of every step. */
+	val stressOctaves: Int = 5,
+	/** Radial godray taps. Screen-space, so its cost is independent of the march. */
+	val stressGodrayTaps: Int = 24,
+	/** Scales the stress effect's contribution; 0 renders the scene unchanged but still pays for it. */
+	val stressIntensity: Float = 1.0f,
+	/** Sign applied to the reconstructed NDC y; -1 when the backend's viewport is y-flipped. */
+	val stressNdcYSign: Float = 1.0f,
+)
+
 class ModConfig(
 	val enabled: Boolean,
 	val qualityMode: SRMode,
@@ -46,20 +66,16 @@ class ModConfig(
 	val sdkPath: Path?,
 	val nativeLibraryPath: Path?,
 	val dataPath: Path?,
-	/** Whether the stress measurement pass runs at all. */
-	val stressEnabled: Boolean,
-	/** Primary raymarch steps per pixel. The dominant cost. */
-	val stressSteps: Int,
-	/** FBM octaves per density sample. Multiplies the cost of every step. */
-	val stressOctaves: Int,
-	/** Radial godray taps. Screen-space, so its cost is independent of the march. */
-	val stressGodrayTaps: Int,
-	/** Scales the stress effect's contribution; 0 renders the scene unchanged but still pays for it. */
-	val stressIntensity: Float,
-	/** Sign applied to the reconstructed NDC y; -1 when the backend's viewport is y-flipped. */
-	val stressNdcYSign: Float,
+	val diagnostics: DiagnosticsConfig = DiagnosticsConfig(),
 	val warnings: List<String>,
 ) {
+	val debugLog: Boolean get() = diagnostics.debugLog
+	val stressEnabled: Boolean get() = diagnostics.stressEnabled
+	val stressSteps: Int get() = diagnostics.stressSteps
+	val stressOctaves: Int get() = diagnostics.stressOctaves
+	val stressGodrayTaps: Int get() = diagnostics.stressGodrayTaps
+	val stressIntensity: Float get() = diagnostics.stressIntensity
+	val stressNdcYSign: Float get() = diagnostics.stressNdcYSign
 	/** The session's DLSS contract config, derived from this one parse. */
 	val startupConfig: DlssStartupConfig
 		get() = DlssStartupConfig(
@@ -84,6 +100,8 @@ class ModConfig(
 		const val NATIVE_LIBRARY_PROPERTY = "mc.dlss.native-library"
 		const val DATA_PATH_PROPERTY = "mc.dlss.data-path"
 
+		const val DEBUG_LOG_PROPERTY = "mc.dlss.debug-log"
+
 		const val STRESS_ENABLED_PROPERTY = "mc.dlss.stress"
 		const val STRESS_STEPS_PROPERTY = "mc.dlss.stress-steps"
 		const val STRESS_OCTAVES_PROPERTY = "mc.dlss.stress-octaves"
@@ -95,9 +113,7 @@ class ModConfig(
 		private const val DEFAULT_OUTPUT_HEIGHT = 1440
 		// Every step pays the secondary sun march, so cost is flat in step count. Re-tune with
 		// mc.dlss.stress-steps.
-		private const val DEFAULT_STRESS_STEPS = 24
-		private const val DEFAULT_STRESS_OCTAVES = 5
-		private const val DEFAULT_STRESS_GODRAY_TAPS = 24
+		private val DEFAULT_DIAGNOSTICS = DiagnosticsConfig()
 
 		/** File-backed user settings. JVM properties remain explicit overrides. */
 		val user: UserSettings = UserSettings(configFile())
@@ -130,12 +146,15 @@ class ModConfig(
 				sdkPath = readPath(properties, SDK_PATH_PROPERTY, warnings),
 				nativeLibraryPath = readPath(properties, NATIVE_LIBRARY_PROPERTY, warnings),
 				dataPath = readPath(properties, DATA_PATH_PROPERTY, warnings),
-				stressEnabled = readBoolean(properties, STRESS_ENABLED_PROPERTY, false, warnings),
-				stressSteps = readInt(properties, STRESS_STEPS_PROPERTY, DEFAULT_STRESS_STEPS, 1, 192),
-				stressOctaves = readInt(properties, STRESS_OCTAVES_PROPERTY, DEFAULT_STRESS_OCTAVES, 1, 8),
-				stressGodrayTaps = readInt(properties, STRESS_GODRAYS_PROPERTY, DEFAULT_STRESS_GODRAY_TAPS, 0, 48),
-				stressIntensity = readFloat(properties, STRESS_INTENSITY_PROPERTY, 1.0f, 0.0f, 4.0f),
-				stressNdcYSign = if (readBoolean(properties, STRESS_FLIP_Y_PROPERTY, false, warnings)) -1.0f else 1.0f,
+				diagnostics = DiagnosticsConfig(
+					debugLog = readBoolean(properties, DEBUG_LOG_PROPERTY, user.debugLog, warnings),
+					stressEnabled = readBoolean(properties, STRESS_ENABLED_PROPERTY, false, warnings),
+					stressSteps = readInt(properties, STRESS_STEPS_PROPERTY, DEFAULT_DIAGNOSTICS.stressSteps, 1, 192),
+					stressOctaves = readInt(properties, STRESS_OCTAVES_PROPERTY, DEFAULT_DIAGNOSTICS.stressOctaves, 1, 8),
+					stressGodrayTaps = readInt(properties, STRESS_GODRAYS_PROPERTY, DEFAULT_DIAGNOSTICS.stressGodrayTaps, 0, 48),
+					stressIntensity = readFloat(properties, STRESS_INTENSITY_PROPERTY, DEFAULT_DIAGNOSTICS.stressIntensity, 0.0f, 4.0f),
+					stressNdcYSign = if (readBoolean(properties, STRESS_FLIP_Y_PROPERTY, false, warnings)) -1.0f else 1.0f,
+				),
 				warnings = warnings.toList(),
 			)
 		}
@@ -237,6 +256,7 @@ class UserSettings internal constructor(private val file: Path?) {
 	private var _qualityMode = SRMode.QUALITY
 	private var _renderPreset = SRModelPreset.M
 	private var _frameGeneration = false
+	private var _debugLog = false
 
 	var enabled: Boolean
 		get() = _enabled
@@ -266,6 +286,13 @@ class UserSettings internal constructor(private val file: Path?) {
 			save()
 		}
 
+	var debugLog: Boolean
+		get() = _debugLog
+		set(value) {
+			_debugLog = value
+			save()
+		}
+
 	init {
 		load()
 	}
@@ -289,6 +316,7 @@ class UserSettings internal constructor(private val file: Path?) {
 			_qualityMode = fields["qualityMode"]?.let(::parseMode) ?: SRMode.QUALITY
 			_renderPreset = fields["renderPreset"]?.let(::parsePreset) ?: SRModelPreset.M
 			_frameGeneration = jsonBoolean(fields["frameGeneration"]) == true
+			_debugLog = jsonBoolean(fields["debugLog"]) == true
 		} catch (_: IOException) {
 			// Keep safe defaults when an older or manually edited file is invalid.
 		} catch (_: RuntimeException) {
@@ -310,6 +338,7 @@ class UserSettings internal constructor(private val file: Path?) {
 					qualityMode = _qualityMode.propertyValue,
 					renderPreset = _renderPreset.propertyValue,
 					frameGeneration = _frameGeneration,
+					debugLog = _debugLog,
 				),
 				StandardCharsets.UTF_8,
 			)
@@ -358,12 +387,14 @@ private fun writeUserSettingsJson(
 	qualityMode: String,
 	renderPreset: String,
 	frameGeneration: Boolean,
+	debugLog: Boolean,
 ): String = buildString {
 	append("{\n")
 	append("  \"enabled\": ").append(enabled).append(",\n")
 	append("  \"qualityMode\": \"").append(qualityMode).append("\",\n")
 	append("  \"renderPreset\": \"").append(renderPreset).append("\",\n")
-	append("  \"frameGeneration\": ").append(frameGeneration).append('\n')
+	append("  \"frameGeneration\": ").append(frameGeneration).append(",\n")
+	append("  \"debugLog\": ").append(debugLog).append('\n')
 	append("}\n")
 }
 

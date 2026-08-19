@@ -183,6 +183,17 @@ object CloudVelocityRender {
 	internal var testPhaseOverride: WorldPhase? = null
 
 	/**
+	 * Fallback-warning sink. Production routes to the real logger; tests that deliberately
+	 * inject failures swap this out so injected-failure catches do not produce spurious
+	 * warnings in the test output. [PRODUCTION_FALLBACK_LOGGER] restores the default.
+	 */
+	@JvmField
+	internal val PRODUCTION_FALLBACK_LOGGER: (String, Throwable) -> Unit = { message, cause -> LOGGER.warn(message, cause) }
+
+	@JvmStatic
+	internal var fallbackLogger: (String, Throwable) -> Unit = PRODUCTION_FALLBACK_LOGGER
+
+	/**
 	 * The device the writer allocates the payload buffer on and precompiles the twins on.
 	 * Production resolves the live Blaze3D device exactly as before; the headless evidence
 	 * swaps in a recording fake device to execute the eligible production flow without one.
@@ -354,7 +365,7 @@ object CloudVelocityRender {
 		// Never throws: a failure at any preflight step answers false, and the pass-creation
 		// redirect falls through to the exact vanilla one-attachment creation. The warning
 		// keeps a repeated failure visible in the log instead of a silently degraded route.
-		LOGGER.warn("Cloud velocity preflight failed; the vanilla cloud pass is used", failure)
+		fallbackLogger("Cloud velocity preflight failed; the vanilla cloud pass is used", failure)
 		false
 	}
 
@@ -414,7 +425,7 @@ object CloudVelocityRender {
 					LOGGER.warn("Cloud velocity partial pass close failed while recovering a failed pass setup", closeFailure)
 				}
 			}
-			LOGGER.warn("Cloud velocity MRT pass setup failed; the vanilla cloud pass is used", failure)
+			fallbackLogger("Cloud velocity MRT pass setup failed; the vanilla cloud pass is used", failure)
 			return vanillaPass(encoder, label, colorTexture, clearColor, depthTexture, clearDepth)
 		}
 
@@ -474,7 +485,7 @@ object CloudVelocityRender {
 				// The pass is already marked closed and the encoder's in-pass flag is cleared
 				// before the backend close runs, so the frame continues on its exact source
 				// route; the warning keeps the device-level failure visible in the log.
-				LOGGER.warn("Cloud velocity pass close failed; absorbed", failure)
+				fallbackLogger("Cloud velocity pass close failed; absorbed", failure)
 			} finally {
 				CLOUD_VELOCITY_PASS.remove()
 				CLOUD_SCENE_DEPTH_TEST.set(false)
@@ -548,18 +559,21 @@ object CloudVelocityRender {
 		sourceDepth: GpuTextureView?,
 	): Pair<GpuTextureView?, Boolean> {
 		val sceneDepth = phase.sceneDepthView
-		if (
-			sourceDepth != null &&
-			sceneDepth != null &&
-			sourceDepth.texture() !== sceneDepth.texture() &&
-			!sceneDepth.isClosed &&
-			sceneDepth.getWidth(0) == colorTexture.getWidth(0) &&
-			sceneDepth.getHeight(0) == colorTexture.getHeight(0)
-		) {
+		if (sceneDepth != null && sceneDepthUsable(sourceDepth, sceneDepth, colorTexture)) {
 			return sceneDepth to true
 		}
 		return sourceDepth to false
 	}
+
+	private fun sceneDepthUsable(
+		sourceDepth: GpuTextureView?,
+		sceneDepth: GpuTextureView,
+		colorTexture: GpuTextureView,
+	): Boolean = sourceDepth != null &&
+		sourceDepth.texture() !== sceneDepth.texture() &&
+		!sceneDepth.isClosed &&
+		sceneDepth.getWidth(0) == colorTexture.getWidth(0) &&
+		sceneDepth.getHeight(0) == colorTexture.getHeight(0)
 
 	/**
 	 * Constructs both cloud writer twins and forces the lazy shader compilation the first

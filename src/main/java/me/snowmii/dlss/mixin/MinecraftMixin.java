@@ -84,6 +84,33 @@ public class MinecraftMixin {
 		return controls.getSurfacePolicy().effectiveVsyncEnabled((Boolean) original);
 	}
 
+
+	// --- frame rate limiter suppression ---
+
+	/**
+	 * Suppresses Minecraft's own FramerateLimiter sleep while FG is composing.
+	 *
+	 * Reflex's slReflexSleep (fired at reflexInputSample) is already pacing the app to the
+	 * correct base rate. Letting Minecraft's limiter also sleep stacks two independent pacers,
+	 * causing double-sleep stutter. Returning MAX_VALUE makes FramerateLimiter compute a
+	 * near-zero target interval, so its sleep becomes a no-op. frameLimitUs stays 0 — we do not
+	 * hand any cap to Reflex, only suppress the engine's own one.
+	 */
+	@ModifyExpressionValue(
+		method = "renderFrame",
+		at = @At(
+			value = "INVOKE",
+			target = "Lcom/mojang/blaze3d/platform/FramerateLimitTracker;getFramerateLimit()I"
+		)
+	)
+	private int mcDlssSuppressFramerateLimiter(final int original) {
+		final RuntimeControls controls = ClientRuntime.active().activeControls();
+		if (controls != null && controls.getSurfacePolicy().getEffective()) {
+			return Integer.MAX_VALUE;
+		}
+		return original;
+	}
+
 	// --- Reflex/PCL markers ---
 
 	@Inject(

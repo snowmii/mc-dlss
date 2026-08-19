@@ -1,4 +1,5 @@
 package me.snowmii.dlss.render
+
 import me.snowmii.streamline.ImageBinding
 import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.readout.FramePacingProbe
@@ -68,6 +69,7 @@ class WorldPhase(
 	private var mainRenderTarget: RenderTarget? = null
 	private var projectionPrepared = false
 	private var lastResolvedTarget: RenderTarget? = null
+
 	/** Snapshotted at [prepare]; Minecraft reuses the seam's live matrices across frames. */
 	private var cameraSample: DlssCameraSample? = null
 
@@ -112,6 +114,7 @@ class WorldPhase(
 			runtime.pacing.end(FramePacingProbe.Span.REFLEX_SLEEP)
 		}
 	}
+
 	fun reflexMarker(type: StreamlineSession.ReflexMarkerType): Boolean =
 		runtime.frameEvaluation?.reflexMarker(type) == true
 

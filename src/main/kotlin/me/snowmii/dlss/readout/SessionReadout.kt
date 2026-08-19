@@ -8,8 +8,9 @@ import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import me.snowmii.dlss.DlssSessionState
 import com.mojang.blaze3d.pipeline.RenderTarget
-import net.fabricmc.loader.api.FabricLoader
+import me.snowmii.dlss.ModEntry
 import net.minecraft.client.Minecraft
+import org.slf4j.LoggerFactory
 
 /**
  * Formats and emits the session's world-phase, frame-rate, environment, and evaluation lines.
@@ -24,7 +25,6 @@ import net.minecraft.client.Minecraft
  */
 class SessionReadout(
 	private val emitLine: (String) -> Unit,
-	private val minecraftBuild: () -> String? = { null },
 	private val resolveReportedTarget: (() -> RenderTarget?)? = null,
 ) {
 	private var firstPhaseReported = false
@@ -190,17 +190,17 @@ class SessionReadout(
 		// a frame rate that did not change while the chain costs a millisecond is a client whose
 		// frames are bounded by something other than the GPU.
 		emitLine(
-			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s%s%s".format(
+			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s%s".format(
 				fps,
 				sampledWorldFrames,
 				frame?.route ?: DlssFrameRoute.VANILLA,
 				scene?.let { "${it.width}x${it.height}" } ?: "main-target",
 				frameTimings() ?: "unmeasured",
 				fgMonitorSuffix(fgState()),
-				pacing() ?: "",
 				accumulationSuffix(),
 			),
 		)
+		pacing()?.let { emitLine("DLSS pacing: $it") }
 		sampleStartedAt = now
 		sampledWorldFrames = 0
 		sampledJitterPhases.clear()
@@ -228,30 +228,51 @@ class SessionReadout(
 		fun fgPresentedFpsSuffix(appFps: Int, fg: FgState): String =
 			if (fg.numFramesPresented <= 1) "" else " fg ${appFps * fg.numFramesPresented}"
 
+		/** The F3 status line: session state, FG, mode, preset, and resolutions. */
+		fun statusLine(
+			state: String,
+			fg: String,
+			multiplier: Int,
+			mode: SRMode,
+			preset: SRModelPreset,
+			internal: String,
+			output: Dimensions,
+		): String = "DLSS $state" +
+			" | fg $fg at ${multiplier}x" +
+			" | mode ${mode.propertyValue}" +
+			" | preset ${preset.propertyValue}" +
+			" | internal $internal" +
+			" | output $output"
+
+		fun frameGenerationStatus(userEnabled: Boolean, effective: Boolean): String = when {
+			!userEnabled -> "off"
+			effective -> "on"
+			else -> "on (suspended)"
+		}
+
 		/** Formats and drops, for tests that assert on the phase's own behavior. */
 		val NOOP: SessionReadout = SessionReadout({})
 
+		private val LOGGER = LoggerFactory.getLogger(ModEntry.MOD_ID)
+
 		/**
-		 * The Minecraft build as the loader reports it, or null when it cannot be read.
+		 * Console + F3 snapshot sink.
 		 *
-		 * Asked of the loader rather than `SharedConstants`, whose shape moves between versions.
-		 * A record field is worth no exception on the render thread, so a failure degrades to the
-		 * reviewer filling the line in by hand.
+		 * Log emission is gated on [me.snowmii.dlss.client.ModConfig.UserSettings.debugLog]; the
+		 * F3 snapshot always updates so the overlay stays live regardless of the log setting.
 		 */
-		private fun loaderMinecraftBuild(): String? = try {
-			FabricLoader.getInstance()
-				.getModContainer("minecraft")
-				.map { container -> container.metadata.version.friendlyString }
-				.orElse(null)
-		} catch (_: Throwable) {
-			null
+		@JvmStatic
+		fun emit(message: String) {
+			if (me.snowmii.dlss.client.ModConfig.user.debugLog) {
+				LOGGER.info(message)
+			}
+			DlssDebugSnapshot.record(message)
 		}
 
-		/** Production wiring: the loader build and a real resolution probe behind the lines. */
+		/** Production wiring: log/snapshot sink and a real resolution probe behind the lines. */
 		@JvmStatic
-		fun forMinecraft(diagnostics: (String) -> Unit): SessionReadout = SessionReadout(
+		fun forMinecraft(diagnostics: (String) -> Unit = ::emit): SessionReadout = SessionReadout(
 			emitLine = diagnostics,
-			minecraftBuild = ::loaderMinecraftBuild,
 			resolveReportedTarget = { Minecraft.getInstance().gameRenderer.mainRenderTarget() },
 		)
 	}

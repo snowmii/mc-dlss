@@ -609,7 +609,6 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept {
     // and where a reader of this module's own image expects to find it.
     record_layout_transition(recordingBuffer, from_uint64<VkImage>(info.depth.image), depthRange,
                              kDlssInputLayout, depthEntryLayout);
-    barrier_probe(recordingBuffer);
     advance_probe();
     return kSuccess;
 }
@@ -710,7 +709,6 @@ int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept {
     // next evaluation's transition starts from.
     record_layout_transition(recordingBuffer, from_uint64<VkImage>(info.depth.image), depthRange,
                              kDlssInputLayout, depthEntryLayout);
-    barrier_probe(recordingBuffer);
     advance_probe();
     return kSuccess;
 }

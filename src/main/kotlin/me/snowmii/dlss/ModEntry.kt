@@ -1,10 +1,11 @@
 package me.snowmii.dlss
 
 import me.snowmii.dlss.client.ClientRuntime
-import me.snowmii.dlss.client.DlssDebugEntry
-import me.snowmii.dlss.client.DlssDebugSnapshot
 import me.snowmii.dlss.client.ModConfig
 import me.snowmii.dlss.mixin.DebugScreenEntriesInvoker
+import me.snowmii.dlss.readout.DlssDebugEntry
+import me.snowmii.dlss.readout.DlssPacingEntry
+import me.snowmii.dlss.readout.DlssDebugSnapshot
 import me.snowmii.dlss.stress.StressRuntime
 import me.snowmii.streamline.Streamline
 import net.fabricmc.api.ClientModInitializer
@@ -36,6 +37,7 @@ object ModEntry : ClientModInitializer {
 		)
 
 		DebugScreenEntriesInvoker.mcDlssRegister(id("dlss"), DlssDebugEntry)
+		DebugScreenEntriesInvoker.mcDlssRegister(id("dlss_pacing"), DlssPacingEntry)
 		registerControls()
 	}
 

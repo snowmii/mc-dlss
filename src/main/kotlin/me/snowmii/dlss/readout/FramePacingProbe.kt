@@ -93,9 +93,16 @@ class FramePacingProbe {
 	 * Null when no frame completed a present in the window, which is a session that is not
 	 * presenting through the measured seams at all rather than one with nothing to report.
 	 */
-	fun sampleAndReset(): String? {
+	fun sampleAndReset(): String? = format()?.also { reset() }
+
+	/**
+	 * Same format as [sampleAndReset] but does not reset the window. Safe to call every F3
+	 * tick; the next [sampleAndReset] still gets the full accumulated window.
+	 */
+	fun peek(): String? = format()
+
+	private fun format(): String? {
 		if (intervalSamples == 0) {
-			reset()
 			return null
 		}
 		val line = StringBuilder(", pacing=frame ")
@@ -109,7 +116,6 @@ class FramePacingProbe {
 				.append(millis(total[span.ordinal] / count)).append('/').append(millis(maximum[span.ordinal]))
 				.append(" x").append(count)
 		}
-		reset()
 		return line.toString()
 	}
 

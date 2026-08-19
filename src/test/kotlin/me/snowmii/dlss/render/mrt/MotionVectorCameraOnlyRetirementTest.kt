@@ -178,7 +178,7 @@ class MotionVectorCameraOnlyRetirementTest {
 			"BlockEntityRenderDispatcherMotionMixin",
 			// The terrain pass clear seam and the compatibility latch backstop.
 			"VulkanChunkSectionsToRenderMixin",
-			"VulkanPipelineCompatibilityMixin",
+			"VulkanDeviceMixin",
 		)) {
 			assertTrue(registration.contains(retained), "$retained must stay registered")
 		}
@@ -334,10 +334,10 @@ class MotionVectorCameraOnlyRetirementTest {
 		)
 
 		val RETAINED_SOURCES = listOf(
-			"src/main/kotlin/me/snowmii/dlss/mrt/EntityVelocityUniforms.kt",
-			"src/main/kotlin/me/snowmii/dlss/mrt/MovingBlockVelocityRender.kt",
-			"src/main/kotlin/me/snowmii/dlss/mrt/CloudVelocityRender.kt",
-			"src/main/kotlin/me/snowmii/dlss/mrt/TerrainVelocityPass.kt",
+			"src/main/kotlin/me/snowmii/dlss/render/mrt/EntityVelocityUniforms.kt",
+			"src/main/kotlin/me/snowmii/dlss/render/mrt/MovingBlockVelocityRender.kt",
+			"src/main/kotlin/me/snowmii/dlss/render/mrt/CloudVelocityRender.kt",
+			"src/main/kotlin/me/snowmii/dlss/render/mrt/TerrainVelocityPass.kt",
 			"src/main/resources/assets/mc-dlss/shaders/core/velocity_entity.fsh",
 			"src/main/resources/assets/mc-dlss/shaders/core/velocity_block.fsh",
 			"src/main/resources/assets/mc-dlss/shaders/core/velocity_clouds.fsh",

@@ -351,6 +351,7 @@ class MotionVectorCloudTest {
 			phase.begin(true, mainTarget)
 			CloudVelocityRender.testPhaseOverride = phase
 			CloudVelocityRender.currentCloudClock = { CloudVelocityRender.CloudClock(100L, 0.5f) }
+			silenceFallbackLogger()
 
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
@@ -409,6 +410,7 @@ class MotionVectorCloudTest {
 			phase.begin(true, mainTarget)
 			CloudVelocityRender.testPhaseOverride = phase
 			CloudVelocityRender.currentCloudClock = { CloudVelocityRender.CloudClock(100L, 0.5f) }
+			silenceFallbackLogger()
 
 			val colorView = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
 			val depthView = FakeView(FakeTexture(GpuFormat.D32_FLOAT, RENDER_DIMENSIONS.width, RENDER_DIMENSIONS.height))
@@ -505,6 +507,7 @@ class MotionVectorCloudTest {
 			CloudVelocityRender.testPhaseOverride = phase
 			CloudVelocityRender.currentCloudClock = { CloudVelocityRender.CloudClock(100L, 0.5f) }
 			CloudVelocityRender.resetState()
+			silenceFallbackLogger()
 
 			val backend = CloudFakeBackend().also { it.failAt = "passClose" }
 			CloudVelocityRender.deviceProvider = { backend.device }
@@ -550,6 +553,7 @@ class MotionVectorCloudTest {
 			CloudVelocityRender.testPhaseOverride = phase
 			CloudVelocityRender.currentCloudClock = { throw IllegalStateException("injected clock failure") }
 			CloudVelocityRender.resetState()
+			silenceFallbackLogger()
 
 			val backend = CloudFakeBackend()
 			CloudVelocityRender.deviceProvider = { backend.device }
@@ -586,6 +590,11 @@ class MotionVectorCloudTest {
 			}.getOrNull()
 		}
 		CloudVelocityRender.deviceProvider = { RenderSystem.getDevice() }
+		CloudVelocityRender.fallbackLogger = CloudVelocityRender.PRODUCTION_FALLBACK_LOGGER
+	}
+
+	private fun silenceFallbackLogger() {
+		CloudVelocityRender.fallbackLogger = { _, _ -> }
 	}
 
 	/**

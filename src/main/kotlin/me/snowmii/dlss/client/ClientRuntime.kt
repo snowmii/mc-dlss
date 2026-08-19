@@ -83,7 +83,11 @@ object ClientRuntime : RenderLoopView, ActiveView {
 	 */
 	@Volatile
 	private var nativeBridge: StreamlineSession? = null
-	internal var sessionOpener: () -> StreamlineSession = Streamline::open
+	/**
+	 * Returns the open [StreamlineSession], or `null` to skip native startup silently (used in
+	 * tests that must exercise the initialization gate without a real GPU context).
+	 */
+	internal var sessionOpener: () -> StreamlineSession? = Streamline::open
 	private var initializationAttempted = false
 
 	/** The render-loop view: the only side that can build the DLSS path. */
@@ -133,7 +137,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 		}
 
 		worldPhaseInstance = try {
-			val native = sessionOpener()
+			val native = sessionOpener() ?: return null
 			this.nativeBridge = native
 			if (Platform.get() == Platform.WINDOWS) {
 				val hwnd = glfwGetWin32Window(Minecraft.getInstance().window.handle())
@@ -141,10 +145,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 					LOGGER.warn("PCL latency-stat window hook failed; NVIDIA latency overlay will be unavailable")
 				}
 			}
-			val diagnostics: (String) -> Unit = { message ->
-				LOGGER.info(message)
-				DlssDebugSnapshot.record(message)
-			}
+			val diagnostics = SessionReadout::emit
 			// One reporter for the session: both the phase and evaluation feed their lines through
 			// the readout created at this composition root.
 			val readout = SessionReadout.forMinecraft(diagnostics)
@@ -206,7 +207,4 @@ object ClientRuntime : RenderLoopView, ActiveView {
 			.onFailure { error -> LOGGER.warn("DLSS shutdown: closing the {} failed", what, error) }
 	}
 
-	/** Whether the render loop has built the DLSS path, used by the seam's own test. */
-	internal val isInitialized: Boolean
-		get() = initializationAttempted
 }

@@ -5,16 +5,14 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.systems.GpuSurface;
 import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
-import me.snowmii.dlss.ModEntry;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.client.RuntimeControls;
+import me.snowmii.dlss.readout.SessionReadout;
 import me.snowmii.dlss.render.WorldPhase;
 import me.snowmii.streamline.StreamlineVulkanProxies;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.system.Struct;
 import org.lwjgl.vulkan.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -43,9 +41,6 @@ import java.nio.LongBuffer;
  */
 @Mixin(VulkanGpuSurface.class)
 public class VulkanGpuSurfaceMixin {
-	@Unique
-	private static final Logger LOGGER = LoggerFactory.getLogger(ModEntry.MOD_ID);
-
 	@Inject(method = "acquireNextTexture()V", at = @At("HEAD"))
 	private void mcDlssAcquireStart(final CallbackInfo ci) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
@@ -74,13 +69,11 @@ public class VulkanGpuSurfaceMixin {
 	@Inject(method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V", at = @At("HEAD"))
 	private void mcDlssReportConfiguration(final GpuSurface.Configuration config, final CallbackInfo ci) {
 		final RuntimeControls controls = ClientRuntime.active().activeControls();
-		LOGGER.info(
-			"DLSS surface configure: {}x{} present={} fg={} declaredBackBuffers={}",
-			config.width(),
-			config.height(),
-			config.presentMode(),
-			controls != null && controls.getSurfacePolicy().getUserEnabled(),
-			controls == null ? 0 : controls.getSurfacePolicy().getRequiredSwapchainImages()
+		SessionReadout.emit(
+			"DLSS surface configure: " + config.width() + "x" + config.height()
+				+ " present=" + config.presentMode()
+				+ " fg=" + (controls != null && controls.getSurfacePolicy().getUserEnabled())
+				+ " declaredBackBuffers=" + (controls == null ? 0 : controls.getSurfacePolicy().getRequiredSwapchainImages())
 		);
 	}
 
@@ -146,7 +139,7 @@ public class VulkanGpuSurfaceMixin {
 		// back or the next acquire blocks instead. The declared back-buffer count is only a request:
 		// the surface capabilities can cap it, and nothing else reports what survived.
 		if (pSwapchainImages == null && pSwapchainImageCount != null) {
-			LOGGER.info("DLSS swapchain images: created={}", pSwapchainImageCount.get(0));
+			SessionReadout.emit("DLSS swapchain images: created=" + pSwapchainImageCount.get(0));
 		}
 		return result;
 	}

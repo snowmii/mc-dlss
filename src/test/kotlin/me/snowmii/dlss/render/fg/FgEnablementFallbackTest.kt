@@ -117,7 +117,7 @@ class FgEnablementFallbackTest {
 			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
 			"the resumed frame must compose FG again",
 		)
-		assertEquals(2, calls.fgConfigures.size, "the resumed frame re-records the eOn options per frame")
+		assertEquals(1, calls.fgConfigures.size, "configureFg is only called when requiredSwapchainImages changes; resuming with the same back-buffer count does not re-record")
 		assertTrue(announced.last().contains("fg on"), "the readout reports the resumed mode: ${announced.last()}")
 	}
 
@@ -195,11 +195,11 @@ class FgEnablementFallbackTest {
 			calls.evaluations[2].resetHistory,
 			"the first composed frame after the discontinuity must record resetHistory",
 		)
-		assertEquals(3, calls.fgConfigures.size, "the reset frame still composes FG: no frame is classified unsupported")
+		assertEquals(1, calls.fgConfigures.size, "the reset frame still composes FG: no frame is classified unsupported")
 
 		composeSupportedFrame(harness, stillCamera())
 		assertFalse(calls.evaluations[3].resetHistory, "the frame after the reset accumulates normally")
-		assertEquals(4, calls.fgConfigures.size, "every frame here composes FG")
+		assertEquals(1, calls.fgConfigures.size, "configureFg is not called again while requiredSwapchainImages is unchanged")
 
 		// The discontinuity leaves every other precedence intact: FG stays on, nothing suspends
 		// or latches, nothing re-records the eOff mode, and the SR session stays READY.
@@ -546,7 +546,7 @@ class FgEnablementFallbackTest {
 			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
 			"the re-armed frame must compose FG again",
 		)
-		assertEquals(2, calls.fgConfigures.size, "the re-armed frame re-records the eOn options")
+		assertEquals(1, calls.fgConfigures.size, "configureFg is only called when requiredSwapchainImages changes; re-arming with the same back-buffer count does not re-record")
 
 		controls.toggleFrameGeneration()
 		assertFalse(policy.effective)
