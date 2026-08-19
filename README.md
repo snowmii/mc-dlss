@@ -5,7 +5,8 @@ DLSS for Minecraft Java Edition powered by NVIDIA [Streamline](https://github.co
 ![Stress-pass framerate with DLSS off vs on](assets/comparison.png)
 
 Made with compatibility in mind. mc-dlss is expected to work with any modification that doesn't
-fully replace minecraft's game renderer. 
+fully replace minecraft's game renderer (sodium, immediately fast, entity culling, shader loaders 
+that don't yet exist, etc.). 
 
 Comes with a few keybinds you can use to toggle through things quickly:<br>
 F6: Toggles DLSS on/off<br>
