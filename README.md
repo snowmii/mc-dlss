@@ -35,12 +35,6 @@ And run:
 .\gradlew.bat build
 ```
 
-## AI usage disclosure
-This project has fully embraced the exponential and is very vibe-coded,
-so pls don't trash on me for the code quality or the amount of docs out there in the code.
-And use it at your own risk.
-
-
 ## License
 
 MIT — see `LICENSE`. Third-party components included with this software are listed in
