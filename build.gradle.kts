@@ -53,16 +53,20 @@ val detektCli = configurations.create("detektCli")
 dependencies {
 	minecraft("com.mojang:minecraft:${providers.gradleProperty("minecraft_version").get()}")
 	implementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
+	implementation("me.snowmii:vk-lib:${providers.gradleProperty("mod_version").get()}")
+	"localRuntime"("me.snowmii:vk-lib:${providers.gradleProperty("mod_version").get()}") { isTransitive = false }
 	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
-	implementation(project(":streamline"))
+	api(project(":streamline"))
 	testImplementation(testFixtures(project(":streamline")))
 	include(project(":streamline"))
 	testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:$junitPlatformVersion")
 
 	runtimeMod("modmenu_version") { "maven.modrinth:modmenu:$it" }
-	providers.gradleProperty("sodium_version").orNull?.let {
+	providers.gradleProperty("sodium_compile_version").orNull?.takeIf(String::isNotBlank)?.let {
+		compileOnly("maven.modrinth:sodium:$it") { isTransitive = false }
+	} ?: providers.gradleProperty("sodium_version").orNull?.takeIf(String::isNotBlank)?.let {
 		compileOnly("maven.modrinth:sodium:$it") { isTransitive = false }
 	}
 	runtimeMod("sodium_version") { "maven.modrinth:sodium:$it" }

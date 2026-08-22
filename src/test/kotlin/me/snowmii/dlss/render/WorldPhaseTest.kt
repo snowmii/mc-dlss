@@ -4,7 +4,7 @@ import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.SRMode
 import me.snowmii.streamline.Dimensions
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -335,7 +335,7 @@ class WorldPhaseTest {
 		),
 	)
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		var releases = 0
 
 		init {

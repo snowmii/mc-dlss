@@ -1,29 +1,15 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuBufferSlice
-import com.mojang.blaze3d.pipeline.RenderPipeline
-import com.mojang.blaze3d.shaders.ShaderSource
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.CommandEncoderBackend
-import com.mojang.blaze3d.systems.DeviceFeatures
-import com.mojang.blaze3d.systems.DeviceInfo
-import com.mojang.blaze3d.systems.DeviceLimits
-import com.mojang.blaze3d.systems.DeviceType
-import com.mojang.blaze3d.systems.GpuDeviceBackend
-import com.mojang.blaze3d.systems.GpuQueryPool
-import com.mojang.blaze3d.systems.GpuSurfaceBackend
-import com.mojang.blaze3d.systems.HintsAndWorkarounds
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.systems.RenderPassBackend
-import com.mojang.blaze3d.systems.RenderPassDescriptor
-import com.mojang.blaze3d.systems.TransientMemory
-import com.mojang.blaze3d.textures.AddressMode
-import com.mojang.blaze3d.textures.FilterMode
-import com.mojang.blaze3d.textures.GpuSampler
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.GpuFormat
+import com.mojang.renderpearl.api.buffers.GpuBuffer
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice
+import com.mojang.renderpearl.api.commands.CommandEncoder
+import com.mojang.renderpearl.api.commands.GpuQueryPool
+import com.mojang.renderpearl.api.commands.RenderPass
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor
+import com.mojang.renderpearl.api.buffers.TransientMemory
+import com.mojang.renderpearl.api.textures.GpuTexture
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitter
 import me.snowmii.dlss.render.DlssJitterOffset
@@ -43,13 +29,13 @@ import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.streamline.VulkanContext
+import me.snowmii.vklib.api.VulkanContext
 import net.minecraft.client.renderer.entity.state.EntityRenderState
 import org.joml.Matrix4f
 import org.joml.Vector3f
@@ -64,9 +50,6 @@ import org.junit.jupiter.api.Test
 import org.lwjgl.vulkan.VkCommandBuffer
 import java.nio.ByteBuffer
 import java.nio.file.Path
-import java.util.OptionalDouble
-import java.util.function.Supplier
-
 /**
  * Entity, moving-block, and cloud vectors go through the velocity-MRT world path; sentinel
  * pixels receive camera motion from the fill.
@@ -429,7 +412,9 @@ class MotionVectorMrtTest {
 	private fun payloadEncoder() = PayloadRecordingEncoder(PayloadBackend())
 
 	/** The payload buffer the writers write through: the same usage and size they own in production. */
-	private class PayloadFakeBuffer : GpuBuffer(USAGE_COPY_DST, EntityVelocityUniforms.UBO_SIZE.toLong()) {
+	private class PayloadFakeBuffer : GpuBuffer {
+		override fun size() = EntityVelocityUniforms.UBO_SIZE.toLong()
+		override fun usage() = GpuBuffer.USAGE_COPY_DST
 		override fun isClosed() = false
 		override fun close() = Unit
 		override fun map(offset: Long, length: Long, read: Boolean, write: Boolean): GpuBufferSlice.MappedView =
@@ -444,43 +429,44 @@ class MotionVectorMrtTest {
 		}
 	}
 
-	private class PayloadRecordingEncoder(val backend: PayloadBackend) :
-		CommandEncoder(null, PayloadGpuDeviceBackend(), backend) {
-
-		override fun createRenderPass(descriptor: RenderPassDescriptor): RenderPass =
-			throw UnsupportedOperationException("payload tests never create passes")
-	}
-
-	/** Records the payload write; every other encoder call is unreachable in a payload write. */
-	private class PayloadBackend : CommandEncoderBackend {
-		val writes = mutableListOf<ByteBuffer>()
-
+	/**
+	 * 26.3: [CommandEncoder] is a plain interface, so the fake implements it directly instead
+	 * of wrapping a backend split. [backend] keeps the recorded state so [lastPayload] can
+	 * still read it off the encoder.
+	 */
+	private class PayloadRecordingEncoder(val backend: PayloadBackend) : CommandEncoder {
 		override fun submit() = Unit
 
 		override fun transientMemory(): TransientMemory = throw UnsupportedOperationException("payload tests never allocate transient memory")
 
-		override fun createRenderPass(descriptor: RenderPassDescriptor): RenderPassBackend =
+		override fun createRenderPass(descriptor: RenderPassDescriptor): RenderPass =
 			throw UnsupportedOperationException("payload tests never create passes")
 
-		override fun submitRenderPass() = Unit
-
-		override fun writeToBuffer(destination: GpuBufferSlice, data: ByteBuffer) {
-			// The payload buffer is a little-endian stack allocation; copy bytes and order while
-			// the call is live so the recorded block decodes exactly as written.
-			val copy = ByteBuffer.allocate(data.remaining()).order(data.order())
-			copy.put(data.duplicate()).flip()
-			writes += copy
-		}
+		override fun writeToBuffer(destination: GpuBufferSlice, data: ByteBuffer) = backend.record(data)
 
 		override fun clearColorTexture(colorTexture: GpuTexture, clearColor: Vector4fc) = Unit
 
 		override fun clearColorAndDepthTextures(colorTexture: GpuTexture, clearColor: Vector4fc, depthTexture: GpuTexture, clearDepth: Double) = Unit
 
-		override fun clearColorAndDepthTextures(colorTexture: GpuTexture, clearColor: Vector4fc, depthTexture: GpuTexture, clearDepth: Double, regionX: Int, regionY: Int, regionWidth: Int, regionHeight: Int) = Unit
+		override fun clearColorAndDepthTextures(
+			colorTexture: GpuTexture,
+			clearColor: Vector4fc,
+			depthTexture: GpuTexture,
+			clearDepth: Double,
+			mipLevel: Int,
+			regionX: Int,
+			regionY: Int,
+			regionWidth: Int,
+			regionHeight: Int,
+		) = Unit
 
 		override fun clearDepthTexture(depthTexture: GpuTexture, clearDepth: Double) = Unit
 
 		override fun copyToBuffer(source: GpuBufferSlice, target: GpuBufferSlice) = Unit
+
+		override fun writeToTexture(destination: GpuTexture, source: com.mojang.blaze3d.platform.NativeImage) = Unit
+
+		override fun writeToTexture(destination: GpuTexture, source: com.mojang.blaze3d.platform.NativeImage, x: Int, y: Int, width: Int, height: Int) = Unit
 
 		override fun writeToTexture(destination: GpuTexture, source: ByteBuffer, mipLevel: Int, depthOrLayer: Int, destX: Int, destY: Int, width: Int, height: Int) = Unit
 
@@ -497,44 +483,17 @@ class MotionVectorMrtTest {
 		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
 	}
 
-	/** The device-info side of the fake device the encoder constructor requires; never driven. */
-	private class PayloadGpuDeviceBackend : GpuDeviceBackend {
-		private val info = DeviceInfo(
-			"fake",
-			"fake",
-			"fake",
-			true,
-			"fake",
-			1f,
-			DeviceLimits(16, 4, 65536, 1L shl 30, 1, 8),
-			DeviceFeatures(true, false, false, false, false, true, false),
-			emptySet(),
-			HintsAndWorkarounds(false, false),
-			DeviceType.OTHER,
-		)
+	/** Records the payload write; every other encoder call is unreachable in a payload write. */
+	private class PayloadBackend {
+		val writes = mutableListOf<ByteBuffer>()
 
-		override fun createSurface(windowHandle: Long): GpuSurfaceBackend = throw UnsupportedOperationException("payload tests never create surfaces")
-		override fun createCommandEncoder(): CommandEncoderBackend = throw UnsupportedOperationException("payload tests never create encoders")
-		override fun createSampler(addressModeU: AddressMode, addressModeV: AddressMode, minFilter: FilterMode, magFilter: FilterMode, maxAnisotropy: Int, maxLod: OptionalDouble): GpuSampler =
-			throw UnsupportedOperationException("payload tests never create samplers")
-		override fun createTexture(label: Supplier<String>?, usage: Int, format: GpuFormat, width: Int, height: Int, depthOrLayers: Int, mipLevels: Int): GpuTexture =
-			throw UnsupportedOperationException("payload tests never create textures")
-		override fun createTexture(label: String?, usage: Int, format: GpuFormat, width: Int, height: Int, depthOrLayers: Int, mipLevels: Int): GpuTexture =
-			throw UnsupportedOperationException("payload tests never create textures")
-		override fun createTextureView(texture: GpuTexture): GpuTextureView = throw UnsupportedOperationException("payload tests never create texture views")
-		override fun createTextureView(texture: GpuTexture, baseMipLevel: Int, mipLevels: Int): GpuTextureView =
-			throw UnsupportedOperationException("payload tests never create texture views")
-		override fun createBuffer(label: Supplier<String>?, usage: Int, size: Long): GpuBuffer = throw UnsupportedOperationException("payload tests never allocate buffers")
-		override fun createBuffer(label: Supplier<String>?, usage: Int, data: ByteBuffer): GpuBuffer = throw UnsupportedOperationException("payload tests never allocate buffers")
-		override fun getLastDebugMessages(): List<String> = emptyList()
-		override fun isDebuggingEnabled(): Boolean = false
-		override fun precompilePipeline(pipeline: RenderPipeline, shaderSource: ShaderSource?): com.mojang.blaze3d.pipeline.CompiledRenderPipeline =
-			throw UnsupportedOperationException("payload tests never compile pipelines")
-		override fun clearPipelineCache() = Unit
-		override fun close() = Unit
-		override fun createTimestampQueryPool(size: Int): GpuQueryPool = throw UnsupportedOperationException("payload tests never create query pools")
-		override fun getTimestampNow(): Long = 0L
-		override fun getDeviceInfo(): DeviceInfo = info
+		fun record(data: ByteBuffer) {
+			// The payload buffer is a little-endian stack allocation; copy bytes and order while
+			// the call is live so the recorded block decodes exactly as written.
+			val copy = ByteBuffer.allocate(data.remaining()).order(data.order())
+			copy.put(data.duplicate()).flip()
+			writes += copy
+		}
 	}
 
 	private fun evaluation(calls: RecordingNativeApi): FrameEvaluation {

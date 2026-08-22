@@ -12,6 +12,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
+import me.snowmii.vklib.api.VulkanContext;
+
 /** Queries Streamline's exact Vulkan requirements at the game's pre-creation bootstrap seams. */
 public final class ExtensionBootstrap {
 	/**
@@ -25,13 +27,13 @@ public final class ExtensionBootstrap {
 
 	/**
 	 * The colocated flat runtime set: the bridge plus every Streamline/NGX runtime dll that must
-	 * sit beside it on disk for Windows dependency resolution. Mirrors the nine files staged by
+	 * sit beside it on disk for Windows dependency resolution. Mirrors the files staged by
 	 * {@code :streamline}'s processResources into {@code assets/streamline-api/native/}.
 	 */
 	private static final List<String> FLAT_RUNTIME_FILES = List.of(
-		"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
-		"sl.pcl.dll",
-		"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
+		"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_d.dll", "sl.dlss_g.dll",
+		"sl.reflex.dll", "sl.pcl.dll",
+		"nvngx_dlss.dll", "nvngx_dlssd.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
 	);
 
 	private static final Path RELATIVE_STREAMLINE = Path.of("build", "resources", "main", "assets", "streamline-api", "native");

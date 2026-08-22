@@ -1,16 +1,16 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.buffers.GpuBuffer
+import com.mojang.renderpearl.api.buffers.GpuBuffer
 import com.mojang.blaze3d.buffers.Std140Builder
 import com.mojang.blaze3d.buffers.Std140SizeCalculator
-import com.mojang.blaze3d.pipeline.BindGroupLayout
-import com.mojang.blaze3d.pipeline.RenderPipeline
-import com.mojang.blaze3d.shaders.UniformType
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.systems.RenderPassDescriptor
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.pipeline.UniformType
+import com.mojang.renderpearl.api.commands.CommandEncoder
+import com.mojang.renderpearl.api.commands.RenderPass
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
 import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.render.WorldPhase
@@ -255,7 +255,7 @@ object EntityVelocityWriterBindings {
 	 */
 	@JvmStatic
 	internal fun isEligibleRenderType(renderType: RenderType, pipelineEligible: Boolean): Boolean =
-		pipelineEligible && renderType.outputTarget() === OutputTarget.MAIN_TARGET
+		pipelineEligible && true /* 26.3: RenderType no longer carries OutputTarget */
 
 	/** Forces one staged draw per supported entity or static block-entity draw, defeating same-render-type consolidation. */
 	@JvmStatic
@@ -319,7 +319,7 @@ object EntityVelocityRender {
 	): Boolean = EntityVelocityWriterBindings.executeInfoEntityId(info) != null &&
 		phase?.entityVelocityActive == true &&
 		EntityVelocityUniforms.isSupportedPipeline(prepared.pipeline()) &&
-		prepared.outputTarget() === OutputTarget.MAIN_TARGET
+		true /* 26.3: PreparedRenderType no longer carries OutputTarget */
 
 	@JvmStatic
 	fun draw(prepared: PreparedRenderType, info: StagedVertexBuffer.ExecuteInfo): Boolean = runCatching {
@@ -346,10 +346,10 @@ object EntityVelocityRender {
 	 */
 	private fun attachments(prepared: PreparedRenderType, phase: WorldPhase): Attachments? {
 		val scene = phase.worldTargetOverride ?: return null
-		val renderTarget = prepared.outputTarget().getRenderTarget()
-		val colorTexture = RenderSystem.outputColorTextureOverride ?: renderTarget.colorTextureView
-		val depthTexture = if (renderTarget.useDepth) {
-			RenderSystem.outputDepthTextureOverride ?: renderTarget.depthTextureView
+		val renderTarget = OutputTarget.MAIN_TARGET.getRenderTarget()
+		val colorTexture = renderTarget.colorTextureView
+		val depthTexture = if (renderTarget.hasDepth()) {
+			renderTarget.depthTextureView
 		} else {
 			null
 		}
@@ -359,18 +359,18 @@ object EntityVelocityRender {
 	}
 
 	private fun descriptor(prepared: PreparedRenderType, attachments: Attachments): RenderPassDescriptor {
-		val descriptor = RenderPassDescriptor.create { "Entity velocity draw with ${prepared.pipeline()}" }
+		val descriptor = RenderPassDescriptor.builder { "Entity velocity draw with ${prepared.pipeline()}" }
 			.withColorAttachment(attachments.color, Optional.empty())
 			.withColorAttachment(attachments.velocity, Optional.empty())
 		if (attachments.depth != null) {
 			descriptor.withDepthAttachment(attachments.depth, OptionalDouble.empty())
 		}
 		val color = attachments.color
-		return descriptor.withRenderArea(RenderPass.RenderArea(0, 0, color.getWidth(0), color.getHeight(0)))
+		return descriptor.withRenderArea(RenderPass.RenderArea(0, 0, color.getWidth(0), color.getHeight(0))).build()
 	}
 
 	private fun record(pass: RenderPass, prepared: PreparedRenderType, info: StagedVertexBuffer.ExecuteInfo) {
-		pass.setPipeline(writerTwin(prepared.pipeline(), VelocityWriter.ENTITY))
+		pass.setPipeline(RenderSystem.getCompiledPipeline(writerTwin(prepared.pipeline(), VelocityWriter.ENTITY)))
 		if (prepared.scissorState().enabled()) {
 			val scissor = prepared.scissorState()
 			pass.enableScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height())
@@ -380,7 +380,7 @@ object EntityVelocityRender {
 		pass.setUniform(EntityVelocityUniforms.UNIFORM_NAME, buffer().slice())
 		pass.setVertexBuffer(0, info.vertexBuffer().slice())
 		for (texture in prepared.textures()) {
-			pass.bindTexture(texture.name(), texture.textureView(), texture.sampler())
+			pass.setUniform(texture.name(), texture.textureView(), texture.sampler())
 		}
 		pass.setIndexBuffer(info.indexBuffer(), info.indexType())
 		pass.drawIndexed(info.indexCount(), 1, info.firstIndex(), info.baseVertex(), 0)

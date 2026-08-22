@@ -1,12 +1,12 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuBufferSlice
-import com.mojang.blaze3d.pipeline.ColorTargetState
+import com.mojang.renderpearl.api.GpuFormat
+import com.mojang.renderpearl.api.buffers.GpuBuffer
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice
+import com.mojang.renderpearl.api.pipeline.ColorTargetState
 import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.textures.GpuTexture
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import java.nio.ByteBuffer
 import java.nio.file.Path
 import kotlin.io.path.readText
@@ -123,7 +123,7 @@ internal class HeadlessRenderTarget(
 	format: GpuFormat = GpuFormat.RGBA8_UNORM,
 	withView: Boolean = false,
 	withDepthView: Boolean = false,
-) : RenderTarget("fake", true, format) {
+) : RenderTarget("fake", format, if (withDepthView) GpuFormat.D32_FLOAT else null) {
 	var releases = 0
 	private val texture = FakeTexture(format, width, height)
 	private val extraDepthView: GpuTextureView? =
@@ -148,18 +148,39 @@ internal class HeadlessRenderTarget(
 	}
 }
 
-internal class FakeTexture(format: GpuFormat, width: Int = 16, height: Int = 16) :
-	GpuTexture(USAGE_RENDER_ATTACHMENT, "fake", format, width, height, 1, 1) {
-	override fun close() = Unit
+/** [GpuTexture] and [GpuTextureView] are plain interfaces in 26.3, so fakes implement them directly. */
+internal open class FakeTexture(
+	private val format: GpuFormat,
+	private val fakeWidth: Int = 16,
+	private val fakeHeight: Int = 16,
+) : GpuTexture {
+	override fun getWidth(mipLevel: Int) = fakeWidth
+	override fun getHeight(mipLevel: Int) = fakeHeight
+	override fun getDepthOrLayers() = 1
+	override fun getMipLevels() = 1
+	override fun getFormat(): GpuFormat = format
+	override fun usage() = GpuTexture.USAGE_RENDER_ATTACHMENT
+	override fun getLabel() = "fake"
 	override fun isClosed() = false
+	override fun close() = Unit
 }
 
-internal class FakeView(texture: GpuTexture) : GpuTextureView(texture, 0, 1) {
-	override fun close() = Unit
+internal open class FakeView(private val fakeTexture: GpuTexture) : GpuTextureView {
 	override fun isClosed() = false
+	override fun texture(): GpuTexture = fakeTexture
+	override fun baseMipLevel() = 0
+	override fun mipLevels() = 1
+	override fun getWidth(mipLevel: Int) = fakeTexture.getWidth(mipLevel)
+	override fun getHeight(mipLevel: Int) = fakeTexture.getHeight(mipLevel)
+	override fun close() = Unit
 }
 
-internal class FakeBuffer : GpuBuffer(USAGE_VERTEX, 0) {
+internal open class FakeBuffer(
+	private val bufferUsage: Int = GpuBuffer.USAGE_VERTEX,
+	private val bufferSize: Long = 0,
+) : GpuBuffer {
+	override fun size() = bufferSize
+	override fun usage() = bufferUsage
 	override fun isClosed() = false
 	override fun close() = Unit
 	override fun map(offset: Long, length: Long, read: Boolean, write: Boolean): GpuBufferSlice.MappedView =

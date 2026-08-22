@@ -3,7 +3,7 @@ package me.snowmii.dlss.mixin;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import com.mojang.blaze3d.systems.CommandEncoder;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.client.RuntimeControls;
 import me.snowmii.dlss.render.WorldPhase;
@@ -117,7 +117,7 @@ public class MinecraftMixin {
 		method = "run",
 		at = @At(
 			value = "INVOKE",
-			target = "Lcom/mojang/blaze3d/systems/RenderSystem;pollEvents()V",
+			target = "Lcom/mojang/blaze3d/systems/RenderSystem;pollEvents(Lcom/mojang/blaze3d/platform/SDLEventHandler;)V",
 			shift = At.Shift.AFTER
 		)
 	)
@@ -149,7 +149,7 @@ public class MinecraftMixin {
 		method = "renderFrame",
 		at = @At(
 			value = "INVOKE",
-			target = "Lcom/mojang/blaze3d/systems/CommandEncoder;submit()V"
+			target = "Lcom/mojang/renderpearl/api/commands/CommandEncoder;submit()V"
 		)
 	)
 	private void mcDlssReflexRenderSubmit(final CommandEncoder encoder, final Operation<Void> original) {

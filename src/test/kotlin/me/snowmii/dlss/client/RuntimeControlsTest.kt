@@ -1,6 +1,6 @@
 package me.snowmii.dlss.client
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
@@ -20,7 +20,7 @@ import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.readout.SessionReadout
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -262,7 +262,7 @@ class RuntimeControlsTest {
 		)
 	}
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height

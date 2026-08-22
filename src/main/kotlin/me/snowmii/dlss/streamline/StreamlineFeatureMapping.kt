@@ -1,7 +1,7 @@
 package me.snowmii.dlss.streamline
 
-import com.mojang.blaze3d.vulkan.init.VulkanFeature
-import com.mojang.blaze3d.vulkan.init.VulkanPNextStruct
+import com.mojang.renderpearl.backend.vulkan.init.VulkanFeature
+import com.mojang.renderpearl.backend.vulkan.init.VulkanPNextStruct
 import me.snowmii.streamline.SlVulkanFeatures
 
 /**
@@ -55,8 +55,15 @@ object StreamlineFeatureMapping {
 			return
 		}
 		val requirement = REQUIREMENTS_BY_NAME[name] ?: return
+		// sType 51 = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+		// sType 1000088000 = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES.
+		val structClass = when (requirement.sType()) {
+			51 -> org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features::class.java
+			1_000_088_000 -> org.lwjgl.vulkan.VkPhysicalDeviceVulkan13Features::class.java
+			else -> return
+		}
 		required.add(
-			VulkanFeature(VulkanPNextStruct(requirement.sType(), requirement.structSize()), name, requirement.offset()),
+			VulkanFeature(VulkanPNextStruct(structClass), name, requirement.offset()),
 		)
 	}
 }

@@ -369,6 +369,16 @@ struct DlssState {
     // refusal as a pre-evaluation one.
     bool fgCameraConstantsRecorded = false;
     McDlssCameraConstants lastFgCameraConstants{};
+    // DLSS Ray Reconstruction: armed for the next SR tag/evaluate when Lumina (or another
+    // guide producer) has called mc_dlss_prepare_rr with enabled != 0 and valid guide images.
+    // Cleared by prepare_rr(enabled=0) and by reset_state. Options matrices are row-major.
+    bool rrArmed = false;
+    McDlssImage rrDiffuseAlbedo{};
+    McDlssImage rrSpecularAlbedo{};
+    McDlssImage rrNormalRoughness{};
+    McDlssImage rrSpecularHitDistance{};
+    float rrWorldToCameraView[16]{};
+    float rrCameraViewToWorld[16]{};
 };
 
 extern DlssState g_state;

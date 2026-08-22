@@ -62,6 +62,8 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 
 	override fun tagSrResources(request: SrTagRequest): Int = notStubbed("tagSrResources")
 
+	override fun prepareRayReconstruction(request: RrPrepareRequest): Int = notStubbed("prepareRayReconstruction")
+
 	override fun tagFrameGenerationResources(request: FgTagRequest): Int = notStubbed("tagFgResources")
 
 	override fun recordPresentHandoff(): Int = notStubbed("presentHandoff")

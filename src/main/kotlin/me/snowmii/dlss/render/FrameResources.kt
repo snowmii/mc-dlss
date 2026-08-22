@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render
 
 import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import me.snowmii.dlss.DlssFrameRoute
 
 /**

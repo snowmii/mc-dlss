@@ -1,6 +1,6 @@
 package me.snowmii.dlss.render
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.EvaluationImages
@@ -17,7 +17,7 @@ import me.snowmii.dlss.DlssNativeStage
 import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.dlss.readout.SessionReadout
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -223,7 +223,7 @@ class EnablementFallbackTest {
 		)
 	}
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height

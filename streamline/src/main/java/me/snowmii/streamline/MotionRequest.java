@@ -1,5 +1,7 @@
 package me.snowmii.streamline;
 
+import me.snowmii.vklib.api.ImageBinding;
+
 import java.util.Arrays;
 import java.util.Objects;
 

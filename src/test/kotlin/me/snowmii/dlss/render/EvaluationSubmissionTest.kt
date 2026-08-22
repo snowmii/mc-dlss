@@ -8,13 +8,13 @@ import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.streamline.VulkanContext
+import me.snowmii.vklib.api.VulkanContext
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

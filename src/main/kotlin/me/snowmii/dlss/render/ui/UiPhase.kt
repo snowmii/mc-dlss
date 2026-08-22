@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render.ui
 
 import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.systems.CommandEncoder
+import com.mojang.renderpearl.api.commands.CommandEncoder
 import com.mojang.blaze3d.systems.RenderSystem
 
 /**

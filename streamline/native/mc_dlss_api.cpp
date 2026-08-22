@@ -36,7 +36,8 @@ namespace {
 
 constexpr char kProjectId[] = "50f68c51-c7be-49bd-a875-f73045f88d27";
 constexpr char kEngineVersion[] = "Minecraft 26.2";
-constexpr sl::Feature kStreamlineFeatures[] = {sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL};
+constexpr sl::Feature kStreamlineFeatures[] = {
+	sl::kFeatureDLSS, sl::kFeatureDLSS_RR, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL};
 
 // The manual-hook Vulkan preferences this module always uses, shared by every bootstrap (a
 // close's slShutdown tears the runtime down and reset_state forgets the bootstrap, so the
@@ -104,7 +105,9 @@ int32_t collect_streamline_extensions(const bool device, const uint32_t index, c
     std::vector<const char*> extensions;
     for (const sl::Feature feature : kStreamlineFeatures) {
         sl::FeatureRequirements requirements{};
-        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) return kFailure;
+        // Skip features that did not load (missing plugin, unsupported GPU, etc.) so one
+        // optional feature like RR cannot fail Vulkan bootstrap for SR/Reflex/PCL.
+        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) continue;
         const uint32_t size = device ? requirements.vkNumDeviceExtensions : requirements.vkNumInstanceExtensions;
         const char* const* values = device ? requirements.vkDeviceExtensions : requirements.vkInstanceExtensions;
         for (uint32_t i = 0; i < size; ++i) {
@@ -124,7 +127,7 @@ int32_t collect_streamline_feature_names(const bool features13, const uint32_t i
     std::vector<const char*> names;
     for (const sl::Feature feature : kStreamlineFeatures) {
         sl::FeatureRequirements requirements{};
-        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) return kFailure;
+        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) continue;
         const uint32_t size = features13 ? requirements.vkNumFeatures13 : requirements.vkNumFeatures12;
         const char* const* values = features13 ? requirements.vkFeatures13 : requirements.vkFeatures12;
         for (uint32_t i = 0; i < size; ++i) {
@@ -152,7 +155,7 @@ int32_t collect_streamline_queue_requirements(uint32_t* extra_graphics_queues,
     uint32_t opticalFlow = 0;
     for (const sl::Feature feature : kStreamlineFeatures) {
         sl::FeatureRequirements requirements{};
-        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) return kFailure;
+        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) continue;
         graphics += requirements.vkNumGraphicsQueuesRequired;
         compute += requirements.vkNumComputeQueuesRequired;
         opticalFlow += requirements.vkNumOpticalFlowQueuesRequired;
@@ -697,6 +700,29 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
                                  current_layout_of(outputImage), kDlssOutputLayout);
         note_layout_after_transition(outputImage, kDlssOutputLayout);
 
+        VkImageLayout rrAlbedoEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout rrSpecularAlbedoEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout rrNormalEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout rrHitDistanceEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (g_state.rrArmed) {
+            rrAlbedoEntry = current_layout_of(g_state.rrDiffuseAlbedo.image);
+            rrSpecularAlbedoEntry = current_layout_of(g_state.rrSpecularAlbedo.image);
+            rrNormalEntry = current_layout_of(g_state.rrNormalRoughness.image);
+            rrHitDistanceEntry = current_layout_of(g_state.rrSpecularHitDistance.image);
+            record_layout_transition(recordingBuffer,
+                                     from_uint64<VkImage>(g_state.rrDiffuseAlbedo.image),
+                                     image_range_of(false), rrAlbedoEntry, kDlssInputLayout);
+            record_layout_transition(recordingBuffer,
+                                     from_uint64<VkImage>(g_state.rrSpecularAlbedo.image),
+                                     image_range_of(false), rrSpecularAlbedoEntry, kDlssInputLayout);
+            record_layout_transition(recordingBuffer,
+                                     from_uint64<VkImage>(g_state.rrNormalRoughness.image),
+                                     image_range_of(false), rrNormalEntry, kDlssInputLayout);
+            record_layout_transition(recordingBuffer,
+                                     from_uint64<VkImage>(g_state.rrSpecularHitDistance.image),
+                                     image_range_of(false), rrHitDistanceEntry, kDlssInputLayout);
+        }
+
         const int32_t evaluateResult = record_sr_evaluation(*info, recordingBuffer);
 
         // The engine's images go back where Minecraft expects to find them, in the same
@@ -709,6 +735,20 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
                                  image_range_of(false), kDlssInputLayout, colorEntryLayout);
         record_layout_transition(recordingBuffer, from_uint64<VkImage>(info->depth.image),
                                  image_range_of(true), kDlssInputLayout, depthEntryLayout);
+        if (g_state.rrArmed) {
+            record_layout_transition(recordingBuffer,
+                                     from_uint64<VkImage>(g_state.rrDiffuseAlbedo.image),
+                                     image_range_of(false), kDlssInputLayout, rrAlbedoEntry);
+            record_layout_transition(recordingBuffer,
+                                     from_uint64<VkImage>(g_state.rrSpecularAlbedo.image),
+                                     image_range_of(false), kDlssInputLayout, rrSpecularAlbedoEntry);
+            record_layout_transition(recordingBuffer,
+                                     from_uint64<VkImage>(g_state.rrNormalRoughness.image),
+                                     image_range_of(false), kDlssInputLayout, rrNormalEntry);
+            record_layout_transition(recordingBuffer,
+                                     from_uint64<VkImage>(g_state.rrSpecularHitDistance.image),
+                                     image_range_of(false), kDlssInputLayout, rrHitDistanceEntry);
+        }
         mark_frame_timing(recordingBuffer, 2);
         return evaluateResult;
     } catch (...) {
@@ -723,6 +763,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
             return kInvalidParameter;
         }
         return tag_sr_resources(*info);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_prepare_rr(const McDlssRrPrepareInfo* info) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (info == nullptr) {
+            return kInvalidParameter;
+        }
+        return prepare_rr(*info);
     } catch (...) {
         return kFailure;
     }

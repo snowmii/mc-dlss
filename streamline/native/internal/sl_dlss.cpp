@@ -8,6 +8,7 @@
 #include <sl.h>
 #include <sl_core_api.h>
 #include <sl_dlss.h>
+#include <sl_dlss_d.h>
 #include <sl_dlss_g.h>
 #include <sl_pcl.h>
 #include <sl_reflex.h>
@@ -840,6 +841,54 @@ static void write_matrix(sl::float4x4& dest, const float* rowMajor) noexcept {
     }
 }
 
+int32_t record_rr_options() noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+
+    sl::DLSSDOptions options{};
+    options.mode = static_cast<sl::DLSSMode>(g_state.qualityMode + 1);
+    options.outputWidth = g_state.outputWidth;
+    options.outputHeight = g_state.outputHeight;
+    // RR requires an HDR color path; Lumina's noisy guide is RGBA16F linear.
+    options.colorBuffersHDR = sl::Boolean::eTrue;
+    options.alphaUpscalingEnabled = sl::Boolean::eFalse;
+    options.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;
+    write_matrix(options.worldToCameraView, g_state.rrWorldToCameraView);
+    write_matrix(options.cameraViewToWorld, g_state.rrCameraViewToWorld);
+
+    const sl::Result result = slDLSSDSetOptions(sl::ViewportHandle{kSrViewportId}, options);
+    return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
+}
+
+int32_t prepare_rr(const McDlssRrPrepareInfo& info) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    if (info.enabled == 0) {
+        g_state.rrArmed = false;
+        g_state.rrDiffuseAlbedo = {};
+        g_state.rrSpecularAlbedo = {};
+        g_state.rrNormalRoughness = {};
+        g_state.rrSpecularHitDistance = {};
+        return record_sr_options();
+    }
+    if (!valid_image(info.diffuse_albedo) || !valid_image(info.specular_albedo) ||
+        !valid_image(info.normal_roughness) || !valid_image(info.specular_hit_distance)) {
+        return kInvalidParameter;
+    }
+    g_state.rrArmed = true;
+    g_state.rrDiffuseAlbedo = info.diffuse_albedo;
+    g_state.rrSpecularAlbedo = info.specular_albedo;
+    g_state.rrNormalRoughness = info.normal_roughness;
+    g_state.rrSpecularHitDistance = info.specular_hit_distance;
+    for (int i = 0; i < 16; ++i) {
+        g_state.rrWorldToCameraView[i] = info.world_to_camera_view[i];
+        g_state.rrCameraViewToWorld[i] = info.camera_view_to_world[i];
+    }
+    return record_rr_options();
+}
+
 // The y flip the FG viewport's constants carry, per matrix role. The ABI's matrices are
 // row-vector (v' = v * M), so where a matrix maps from and to decides the flip: F =
 // diag(1, -1, 1, 1) applied to the output side is M' = M * F (column 1 negated - flat
@@ -1061,7 +1110,8 @@ int32_t record_sr_evaluation(const McDlssEvaluateInfo& info,
     // sl::CommandBuffer is void, so CommandBuffer* is the native Vulkan handle itself as
     // void*. Applying address-of here would pass the address of this local handle variable; SL
     // would forward that stack address to NGX as a VkCommandBuffer and corrupt the process.
-    result = slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, 1, commandBuffer);
+    result = slEvaluateFeature(g_state.rrArmed ? sl::kFeatureDLSS_RR : sl::kFeatureDLSS,
+                               *frameToken, inputs, 1, commandBuffer);
     // The token stays until present_end: render-submit and PRESENT_START/END still have to
     // emit under the same index the evaluation recorded, and dropping it here is what left
     // the NVIDIA overlay at 0 FPS / N/A latency on SR-only frames. A failed evaluation keeps
@@ -1106,9 +1156,6 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // no engine velocity image crosses the ABI. The module's output image tags only once it
     // exists at the configured size, so it is added when images_match_configuration holds.
     const bool moduleImagesReady = images_match_configuration();
-    // Four slots when the module's images exist at the configured size (the two engine
-    // inputs, the module motion image, the module output image), two otherwise.
-    const uint32_t numTags = moduleImagesReady ? 4 : 2;
 
     const uint32_t renderWidth = g_state.renderWidth;
     const uint32_t renderHeight = g_state.renderHeight;
@@ -1175,27 +1222,71 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     outputResource.next = &outputRange;
 
     // Every tag covers the whole image: the inputs are the configured render size, the output
-    // is the configured output size, and all four start at the origin.
+    // is the configured output size, and all start at the origin.
     const sl::Extent renderExtent{0, 0, renderWidth, renderHeight};
     const sl::Extent outputExtent{0, 0, outputWidth, outputHeight};
-    sl::ResourceTag tags[4]{};
-    tags[0] = sl::ResourceTag(&colorResource, sl::kBufferTypeScalingInputColor,
-                              sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
-    tags[1] = sl::ResourceTag(&depthResource, sl::kBufferTypeDepth,
-                              sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+    // SR: color, depth, [motion, output]. RR adds albedo, specular albedo, normalRoughness,
+    // specular hit distance when armed (color is then the noisy RT input).
+    sl::ResourceTag tags[8]{};
+    uint32_t tagCount = 0;
+    tags[tagCount++] = sl::ResourceTag(&colorResource, sl::kBufferTypeScalingInputColor,
+                                       sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+    tags[tagCount++] = sl::ResourceTag(&depthResource, sl::kBufferTypeDepth,
+                                       sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
     if (moduleImagesReady) {
-        // The motion source is the module's own motion image on every route, filled with the
-        // same NDC motion payload the evaluation's mvecScale and cameraMotionIncluded expect.
-        tags[2] = sl::ResourceTag(&motionResource, sl::kBufferTypeMotionVectors,
-                                  sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
-        tags[3] = sl::ResourceTag(&outputResource, sl::kBufferTypeScalingOutputColor,
-                                  sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
+        tags[tagCount++] = sl::ResourceTag(&motionResource, sl::kBufferTypeMotionVectors,
+                                           sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+        tags[tagCount++] = sl::ResourceTag(&outputResource, sl::kBufferTypeScalingOutputColor,
+                                           sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
+    }
+
+    sl::Resource albedoResource{};
+    sl::Resource specularAlbedoResource{};
+    sl::Resource normalRoughnessResource{};
+    sl::Resource specularHitDistanceResource{};
+    static sl::SubresourceRange guideRange{};
+    guideRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    guideRange.baseMipLevel = 0;
+    guideRange.levelCount = 1;
+    guideRange.baseArrayLayer = 0;
+    guideRange.layerCount = 1;
+    if (g_state.rrArmed) {
+        albedoResource = make_tagged_resource(
+            from_uint64<void*>(g_state.rrDiffuseAlbedo.image), nullptr,
+            from_uint64<void*>(g_state.rrDiffuseAlbedo.view), kDlssInputLayout, renderWidth,
+            renderHeight, g_state.rrDiffuseAlbedo.format);
+        specularAlbedoResource = make_tagged_resource(
+            from_uint64<void*>(g_state.rrSpecularAlbedo.image), nullptr,
+            from_uint64<void*>(g_state.rrSpecularAlbedo.view), kDlssInputLayout, renderWidth,
+            renderHeight, g_state.rrSpecularAlbedo.format);
+        normalRoughnessResource = make_tagged_resource(
+            from_uint64<void*>(g_state.rrNormalRoughness.image), nullptr,
+            from_uint64<void*>(g_state.rrNormalRoughness.view), kDlssInputLayout, renderWidth,
+            renderHeight, g_state.rrNormalRoughness.format);
+        specularHitDistanceResource = make_tagged_resource(
+            from_uint64<void*>(g_state.rrSpecularHitDistance.image), nullptr,
+            from_uint64<void*>(g_state.rrSpecularHitDistance.view), kDlssInputLayout, renderWidth,
+            renderHeight, g_state.rrSpecularHitDistance.format);
+        albedoResource.next = &guideRange;
+        specularAlbedoResource.next = &guideRange;
+        normalRoughnessResource.next = &guideRange;
+        specularHitDistanceResource.next = &guideRange;
+        tags[tagCount++] = sl::ResourceTag(&albedoResource, sl::kBufferTypeAlbedo,
+                                           sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+        tags[tagCount++] = sl::ResourceTag(&specularAlbedoResource, sl::kBufferTypeSpecularAlbedo,
+                                           sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+        tags[tagCount++] = sl::ResourceTag(&normalRoughnessResource, sl::kBufferTypeNormalRoughness,
+                                           sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+        tags[tagCount++] =
+            sl::ResourceTag(&specularHitDistanceResource, sl::kBufferTypeSpecularHitDistance,
+                            sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
     }
 
     // The command buffer is the caller's shared recording: slSetTagForFrame takes it as an
     // opaque pointer and this module only ever records on it, never submits.
     // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
-    result = slSetTagForFrame(*frameToken, sl::ViewportHandle{kSrViewportId}, tags, numTags, commandBuffer);
+    result = slSetTagForFrame(*frameToken, sl::ViewportHandle{kSrViewportId}, tags, tagCount,
+                              commandBuffer);
     if (result != sl::Result::eOk) {
         // A failed tag leaves the frame with no valid SR record, and the token the attempt
         // used is not a token any later record may be reused under: the whole in-flight set

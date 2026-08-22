@@ -21,7 +21,7 @@ import me.snowmii.dlss.DlssSessionState
 import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.dlss.SRMode
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -288,7 +288,7 @@ class FgMultiplierToggleTest {
 		override fun tagSrResources(request: SrTagRequest): Int = error("unexpected tagSrResources")
 	}
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height

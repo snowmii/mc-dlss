@@ -1,5 +1,7 @@
 package me.snowmii.streamline;
 
+import me.snowmii.vklib.api.ImageBinding;
+
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -125,6 +127,20 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	).withName("McDlssTagInfo");
 
 	/**
+	 * enabled (4) + pad (4) + four McDlssImage (24 each) + two float[16] (64 each).
+	 */
+	private static final StructLayout RR_PREPARE_LAYOUT = MemoryLayout.structLayout(
+		JAVA_INT.withName("enabled"),
+		MemoryLayout.paddingLayout(4),
+		IMAGE_LAYOUT.withName("diffuse_albedo"),
+		IMAGE_LAYOUT.withName("specular_albedo"),
+		IMAGE_LAYOUT.withName("normal_roughness"),
+		IMAGE_LAYOUT.withName("specular_hit_distance"),
+		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("world_to_camera_view"),
+		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("camera_view_to_world")
+	).withName("McDlssRrPrepareInfo");
+
+	/**
 	 * Depth, HUD-less colour, UI colour+alpha. Motion is never carried, same as the SR tag.
 	 */
 	private static final StructLayout FG_TAG_LAYOUT = MemoryLayout.structLayout(
@@ -216,6 +232,27 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private static final VarHandle TAG_DEPTH_IMAGE = field(TAG_LAYOUT, "depth", "image");
 	private static final VarHandle TAG_DEPTH_FORMAT = field(TAG_LAYOUT, "depth", "format");
 
+	private static final VarHandle RR_ENABLED = field(RR_PREPARE_LAYOUT, "enabled");
+	private static final VarHandle RR_DIFFUSE_VIEW = field(RR_PREPARE_LAYOUT, "diffuse_albedo", "view");
+	private static final VarHandle RR_DIFFUSE_IMAGE = field(RR_PREPARE_LAYOUT, "diffuse_albedo", "image");
+	private static final VarHandle RR_DIFFUSE_FORMAT = field(RR_PREPARE_LAYOUT, "diffuse_albedo", "format");
+	private static final VarHandle RR_SPECULAR_VIEW = field(RR_PREPARE_LAYOUT, "specular_albedo", "view");
+	private static final VarHandle RR_SPECULAR_IMAGE = field(RR_PREPARE_LAYOUT, "specular_albedo", "image");
+	private static final VarHandle RR_SPECULAR_FORMAT = field(RR_PREPARE_LAYOUT, "specular_albedo", "format");
+	private static final VarHandle RR_NORMAL_VIEW = field(RR_PREPARE_LAYOUT, "normal_roughness", "view");
+	private static final VarHandle RR_NORMAL_IMAGE = field(RR_PREPARE_LAYOUT, "normal_roughness", "image");
+	private static final VarHandle RR_NORMAL_FORMAT = field(RR_PREPARE_LAYOUT, "normal_roughness", "format");
+	private static final VarHandle RR_HIT_VIEW = field(RR_PREPARE_LAYOUT, "specular_hit_distance", "view");
+	private static final VarHandle RR_HIT_IMAGE = field(RR_PREPARE_LAYOUT, "specular_hit_distance", "image");
+	private static final VarHandle RR_HIT_FORMAT = field(RR_PREPARE_LAYOUT, "specular_hit_distance", "format");
+
+	private static final long RR_WORLD_TO_VIEW_OFFSET = RR_PREPARE_LAYOUT.byteOffset(
+		MemoryLayout.PathElement.groupElement("world_to_camera_view")
+	);
+	private static final long RR_VIEW_TO_WORLD_OFFSET = RR_PREPARE_LAYOUT.byteOffset(
+		MemoryLayout.PathElement.groupElement("camera_view_to_world")
+	);
+
 	private static final VarHandle FG_TAG_COMMAND_BUFFER = field(FG_TAG_LAYOUT, "command_buffer");
 	private static final VarHandle FG_TAG_DEPTH_VIEW = field(FG_TAG_LAYOUT, "depth", "view");
 	private static final VarHandle FG_TAG_DEPTH_IMAGE = field(FG_TAG_LAYOUT, "depth", "image");
@@ -266,12 +303,14 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private final MemorySegment fillScratch;
 	private final MemorySegment presentScratch;
 	private final MemorySegment tagScratch;
+	private final MemorySegment rrPrepareScratch;
 	private final MemorySegment fgTagScratch;
 	private final MethodHandle writeMotion;
 	private final MethodHandle fillVelocity;
 	private final MethodHandle presentOutput;
 	private final MethodHandle evaluateSuperResolution;
 	private final MethodHandle tagSrResources;
+	private final MethodHandle prepareRayReconstruction;
 	private final MethodHandle tagFgResources;
 	private final MethodHandle presentHandoff;
 	private final MethodHandle presentStart;
@@ -450,6 +489,11 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_tag_sr_resources",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssTagInfo*
 		);
+		this.prepareRayReconstruction = bind(
+			lookup,
+			"mc_dlss_prepare_rr",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssRrPrepareInfo*
+		);
 		this.tagFgResources = bindOptional(
 			lookup,
 			"mc_dlss_tag_fg_resources",
@@ -516,6 +560,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		this.fillScratch = arena.allocate(FILL_LAYOUT);
 		this.presentScratch = arena.allocate(PRESENT_LAYOUT);
 		this.tagScratch = arena.allocate(TAG_LAYOUT);
+		this.rrPrepareScratch = arena.allocate(RR_PREPARE_LAYOUT);
 		this.fgTagScratch = arena.allocate(FG_TAG_LAYOUT);
 	}
 
@@ -1160,6 +1205,24 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			return (int)this.tagSrResources.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("tag-sr-resources", error);
+		}
+	}
+
+	@Override
+	public int prepareRayReconstruction(final RrPrepareRequest request) {
+		try {
+			final MemorySegment info = this.rrPrepareScratch;
+			info.fill((byte) 0);
+			RR_ENABLED.set(info, 0L, request.getEnabled() ? 1 : 0);
+			writeImage(info, RR_DIFFUSE_VIEW, RR_DIFFUSE_IMAGE, RR_DIFFUSE_FORMAT, request.getDiffuseAlbedo());
+			writeImage(info, RR_SPECULAR_VIEW, RR_SPECULAR_IMAGE, RR_SPECULAR_FORMAT, request.getSpecularAlbedo());
+			writeImage(info, RR_NORMAL_VIEW, RR_NORMAL_IMAGE, RR_NORMAL_FORMAT, request.getNormalRoughness());
+			writeImage(info, RR_HIT_VIEW, RR_HIT_IMAGE, RR_HIT_FORMAT, request.getSpecularHitDistance());
+			writeCameraFloats(info, RR_WORLD_TO_VIEW_OFFSET, request.getWorldToCameraView());
+			writeCameraFloats(info, RR_VIEW_TO_WORLD_OFFSET, request.getCameraViewToWorld());
+			return (int) this.prepareRayReconstruction.invokeExact(info);
+		} catch (Throwable error) {
+			throw nativeError("prepare-rr", error);
 		}
 	}
 

@@ -1,16 +1,16 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.buffers.GpuBuffer
+import com.mojang.renderpearl.api.buffers.GpuBuffer
 import com.mojang.blaze3d.buffers.Std140Builder
 import com.mojang.blaze3d.buffers.Std140SizeCalculator
-import com.mojang.blaze3d.pipeline.BindGroupLayout
-import com.mojang.blaze3d.pipeline.RenderPipeline
-import com.mojang.blaze3d.shaders.UniformType
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.systems.RenderPassDescriptor
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.pipeline.UniformType
+import com.mojang.renderpearl.api.commands.CommandEncoder
+import com.mojang.renderpearl.api.commands.RenderPass
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
 import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.render.DlssFrameMotion
@@ -177,7 +177,7 @@ object MovingBlockVelocityRender {
 	): Boolean = MovingBlockVelocityWriterBindings.executeInfoMovingBlockId(info) != null &&
 		phase?.terrainVelocityView != null &&
 		isSupportedPipeline(prepared.pipeline()) &&
-		prepared.outputTarget() === OutputTarget.MAIN_TARGET
+		true /* 26.3: PreparedRenderType no longer carries OutputTarget */
 
 	/**
 	 * Classifies and computes the reprojection one moving-block draw writes, or null when the
@@ -275,10 +275,10 @@ object MovingBlockVelocityRender {
 		// Target preflight: the scene, its textures, and the velocity companion. Still pure
 		// reads; a missing or foreign target is the ineligible passthrough, not a failure.
 		val scene = phase.worldTargetOverride ?: return false
-		val renderTarget = prepared.outputTarget().getRenderTarget()
-		val colorTexture = RenderSystem.outputColorTextureOverride ?: renderTarget.colorTextureView
-		val depthTexture = if (renderTarget.useDepth) {
-			RenderSystem.outputDepthTextureOverride ?: renderTarget.depthTextureView
+		val renderTarget = OutputTarget.MAIN_TARGET.getRenderTarget()
+		val colorTexture = renderTarget.colorTextureView
+		val depthTexture = if (renderTarget.hasDepth()) {
+			renderTarget.depthTextureView
 		} else {
 			null
 		}
@@ -327,7 +327,7 @@ object MovingBlockVelocityRender {
 			)
 
 			encoder.createRenderPass(descriptor).use { pass ->
-				pass.setPipeline(twin)
+				pass.setPipeline(RenderSystem.getCompiledPipeline(twin))
 				applyScissor(pass, scissorEnabled, scissorX, scissorY, scissorWidth, scissorHeight)
 				RenderSystem.bindDefaultUniforms(pass)
 				pass.setUniform("DynamicTransforms", dynamicTransforms)
@@ -360,13 +360,13 @@ object MovingBlockVelocityRender {
 		width: Int,
 		height: Int,
 	): RenderPassDescriptor {
-		val descriptor = RenderPassDescriptor.create { label }
+		val descriptor = RenderPassDescriptor.builder { label }
 			.withColorAttachment(color, Optional.empty())
 			.withColorAttachment(velocity, Optional.empty())
 		if (depth != null) {
 			descriptor.withDepthAttachment(depth, OptionalDouble.empty())
 		}
-		return descriptor.withRenderArea(RenderPass.RenderArea(0, 0, width, height))
+		return descriptor.withRenderArea(RenderPass.RenderArea(0, 0, width, height)).build()
 	}
 
 	/** The source draw's scissor rect, applied only when the source draw had one. */
@@ -379,7 +379,7 @@ object MovingBlockVelocityRender {
 	/** The source draw's texture bindings, replayed onto the owned pass unchanged. */
 	private fun bindTextures(pass: RenderPass, textures: List<PreparedRenderType.Texture>) {
 		for (texture in textures) {
-			pass.bindTexture(texture.name(), texture.textureView(), texture.sampler())
+			pass.setUniform(texture.name(), texture.textureView(), texture.sampler())
 		}
 	}
 
@@ -558,7 +558,7 @@ object MovingBlockVelocityWriterBindings {
 	}
 
 	private fun isEligibleRenderType(renderType: RenderType, pipelineEligible: Boolean): Boolean =
-		pipelineEligible && renderType.outputTarget() === OutputTarget.MAIN_TARGET
+		pipelineEligible && true /* 26.3: RenderType no longer carries OutputTarget */
 
 	/** Forces one staged draw per supported moving-block draw, defeating same-render-type consolidation. */
 	@JvmStatic

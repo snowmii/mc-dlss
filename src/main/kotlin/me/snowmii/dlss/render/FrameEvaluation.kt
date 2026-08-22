@@ -6,14 +6,16 @@ import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.FgState
 import me.snowmii.streamline.FillVelocityRequest
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
 
 import me.snowmii.streamline.SrTagRequest
+import me.snowmii.streamline.RrPrepareRequest
 import me.snowmii.streamline.Vec2
-import me.snowmii.streamline.VulkanContext
+import me.snowmii.vklib.api.VulkanContext
+import me.snowmii.dlss.api.RayReconstruction
 import me.snowmii.dlss.render.mrt.MotionVectorRoute
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.streamline.LifecycleAdapter
@@ -208,30 +210,47 @@ class FrameEvaluation(
 		camera: DlssCameraSample?,
 	): Boolean {
 		val handle = buffer.address()
+		val rr = if (RayReconstruction.enabled) RayReconstruction.guides?.get() else null
+		val color = rr?.noisyColor ?: scene.color
+		if (rr != null && camera != null) {
+			val worldToView = FloatArray(16)
+			val viewToWorld = FloatArray(16)
+			Matrix4f(camera.viewRotation).get(worldToView)
+			Matrix4f(camera.viewRotation).invert().get(viewToWorld)
+			if (!adapter.prepareRayReconstruction(
+					RrPrepareRequest(
+						enabled = true,
+						diffuseAlbedo = rr.diffuseAlbedo,
+						specularAlbedo = rr.specularAlbedo,
+						normalRoughness = rr.normalRoughness,
+						specularHitDistance = rr.specularHitDistance,
+						worldToCameraView = worldToView,
+						cameraViewToWorld = viewToWorld,
+					),
+				)
+			) {
+				adapter.prepareRayReconstruction(RrPrepareRequest(enabled = false))
+				return recordSuperResolutionSrOnly(handle, scene, jitter, motion, camera)
+			}
+		} else {
+			adapter.prepareRayReconstruction(RrPrepareRequest(enabled = false))
+		}
 
-		// Tag between motion and evaluation on the same buffer: obtains the Streamline frame
-		// token the evaluation consumes. Motion is always the native motion image, so the tag
-		// request is route-independent.
-		val tagged = adapter.tagSrResources(
-			SrTagRequest(
-				handle,
-				scene.color,
-				scene.depth,
-			),
-		)
+		val tagged = adapter.tagSrResources(SrTagRequest(handle, color, scene.depth))
 		if (!tagged) {
+			if (rr != null) {
+				adapter.prepareRayReconstruction(RrPrepareRequest(enabled = false))
+				return recordSuperResolutionSrOnly(handle, scene, jitter, motion, camera)
+			}
 			return false
 		}
 
-		// The two inputs that decide whether DLSS accumulates at all, recorded per evaluated frame
-		// so a session that stays aliased while standing still says which one failed.
 		readout?.recordFrameJitter(jitter.index, jitter.pixelX, jitter.pixelY, motion.reset)
-		val evaluated = adapter.evaluate(
+		return adapter.evaluate(
 			EvaluationRequest.builder()
 				.commandBuffer(handle)
-				.color(scene.color)
+				.color(color)
 				.depth(scene.depth)
-				// NGX takes the offset in render pixels, which is the unit the sequence is in.
 				.jitter(Vec2(jitter.pixelX, jitter.pixelY))
 				.motionScale(Vec2(motion.motionScaleX, motion.motionScaleY))
 				.frameTimeMilliseconds(motion.frameTimeMillis)
@@ -239,7 +258,30 @@ class FrameEvaluation(
 				.camera(camera?.let { cameraConstants(it, motion) })
 				.build(),
 		)
-		return evaluated
+	}
+
+	private fun recordSuperResolutionSrOnly(
+		handle: Long,
+		scene: SceneResources,
+		jitter: DlssJitterOffset,
+		motion: DlssFrameMotion,
+		camera: DlssCameraSample?,
+	): Boolean {
+		val tagged = adapter.tagSrResources(SrTagRequest(handle, scene.color, scene.depth))
+		if (!tagged) return false
+		readout?.recordFrameJitter(jitter.index, jitter.pixelX, jitter.pixelY, motion.reset)
+		return adapter.evaluate(
+			EvaluationRequest.builder()
+				.commandBuffer(handle)
+				.color(scene.color)
+				.depth(scene.depth)
+				.jitter(Vec2(jitter.pixelX, jitter.pixelY))
+				.motionScale(Vec2(motion.motionScaleX, motion.motionScaleY))
+				.frameTimeMilliseconds(motion.frameTimeMillis)
+				.resetHistory(motion.reset)
+				.camera(camera?.let { cameraConstants(it, motion) })
+				.build(),
+		)
 	}
 
 	/**

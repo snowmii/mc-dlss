@@ -6,7 +6,7 @@ import me.snowmii.dlss.render.SceneTarget
 import me.snowmii.dlss.DlssSession
 import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.SRMode
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.dlss.render.FgSurfacePolicy
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -168,7 +168,7 @@ class FgSwapchainReconfigureTest {
 		),
 	)
 
-	private class HeadlessRenderTarget : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		override fun createBuffers(width: Int, height: Int) {
 			this.width = width
 			this.height = height

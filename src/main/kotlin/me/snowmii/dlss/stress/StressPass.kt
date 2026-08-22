@@ -4,21 +4,21 @@ import me.snowmii.dlss.render.mrt.VelocityContext
 import me.snowmii.dlss.render.mrt.velocityTwin
 import me.snowmii.dlss.render.DlssCameraSample
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.PrimitiveTopology
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuBufferSlice
+import com.mojang.renderpearl.api.GpuFormat
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology
+import com.mojang.renderpearl.api.buffers.GpuBuffer
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice
 import com.mojang.blaze3d.buffers.Std140Builder
 import com.mojang.blaze3d.buffers.Std140SizeCalculator
-import com.mojang.blaze3d.pipeline.BindGroupLayout
-import com.mojang.blaze3d.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.pipeline.TextureTarget
-import com.mojang.blaze3d.shaders.UniformType
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.systems.RenderPassDescriptor
+import com.mojang.renderpearl.api.pipeline.UniformType
+import com.mojang.renderpearl.api.commands.RenderPass
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.FilterMode
+import com.mojang.renderpearl.api.textures.FilterMode
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.resources.Identifier
 import org.joml.Matrix4f
@@ -170,24 +170,25 @@ class StressPass(
 				encoder.createRenderPass({ "DLSS stress" }, scratchColor, Optional.empty())
 			} else {
 				encoder.createRenderPass(
-					RenderPassDescriptor.create { "DLSS stress velocity" }
+					RenderPassDescriptor.builder { "DLSS stress velocity" }
 						.withColorAttachment(scratchColor, Optional.empty())
 						.withColorAttachment(velocity.view, Optional.empty())
-						.withRenderArea(RenderPass.RenderArea(0, 0, target.width, target.height)),
+						.withRenderArea(RenderPass.RenderArea(0, 0, target.width, target.height))
+						.build(),
 				)
 			}
 			pass.use { renderPass ->
-				renderPass.setPipeline(pipelineForVelocityRoute(velocity))
+				renderPass.setPipeline(RenderSystem.getCompiledPipeline(pipelineForVelocityRoute(velocity)))
 				renderPass.setUniform("StressConfig", uniforms)
-				renderPass.bindTexture("InSampler", color, samplers.getClampToEdge(FilterMode.LINEAR))
-				renderPass.bindTexture("InDepthSampler", depth, samplers.getClampToEdge(FilterMode.NEAREST))
+				renderPass.setUniform("InSampler", color, samplers.getClampToEdge(FilterMode.LINEAR))
+				renderPass.setUniform("InDepthSampler", depth, samplers.getClampToEdge(FilterMode.NEAREST))
 				renderPass.draw(3, 1, 0, 0)
 			}
 
 			encoder.createRenderPass({ "DLSS stress resolve" }, color, Optional.empty()).use { pass ->
 				RenderSystem.bindDefaultUniforms(pass)
-				pass.setPipeline(RenderPipelines.TRACY_BLIT)
-				pass.bindTexture("InSampler", scratchColor, samplers.getClampToEdge(FilterMode.NEAREST))
+				pass.setPipeline(RenderSystem.getCompiledPipeline(RenderPipelines.TRACY_BLIT))
+				pass.setUniform("InSampler", scratchColor, samplers.getClampToEdge(FilterMode.NEAREST))
 				pass.draw(3, 1, 0, 0)
 			}
 		} catch (failure: Throwable) {
@@ -212,7 +213,7 @@ class StressPass(
 
 		releaseScratch()
 		// No depth: the pass reads the world's depth as a texture and writes colour only.
-		return TextureTarget(SCRATCH_LABEL, width, height, false, GpuFormat.RGBA8_UNORM).also { scratchTarget = it }
+		return TextureTarget(SCRATCH_LABEL, width, height, GpuFormat.RGBA8_UNORM, null).also { scratchTarget = it }
 	}
 
 	private fun releaseScratch() {
@@ -298,8 +299,8 @@ class StressPass(
 
 		private val STRESS_LAYOUT: BindGroupLayout = BindGroupLayout.builder()
 			.withUniform("StressConfig", UniformType.UNIFORM_BUFFER)
-			.withSampler("InSampler")
-			.withSampler("InDepthSampler")
+			.withUniform("InSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+			.withUniform("InDepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.build()
 
 		/**

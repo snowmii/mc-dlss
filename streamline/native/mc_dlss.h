@@ -653,6 +653,29 @@ typedef struct McDlssTagInfo {
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* info);
 
 /*
+ * Arms (or clears) DLSS Ray Reconstruction for the next tag + evaluate on the SR viewport.
+ *
+ * When `enabled` is non-zero, the next mc_dlss_tag_sr_resources tags the guide images as
+ * Streamline RR inputs and mc_dlss_evaluate runs kFeatureDLSS_RR instead of kFeatureDLSS.
+ * `color` on the tag/evaluate remains ScalingInputColor and must be the noisy ray-traced
+ * image (HDR float). Matrices are 16 floats row-major (sl::float4x4 layout).
+ *
+ * When `enabled` is zero, RR is cleared and the next evaluate uses Super Resolution again.
+ * Guide image fields may be zeroed when disabling.
+ */
+typedef struct McDlssRrPrepareInfo {
+    int32_t enabled;
+    McDlssImage diffuse_albedo;
+    McDlssImage specular_albedo;
+    McDlssImage normal_roughness;
+    McDlssImage specular_hit_distance;
+    float world_to_camera_view[16];
+    float camera_view_to_world[16];
+} McDlssRrPrepareInfo;
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_prepare_rr(const McDlssRrPrepareInfo* info);
+
+/*
  * Tags one frame's DLSS-G resources on the caller's command buffer, through Streamline's
  * frame-based tagging (slGetNewFrameToken + slSetTagForFrame).
  *

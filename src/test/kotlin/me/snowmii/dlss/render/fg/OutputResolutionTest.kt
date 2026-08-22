@@ -18,11 +18,11 @@ import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgState
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.dlss.streamline.SessionBridge
 import org.joml.Matrix4f
@@ -213,7 +213,7 @@ class OutputResolutionTest {
 		)
 	}
 
-	private class HeadlessRenderTarget(dimensions: Dimensions) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(dimensions: Dimensions) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = dimensions.width
 			this.height = dimensions.height

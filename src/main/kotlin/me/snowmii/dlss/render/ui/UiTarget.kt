@@ -1,9 +1,9 @@
 package me.snowmii.dlss.render.ui
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.pipeline.TextureTarget
-import com.mojang.blaze3d.systems.CommandEncoder
+import com.mojang.renderpearl.api.commands.CommandEncoder
 import org.joml.Vector4f
 
 /**
@@ -62,7 +62,7 @@ class UiTarget(
 		/** Production: color + depth, vanilla usage flags, render-thread assert. */
 		@JvmStatic
 		fun forMinecraft(): UiTarget = UiTarget(
-			allocate = { width, height -> TextureTarget(LABEL, width, height, true, FORMAT) },
+			allocate = { width, height -> TextureTarget(LABEL, width, height, FORMAT, GpuFormat.D32_FLOAT) },
 			release = RenderTarget::destroyBuffers,
 		)
 	}

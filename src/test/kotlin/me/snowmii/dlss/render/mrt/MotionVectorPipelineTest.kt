@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.GpuFormat
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.WorldPhase
 import me.snowmii.dlss.render.mrt.MotionVectorCompatibility
@@ -143,7 +143,7 @@ class MotionVectorPipelineTest {
 	 */
 
 	private fun knownWorldPipelines(): List<RenderPipeline> =
-		ChunkSectionLayer.entries.map { it.pipeline() } + RenderPipelines.WIREFRAME
+		ChunkSectionLayer.entries.map { it.pipeline(false) } + RenderPipelines.WIREFRAME
 
 	private fun pipelineObservation(pipeline: RenderPipeline) = MotionVectorPipeline(
 		pipeline.location.toString(),

@@ -3,7 +3,7 @@ import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.DlssFrameRoute
 import me.snowmii.dlss.DlssFrameDecision
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -196,7 +196,7 @@ class SceneTargetTest {
 		mainTargetDimensions = output,
 	)
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height

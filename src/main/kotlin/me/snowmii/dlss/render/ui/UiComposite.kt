@@ -1,14 +1,14 @@
 package me.snowmii.dlss.render.ui
 
-import com.mojang.blaze3d.PrimitiveTopology
-import com.mojang.blaze3d.pipeline.BlendFunction
-import com.mojang.blaze3d.pipeline.ColorTargetState
-import com.mojang.blaze3d.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology
+import com.mojang.renderpearl.api.pipeline.BlendFunction
+import com.mojang.renderpearl.api.pipeline.ColorTargetState
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
 import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.systems.CommandEncoder
+import com.mojang.renderpearl.api.commands.CommandEncoder
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.FilterMode
-import com.mojang.blaze3d.textures.GpuSampler
+import com.mojang.renderpearl.api.textures.FilterMode
+import com.mojang.renderpearl.api.textures.GpuSampler
 import java.util.Optional
 import net.minecraft.client.renderer.BindGroupLayouts
 import net.minecraft.resources.Identifier
@@ -34,14 +34,14 @@ class UiComposite(
 
 		if (hudlessColor !== destinationColor) {
 			encoder.createRenderPass({ "DLSS UI composite base" }, destinationColor, Optional.empty()).use { pass ->
-				pass.setPipeline(HUDLESS_COPY_PIPELINE)
-				pass.bindTexture("InSampler", hudlessColor, nearest)
+				pass.setPipeline(RenderSystem.getCompiledPipeline(HUDLESS_COPY_PIPELINE))
+				pass.setUniform("InSampler", hudlessColor, nearest)
 				pass.draw(3, 1, 0, 0)
 			}
 		}
 		encoder.createRenderPass({ "DLSS UI composite overlay" }, destinationColor, Optional.empty()).use { pass ->
-			pass.setPipeline(UI_OVERLAY_PIPELINE)
-			pass.bindTexture("InSampler", uiColor, nearest)
+			pass.setPipeline(RenderSystem.getCompiledPipeline(UI_OVERLAY_PIPELINE))
+			pass.setUniform("InSampler", uiColor, nearest)
 			pass.draw(3, 1, 0, 0)
 		}
 	}

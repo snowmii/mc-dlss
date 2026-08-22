@@ -37,6 +37,7 @@ val fastutilVersion = providers.gradleProperty("fastutil_version").get()
 dependencies {
 	implementation("org.joml:joml:$jomlVersion")
 	implementation("org.lwjgl:lwjgl-vulkan:$lwjglVersion")
+	implementation("me.snowmii:vk-lib-api:${providers.gradleProperty("mod_version").get()}")
 
 	testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:$junitPlatformVersion")
@@ -280,9 +281,9 @@ val streamlineRuntime = toolchainRoot(
 	"mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk
 ).map { it.resolve("bin/x64") }
 val streamlineRuntimeFiles = listOf(
-	"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
-	"sl.pcl.dll",
-	"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
+	"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_d.dll", "sl.dlss_g.dll",
+	"sl.reflex.dll", "sl.pcl.dll",
+	"nvngx_dlss.dll", "nvngx_dlssd.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
 )
 
 tasks.processResources {

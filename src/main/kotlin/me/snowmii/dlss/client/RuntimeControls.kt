@@ -1,5 +1,6 @@
 package me.snowmii.dlss.client
 
+import me.snowmii.dlss.api.RayReconstruction
 import me.snowmii.dlss.render.FgSurfacePolicy
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.SRMode
@@ -63,6 +64,16 @@ class RuntimeControls(
 		emitStatus(readout())
 	}
 
+	/** Switches Ray Reconstruction off or on; needs a guide producer (e.g. Lumina). */
+	fun toggleRayReconstruction() = setRayReconstructionEnabled(!RayReconstruction.enabled)
+
+	fun setRayReconstructionEnabled(enabled: Boolean) {
+		RayReconstruction.enabled = enabled
+		ModConfig.user.rayReconstruction = enabled
+		SessionReadout.emit("DLSS ray reconstruction: ${if (enabled) "on" else "off"}")
+		emitStatus(readout())
+	}
+
 	/**
 	 * Cycles the FG multiplier 2x, 3x, ... up through the device ceiling and back to 2x,
 	 * then reports the multiplier actually in effect.
@@ -118,6 +129,9 @@ class RuntimeControls(
 	val frameGenerationEnabled: Boolean
 		get() = surfacePolicy.userEnabled
 
+	val rayReconstructionEnabled: Boolean
+		get() = RayReconstruction.enabled
+
 	val frameGenerationMultiplier: Int
 		get() = runtime.fgMultiplier + 1
 
@@ -128,6 +142,7 @@ class RuntimeControls(
 			else -> runtime.sessionState.name.lowercase().replace('_', '-')
 		}
 		val internal = runtime.dlssRenderDimensions?.toString() ?: "not chosen yet"
+		val rr = if (RayReconstruction.enabled) "rr=on" else "rr=off"
 		return SessionReadout.statusLine(
 			state = state,
 			fg = frameGenerationStatus(),
@@ -136,7 +151,7 @@ class RuntimeControls(
 			preset = runtime.renderPreset,
 			internal = internal,
 			output = runtime.outputDimensions,
-		)
+		) + " $rr"
 	}
 
 	fun fgPresentedFpsSuffix(appFps: Int): String {

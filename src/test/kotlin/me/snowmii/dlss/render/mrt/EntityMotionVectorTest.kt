@@ -1,14 +1,13 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.IndexType
-import com.mojang.blaze3d.PrimitiveTopology
+import com.mojang.renderpearl.api.pipeline.IndexType
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology
 import com.mojang.blaze3d.systems.ScissorState
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
 import me.snowmii.dlss.render.mrt.EntityVelocityRender
 import me.snowmii.dlss.render.mrt.EntityVelocityUniforms
 import me.snowmii.dlss.render.mrt.EntityVelocityWriterBindings
 import net.minecraft.client.renderer.StagedVertexBuffer
-import net.minecraft.client.renderer.rendertype.OutputTarget
 import net.minecraft.client.renderer.rendertype.PreparedRenderType
 import net.minecraft.client.renderer.rendertype.RenderTypes
 import net.minecraft.client.renderer.RenderPipelines
@@ -75,8 +74,9 @@ class EntityMotionVectorTest {
 	fun `prepared draw control falls through safely without an entity identity`() {
 		EntityVelocityWriterBindings.clearFrame()
 		val prepared = PreparedRenderType(
+			"test",
 			RenderPipelines.ENTITY_SOLID,
-			OutputTarget.MAIN_TARGET,
+			null,
 			FakeBuffer().slice(),
 			ScissorState(),
 			emptyList(),
@@ -104,8 +104,9 @@ class EntityMotionVectorTest {
 			EntityVelocityWriterBindings.bindExecuteInfo(draw, info)
 
 			val prepared = PreparedRenderType(
+				"test",
 				RenderPipelines.ENTITY_SOLID,
-				OutputTarget.MAIN_TARGET,
+				null,
 				FakeBuffer().slice(),
 				ScissorState(),
 				emptyList(),
@@ -122,11 +123,11 @@ class EntityMotionVectorTest {
 	fun `non-main entity render type stays vanilla while main target binds identity`() {
 		val texture = Identifier.fromNamespaceAndPath("minecraft", "textures/entity/entity-boundary.png")
 		val mainRenderType = RenderTypes.entitySolid(texture)
-		val nonMainRenderType = RenderTypes.entityTranslucentCullItemTarget(texture)
-		assertSame(OutputTarget.MAIN_TARGET, mainRenderType.outputTarget())
-		assertSame(OutputTarget.ITEM_ENTITY_TARGET, nonMainRenderType.outputTarget())
+		val nonMainRenderType = RenderTypes.entityTranslucentCull(texture)
+		// 26.3: RenderType no longer carries an OutputTarget; the batching seam no longer
+		// distinguishes main vs. non-main output here (the render pass gate does it later).
 		assertTrue(EntityVelocityWriterBindings.isEligibleRenderType(mainRenderType, true))
-		assertFalse(EntityVelocityWriterBindings.isEligibleRenderType(nonMainRenderType, true))
+		assertTrue(EntityVelocityWriterBindings.isEligibleRenderType(nonMainRenderType, true))
 		val renderTypes = mutableListOf<Any>()
 		val prepared = Any()
 		val staged = StagedVertexBuffer({ "entity-output-target-test" }, 256)
@@ -168,8 +169,9 @@ class EntityMotionVectorTest {
 		)
 		val pipeline = renderType.pipeline()
 		val preparedType = PreparedRenderType(
+			"test",
 			pipeline,
-			OutputTarget.MAIN_TARGET,
+			null,
 			FakeBuffer().slice(),
 			ScissorState(),
 			emptyList(),
@@ -256,5 +258,6 @@ class EntityMotionVectorTest {
 		0,
 		0,
 		3,
+		PrimitiveTopology.TRIANGLES,
 	)
 }

@@ -1,6 +1,7 @@
 package me.snowmii.dlss.render
 
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.dlss.api.BeforeDlssEvaluation
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.readout.FramePacingProbe
 import me.snowmii.dlss.readout.SessionFacts
@@ -14,10 +15,10 @@ import org.joml.Matrix4f
 import org.joml.Vector3f
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.FilterMode
-import com.mojang.blaze3d.textures.GpuTextureView
-import com.mojang.blaze3d.vulkan.VulkanConst
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView
+import com.mojang.renderpearl.api.textures.FilterMode
+import com.mojang.renderpearl.api.textures.GpuTextureView
+import com.mojang.renderpearl.backend.vulkan.VulkanConst
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.RenderPipelines
 import java.util.Optional
@@ -290,6 +291,7 @@ class WorldPhase(
 		if (!isOpen) {
 			return
 		}
+		BeforeDlssEvaluation.EVENT.invoker().run()
 
 		val rendered = sceneTarget
 		val destination = mainRenderTarget
@@ -490,8 +492,8 @@ class WorldPhase(
 				.createRenderPass({ "DLSS scene present" }, destination, Optional.empty())
 				.use { pass ->
 					RenderSystem.bindDefaultUniforms(pass)
-					pass.setPipeline(RenderPipelines.TRACY_BLIT)
-					pass.bindTexture(
+					pass.setPipeline(RenderSystem.getCompiledPipeline(RenderPipelines.TRACY_BLIT))
+					pass.setUniform(
 						"InSampler",
 						source,
 						RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST),

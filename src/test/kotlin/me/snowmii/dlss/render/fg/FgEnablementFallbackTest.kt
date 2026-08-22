@@ -1,6 +1,6 @@
 package me.snowmii.dlss.render.fg
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.dlss.client.RuntimeControls
 import me.snowmii.dlss.render.mrt.MotionVectorRoute
@@ -26,13 +26,13 @@ import me.snowmii.streamline.FgState
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.streamline.VulkanContext
+import me.snowmii.vklib.api.VulkanContext
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -872,7 +872,7 @@ class FgEnablementFallbackTest {
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int = error("unexpected evaluate")
 	}
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height

@@ -6,7 +6,7 @@ import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FillVelocityRequest
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.StreamlineSession

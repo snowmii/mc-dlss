@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.IndexType
-import com.mojang.blaze3d.PrimitiveTopology
+import com.mojang.renderpearl.api.pipeline.IndexType
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology
 import com.mojang.blaze3d.systems.ScissorState
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
 import me.snowmii.streamline.Dimensions
@@ -24,7 +24,6 @@ import net.minecraft.WorldVersion
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.renderer.StagedVertexBuffer
 import net.minecraft.client.renderer.block.MovingBlockRenderState
-import net.minecraft.client.renderer.rendertype.OutputTarget
 import net.minecraft.client.renderer.rendertype.PreparedRenderType
 import net.minecraft.client.renderer.rendertype.RenderTypes
 import net.minecraft.core.BlockPos
@@ -104,10 +103,7 @@ class MotionVectorMovingBlockTest {
 		assertSame(RenderPipelines.SOLID_BLOCK, RenderTypes.solidMovingBlock().pipeline())
 		assertSame(RenderPipelines.CUTOUT_BLOCK, RenderTypes.cutoutMovingBlock().pipeline())
 		assertSame(RenderPipelines.TRANSLUCENT_BLOCK, RenderTypes.translucentMovingBlock().pipeline())
-		assertSame(OutputTarget.MAIN_TARGET, RenderTypes.solidMovingBlock().outputTarget())
-		assertSame(OutputTarget.MAIN_TARGET, RenderTypes.cutoutMovingBlock().outputTarget())
-		assertSame(OutputTarget.ITEM_ENTITY_TARGET, RenderTypes.translucentMovingBlock().outputTarget())
-
+		// 26.3: RenderType no longer carries an OutputTarget; the render pass now supplies it.
 	}
 
 	@Test
@@ -221,8 +217,9 @@ class MotionVectorMovingBlockTest {
 	fun `moving block then identity-less moving geometry gets fresh draw and keeps batching isolation`() {
 		val pipeline = RenderTypes.solidMovingBlock().pipeline()
 		val preparedType = PreparedRenderType(
+			"test",
 			pipeline,
-			OutputTarget.MAIN_TARGET,
+			null,
 			FakeBuffer().slice(),
 			ScissorState(),
 			emptyList(),
@@ -483,17 +480,17 @@ class MotionVectorMovingBlockTest {
 			MovingBlockVelocityWriterBindings.endDraw()
 			MovingBlockVelocityWriterBindings.endMovingBlock()
 
-			val solid = PreparedRenderType(RenderPipelines.SOLID_BLOCK, OutputTarget.MAIN_TARGET, FakeBuffer().slice(), ScissorState(), emptyList())
+			val solid = PreparedRenderType("test", RenderPipelines.SOLID_BLOCK, null, FakeBuffer().slice(), ScissorState(), emptyList())
 			assertTrue(MovingBlockVelocityRender.canDraw(solid, info, phase))
-			val cutout = PreparedRenderType(RenderPipelines.CUTOUT_BLOCK, OutputTarget.MAIN_TARGET, FakeBuffer().slice(), ScissorState(), emptyList())
+			val cutout = PreparedRenderType("test", RenderPipelines.CUTOUT_BLOCK, null, FakeBuffer().slice(), ScissorState(), emptyList())
 			assertTrue(MovingBlockVelocityRender.canDraw(cutout, info, phase))
 
 			// The translucent layer writes the item/entity target: never a velocity route.
-			val translucent = PreparedRenderType(RenderPipelines.TRANSLUCENT_BLOCK, OutputTarget.ITEM_ENTITY_TARGET, FakeBuffer().slice(), ScissorState(), emptyList())
+			val translucent = PreparedRenderType("test", RenderPipelines.TRANSLUCENT_BLOCK, null, FakeBuffer().slice(), ScissorState(), emptyList())
 			assertFalse(MovingBlockVelocityRender.canDraw(translucent, info, phase))
 
 			// Unsupported pipelines fall through to their exact source draw.
-			val terrain = PreparedRenderType(RenderPipelines.SOLID_TERRAIN, OutputTarget.MAIN_TARGET, FakeBuffer().slice(), ScissorState(), emptyList())
+			val terrain = PreparedRenderType("test", RenderPipelines.SOLID_TERRAIN, null, FakeBuffer().slice(), ScissorState(), emptyList())
 			assertFalse(MovingBlockVelocityRender.canDraw(terrain, info, phase))
 
 			// A draw without a bound identity (a falling block) falls through even on the
@@ -530,13 +527,13 @@ class MotionVectorMovingBlockTest {
 		val info = emptyExecuteInfo()
 		assertFalse(
 			MovingBlockVelocityRender.canDraw(
-				PreparedRenderType(RenderPipelines.SOLID_BLOCK, OutputTarget.MAIN_TARGET, FakeBuffer().slice(), ScissorState(), emptyList()),
+				PreparedRenderType("test", RenderPipelines.SOLID_BLOCK, null, FakeBuffer().slice(), ScissorState(), emptyList()),
 				info,
 				cameraOnlyPhase,
 			),
 			"a camera-only phase offers no velocity view",
 		)
-		assertFalse(MovingBlockVelocityRender.draw(PreparedRenderType(RenderPipelines.SOLID_BLOCK, OutputTarget.MAIN_TARGET, FakeBuffer().slice(), ScissorState(), emptyList()), info))
+		assertFalse(MovingBlockVelocityRender.draw(PreparedRenderType("test", RenderPipelines.SOLID_BLOCK, null, FakeBuffer().slice(), ScissorState(), emptyList()), info))
 
 		// Vanilla: a session without DLSS keeps the moving-block draw on its exact source route.
 		val vanillaSession = DlssSession(
@@ -563,7 +560,7 @@ class MotionVectorMovingBlockTest {
 		)
 		assertFalse(
 			MovingBlockVelocityRender.canDraw(
-				PreparedRenderType(RenderPipelines.SOLID_BLOCK, OutputTarget.MAIN_TARGET, FakeBuffer().slice(), ScissorState(), emptyList()),
+				PreparedRenderType("test", RenderPipelines.SOLID_BLOCK, null, FakeBuffer().slice(), ScissorState(), emptyList()),
 				info,
 				vanillaPhase,
 			),
@@ -577,5 +574,6 @@ class MotionVectorMovingBlockTest {
 		0,
 		0,
 		3,
+		PrimitiveTopology.TRIANGLES,
 	)
 }

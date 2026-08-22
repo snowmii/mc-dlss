@@ -1,6 +1,6 @@
 package me.snowmii.dlss.bridge
-import me.snowmii.streamline.VulkanContext
-import me.snowmii.streamline.VulkanContextRegistry
+import me.snowmii.vklib.api.VulkanContext
+import me.snowmii.vklib.api.VulkanContextRegistry
 
 import me.snowmii.dlss.NativeBridge
 import org.junit.jupiter.api.Assertions.assertEquals

@@ -256,6 +256,7 @@ class UserSettings internal constructor(private val file: Path?) {
 	private var _qualityMode = SRMode.QUALITY
 	private var _renderPreset = SRModelPreset.M
 	private var _frameGeneration = false
+	private var _rayReconstruction = false
 	private var _debugLog = false
 
 	var enabled: Boolean
@@ -283,6 +284,13 @@ class UserSettings internal constructor(private val file: Path?) {
 		get() = _frameGeneration
 		set(value) {
 			_frameGeneration = value
+			save()
+		}
+
+	var rayReconstruction: Boolean
+		get() = _rayReconstruction
+		set(value) {
+			_rayReconstruction = value
 			save()
 		}
 
@@ -316,6 +324,7 @@ class UserSettings internal constructor(private val file: Path?) {
 			_qualityMode = fields["qualityMode"]?.let(::parseMode) ?: SRMode.QUALITY
 			_renderPreset = fields["renderPreset"]?.let(::parsePreset) ?: SRModelPreset.M
 			_frameGeneration = jsonBoolean(fields["frameGeneration"]) == true
+			_rayReconstruction = jsonBoolean(fields["rayReconstruction"]) == true
 			_debugLog = jsonBoolean(fields["debugLog"]) == true
 		} catch (_: IOException) {
 			// Keep safe defaults when an older or manually edited file is invalid.
@@ -338,6 +347,7 @@ class UserSettings internal constructor(private val file: Path?) {
 					qualityMode = _qualityMode.propertyValue,
 					renderPreset = _renderPreset.propertyValue,
 					frameGeneration = _frameGeneration,
+					rayReconstruction = _rayReconstruction,
 					debugLog = _debugLog,
 				),
 				StandardCharsets.UTF_8,
@@ -387,6 +397,7 @@ private fun writeUserSettingsJson(
 	qualityMode: String,
 	renderPreset: String,
 	frameGeneration: Boolean,
+	rayReconstruction: Boolean,
 	debugLog: Boolean,
 ): String = buildString {
 	append("{\n")
@@ -394,6 +405,7 @@ private fun writeUserSettingsJson(
 	append("  \"qualityMode\": \"").append(qualityMode).append("\",\n")
 	append("  \"renderPreset\": \"").append(renderPreset).append("\",\n")
 	append("  \"frameGeneration\": ").append(frameGeneration).append(",\n")
+	append("  \"rayReconstruction\": ").append(rayReconstruction).append(",\n")
 	append("  \"debugLog\": ").append(debugLog).append('\n')
 	append("}\n")
 }

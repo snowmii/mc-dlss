@@ -14,10 +14,11 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 	private lateinit var presetButton: Button
 	private lateinit var fgButton: Button
 	private lateinit var multiplierButton: Button
+	private lateinit var rrButton: Button
 
 	override fun init() {
 		val x = (width - BUTTON_WIDTH) / 2
-		val y = height / 2 - 70
+		val y = height / 2 - 82
 		val title = StringWidget(title, font)
 		title.setPosition((width - title.width) / 2, y - 28)
 		addRenderableWidget(title)
@@ -27,12 +28,13 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		presetButton = optionButton(x, y + 48, ::cyclePreset)
 		fgButton = optionButton(x, y + 72, ::toggleFrameGeneration)
 		multiplierButton = optionButton(x, y + 96) { controls()?.cycleFgMultiplier() }
+		rrButton = optionButton(x, y + 120, ::toggleRayReconstruction)
 		if (controls() == null) {
 			val restart = StringWidget(Component.translatable("mc-dlss.options.restart_required"), font)
-			restart.setPosition((width - restart.width) / 2, y + 116)
+			restart.setPosition((width - restart.width) / 2, y + 140)
 			addRenderableWidget(restart)
 		}
-		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE) { onClose() }.bounds(x, y + 130, BUTTON_WIDTH, 20).build())
+		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE) { onClose() }.bounds(x, y + 154, BUTTON_WIDTH, 20).build())
 		refreshLabels()
 	}
 
@@ -76,6 +78,15 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		if (controls != null) controls.toggleFrameGeneration() else user.frameGeneration = !user.frameGeneration
 	}
 
+	private fun toggleRayReconstruction() {
+		val controls = controls()
+		if (controls != null) {
+			controls.toggleRayReconstruction()
+		} else {
+			user.rayReconstruction = !user.rayReconstruction
+		}
+	}
+
 	private fun refreshLabels() {
 		val controls = controls()
 		enabledButton.message = label("mc-dlss.options.enabled", controls?.enabled ?: user.enabled)
@@ -87,6 +98,10 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 			controls?.let { "${it.frameGenerationMultiplier}x" } ?: Component.translatable("mc-dlss.options.in_world").string,
 		)
 		multiplierButton.active = controls != null
+		rrButton.message = label(
+			"mc-dlss.options.ray_reconstruction",
+			controls?.rayReconstructionEnabled ?: user.rayReconstruction,
+		)
 	}
 
 	private fun controls(): RuntimeControls? = ClientRuntime.active().activeControls()

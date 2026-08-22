@@ -3,8 +3,8 @@ package me.snowmii.dlss.mixin.blaze3d;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import com.mojang.blaze3d.systems.GpuSurface;
-import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
+import com.mojang.renderpearl.api.device.GpuSurface;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSurface;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.client.RuntimeControls;
 import me.snowmii.dlss.readout.SessionReadout;
@@ -66,7 +66,7 @@ public class VulkanGpuSurfaceMixin {
 	}
 
 
-	@Inject(method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V", at = @At("HEAD"))
+	@Inject(method = "configure(Lcom/mojang/renderpearl/api/device/GpuSurface$Configuration;)V", at = @At("HEAD"))
 	private void mcDlssReportConfiguration(final GpuSurface.Configuration config, final CallbackInfo ci) {
 		final RuntimeControls controls = ClientRuntime.active().activeControls();
 		SessionReadout.emit(
@@ -78,7 +78,7 @@ public class VulkanGpuSurfaceMixin {
 	}
 
 	@ModifyExpressionValue(
-		method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V",
+		method = "configure(Lcom/mojang/renderpearl/api/device/GpuSurface$Configuration;)V",
 		at = @At(
 			value = "INVOKE",
 			target = "Ljava/lang/Math;max(II)I"
@@ -94,7 +94,7 @@ public class VulkanGpuSurfaceMixin {
 
 
 	@WrapOperation(
-		method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V",
+		method = "configure(Lcom/mojang/renderpearl/api/device/GpuSurface$Configuration;)V",
 		at = @At(
 			value = "INVOKE",
 			target = "Lorg/lwjgl/vulkan/KHRSwapchain;vkCreateSwapchainKHR(Lorg/lwjgl/vulkan/VkDevice;Lorg/lwjgl/vulkan/VkSwapchainCreateInfoKHR;Lorg/lwjgl/vulkan/VkAllocationCallbacks;Ljava/nio/LongBuffer;)I"
@@ -116,7 +116,7 @@ public class VulkanGpuSurfaceMixin {
 	}
 
 	@WrapOperation(
-		method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V",
+		method = "configure(Lcom/mojang/renderpearl/api/device/GpuSurface$Configuration;)V",
 		at = @At(
 			value = "INVOKE",
 			target = "Lorg/lwjgl/vulkan/KHRSwapchain;vkGetSwapchainImagesKHR(Lorg/lwjgl/vulkan/VkDevice;JLjava/nio/IntBuffer;Ljava/nio/LongBuffer;)I"

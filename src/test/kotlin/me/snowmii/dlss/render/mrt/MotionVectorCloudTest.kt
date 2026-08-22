@@ -1,34 +1,31 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.IndexType
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuBufferSlice
-import com.mojang.blaze3d.buffers.GpuFence
-import com.mojang.blaze3d.pipeline.CompiledRenderPipeline
-import com.mojang.blaze3d.pipeline.RenderPipeline
-import com.mojang.blaze3d.shaders.ShaderSource
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.CommandEncoderBackend
-import com.mojang.blaze3d.systems.DeviceFeatures
-import com.mojang.blaze3d.systems.DeviceInfo
-import com.mojang.blaze3d.systems.DeviceLimits
-import com.mojang.blaze3d.systems.DeviceType
-import com.mojang.blaze3d.systems.GpuDevice
-import com.mojang.blaze3d.systems.GpuDeviceBackend
-import com.mojang.blaze3d.systems.GpuQueryPool
-import com.mojang.blaze3d.systems.GpuSurfaceBackend
-import com.mojang.blaze3d.systems.HintsAndWorkarounds
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.systems.RenderPassBackend
-import com.mojang.blaze3d.systems.RenderPassDescriptor
+import com.mojang.renderpearl.api.GpuFormat
+import com.mojang.renderpearl.api.pipeline.IndexType
+import com.mojang.renderpearl.api.buffers.GpuBuffer
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice
+import com.mojang.renderpearl.api.commands.GpuFence
+import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.pipeline.ShaderSource
+import com.mojang.renderpearl.api.commands.CommandEncoder
+import com.mojang.renderpearl.api.device.DeviceFeatures
+import com.mojang.renderpearl.api.device.DeviceInfo
+import com.mojang.renderpearl.api.device.DeviceLimits
+import com.mojang.renderpearl.api.device.DeviceType
+import com.mojang.renderpearl.api.device.GpuDevice
+import com.mojang.renderpearl.api.device.GpuSurface
+import com.mojang.renderpearl.api.commands.GpuQueryPool
+import com.mojang.renderpearl.api.device.HintsAndWorkarounds
+import com.mojang.renderpearl.api.commands.RenderPass
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.systems.TransientMemory
-import com.mojang.blaze3d.textures.AddressMode
-import com.mojang.blaze3d.textures.FilterMode
-import com.mojang.blaze3d.textures.GpuSampler
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.buffers.TransientMemory
+import com.mojang.renderpearl.api.textures.AddressMode
+import com.mojang.renderpearl.api.textures.FilterMode
+import com.mojang.renderpearl.api.textures.GpuSampler
+import com.mojang.renderpearl.api.textures.GpuTexture
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import java.nio.ByteBuffer
 import java.nio.IntBuffer
 import java.util.Optional
@@ -598,15 +595,19 @@ class MotionVectorCloudTest {
 	}
 
 	/**
-	 * The recording fake command backend the eligible cloud pass setup executes on. The
-	 * writer's three seams - the phase, the clock, and the device - point at this fixture;
-	 * everything else in `CloudVelocityRender.createPass`/`bindPipeline`/`closePass` runs for
-	 * real, including the descriptor build, the twin cache lookup, the real `RenderPass`
-	 * constructor, and the real `RenderPass.setUniform`/`setPipeline`/`close` validation
-	 * against the fake backends. [failAt] names one device call to make throw for the injected
-	 * fallback evidence; [failCreateRenderPassOnce] fails only the next pass creation (the MRT
-	 * attempt), so the vanilla fallback creation still succeeds; [precompileInvalid] makes the
-	 * fake precompile answer an invalid compiled pipeline.
+	 * The recording fake device the eligible cloud pass setup executes on. The writer's three
+	 * seams - the phase, the clock, and the device - point at this fixture; everything else in
+	 * `CloudVelocityRender.createPass`/`bindPipeline`/`closePass` runs for real, including the
+	 * descriptor build and the twin cache lookup.
+	 *
+	 * 26.3: [GpuDevice], [CommandEncoder], and [RenderPass] are plain interfaces (there is no
+	 * concrete engine class left to wrap with a backend), so the fakes below implement those
+	 * interfaces directly instead of driving a real `RenderPass` through a backend split; the
+	 * pass-body recording (`setPipeline`/`setUniform`/etc.) is this fixture's own bookkeeping
+	 * rather than real attachment validation. [failAt] names one device call to make throw for
+	 * the injected fallback evidence; [failCreateRenderPassOnce] fails only the next pass
+	 * creation (the MRT attempt), so the vanilla fallback creation still succeeds;
+	 * [precompileInvalid] makes the fake precompile answer an invalid compiled pipeline.
 	 */
 	private class CloudFakeBackend {
 		var failAt: String? = null
@@ -615,7 +616,8 @@ class MotionVectorCloudTest {
 
 		val payloadBuffer = FakeBuffer()
 		val renderPassDescriptors = mutableListOf<RenderPassDescriptor>()
-		var pipeline: RenderPipeline? = null
+		/** 26.3: `RenderPass.setPipeline` now takes the compiled form; callers resolve it via [RenderSystem]. */
+		var pipeline: CompiledRenderPipeline? = null
 		val uniforms = mutableListOf<Pair<String, GpuBufferSlice>>()
 		var payloadBytes: Int = -1
 		var passCloses = 0
@@ -628,18 +630,15 @@ class MotionVectorCloudTest {
 			true,
 			"fake",
 			1f,
-			DeviceLimits(16, 4, 65536, 1L shl 30, 1, 8),
-			DeviceFeatures(true, false, false, false, false, true, false),
+			DeviceLimits(16, 4, 65536, 1L shl 30, 1, 8, 1),
+			DeviceFeatures(true, false, false, false, false, true, false, false),
 			emptySet(),
-			HintsAndWorkarounds(false, false),
+			HintsAndWorkarounds(false, false, false),
 			DeviceType.OTHER,
 		)
-		private val deviceBackend = CloudGpuDeviceBackend(deviceInfo)
-		private val passBackend = CloudPassBackend(this)
-		private val commandBackend = CloudCommandEncoderBackend()
 
-		val encoder: CommandEncoder = CloudEncoder(this, deviceBackend, passBackend, commandBackend)
-		val device: GpuDevice = CloudDevice(this, encoder, deviceBackend)
+		val encoder: CommandEncoder = CloudEncoder(this)
+		val device: GpuDevice = CloudDevice(this, encoder, deviceInfo)
 
 		fun failIf(point: String) {
 			if (failAt == point) {
@@ -652,35 +651,72 @@ class MotionVectorCloudTest {
 	private class CloudDevice(
 		private val backend: CloudFakeBackend,
 		private val encoder: CommandEncoder,
-		deviceBackend: GpuDeviceBackend,
-	) : GpuDevice(deviceBackend, {}) {
+		private val info: DeviceInfo,
+	) : GpuDevice {
+		override fun createSurface(windowHandle: Long): GpuSurface = throw UnsupportedOperationException("test backend never creates surfaces")
+
 		override fun createCommandEncoder(): CommandEncoder = encoder
+
+		override fun createSampler(
+			addressModeU: AddressMode,
+			addressModeV: AddressMode,
+			minFilter: FilterMode,
+			magFilter: FilterMode,
+			maxAnisotropy: Int,
+			maxLod: OptionalDouble,
+		): GpuSampler = throw UnsupportedOperationException("test backend never creates samplers")
+
+		override fun createTexture(label: Supplier<String>?, usage: Int, format: GpuFormat, width: Int, height: Int, depthOrLayers: Int, mipLevels: Int): GpuTexture =
+			throw UnsupportedOperationException("test backend never creates textures")
+
+		override fun createTexture(label: String?, usage: Int, format: GpuFormat, width: Int, height: Int, depthOrLayers: Int, mipLevels: Int): GpuTexture =
+			throw UnsupportedOperationException("test backend never creates textures")
+
+		override fun createTextureView(texture: GpuTexture): GpuTextureView = throw UnsupportedOperationException("test backend never creates texture views")
+
+		override fun createTextureView(texture: GpuTexture, baseMipLevel: Int, mipLevels: Int): GpuTextureView =
+			throw UnsupportedOperationException("test backend never creates texture views")
 
 		override fun createBuffer(label: Supplier<String>?, usage: Int, size: Long): GpuBuffer {
 			backend.failIf("createBuffer")
 			return backend.payloadBuffer
 		}
 
-		override fun precompilePipeline(pipeline: RenderPipeline, shaderSource: ShaderSource?): CompiledRenderPipeline {
+		override fun createBuffer(label: Supplier<String>?, usage: Int, data: ByteBuffer): GpuBuffer =
+			throw UnsupportedOperationException("test backend never allocates buffers from bytes")
+
+		override fun getLastDebugMessages(): List<String> = emptyList()
+
+		override fun isDebuggingEnabled(): Boolean = false
+
+		override fun compilePipeline(pipeline: RenderPipeline, shaderSource: ShaderSource): CompiledRenderPipeline? {
 			backend.failIf("precompilePipeline")
 			backend.precompiledPipelines.add(pipeline)
-			return CompiledRenderPipeline { !backend.precompileInvalid }
+			return object : CompiledRenderPipeline {
+				override fun isClosed() = backend.precompileInvalid
+				override fun close() = Unit
+			}
 		}
+
+		override fun close() = Unit
+
+		override fun createTimestampQueryPool(size: Int): GpuQueryPool = throw UnsupportedOperationException("test backend never creates query pools")
+
+		override fun getDeviceInfo(): DeviceInfo = info
 	}
 
 	/**
 	 * The recording encoder: records the pass descriptors (the attachment-order evidence) and
-	 * the payload write, then builds the real [RenderPass] over the recording backends so the
-	 * writer's pass body runs against real validation. The MRT-creation failure injection
-	 * fails exactly one creation (the two-attachment attempt), so the vanilla fallback
-	 * creation still runs - that is the guard under test.
+	 * the payload write, then hands back a [CloudPass] that records the pass-body calls the
+	 * writer makes. The MRT-creation failure injection fails exactly one creation (the
+	 * two-attachment attempt), so the vanilla fallback creation still runs - that is the guard
+	 * under test.
 	 */
-	private class CloudEncoder(
-		private val backend: CloudFakeBackend,
-		private val deviceBackend: GpuDeviceBackend,
-		private val passBackend: RenderPassBackend,
-		commandBackend: CommandEncoderBackend,
-	) : CommandEncoder(null, deviceBackend, commandBackend) {
+	private class CloudEncoder(private val backend: CloudFakeBackend) : CommandEncoder {
+		override fun submit() = Unit
+
+		override fun transientMemory(): TransientMemory = throw UnsupportedOperationException("test backend never allocates transient memory")
+
 		override fun createRenderPass(descriptor: RenderPassDescriptor): RenderPass {
 			// The MRT-creation injection fails exactly one creation (the two-attachment
 			// attempt), so the vanilla fallback creation still runs - that is the guard under
@@ -691,36 +727,72 @@ class MotionVectorCloudTest {
 			}
 			backend.failIf("createRenderPass")
 			backend.renderPassDescriptors.add(descriptor)
-			return RenderPass(
-				passBackend,
-				deviceBackend,
-				descriptor.colorAttachments(),
-				{
-					backend.passCloses++
-					backend.failIf("passClose")
-				},
-				descriptor.renderArea,
-			)
+			return CloudPass(backend)
 		}
+
+		override fun clearColorTexture(colorTexture: GpuTexture, clearColor: Vector4fc) = Unit
+
+		override fun clearColorAndDepthTextures(colorTexture: GpuTexture, clearColor: Vector4fc, depthTexture: GpuTexture, clearDepth: Double) = Unit
+
+		override fun clearColorAndDepthTextures(
+			colorTexture: GpuTexture,
+			clearColor: Vector4fc,
+			depthTexture: GpuTexture,
+			clearDepth: Double,
+			mipLevel: Int,
+			regionX: Int,
+			regionY: Int,
+			regionWidth: Int,
+			regionHeight: Int,
+		) = Unit
+
+		override fun clearDepthTexture(depthTexture: GpuTexture, clearDepth: Double) = Unit
 
 		override fun writeToBuffer(destination: GpuBufferSlice, data: ByteBuffer) {
 			backend.failIf("writeToBuffer")
 			backend.payloadBytes = data.remaining()
 		}
+
+		override fun copyToBuffer(source: GpuBufferSlice, target: GpuBufferSlice) = Unit
+
+		override fun writeToTexture(destination: GpuTexture, source: com.mojang.blaze3d.platform.NativeImage) = Unit
+
+		override fun writeToTexture(destination: GpuTexture, source: com.mojang.blaze3d.platform.NativeImage, x: Int, y: Int, width: Int, height: Int) = Unit
+
+		override fun writeToTexture(destination: GpuTexture, source: ByteBuffer, mipLevel: Int, depthOrLayer: Int, destX: Int, destY: Int, width: Int, height: Int) = Unit
+
+		override fun copyBufferToTexture(source: GpuBufferSlice, sourceX: Int, sourceY: Int, sourceWidth: Int, sourceHeight: Int, destination: GpuTexture, destinationX: Int, destinationY: Int, copyWidth: Int, copyHeight: Int, mipLevel: Int, arrayLayer: Int) = Unit
+
+		override fun copyTextureToBuffer(source: GpuTexture, destination: GpuBuffer, offset: Long, callback: Runnable, mipLevel: Int) = Unit
+
+		override fun copyTextureToBuffer(source: GpuTexture, destination: GpuBuffer, offset: Long, callback: Runnable, mipLevel: Int, x: Int, y: Int, width: Int, height: Int) = Unit
+
+		override fun copyTextureToTexture(source: GpuTexture, destination: GpuTexture, mipLevel: Int, destX: Int, destY: Int, sourceX: Int, sourceY: Int, width: Int, height: Int) = Unit
+
+		override fun createFence(): GpuFence = throw UnsupportedOperationException("test backend never creates fences")
+
+		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
 	}
 
 	/** Records the pass-body calls the writer makes; every failure point can be injected. */
-	private class CloudPassBackend(private val backend: CloudFakeBackend) : RenderPassBackend {
+	private class CloudPass(private val backend: CloudFakeBackend) : RenderPass {
+		override fun close() {
+			backend.passCloses++
+			backend.failIf("passClose")
+		}
+
 		override fun pushDebugGroup(label: Supplier<String>) = Unit
 
 		override fun popDebugGroup() = Unit
 
-		override fun setPipeline(pipeline: RenderPipeline) {
+		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
+
+		override fun setPipeline(pipeline: CompiledRenderPipeline) {
 			backend.failIf("setPipeline")
 			backend.pipeline = pipeline
 		}
 
-		override fun bindTexture(name: String, textureView: GpuTextureView?, sampler: GpuSampler?) = Unit
+		override fun setUniform(name: String, textureView: GpuTextureView?, sampler: GpuSampler?) = Unit
 
 		override fun setUniform(name: String, value: GpuBuffer) = setUniform(name, GpuBufferSlice(value, 0, value.size()))
 
@@ -728,6 +800,8 @@ class MotionVectorCloudTest {
 			backend.failIf("setUniform")
 			backend.uniforms.add(name to value)
 		}
+
+		override fun pushConstants(data: ByteBuffer) = Unit
 
 		override fun enableScissor(x: Int, y: Int, width: Int, height: Int) = Unit
 
@@ -760,79 +834,6 @@ class MotionVectorCloudTest {
 		override fun multiDraw(firstVertices: IntBuffer, vertexCounts: IntBuffer, drawCount: Int) = Unit
 
 		override fun drawIndirect(commands: GpuBufferSlice, drawCount: Int) = Unit
-
-		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
-	}
-
-	/** The no-op encoder backend the real CommandEncoder constructor requires; never driven. */
-	private class CloudCommandEncoderBackend : CommandEncoderBackend {
-		override fun submit() = Unit
-		override fun transientMemory(): TransientMemory = throw UnsupportedOperationException("test backend never allocates transient memory")
-		override fun createRenderPass(descriptor: RenderPassDescriptor): RenderPassBackend = throw UnsupportedOperationException("test backend never creates passes")
-		override fun submitRenderPass() = Unit
-		override fun clearColorTexture(colorTexture: GpuTexture, clearColor: Vector4fc) = Unit
-		override fun clearColorAndDepthTextures(colorTexture: GpuTexture, clearColor: Vector4fc, depthTexture: GpuTexture, clearDepth: Double) = Unit
-		override fun clearColorAndDepthTextures(colorTexture: GpuTexture, clearColor: Vector4fc, depthTexture: GpuTexture, clearDepth: Double, regionX: Int, regionY: Int, regionWidth: Int, regionHeight: Int) = Unit
-		override fun clearDepthTexture(depthTexture: GpuTexture, clearDepth: Double) = Unit
-		override fun writeToBuffer(destination: GpuBufferSlice, data: ByteBuffer) = Unit
-		override fun copyToBuffer(source: GpuBufferSlice, target: GpuBufferSlice) = Unit
-		override fun writeToTexture(destination: GpuTexture, source: ByteBuffer, mipLevel: Int, depthOrLayer: Int, destX: Int, destY: Int, width: Int, height: Int) = Unit
-		override fun copyBufferToTexture(source: GpuBufferSlice, sourceX: Int, sourceY: Int, sourceWidth: Int, sourceHeight: Int, destination: GpuTexture, destinationX: Int, destinationY: Int, copyWidth: Int, copyHeight: Int, mipLevel: Int, arrayLayer: Int) = Unit
-		override fun copyTextureToBuffer(source: GpuTexture, destination: GpuBuffer, offset: Long, callback: Runnable, mipLevel: Int) = Unit
-		override fun copyTextureToBuffer(source: GpuTexture, destination: GpuBuffer, offset: Long, callback: Runnable, mipLevel: Int, x: Int, y: Int, width: Int, height: Int) = Unit
-		override fun copyTextureToTexture(source: GpuTexture, destination: GpuTexture, mipLevel: Int, destX: Int, destY: Int, sourceX: Int, sourceY: Int, width: Int, height: Int) = Unit
-		override fun createFence(): GpuFence = throw UnsupportedOperationException("test backend never creates fences")
-		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
-	}
-
-	/** The device-info side of the fake device, so the real RenderPass constructor and validation can run. */
-	private class CloudGpuDeviceBackend(private val info: DeviceInfo) : GpuDeviceBackend {
-		override fun createSurface(windowHandle: Long): GpuSurfaceBackend = throw UnsupportedOperationException("test backend never creates surfaces")
-
-		override fun createCommandEncoder(): CommandEncoderBackend = throw UnsupportedOperationException("test backend never creates encoders")
-
-		override fun createSampler(
-			addressModeU: AddressMode,
-			addressModeV: AddressMode,
-			minFilter: FilterMode,
-			magFilter: FilterMode,
-			maxAnisotropy: Int,
-			maxLod: OptionalDouble,
-		): GpuSampler = throw UnsupportedOperationException("test backend never creates samplers")
-
-		override fun createTexture(label: Supplier<String>?, usage: Int, format: GpuFormat, width: Int, height: Int, depthOrLayers: Int, mipLevels: Int): GpuTexture =
-			throw UnsupportedOperationException("test backend never creates textures")
-
-		override fun createTexture(label: String?, usage: Int, format: GpuFormat, width: Int, height: Int, depthOrLayers: Int, mipLevels: Int): GpuTexture =
-			throw UnsupportedOperationException("test backend never creates textures")
-
-		override fun createTextureView(texture: GpuTexture): GpuTextureView = throw UnsupportedOperationException("test backend never creates texture views")
-
-		override fun createTextureView(texture: GpuTexture, baseMipLevel: Int, mipLevels: Int): GpuTextureView =
-			throw UnsupportedOperationException("test backend never creates texture views")
-
-		override fun createBuffer(label: Supplier<String>?, usage: Int, size: Long): GpuBuffer =
-			throw UnsupportedOperationException("test backend never allocates buffers")
-
-		override fun createBuffer(label: Supplier<String>?, usage: Int, data: ByteBuffer): GpuBuffer =
-			throw UnsupportedOperationException("test backend never allocates buffers")
-
-		override fun getLastDebugMessages(): List<String> = emptyList()
-
-		override fun isDebuggingEnabled(): Boolean = false
-
-		override fun precompilePipeline(pipeline: RenderPipeline, shaderSource: ShaderSource?): CompiledRenderPipeline =
-			throw UnsupportedOperationException("test backend never compiles pipelines")
-
-		override fun clearPipelineCache() = Unit
-
-		override fun close() = Unit
-
-		override fun createTimestampQueryPool(size: Int): GpuQueryPool = throw UnsupportedOperationException("test backend never creates query pools")
-
-		override fun getTimestampNow(): Long = 0L
-
-		override fun getDeviceInfo(): DeviceInfo = info
 	}
 
 	private companion object {

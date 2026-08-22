@@ -1,10 +1,11 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.pipeline.BindGroupLayout
-import com.mojang.blaze3d.pipeline.ColorTargetState
-import com.mojang.blaze3d.pipeline.DepthStencilState
-import com.mojang.blaze3d.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.GpuFormat
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout
+import com.mojang.renderpearl.api.pipeline.ColorTargetState
+import com.mojang.renderpearl.api.pipeline.DepthStencilState
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.pipeline.ShaderType
 import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
 import net.minecraft.resources.Identifier
@@ -127,17 +128,17 @@ private fun build(
 	edits: RenderPipeline.Builder.() -> Unit,
 ): RenderPipeline {
 	val snippet = RenderPipeline.Snippet(
-		Optional.of(source.vertexShader),
-		Optional.of(source.fragmentShader),
+		source.shaders,
 		Optional.of(source.shaderDefines),
 		Optional.of(source.bindGroupLayouts),
-		source.colorTargetStates,
+		source.colorTargetStates.toTypedArray(),
 		source.colorTargetStates.size,
 		Optional.ofNullable(source.depthStencilState),
 		Optional.of(source.polygonMode),
 		Optional.of(source.isCull),
-		source.vertexFormatBindings,
+		source.vertexFormatBindings.toTypedArray(),
 		Optional.of(source.primitiveTopology),
+		source.pushConstantSize(),
 	)
 	return RenderPipeline.builder(snippet).withLocation(location).apply(edits).build()
 }
@@ -152,6 +153,13 @@ private fun writerLocation(source: RenderPipeline, writer: VelocityWriter): Iden
 		VELOCITY_NAMESPACE,
 		"$VELOCITY_PATH_PREFIX${writer.segment}/${source.path.removePrefix("pipeline/")}",
 	)
+
+
+internal val RenderPipeline.vertexShader: Identifier
+	get() = shaders.getValue(ShaderType.VERTEX)
+
+internal val RenderPipeline.fragmentShader: Identifier
+	get() = shaders.getValue(ShaderType.FRAGMENT)
 
 private val RenderPipeline.path: String
 	get() = location.path

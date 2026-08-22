@@ -1,8 +1,8 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.commands.CommandEncoder
+import com.mojang.renderpearl.api.commands.RenderPass
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import org.joml.Vector4f
 
 /**

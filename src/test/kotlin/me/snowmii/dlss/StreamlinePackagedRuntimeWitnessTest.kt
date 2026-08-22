@@ -56,9 +56,9 @@ class StreamlinePackagedRuntimeWitnessTest {
 			// Every entry of the colocated flat runtime must land beside the bridge.
 			val flatRuntime = listOf(
 				"mc_dlss.dll",
-				"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
-				"sl.pcl.dll",
-				"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
+				"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_d.dll", "sl.dlss_g.dll",
+				"sl.reflex.dll", "sl.pcl.dll",
+				"nvngx_dlss.dll", "nvngx_dlssd.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
 			)
 			Files.list(runtime).use { entries ->
 				assertEquals(flatRuntime.size.toLong(), entries.count(), "no stray entries in $runtime")

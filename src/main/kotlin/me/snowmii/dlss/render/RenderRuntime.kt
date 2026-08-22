@@ -3,7 +3,7 @@ import me.snowmii.dlss.DlssFrameDecision
 import me.snowmii.dlss.DlssFrameRoute
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.dlss.readout.FramePacingProbe
-import me.snowmii.streamline.VulkanContextRegistry
+import me.snowmii.vklib.api.VulkanContextRegistry
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.SRMode
@@ -24,7 +24,7 @@ import me.snowmii.dlss.streamline.SessionBridge
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.screens.LoadingOverlay
 import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.textures.GpuTextureView
 
 /** Dimension policy consumed by renderer hooks before world target allocation. */
 data class WorldTargetRoute(

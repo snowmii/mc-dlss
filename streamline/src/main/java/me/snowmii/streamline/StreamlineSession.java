@@ -1,5 +1,7 @@
 package me.snowmii.streamline;
 
+import me.snowmii.vklib.api.ImageBinding;
+
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
@@ -215,6 +217,13 @@ public interface StreamlineSession extends AutoCloseable {
 	 * still succeeds with just the engine's inputs.
 	 */
 	int tagSrResources(SrTagRequest request);
+
+	/**
+	 * Arms or clears DLSS Ray Reconstruction for the next {@link #tagSrResources} /
+	 * {@link #evaluateSuperResolution}. When enabled, guide images are tagged and evaluation
+	 * runs {@code kFeatureDLSS_RR}; when disabled, Super Resolution is restored.
+	 */
+	int prepareRayReconstruction(RrPrepareRequest request);
 
 	/**
 	 * Tags one frame's DLSS-G resources on the caller's command buffer, through Streamline's

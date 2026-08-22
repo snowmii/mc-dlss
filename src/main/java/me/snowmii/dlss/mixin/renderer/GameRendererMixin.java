@@ -2,7 +2,7 @@ package me.snowmii.dlss.mixin.renderer;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import me.snowmii.dlss.client.ActiveView;
 import me.snowmii.dlss.client.ClientRuntime;
@@ -65,7 +65,7 @@ public class GameRendererMixin {
 		method = "renderLevel",
 		at = @At(
 			value = "INVOKE",
-			target = "Lnet/minecraft/client/renderer/ProjectionMatrixBuffer;getBuffer(Lorg/joml/Matrix4f;)Lcom/mojang/blaze3d/buffers/GpuBufferSlice;",
+			target = "Lnet/minecraft/client/renderer/ProjectionMatrixBuffer;getBuffer(Lorg/joml/Matrix4f;)Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;",
 			ordinal = 0
 		)
 	)

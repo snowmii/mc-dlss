@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.GpuFormat
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
 import me.snowmii.dlss.render.mrt.TerrainVelocityPass
 import me.snowmii.dlss.render.mrt.VelocityWriter
 import me.snowmii.dlss.render.mrt.velocityTwin
@@ -38,7 +38,6 @@ class VelocityWriterContractTest {
 		VelocityWriter.ENTITY to listOf(
 			RenderPipelines.ARMOR_CUTOUT_NO_CULL,
 			RenderPipelines.ARMOR_DECAL_CUTOUT_NO_CULL,
-			RenderPipelines.ARMOR_TRANSLUCENT,
 			RenderPipelines.ENTITY_SOLID,
 			RenderPipelines.ENTITY_SOLID_Z_OFFSET_FORWARD,
 			RenderPipelines.ENTITY_CUTOUT_CULL,
@@ -127,7 +126,7 @@ class VelocityWriterContractTest {
 	 */
 	@Test
 	fun `the plain twin keeps the source shader and takes its own location`() {
-		val source = RenderPipelines.WEATHER_DEPTH_WRITE
+		val source = RenderPipelines.WEATHER
 		val plain = velocityTwin(source)
 
 		assertSame(source.fragmentShader, plain.fragmentShader)
@@ -135,7 +134,7 @@ class VelocityWriterContractTest {
 		assertEquals(2, plain.colorTargetStates.size)
 		assertVelocityTarget(plain.colorTargetStates[1]!!)
 		assertEquals(
-			Identifier.fromNamespaceAndPath("mc-dlss", "velocity/pipeline/weather_depth_write"),
+			Identifier.fromNamespaceAndPath("mc-dlss", "velocity/pipeline/weather"),
 			plain.location,
 		)
 		assertNotEquals(source.location, velocityTwin(plain).location, "an mc-dlss source still gets a distinct location")
@@ -153,10 +152,11 @@ class VelocityWriterContractTest {
 		val velocity = FakeView(FakeTexture(GpuFormat.RG16_FLOAT))
 		val depth = FakeView(FakeTexture(GpuFormat.D32_FLOAT))
 
-		val descriptor = com.mojang.blaze3d.systems.RenderPassDescriptor.create { "velocity" }
+		val descriptor = com.mojang.renderpearl.api.commands.RenderPassDescriptor.builder { "velocity" }
 			.withColorAttachment(scene)
 			.withColorAttachment(velocity, Optional.empty())
 			.withDepthAttachment(depth, OptionalDouble.empty())
+			.build()
 
 		val attachments = descriptor.colorAttachments()
 		assertEquals(2, attachments.size)

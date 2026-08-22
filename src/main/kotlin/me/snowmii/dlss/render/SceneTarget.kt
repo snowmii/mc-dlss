@@ -2,7 +2,7 @@ package me.snowmii.dlss.render
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.DlssFrameRoute
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.pipeline.TextureTarget
 
@@ -112,9 +112,9 @@ class SceneTarget(
 		 */
 		@JvmStatic
 		fun forMinecraft(): SceneTarget = SceneTarget(
-			allocate = { width, height -> TextureTarget(LABEL, width, height, true, GpuFormat.RGBA8_UNORM) },
+			allocate = { width, height -> TextureTarget(LABEL, width, height, GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) },
 			release = RenderTarget::destroyBuffers,
-			allocateVelocity = { width, height -> TextureTarget("$LABEL Velocity", width, height, false, VELOCITY_FORMAT) },
+			allocateVelocity = { width, height -> TextureTarget("$LABEL Velocity", width, height, VELOCITY_FORMAT, null) },
 		)
 	}
 }

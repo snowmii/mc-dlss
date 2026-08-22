@@ -36,6 +36,13 @@ int32_t query_optimal_dimensions_sl(uint32_t outputWidth, uint32_t outputHeight,
 // carries for that mode. Requires sl_session_ready; returns kNotInitialized otherwise.
 int32_t record_sr_options() noexcept;
 
+// Records slDLSSDSetOptions for the SR viewport from the armed RR matrices/mode. Called when
+// mc_dlss_prepare_rr enables RR so the next evaluate can run kFeatureDLSS_RR.
+int32_t record_rr_options() noexcept;
+
+// Arms or clears Ray Reconstruction guide state for the next tag/evaluate.
+int32_t prepare_rr(const McDlssRrPrepareInfo& info) noexcept;
+
 // Records the DLSS-G per-frame 2x options with slDLSSGSetOptions: mode eOn, one generated
 // frame per real one, retained resources while off, UI recomposition, the queue-parallelism
 // mode, the declared back-buffer count, the render/output extents from the stored

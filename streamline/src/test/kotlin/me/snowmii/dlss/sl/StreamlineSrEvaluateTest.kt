@@ -2,7 +2,7 @@ package me.snowmii.dlss.sl
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals

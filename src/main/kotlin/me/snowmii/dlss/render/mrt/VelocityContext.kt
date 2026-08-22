@@ -1,6 +1,6 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import org.joml.Matrix4f
 
 /**

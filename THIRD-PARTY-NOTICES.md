@@ -8,7 +8,8 @@ and the licenses under which those components are received are set forth below.
 NVIDIA Streamline SDK 2.12.0
 https://github.com/NVIDIA-RTX/Streamline
 
-sl.interposer.dll, sl.common.dll, sl.dlss.dll, sl.dlss_g.dll, sl.reflex.dll,
+sl.interposer.dll, sl.common.dll, sl.dlss.dll, sl.dlss_d.dll, sl.dlss_g.dll, sl.reflex.dll,
+
 sl.pcl.dll
 
 Copyright (c) 2023 NVIDIA CORPORATION. All rights reserved
@@ -36,7 +37,7 @@ SOFTWARE.
 NVIDIA DLSS
 Distributed with NVIDIA Streamline SDK 2.12.0
 
-nvngx_dlss.dll, nvngx_dlssg.dll
+nvngx_dlss.dll, nvngx_dlssd.dll, nvngx_dlssg.dll
 
 NVIDIA RTX SDKs LICENSE
 

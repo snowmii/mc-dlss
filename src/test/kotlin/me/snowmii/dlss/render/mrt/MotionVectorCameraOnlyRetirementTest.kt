@@ -1,30 +1,18 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.IndexType
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuBufferSlice
-import com.mojang.blaze3d.pipeline.CompiledRenderPipeline
-import com.mojang.blaze3d.pipeline.RenderPipeline
-import com.mojang.blaze3d.shaders.ShaderSource
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.CommandEncoderBackend
-import com.mojang.blaze3d.systems.DeviceFeatures
-import com.mojang.blaze3d.systems.DeviceInfo
-import com.mojang.blaze3d.systems.DeviceLimits
-import com.mojang.blaze3d.systems.DeviceType
-import com.mojang.blaze3d.systems.GpuDeviceBackend
-import com.mojang.blaze3d.systems.GpuQueryPool
-import com.mojang.blaze3d.systems.GpuSurfaceBackend
-import com.mojang.blaze3d.systems.HintsAndWorkarounds
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.systems.RenderPassBackend
-import com.mojang.blaze3d.systems.RenderPassDescriptor
-import com.mojang.blaze3d.textures.AddressMode
-import com.mojang.blaze3d.textures.FilterMode
-import com.mojang.blaze3d.textures.GpuSampler
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.GpuFormat
+import com.mojang.renderpearl.api.pipeline.IndexType
+import com.mojang.renderpearl.api.buffers.GpuBuffer
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice
+import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline
+import com.mojang.renderpearl.api.commands.CommandEncoder
+import com.mojang.renderpearl.api.commands.GpuQueryPool
+import com.mojang.renderpearl.api.commands.RenderPass
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor
+import com.mojang.renderpearl.api.buffers.TransientMemory
+import com.mojang.renderpearl.api.textures.GpuSampler
+import com.mojang.renderpearl.api.textures.GpuTexture
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import me.snowmii.dlss.render.mrt.TerrainVelocityPass
 import me.snowmii.dlss.render.mrt.VelocityWriter
 import java.nio.ByteBuffer
@@ -178,7 +166,7 @@ class MotionVectorCameraOnlyRetirementTest {
 			"BlockEntityRenderDispatcherMotionMixin",
 			// The terrain pass clear seam and the compatibility latch backstop.
 			"VulkanChunkSectionsToRenderMixin",
-			"VulkanDeviceMixin",
+			"me.snowmii.vklib.mixin.VulkanDeviceMixin",
 		)) {
 			assertTrue(registration.contains(retained), "$retained must stay registered")
 		}
@@ -200,47 +188,33 @@ class MotionVectorCameraOnlyRetirementTest {
 	}
 
 	/** A velocity texture that satisfies the clear path's usage checks, like the scene companion. */
-	private class ClearableFakeTexture(format: GpuFormat, width: Int = 16, height: Int = 16) :
-		GpuTexture(USAGE_RENDER_ATTACHMENT or USAGE_COPY_DST, "fake", format, width, height, 1, 1) {
-		override fun close() = Unit
-		override fun isClosed() = false
+	private class ClearableFakeTexture(format: GpuFormat, width: Int = 16, height: Int = 16) : FakeTexture(format, width, height) {
+		override fun usage() = GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_COPY_DST
 	}
 
-	private class RecordingEncoder(private val recording: RecordingBackend) :
-		CommandEncoder(null, RecordingGpuDeviceBackend(), recording) {
+	/** 26.3: [CommandEncoder] and [RenderPass] are plain interfaces; the fakes implement them directly. */
+	private class RecordingEncoder(private val recording: RecordingBackend) : CommandEncoder {
+		override fun submit() = Unit
+		override fun transientMemory(): TransientMemory = throw UnsupportedOperationException("test backend never allocates transient memory")
 
 		override fun createRenderPass(descriptor: RenderPassDescriptor): RenderPass {
 			recording.passDescriptors += descriptor
 			recording.events += "pass"
-			return RenderPass(
-				RecordingPassBackend(),
-				RecordingGpuDeviceBackend(),
-				descriptor.colorAttachments(),
-				{},
-				descriptor.renderArea,
-			)
+			return RecordingPass()
 		}
-	}
-
-	private class RecordingBackend : CommandEncoderBackend {
-		val events = mutableListOf<String>()
-		val clears = mutableListOf<Pair<GpuTexture, Vector4fc>>()
-		val passDescriptors = mutableListOf<RenderPassDescriptor>()
 
 		override fun clearColorTexture(colorTexture: GpuTexture, clearColor: Vector4fc) {
-			clears += colorTexture to clearColor
-			events += "clear"
+			recording.clears += colorTexture to clearColor
+			recording.events += "clear"
 		}
 
-		override fun submit() = Unit
-		override fun transientMemory() = throw UnsupportedOperationException("test backend never allocates transient memory")
-		override fun createRenderPass(descriptor: RenderPassDescriptor): RenderPassBackend = throw UnsupportedOperationException("test backend never creates passes")
-		override fun submitRenderPass() = Unit
 		override fun clearColorAndDepthTextures(colorTexture: GpuTexture, clearColor: Vector4fc, depthTexture: GpuTexture, clearDepth: Double) = Unit
-		override fun clearColorAndDepthTextures(colorTexture: GpuTexture, clearColor: Vector4fc, depthTexture: GpuTexture, clearDepth: Double, regionX: Int, regionY: Int, regionWidth: Int, regionHeight: Int) = Unit
+		override fun clearColorAndDepthTextures(colorTexture: GpuTexture, clearColor: Vector4fc, depthTexture: GpuTexture, clearDepth: Double, mipLevel: Int, regionX: Int, regionY: Int, regionWidth: Int, regionHeight: Int) = Unit
 		override fun clearDepthTexture(depthTexture: GpuTexture, clearDepth: Double) = Unit
 		override fun writeToBuffer(destination: GpuBufferSlice, data: ByteBuffer) = Unit
 		override fun copyToBuffer(source: GpuBufferSlice, target: GpuBufferSlice) = Unit
+		override fun writeToTexture(destination: GpuTexture, source: com.mojang.blaze3d.platform.NativeImage) = Unit
+		override fun writeToTexture(destination: GpuTexture, source: com.mojang.blaze3d.platform.NativeImage, x: Int, y: Int, width: Int, height: Int) = Unit
 		override fun writeToTexture(destination: GpuTexture, source: ByteBuffer, mipLevel: Int, depthOrLayer: Int, destX: Int, destY: Int, width: Int, height: Int) = Unit
 		override fun copyBufferToTexture(source: GpuBufferSlice, sourceX: Int, sourceY: Int, sourceWidth: Int, sourceHeight: Int, destination: GpuTexture, destinationX: Int, destinationY: Int, copyWidth: Int, copyHeight: Int, mipLevel: Int, arrayLayer: Int) = Unit
 		override fun copyTextureToBuffer(source: GpuTexture, destination: GpuBuffer, offset: Long, callback: Runnable, mipLevel: Int) = Unit
@@ -250,13 +224,22 @@ class MotionVectorCameraOnlyRetirementTest {
 		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
 	}
 
-	private class RecordingPassBackend : RenderPassBackend {
+	private class RecordingBackend {
+		val events = mutableListOf<String>()
+		val clears = mutableListOf<Pair<GpuTexture, Vector4fc>>()
+		val passDescriptors = mutableListOf<RenderPassDescriptor>()
+	}
+
+	private class RecordingPass : RenderPass {
+		override fun close() = Unit
 		override fun pushDebugGroup(label: Supplier<String>) = Unit
 		override fun popDebugGroup() = Unit
-		override fun setPipeline(pipeline: RenderPipeline) = Unit
-		override fun bindTexture(name: String, textureView: GpuTextureView?, sampler: GpuSampler?) = Unit
+		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
+		override fun setPipeline(pipeline: CompiledRenderPipeline) = Unit
+		override fun setUniform(name: String, textureView: GpuTextureView?, sampler: GpuSampler?) = Unit
 		override fun setUniform(name: String, value: GpuBuffer) = Unit
 		override fun setUniform(name: String, value: GpuBufferSlice) = Unit
+		override fun pushConstants(data: ByteBuffer) = Unit
 		override fun enableScissor(x: Int, y: Int, width: Int, height: Int) = Unit
 		override fun disableScissor() = Unit
 		override fun setVertexBuffer(slot: Int, vertexBuffer: GpuBufferSlice?) = Unit
@@ -276,46 +259,6 @@ class MotionVectorCameraOnlyRetirementTest {
 		override fun multiDraw(drawParameters: IntBuffer, instanceCount: Int, firstInstance: Int, drawCount: Int) = Unit
 		override fun multiDraw(firstVertices: IntBuffer, vertexCounts: IntBuffer, drawCount: Int) = Unit
 		override fun drawIndirect(commands: GpuBufferSlice, drawCount: Int) = Unit
-		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
-	}
-
-	private class RecordingGpuDeviceBackend : GpuDeviceBackend {
-		private val info = DeviceInfo(
-			"fake",
-			"fake",
-			"fake",
-			true,
-			"fake",
-			1f,
-			DeviceLimits(16, 4, 65536, 1L shl 30, 1, 8),
-			DeviceFeatures(true, false, false, false, false, true, false),
-			emptySet(),
-			HintsAndWorkarounds(false, false),
-			DeviceType.OTHER,
-		)
-
-		override fun createSurface(windowHandle: Long): GpuSurfaceBackend = throw UnsupportedOperationException("test backend never creates surfaces")
-		override fun createCommandEncoder(): CommandEncoderBackend = throw UnsupportedOperationException("test backend never creates encoders")
-		override fun createSampler(addressModeU: AddressMode, addressModeV: AddressMode, minFilter: FilterMode, magFilter: FilterMode, maxAnisotropy: Int, maxLod: OptionalDouble): GpuSampler =
-			throw UnsupportedOperationException("test backend never creates samplers")
-		override fun createTexture(label: Supplier<String>?, usage: Int, format: GpuFormat, width: Int, height: Int, depthOrLayers: Int, mipLevels: Int): GpuTexture =
-			throw UnsupportedOperationException("test backend never creates textures")
-		override fun createTexture(label: String?, usage: Int, format: GpuFormat, width: Int, height: Int, depthOrLayers: Int, mipLevels: Int): GpuTexture =
-			throw UnsupportedOperationException("test backend never creates textures")
-		override fun createTextureView(texture: GpuTexture): GpuTextureView = throw UnsupportedOperationException("test backend never creates texture views")
-		override fun createTextureView(texture: GpuTexture, baseMipLevel: Int, mipLevels: Int): GpuTextureView =
-			throw UnsupportedOperationException("test backend never creates texture views")
-		override fun createBuffer(label: Supplier<String>?, usage: Int, size: Long): GpuBuffer = throw UnsupportedOperationException("test backend never allocates buffers")
-		override fun createBuffer(label: Supplier<String>?, usage: Int, data: ByteBuffer): GpuBuffer = throw UnsupportedOperationException("test backend never allocates buffers")
-		override fun getLastDebugMessages(): List<String> = emptyList()
-		override fun isDebuggingEnabled(): Boolean = false
-		override fun precompilePipeline(pipeline: RenderPipeline, shaderSource: ShaderSource?): CompiledRenderPipeline =
-			throw UnsupportedOperationException("test backend never compiles pipelines")
-		override fun clearPipelineCache() = Unit
-		override fun close() = Unit
-		override fun createTimestampQueryPool(size: Int): GpuQueryPool = throw UnsupportedOperationException("test backend never creates query pools")
-		override fun getTimestampNow(): Long = 0L
-		override fun getDeviceInfo(): DeviceInfo = info
 	}
 
 	private companion object {

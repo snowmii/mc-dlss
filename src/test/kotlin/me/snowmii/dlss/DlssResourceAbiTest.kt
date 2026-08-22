@@ -3,7 +3,7 @@ package me.snowmii.dlss
 import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.vklib.api.ImageBinding
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.Vec2

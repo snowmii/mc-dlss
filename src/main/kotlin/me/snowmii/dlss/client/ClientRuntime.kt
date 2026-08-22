@@ -10,7 +10,8 @@ import me.snowmii.dlss.DlssNativeStage
 import me.snowmii.dlss.render.ui.UiPhase
 import me.snowmii.dlss.ModEntry
 import net.minecraft.client.Minecraft
-import org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window
+import org.lwjgl.sdl.SDLProperties
+import org.lwjgl.sdl.SDLVideo
 import org.lwjgl.system.Platform
 import org.slf4j.LoggerFactory
 
@@ -140,8 +141,14 @@ object ClientRuntime : RenderLoopView, ActiveView {
 			val native = sessionOpener() ?: return null
 			this.nativeBridge = native
 			if (Platform.get() == Platform.WINDOWS) {
-				val hwnd = glfwGetWin32Window(Minecraft.getInstance().window.handle())
-				if (native.installPclWindow(hwnd) != StreamlineSession.SUCCESS_RESULT) {
+				val window = Minecraft.getInstance().window.handle()
+				val props = SDLVideo.SDL_GetWindowProperties(window)
+				val hwnd = SDLProperties.SDL_GetPointerProperty(
+					props,
+					SDLVideo.SDL_PROP_WINDOW_WIN32_HWND_POINTER,
+					0L,
+				)
+				if (hwnd != 0L && native.installPclWindow(hwnd) != StreamlineSession.SUCCESS_RESULT) {
 					LOGGER.warn("PCL latency-stat window hook failed; NVIDIA latency overlay will be unavailable")
 				}
 			}
@@ -153,6 +160,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 			runtimeControls = RuntimeControls(runtime, diagnostics).also { controls ->
 				if (!ModConfig.user.enabled) controls.setEnabled(false)
 				if (ModConfig.user.frameGeneration) controls.setFrameGenerationEnabled(true)
+				if (ModConfig.user.rayReconstruction) controls.setRayReconstructionEnabled(true)
 			}
 			WorldPhase.forMinecraft(runtime, readout)
 		} catch (error: Throwable) {

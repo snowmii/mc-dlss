@@ -1,19 +1,19 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuBufferSlice
+import com.mojang.renderpearl.api.buffers.GpuBuffer
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice
 import com.mojang.blaze3d.buffers.Std140Builder
 import com.mojang.blaze3d.buffers.Std140SizeCalculator
-import com.mojang.blaze3d.pipeline.BindGroupLayout
-import com.mojang.blaze3d.pipeline.RenderPipeline
-import com.mojang.blaze3d.shaders.UniformType
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.GpuDevice
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.systems.RenderPassDescriptor
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.pipeline.UniformType
+import com.mojang.renderpearl.api.commands.CommandEncoder
+import com.mojang.renderpearl.api.device.GpuDevice
+import com.mojang.renderpearl.api.commands.RenderPass
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.renderpearl.api.textures.GpuTexture
+import com.mojang.renderpearl.api.textures.GpuTextureView
 import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitterOffset
@@ -407,14 +407,14 @@ object CloudVelocityRender {
 
 		var pass: RenderPass? = null
 		try {
-			val descriptor = RenderPassDescriptor.create(label)
+			val descriptor = RenderPassDescriptor.builder(label)
 				.withColorAttachment(colorTexture, clearColor)
 				.withColorAttachment(velocity, Optional.empty())
 			if (testDepth != null) {
 				descriptor.withDepthAttachment(testDepth, if (occludeAgainstScene) OptionalDouble.empty() else clearDepth)
 			}
 			descriptor.withRenderArea(RenderPass.RenderArea(0, 0, colorTexture.getWidth(0), colorTexture.getHeight(0)))
-			pass = encoder.createRenderPass(descriptor)
+			pass = encoder.createRenderPass(descriptor.build())
 			// The payload binding was pre-allocated by prepare and starts at offset zero, so this
 			// bind passes the alignment validation; a failure here is still inside the guarded
 			// region, which recovers by closing the partial pass and falling back to vanilla.
@@ -453,7 +453,7 @@ object CloudVelocityRender {
 		if (CLOUD_VELOCITY_PASS.get() === pass) {
 			val twin = twinFor(pipeline)
 			if (twin != null) {
-				pass.setPipeline(twin)
+				pass.setPipeline(RenderSystem.getCompiledPipeline(twin))
 			} else {
 				// Unreachable in the mapped render call, which binds exactly the two
 				// preflighted statics. A pipeline the preflight never covered cannot take the
@@ -463,11 +463,33 @@ object CloudVelocityRender {
 					"Cloud velocity pass bound unexpected pipeline {}; the source pipeline binds and the attachment mismatch fails loudly",
 					pipeline.location,
 				)
-				pass.setPipeline(pipeline)
+				pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline))
 			}
 		} else {
-			pass.setPipeline(pipeline)
+			pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline))
 		}
+	}
+
+	/**
+	 * Resolves the compiled pipeline for cloud drawing. When a velocity-latched pass is active,
+	 * returns the writer twin; otherwise compiles the source pipeline.
+	 */
+	@JvmStatic
+	fun resolveCloudCompiledPipeline(
+		pipeline: RenderPipeline,
+		compile: (RenderPipeline) -> com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline,
+	): com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline {
+		if (CLOUD_VELOCITY_PASS.get() != null) {
+			val twin = twinFor(pipeline)
+			if (twin != null) {
+				return compile(twin)
+			}
+			LOGGER.error(
+				"Cloud velocity pass bound unexpected pipeline {}; compiling the source pipeline",
+				pipeline.location,
+			)
+		}
+		return compile(pipeline)
 	}
 
 	/**
@@ -583,15 +605,16 @@ object CloudVelocityRender {
 	 * guaranteed cache hit on a valid pipeline.
 	 */
 	private fun preflightTwins() {
-		val device = deviceProvider()
 		val twins = HashMap<RenderPipeline, RenderPipeline>()
 		for (source in CLOUD_PIPELINES) {
 			val twin = writerTwin(source, VelocityWriter.CLOUD)
-			val compiled = device.precompilePipeline(twin)
-			check(compiled.isValid) { "cloud twin ${twin.location} failed to compile" }
+			val compiled = RenderSystem.getCompiledPipelineNullable(twin)
+			check(compiled != null && !compiled.isClosed) { "cloud twin ${twin.location} failed to compile" }
 			val occlude = cloudSceneDepthTwin(source)
-			val occludeCompiled = device.precompilePipeline(occlude)
-			check(occludeCompiled.isValid) { "cloud scene-depth twin ${occlude.location} failed to compile" }
+			val occludeCompiled = RenderSystem.getCompiledPipelineNullable(occlude)
+			check(occludeCompiled != null && !occludeCompiled.isClosed) {
+				"cloud scene-depth twin ${occlude.location} failed to compile"
+			}
 			twins[source] = twin
 		}
 		preflightedTwins.clear()

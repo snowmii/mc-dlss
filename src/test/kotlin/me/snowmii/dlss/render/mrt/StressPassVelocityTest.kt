@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.systems.RenderPassDescriptor
+import com.mojang.renderpearl.api.GpuFormat
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor
 import me.snowmii.dlss.render.mrt.VelocityContext
 import java.util.Optional
 import org.lwjgl.system.MemoryUtil
@@ -45,8 +45,9 @@ class StressPassVelocityTest {
 		assertEquals(GpuFormat.RGBA8_UNORM, pipeline.colorTargetStates[0]!!.format())
 		assertSame(pipeline, StressPass.pipelineForVelocityRoute(null), "the one-target pipeline is never rebuilt or mutated")
 
-		val descriptor = RenderPassDescriptor.create { "DLSS stress" }
+		val descriptor = RenderPassDescriptor.builder { "DLSS stress" }
 			.withColorAttachment(FakeView(FakeTexture(GpuFormat.RGBA8_UNORM)))
+			.build()
 		assertEquals(1, descriptor.colorAttachments().size)
 		assertEquals(1, pipeline.colorTargetStates.size)
 	}
@@ -89,10 +90,11 @@ class StressPassVelocityTest {
 		val scene = FakeView(FakeTexture(GpuFormat.RGBA8_UNORM))
 		val velocity = FakeView(FakeTexture(GpuFormat.RG16_FLOAT))
 
-		val oneTarget = RenderPassDescriptor.create { "DLSS stress" }.withColorAttachment(scene)
-		val twoTarget = RenderPassDescriptor.create { "DLSS stress velocity" }
+		val oneTarget = RenderPassDescriptor.builder { "DLSS stress" }.withColorAttachment(scene).build()
+		val twoTarget = RenderPassDescriptor.builder { "DLSS stress velocity" }
 			.withColorAttachment(scene)
 			.withColorAttachment(velocity, Optional.empty())
+			.build()
 
 		val vanillaPipeline = StressPass.pipelineForVelocityRoute(null)
 		val twin = StressPass.pipelineForVelocityRoute(VelocityContext(velocity, Matrix4f(), reset = false))

@@ -13,6 +13,7 @@ import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
+import me.snowmii.streamline.RrPrepareRequest
 import me.snowmii.dlss.DlssNativeFailure
 import me.snowmii.dlss.DlssNativeStage
 import me.snowmii.dlss.DlssSession
@@ -269,6 +270,15 @@ class LifecycleAdapter(
 
 		return invokeStatus(DlssNativeStage.TAG) {
 			native.tagSrResources(request)
+		}
+	}
+
+	fun prepareRayReconstruction(request: RrPrepareRequest): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return invokeStatus(DlssNativeStage.CONFIGURE) {
+			native.prepareRayReconstruction(request)
 		}
 	}
 

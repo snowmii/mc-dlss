@@ -4,6 +4,8 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 
+import me.snowmii.vklib.api.VulkanContext;
+
 /** Java entry point for Streamline configuration, requirements, and sessions. */
 public final class Streamline {
 	private Streamline() {}
