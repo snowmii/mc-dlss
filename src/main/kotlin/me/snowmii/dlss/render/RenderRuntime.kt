@@ -11,7 +11,6 @@ import me.snowmii.dlss.SRModelPreset
 import me.snowmii.dlss.DlssSession
 import me.snowmii.dlss.DlssSessionState
 import me.snowmii.dlss.DlssStartupConfig
-import me.snowmii.dlss.client.ModConfig
 import me.snowmii.dlss.render.mrt.MotionVectorCompatibility
 import me.snowmii.dlss.render.mrt.MotionVectorPipeline
 import me.snowmii.dlss.render.mrt.MotionVectorRoute
@@ -21,6 +20,7 @@ import org.joml.Matrix4f
 import java.util.IdentityHashMap
 import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.dlss.streamline.SessionBridge
+import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.screens.LoadingOverlay
 import com.mojang.blaze3d.pipeline.RenderTarget
@@ -710,8 +710,7 @@ class RenderRuntime(
 		/**
 		 * Production wiring: Streamline-backed startup against the captured Minecraft Vulkan
 		 * context and a Minecraft-allocated scene target. Returns null when no Vulkan context has
-		 * been captured yet or the configuration supplies no SDK/data path, because
-		 * [LifecycleAdapter.initialize] cannot run without either.
+		 * been captured yet.
 		 */
 		fun forMinecraft(
 			session: DlssSession,
@@ -781,25 +780,17 @@ class RenderRuntime(
 			// thread where the controls toggle it; the reconfigure happens between frames.
 			frameGeneration = frameGeneration, startup = {
 				val context = VulkanContextRegistry.getCurrent()
-				val sdkPath = session.config.sdkPath
-				val dataPath = session.config.dataPath
-				if (context == null || sdkPath == null || dataPath == null) {
-					// Each of these silently disables DLSS for the whole session, so name the one
-					// that is actually missing rather than leaving a vanilla-looking frame.
-					diagnostics(
-						"DLSS startup skipped:" +
-							" vulkan-context=${if (context == null) "missing" else "captured"}" +
-							" ${ModConfig.SDK_PATH_PROPERTY}=${sdkPath ?: "unset"}" +
-							" ${ModConfig.DATA_PATH_PROPERTY}=${dataPath ?: "unset"}",
-					)
+				if (context == null) {
+					diagnostics("DLSS startup skipped: vulkan-context=missing")
 					null
 				} else {
+					val gameDir = FabricLoader.getInstance().gameDir
 					adapter.initialize(
 						vkInstance = context.instanceHandle,
 						vkPhysicalDevice = context.physicalDeviceHandle,
 						vkDevice = context.deviceHandle,
-						sdkPath = sdkPath,
-						dataPath = dataPath,
+						sdkPath = session.config.sdkPath ?: gameDir,
+						dataPath = session.config.dataPath ?: gameDir,
 					)
 				}
 			})
