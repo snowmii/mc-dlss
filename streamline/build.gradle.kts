@@ -45,6 +45,7 @@ dependencies {
 	testFixturesImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
 	testFixturesImplementation("it.unimi.dsi:fastutil:$fastutilVersion")
 	testFixturesImplementation("org.lwjgl:lwjgl-vulkan:$lwjglVersion")
+	testFixturesImplementation("me.snowmii:vk-lib-api:${providers.gradleProperty("mod_version").get()}")
 }
 
 val streamlineSdkVersion = providers.gradleProperty("streamline_sdk_version").get()

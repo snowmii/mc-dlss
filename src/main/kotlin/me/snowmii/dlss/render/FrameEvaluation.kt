@@ -213,13 +213,12 @@ class FrameEvaluation(
 		val rr = if (RayReconstruction.enabled) RayReconstruction.guides?.get() else null
 		val color = rr?.noisyColor ?: scene.color
 		if (rr != null && camera != null) {
-			val worldToView = FloatArray(16)
-			val viewToWorld = FloatArray(16)
-			Matrix4f(camera.viewRotation).get(worldToView)
-			Matrix4f(camera.viewRotation).invert().get(viewToWorld)
+			val worldToView = CameraConstants.rowMajorOf(camera.viewRotation)
+			val viewToWorld = CameraConstants.rowMajorOf(Matrix4f(camera.viewRotation).invert())
 			if (!adapter.prepareRayReconstruction(
 					RrPrepareRequest(
 						enabled = true,
+						rrPreset = RayReconstruction.modelPreset.sdkValue,
 						diffuseAlbedo = rr.diffuseAlbedo,
 						specularAlbedo = rr.specularAlbedo,
 						normalRoughness = rr.normalRoughness,

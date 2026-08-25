@@ -1,5 +1,6 @@
 package me.snowmii.dlss.api
 
+import me.snowmii.dlss.RRModelPreset
 import me.snowmii.vklib.api.ImageBinding
 import java.util.function.Supplier
 
@@ -13,6 +14,11 @@ object RayReconstruction {
 	@JvmField
 	@Volatile
 	var enabled: Boolean = false
+
+	/** RR model preset applied on the next armed prepare. */
+	@JvmField
+	@Volatile
+	var modelPreset: RRModelPreset = RRModelPreset.DEFAULT
 
 	@JvmField
 	@Volatile

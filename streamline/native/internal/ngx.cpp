@@ -24,10 +24,24 @@ bool valid_quality_mode(const uint32_t qualityMode) noexcept {
 
 bool valid_render_preset(const uint32_t renderPreset) noexcept {
     switch (static_cast<NVSDK_NGX_DLSS_Hint_Render_Preset>(renderPreset)) {
+        case NVSDK_NGX_DLSS_Hint_Render_Preset_Default:
         case NVSDK_NGX_DLSS_Hint_Render_Preset_J:
         case NVSDK_NGX_DLSS_Hint_Render_Preset_K:
         case NVSDK_NGX_DLSS_Hint_Render_Preset_L:
         case NVSDK_NGX_DLSS_Hint_Render_Preset_M:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool valid_rr_preset(const uint32_t rrPreset) noexcept {
+    // sl::DLSSDPreset: eDefault=0, D=4, E=5, F=6 (see sl_dlss_d.h).
+    switch (rrPreset) {
+        case 0:
+        case 4:
+        case 5:
+        case 6:
             return true;
         default:
             return false;

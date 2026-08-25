@@ -63,6 +63,9 @@ object ModEntry : ClientModInitializer {
 			binding(category, "ray_reconstruction", InputConstants.KEY_F5) {
 				ClientRuntime.active().activeControls()?.toggleRayReconstruction()
 			},
+			binding(category, "rr_preset", InputConstants.KEY_F4) {
+				ClientRuntime.active().activeControls()?.cycleRrPreset()
+			},
 		)
 		ClientTickEvents.END_CLIENT_TICK.register { client ->
 			val debugModifierDown = client.options.keyDebugModifier.isDown

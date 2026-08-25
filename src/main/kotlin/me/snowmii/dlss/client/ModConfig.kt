@@ -1,6 +1,7 @@
 package me.snowmii.dlss.client
 
 import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import me.snowmii.streamline.Dimensions
@@ -58,7 +59,7 @@ data class DiagnosticsConfig(
 class ModConfig(
 	val enabled: Boolean,
 	val qualityMode: SRMode,
-	/** Preset this session runs; [SRModelPreset.M] unless one was asked for. Independent of [qualityMode]. */
+	/** Preset this session runs; [SRModelPreset.DEFAULT] follows NVIDIA App unless locked. */
 	val renderPreset: SRModelPreset,
 	val outputDimensions: Dimensions,
 	/** Whether either output knob was named, which pins the session to [outputDimensions]. */
@@ -94,6 +95,7 @@ class ModConfig(
 		const val ENABLED_PROPERTY = "mc.dlss.enabled"
 		const val MODE_PROPERTY = "mc.dlss.mode"
 		const val PRESET_PROPERTY = "mc.dlss.preset"
+		const val RR_PRESET_PROPERTY = "mc.dlss.rr-preset"
 		const val OUTPUT_WIDTH_PROPERTY = "mc.dlss.output-width"
 		const val OUTPUT_HEIGHT_PROPERTY = "mc.dlss.output-height"
 		const val SDK_PATH_PROPERTY = "mc.dlss.sdk-path"
@@ -171,8 +173,7 @@ class ModConfig(
 		}
 
 		/**
-		 * Reads the preset override. Unset, "default", or unreadable values fall back to [SRModelPreset.M],
-		 * independently of the quality mode.
+		 * Reads the SR preset. Unset or "default" follows NVIDIA App / OTA ([SRModelPreset.DEFAULT]).
 		 */
 		private fun readPreset(
 			properties: Properties,
@@ -180,11 +181,11 @@ class ModConfig(
 		): SRModelPreset {
 			val value = properties.getProperty(PRESET_PROPERTY)?.trim()?.lowercase(Locale.ROOT)
 			if (value.isNullOrEmpty() || value == "default") {
-				return SRModelPreset.M
+				return SRModelPreset.DEFAULT
 			}
 			return parsePreset(value) ?: run {
-				warnings += "$PRESET_PROPERTY=$value is invalid; using ${SRModelPreset.M.propertyValue}"
-				SRModelPreset.M
+				warnings += "$PRESET_PROPERTY=$value is invalid; using ${SRModelPreset.DEFAULT.propertyValue}"
+				SRModelPreset.DEFAULT
 			}
 		}
 
@@ -254,9 +255,10 @@ class ModConfig(
 class UserSettings internal constructor(private val file: Path?) {
 	private var _enabled = true
 	private var _qualityMode = SRMode.QUALITY
-	private var _renderPreset = SRModelPreset.M
+	private var _renderPreset = SRModelPreset.DEFAULT
 	private var _frameGeneration = false
 	private var _rayReconstruction = false
+	private var _rrModelPreset = RRModelPreset.DEFAULT
 	private var _debugLog = false
 
 	var enabled: Boolean
@@ -294,6 +296,13 @@ class UserSettings internal constructor(private val file: Path?) {
 			save()
 		}
 
+	var rrModelPreset: RRModelPreset
+		get() = _rrModelPreset
+		set(value) {
+			_rrModelPreset = value
+			save()
+		}
+
 	var debugLog: Boolean
 		get() = _debugLog
 		set(value) {
@@ -311,6 +320,7 @@ class UserSettings internal constructor(private val file: Path?) {
 		merged.putAll(overrides)
 		merged.putIfAbsent(ModConfig.MODE_PROPERTY, qualityMode.propertyValue)
 		merged.putIfAbsent(ModConfig.PRESET_PROPERTY, renderPreset.propertyValue)
+		merged.putIfAbsent(ModConfig.RR_PRESET_PROPERTY, rrModelPreset.propertyValue)
 		return merged
 	}
 
@@ -322,9 +332,10 @@ class UserSettings internal constructor(private val file: Path?) {
 			val fields = readUserSettingsJson(Files.readString(file, StandardCharsets.UTF_8))
 			_enabled = jsonBoolean(fields["enabled"]) != false
 			_qualityMode = fields["qualityMode"]?.let(::parseMode) ?: SRMode.QUALITY
-			_renderPreset = fields["renderPreset"]?.let(::parsePreset) ?: SRModelPreset.M
+			_renderPreset = fields["renderPreset"]?.let(::parsePreset) ?: SRModelPreset.DEFAULT
 			_frameGeneration = jsonBoolean(fields["frameGeneration"]) == true
 			_rayReconstruction = jsonBoolean(fields["rayReconstruction"]) == true
+			_rrModelPreset = fields["rrModelPreset"]?.let(::parseRrPreset) ?: RRModelPreset.DEFAULT
 			_debugLog = jsonBoolean(fields["debugLog"]) == true
 		} catch (_: IOException) {
 			// Keep safe defaults when an older or manually edited file is invalid.
@@ -348,6 +359,7 @@ class UserSettings internal constructor(private val file: Path?) {
 					renderPreset = _renderPreset.propertyValue,
 					frameGeneration = _frameGeneration,
 					rayReconstruction = _rayReconstruction,
+					rrModelPreset = _rrModelPreset.propertyValue,
 					debugLog = _debugLog,
 				),
 				StandardCharsets.UTF_8,
@@ -377,9 +389,17 @@ private fun parseMode(value: String): SRMode? =
 private fun parsePreset(value: String): SRModelPreset? {
 	val trimmed = value.trim().lowercase(Locale.ROOT)
 	if (trimmed.isEmpty() || trimmed == "default") {
-		return SRModelPreset.M
+		return SRModelPreset.DEFAULT
 	}
 	return SRModelPreset.fromPropertyValue(trimmed)
+}
+
+private fun parseRrPreset(value: String): RRModelPreset? {
+	val trimmed = value.trim().lowercase(Locale.ROOT)
+	if (trimmed.isEmpty() || trimmed == "default") {
+		return RRModelPreset.DEFAULT
+	}
+	return RRModelPreset.fromPropertyValue(trimmed)
 }
 
 private fun jsonBoolean(value: String?): Boolean? =
@@ -398,6 +418,7 @@ private fun writeUserSettingsJson(
 	renderPreset: String,
 	frameGeneration: Boolean,
 	rayReconstruction: Boolean,
+	rrModelPreset: String,
 	debugLog: Boolean,
 ): String = buildString {
 	append("{\n")
@@ -406,6 +427,7 @@ private fun writeUserSettingsJson(
 	append("  \"renderPreset\": \"").append(renderPreset).append("\",\n")
 	append("  \"frameGeneration\": ").append(frameGeneration).append(",\n")
 	append("  \"rayReconstruction\": ").append(rayReconstruction).append(",\n")
+	append("  \"rrModelPreset\": \"").append(rrModelPreset).append("\",\n")
 	append("  \"debugLog\": ").append(debugLog).append('\n')
 	append("}\n")
 }

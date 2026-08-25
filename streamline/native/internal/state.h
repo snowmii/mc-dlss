@@ -285,6 +285,8 @@ struct DlssState {
     uint32_t renderHeight = 0;
     uint32_t qualityMode = 0;
     uint32_t renderPreset = 0;
+    /** Armed RR model (`sl::DLSSDPreset`); 0 = NVIDIA App / OTA, else D/E/F. */
+    uint32_t rrPreset = 0;
     // The DLSS-G options record every later record re-records from; make_fg_options reads it.
     FgOptionsRecord fgOptions;
     // The Reflex options registration the READY transition records: one slReflexSetOptions

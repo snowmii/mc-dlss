@@ -1,5 +1,6 @@
 package me.snowmii.dlss.client
 
+import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import net.minecraft.client.gui.components.Button
@@ -15,10 +16,11 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 	private lateinit var fgButton: Button
 	private lateinit var multiplierButton: Button
 	private lateinit var rrButton: Button
+	private lateinit var rrPresetButton: Button
 
 	override fun init() {
 		val x = (width - BUTTON_WIDTH) / 2
-		val y = height / 2 - 82
+		val y = height / 2 - 94
 		val title = StringWidget(title, font)
 		title.setPosition((width - title.width) / 2, y - 28)
 		addRenderableWidget(title)
@@ -29,12 +31,13 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		fgButton = optionButton(x, y + 72, ::toggleFrameGeneration)
 		multiplierButton = optionButton(x, y + 96) { controls()?.cycleFgMultiplier() }
 		rrButton = optionButton(x, y + 120, ::toggleRayReconstruction)
+		rrPresetButton = optionButton(x, y + 144, ::cycleRrPreset)
 		if (controls() == null) {
 			val restart = StringWidget(Component.translatable("mc-dlss.options.restart_required"), font)
-			restart.setPosition((width - restart.width) / 2, y + 140)
+			restart.setPosition((width - restart.width) / 2, y + 164)
 			addRenderableWidget(restart)
 		}
-		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE) { onClose() }.bounds(x, y + 154, BUTTON_WIDTH, 20).build())
+		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE) { onClose() }.bounds(x, y + 178, BUTTON_WIDTH, 20).build())
 		refreshLabels()
 	}
 
@@ -87,6 +90,16 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		}
 	}
 
+	private fun cycleRrPreset() {
+		val controls = controls()
+		if (controls != null) {
+			controls.cycleRrPreset()
+		} else {
+			val presets = RRModelPreset.entries
+			user.rrModelPreset = presets[(presets.indexOf(user.rrModelPreset) + 1) % presets.size]
+		}
+	}
+
 	private fun refreshLabels() {
 		val controls = controls()
 		enabledButton.message = label("mc-dlss.options.enabled", controls?.enabled ?: user.enabled)
@@ -101,6 +114,10 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		rrButton.message = label(
 			"mc-dlss.options.ray_reconstruction",
 			controls?.rayReconstructionEnabled ?: user.rayReconstruction,
+		)
+		rrPresetButton.message = valueLabel(
+			"mc-dlss.options.rr_preset",
+			(controls?.rrModelPreset ?: user.rrModelPreset).propertyValue,
 		)
 	}
 

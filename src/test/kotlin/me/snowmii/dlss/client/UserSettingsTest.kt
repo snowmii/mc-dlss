@@ -1,5 +1,6 @@
 package me.snowmii.dlss.client
 
+import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -18,6 +19,7 @@ class UserSettingsTest {
 		assertNull(userSettings.getProperty(ModConfig.ENABLED_PROPERTY))
 		assertEquals(ModConfig.user.qualityMode.propertyValue, userSettings.getProperty(ModConfig.MODE_PROPERTY))
 		assertEquals(ModConfig.user.renderPreset.propertyValue, userSettings.getProperty(ModConfig.PRESET_PROPERTY))
+		assertEquals(ModConfig.user.rrModelPreset.propertyValue, userSettings.getProperty(ModConfig.RR_PRESET_PROPERTY))
 
 		val launchOverride = Properties().apply { setProperty(ModConfig.ENABLED_PROPERTY, "false") }
 		assertEquals(
@@ -33,16 +35,19 @@ class UserSettingsTest {
 			written.enabled = false
 			written.qualityMode = SRMode.DLAA
 			written.renderPreset = SRModelPreset.K
+			written.rrModelPreset = RRModelPreset.E
 			written.frameGeneration = true
 
 			val text = Files.readString(file)
 			assertTrue("\"enabled\": false" in text)
 			assertTrue("\"qualityMode\": \"dlaa\"" in text)
+			assertTrue("\"rrModelPreset\": \"e\"" in text)
 
 			val read = UserSettings(file)
 			assertFalse(read.enabled)
 			assertEquals(SRMode.DLAA, read.qualityMode)
 			assertEquals(SRModelPreset.K, read.renderPreset)
+			assertEquals(RRModelPreset.E, read.rrModelPreset)
 			assertTrue(read.frameGeneration)
 		}
 	}
@@ -63,17 +68,19 @@ class UserSettingsTest {
 			assertFalse(read.enabled)
 			assertEquals(SRMode.PERFORMANCE, read.qualityMode)
 			assertEquals(SRModelPreset.L, read.renderPreset)
+			assertEquals(RRModelPreset.DEFAULT, read.rrModelPreset)
 			assertTrue(read.frameGeneration)
 		}
 	}
 
 	@Test
-	fun `invalid json keeps defaults`() {
+	fun `invalid json keeps defaults that follow NVIDIA App`() {
 		withSettingsFile("not json") { file ->
 			val read = UserSettings(file)
 			assertTrue(read.enabled)
 			assertEquals(SRMode.QUALITY, read.qualityMode)
-			assertEquals(SRModelPreset.M, read.renderPreset)
+			assertEquals(SRModelPreset.DEFAULT, read.renderPreset)
+			assertEquals(RRModelPreset.DEFAULT, read.rrModelPreset)
 			assertFalse(read.frameGeneration)
 		}
 	}

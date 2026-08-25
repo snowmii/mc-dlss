@@ -1,6 +1,7 @@
 package me.snowmii.dlss.session
 import me.snowmii.dlss.DlssSession
 import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import me.snowmii.dlss.streamline.LifecycleAdapter
@@ -23,9 +24,8 @@ import java.nio.file.Path
 import java.util.Properties
 
 /**
- * Ultra Performance and DLAA are selectable, and every session runs a preset it named. NGX
- * selects a preset for every mode, so native configuration and readout record the chosen
- * preset rather than a DLL default.
+ * Ultra Performance and DLAA are selectable. Unset SR/RR presets follow NVIDIA App / OTA;
+ * naming K/L/M or D/E/F locks the model.
  */
 class QualityModePresetTest {
 	private val output = Dimensions(2560, 1440)
@@ -61,15 +61,15 @@ class QualityModePresetTest {
 	}
 
 	@Test
-	fun `unset or unreadable preset falls back to M for every mode`() {
+	fun `unset or default preset follows NVIDIA App for every mode`() {
 		SRMode.entries.forEach { mode ->
 			val config = configFrom(ModConfig.MODE_PROPERTY to mode.propertyValue)
-			assertEquals(SRModelPreset.M, config.renderPreset, "${mode.propertyValue} fallback preset")
+			assertEquals(SRModelPreset.DEFAULT, config.renderPreset, "${mode.propertyValue} fallback preset")
 		}
 	}
 
 	@Test
-	fun `preset property overrides the fallback and degrades to M when unreadable`() {
+	fun `preset property locks K L or M and degrades to default when unreadable`() {
 		val overridden = configFrom(
 			ModConfig.MODE_PROPERTY to "performance",
 			ModConfig.PRESET_PROPERTY to "k",
@@ -77,23 +77,55 @@ class QualityModePresetTest {
 		assertEquals(SRModelPreset.K, overridden.renderPreset)
 		assertTrue(overridden.warnings.isEmpty())
 
+		assertEquals(
+			SRModelPreset.L,
+			configFrom(ModConfig.PRESET_PROPERTY to "l").renderPreset,
+		)
+		assertEquals(
+			SRModelPreset.M,
+			configFrom(ModConfig.PRESET_PROPERTY to "m").renderPreset,
+		)
+
 		val explicitDefault = configFrom(
 			ModConfig.MODE_PROPERTY to "quality",
 			ModConfig.PRESET_PROPERTY to "default",
 		)
-		assertEquals(SRModelPreset.M, explicitDefault.renderPreset)
+		assertEquals(SRModelPreset.DEFAULT, explicitDefault.renderPreset)
 
-		// Preset E is deprecated and A through D are not in the SDK, so naming one is refused
-		// rather than forwarded.
+		// Preset E is deprecated and A through D are not in the SR SDK, so naming one is refused.
 		val invalid = configFrom(
 			ModConfig.MODE_PROPERTY to "ultra-performance",
 			ModConfig.PRESET_PROPERTY to "e",
 		)
-		assertEquals(SRModelPreset.M, invalid.renderPreset, "degrades to M")
+		assertEquals(SRModelPreset.DEFAULT, invalid.renderPreset, "degrades to default")
 		assertTrue(
 			invalid.warnings.any { it.contains(ModConfig.PRESET_PROPERTY) && it.contains("e") },
 			"invalid preset must warn: ${invalid.warnings}",
 		)
+	}
+
+	@Test
+	fun `SR offers default plus K L and M`() {
+		assertEquals(
+			listOf("default", "k", "l", "m"),
+			SRModelPreset.entries.map { it.propertyValue },
+		)
+		assertEquals(0, SRModelPreset.DEFAULT.sdkValue)
+		assertEquals(11, SRModelPreset.K.sdkValue)
+		assertEquals(12, SRModelPreset.L.sdkValue)
+		assertEquals(13, SRModelPreset.M.sdkValue)
+	}
+
+	@Test
+	fun `RR offers default plus D E and F`() {
+		assertEquals(
+			listOf("default", "d", "e", "f"),
+			RRModelPreset.entries.map { it.propertyValue },
+		)
+		assertEquals(0, RRModelPreset.DEFAULT.sdkValue)
+		assertEquals(4, RRModelPreset.D.sdkValue)
+		assertEquals(5, RRModelPreset.E.sdkValue)
+		assertEquals(6, RRModelPreset.F.sdkValue)
 	}
 
 	@Test

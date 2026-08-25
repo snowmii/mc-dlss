@@ -13,8 +13,8 @@ import java.nio.file.Path
 data class DlssStartupConfig(
 	val enabled: Boolean,
 	val qualityMode: SRMode,
-	/** Preset this session runs; [SRModelPreset.M] unless one was asked for. Independent of [qualityMode]. */
-	val renderPreset: SRModelPreset = SRModelPreset.M,
+	/** Preset this session runs; [SRModelPreset.DEFAULT] follows NVIDIA App / OTA unless locked. */
+	val renderPreset: SRModelPreset = SRModelPreset.DEFAULT,
 	/**
 	 * Output size the session starts against. It is the size in effect only until the first world
 	 * frame reports the client's real main target; see [DlssSession.outputDimensions]. A session
@@ -37,31 +37,62 @@ data class DlssStartupConfig(
  * The DLSS Super Resolution model a session runs, in the values
  * `NVSDK_NGX_DLSS_Hint_Render_Preset` gives them.
  *
- * NGX picks a preset for every mode whether or not one is asked for, and which one it picks moves
- * with the DLL and with driver-side overrides. A session that never names a preset therefore
- * cannot report which model produced its frames. The preset is always written, independently of
- * the quality mode, using [M] unless the user selects another.
+ * [DEFAULT] leaves the model to NGX / NVIDIA App / OTA (`eDefault`). Named presets lock the
+ * model so App overrides cannot change it.
  *
- * Only the presets SDK 310.7.0 documents as usable are here. A through D were removed from the
- * SDK, E and F are deprecated, and G through I and N and O revert to default behaviour, so none of
- * them is a choice this mod offers.
+ * Only the presets SDK 310.7.0 documents as usable are offered besides [DEFAULT]. A through D
+ * were removed from the SR SDK, E and F are deprecated, and G through I and N and O revert to
+ * default behaviour, so none of them is a choice this mod offers for SR.
  */
 enum class SRModelPreset(
 	val sdkValue: Int,
 	val propertyValue: String,
 ) {
+	/** NVIDIA App / OTA may select the model (`NVSDK_NGX_DLSS_Hint_Render_Preset_Default`). */
+	DEFAULT(0, "default"),
+
 	/** Transformer; NVIDIA's documented Quality/Balanced/DLAA model. Heavier temporal history. */
 	K(11, "k"),
 
 	/** Transformer; NVIDIA's documented Ultra Performance model. */
 	L(12, "l"),
 
-	/** Transformer; NVIDIA's documented Performance model, and this mod's fallback. */
+	/** Transformer; NVIDIA's documented Performance model. */
 	M(13, "m"),
 	;
 
 	companion object {
 		fun fromPropertyValue(value: String): SRModelPreset? =
+			entries.firstOrNull { it.propertyValue == value }
+	}
+}
+
+/**
+ * DLSS Ray Reconstruction model presets (`sl::DLSSDPreset`).
+ *
+ * [DEFAULT] leaves the model to NGX / NVIDIA App / OTA (`eDefault`). Named D/E/F lock the
+ * model. Public headers still label E “latest” and F “reverts to default”; DLSS 4.5 guidance
+ * treats F as the current RR transformer — keep all three for comparison.
+ */
+enum class RRModelPreset(
+	val sdkValue: Int,
+	val propertyValue: String,
+) {
+	/** NVIDIA App / OTA may select the RR model (`sl::DLSSDPreset::eDefault`). */
+	DEFAULT(0, "default"),
+
+	/** Default transformer model in public Streamline RR headers. */
+	D(4, "d"),
+
+	/** Prior “latest” transformer; required when a DoF guide is needed per public headers. */
+	E(5, "e"),
+
+	/** DLSS 4.5 RR model selection target. */
+	F(6, "f"),
+	;
+
+	companion object {
+		fun fromPropertyValue(value: String): RRModelPreset? =
 			entries.firstOrNull { it.propertyValue == value }
 	}
 }

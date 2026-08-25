@@ -127,11 +127,11 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	).withName("McDlssTagInfo");
 
 	/**
-	 * enabled (4) + pad (4) + four McDlssImage (24 each) + two float[16] (64 each).
+	 * enabled (4) + rr_preset (4) + four McDlssImage (24 each) + two float[16] (64 each).
 	 */
 	private static final StructLayout RR_PREPARE_LAYOUT = MemoryLayout.structLayout(
 		JAVA_INT.withName("enabled"),
-		MemoryLayout.paddingLayout(4),
+		JAVA_INT.withName("rr_preset"),
 		IMAGE_LAYOUT.withName("diffuse_albedo"),
 		IMAGE_LAYOUT.withName("specular_albedo"),
 		IMAGE_LAYOUT.withName("normal_roughness"),
@@ -233,6 +233,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private static final VarHandle TAG_DEPTH_FORMAT = field(TAG_LAYOUT, "depth", "format");
 
 	private static final VarHandle RR_ENABLED = field(RR_PREPARE_LAYOUT, "enabled");
+	private static final VarHandle RR_PRESET = field(RR_PREPARE_LAYOUT, "rr_preset");
 	private static final VarHandle RR_DIFFUSE_VIEW = field(RR_PREPARE_LAYOUT, "diffuse_albedo", "view");
 	private static final VarHandle RR_DIFFUSE_IMAGE = field(RR_PREPARE_LAYOUT, "diffuse_albedo", "image");
 	private static final VarHandle RR_DIFFUSE_FORMAT = field(RR_PREPARE_LAYOUT, "diffuse_albedo", "format");
@@ -1214,6 +1215,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			final MemorySegment info = this.rrPrepareScratch;
 			info.fill((byte) 0);
 			RR_ENABLED.set(info, 0L, request.getEnabled() ? 1 : 0);
+			RR_PRESET.set(info, 0L, request.getRrPreset());
 			writeImage(info, RR_DIFFUSE_VIEW, RR_DIFFUSE_IMAGE, RR_DIFFUSE_FORMAT, request.getDiffuseAlbedo());
 			writeImage(info, RR_SPECULAR_VIEW, RR_SPECULAR_IMAGE, RR_SPECULAR_FORMAT, request.getSpecularAlbedo());
 			writeImage(info, RR_NORMAL_VIEW, RR_NORMAL_IMAGE, RR_NORMAL_FORMAT, request.getNormalRoughness());

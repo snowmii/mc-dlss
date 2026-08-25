@@ -3,6 +3,7 @@ package me.snowmii.dlss.client
 import me.snowmii.dlss.api.RayReconstruction
 import me.snowmii.dlss.render.FgSurfacePolicy
 import me.snowmii.dlss.render.RenderRuntime
+import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import me.snowmii.dlss.readout.SessionReadout
@@ -74,6 +75,20 @@ class RuntimeControls(
 		emitStatus(readout())
 	}
 
+	/** Moves to the next RR model preset (default → D → E → F). */
+	fun cycleRrPreset() {
+		val presets = RRModelPreset.entries
+		val next = presets[(presets.indexOf(RayReconstruction.modelPreset) + 1) % presets.size]
+		setRrModelPreset(next)
+	}
+
+	fun setRrModelPreset(preset: RRModelPreset) {
+		RayReconstruction.modelPreset = preset
+		ModConfig.user.rrModelPreset = preset
+		SessionReadout.emit("DLSS RR model preset: ${preset.propertyValue}")
+		emitStatus(readout())
+	}
+
 	/**
 	 * Cycles the FG multiplier 2x, 3x, ... up through the device ceiling and back to 2x,
 	 * then reports the multiplier actually in effect.
@@ -132,6 +147,9 @@ class RuntimeControls(
 	val rayReconstructionEnabled: Boolean
 		get() = RayReconstruction.enabled
 
+	val rrModelPreset: RRModelPreset
+		get() = RayReconstruction.modelPreset
+
 	val frameGenerationMultiplier: Int
 		get() = runtime.fgMultiplier + 1
 
@@ -142,7 +160,11 @@ class RuntimeControls(
 			else -> runtime.sessionState.name.lowercase().replace('_', '-')
 		}
 		val internal = runtime.dlssRenderDimensions?.toString() ?: "not chosen yet"
-		val rr = if (RayReconstruction.enabled) "rr=on" else "rr=off"
+		val rr = if (RayReconstruction.enabled) {
+			"rr=on/${RayReconstruction.modelPreset.propertyValue}"
+		} else {
+			"rr=off"
+		}
 		return SessionReadout.statusLine(
 			state = state,
 			fg = frameGenerationStatus(),

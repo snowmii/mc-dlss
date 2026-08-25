@@ -234,9 +234,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
  * `quality_mode` is an NVSDK_NGX_PerfQuality_Value: MaxPerf, Balanced, MaxQuality,
  * UltraPerformance, or DLAA. UltraQuality is defined by NGX and not implemented by it, so it
  * is rejected here rather than passed through. The bridge maps the mode onto sl::DLSSMode and
- * writes `render_preset` (an NVSDK_NGX_DLSS_Hint_Render_Preset: J, K, L, or M) onto the
+ * writes `render_preset` (an NVSDK_NGX_DLSS_Hint_Render_Preset: Default, J, K, L, or M) onto the
  * preset field sl::DLSSOptions carries for that mode; every other preset field stays the SDK
- * default.
+ * default. Default (0) lets NVIDIA App / OTA select the model.
  *
  * These dimensions are the single source of truth for everything sized from them: the images
  * mc_dlss_acquire_images allocates, the tags mc_dlss_tag_sr_resources records, and the sizes
@@ -665,6 +665,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
  */
 typedef struct McDlssRrPrepareInfo {
     int32_t enabled;
+    /** sl::DLSSDPreset: 0 = NVIDIA App / OTA default; D=4, E=5, F=6 lock the RR model. */
+    uint32_t rr_preset;
     McDlssImage diffuse_albedo;
     McDlssImage specular_albedo;
     McDlssImage normal_roughness;

@@ -857,6 +857,14 @@ int32_t record_rr_options() noexcept {
     write_matrix(options.worldToCameraView, g_state.rrWorldToCameraView);
     write_matrix(options.cameraViewToWorld, g_state.rrCameraViewToWorld);
 
+    // Same model on every mode field so quality-mode switches keep the chosen RR preset.
+    const sl::DLSSDPreset preset = static_cast<sl::DLSSDPreset>(g_state.rrPreset);
+    options.dlaaPreset = preset;
+    options.qualityPreset = preset;
+    options.balancedPreset = preset;
+    options.performancePreset = preset;
+    options.ultraPerformancePreset = preset;
+
     const sl::Result result = slDLSSDSetOptions(sl::ViewportHandle{kSrViewportId}, options);
     return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
 }
@@ -874,10 +882,12 @@ int32_t prepare_rr(const McDlssRrPrepareInfo& info) noexcept {
         return record_sr_options();
     }
     if (!valid_image(info.diffuse_albedo) || !valid_image(info.specular_albedo) ||
-        !valid_image(info.normal_roughness) || !valid_image(info.specular_hit_distance)) {
+        !valid_image(info.normal_roughness) || !valid_image(info.specular_hit_distance) ||
+        !valid_rr_preset(info.rr_preset)) {
         return kInvalidParameter;
     }
     g_state.rrArmed = true;
+    g_state.rrPreset = info.rr_preset;
     g_state.rrDiffuseAlbedo = info.diffuse_albedo;
     g_state.rrSpecularAlbedo = info.specular_albedo;
     g_state.rrNormalRoughness = info.normal_roughness;

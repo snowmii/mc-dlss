@@ -160,6 +160,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 			runtimeControls = RuntimeControls(runtime, diagnostics).also { controls ->
 				if (!ModConfig.user.enabled) controls.setEnabled(false)
 				if (ModConfig.user.frameGeneration) controls.setFrameGenerationEnabled(true)
+				controls.setRrModelPreset(ModConfig.user.rrModelPreset)
 				if (ModConfig.user.rayReconstruction) controls.setRayReconstructionEnabled(true)
 			}
 			WorldPhase.forMinecraft(runtime, readout)
