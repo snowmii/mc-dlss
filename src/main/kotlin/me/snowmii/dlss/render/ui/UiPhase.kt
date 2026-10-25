@@ -32,10 +32,11 @@ class UiPhase(
 		private set
 
 	/**
-	 * Clear-once-per-frame: hand sets it; GUI reads then clears it. Hand always clears, which
-	 * also heals a handoff stranded by a crash between windows.
+	 * Clear-once-per-frame: see-through or hand sets it; GUI reads then clears it. Hand clears if
+	 * see-through did not, which also heals a handoff stranded by a crash between windows.
 	 */
 	private var clearedThisFrame = false
+	private var seeThroughClearedThisFrame = false
 
 	/**
 	 * Real main target, stashed at window open. Read at HEAD while the redirect is still
@@ -59,12 +60,32 @@ class UiPhase(
 		get() = target.currentUiTarget
 
 	/**
-	 * First UI window: always clears. Drops a window left open by a failed frame (exception
-	 * between UI windows) rather than leaking the override to present.
+	 * See-through world features (nametags, see-through text) rendered at full native resolution
+	 * into [UiTarget] rather than inside the low-resolution jittered world phase.
+	 * Clears the UI target for this frame.
+	 */
+	fun beginSeeThrough(mainTarget: RenderTarget): RenderTarget? {
+		if (openWindow(mainTarget, clear = true)) {
+			clearedThisFrame = true
+			seeThroughClearedThisFrame = true
+			return target.currentUiTarget
+		}
+		return null
+	}
+
+	fun endSeeThrough() {
+		isOpen = false
+	}
+
+	/**
+	 * First UI window: clears if see-through did not already clear. Drops a window left open by a failed frame
+	 * (exception between UI windows) rather than leaking the override to present.
 	 * Zero-size main target never opens.
 	 */
 	fun beginHand(mainTarget: RenderTarget) {
-		if (openWindow(mainTarget, clear = true)) {
+		val clear = !seeThroughClearedThisFrame
+		seeThroughClearedThisFrame = false
+		if (openWindow(mainTarget, clear = clear)) {
 			clearedThisFrame = true
 		}
 	}
@@ -80,12 +101,14 @@ class UiPhase(
 	}
 
 	/**
-	 * Last UI window: clears only if hand did not. Consumes the handoff so the next frame's
+	 * Last UI window: clears only if hand/see-through did not. Consumes the handoff so the next frame's
 	 * hand clears again. Drops a stale open window like [beginHand].
 	 */
 	fun begin(mainTarget: RenderTarget) {
-		openWindow(mainTarget, clear = !clearedThisFrame)
+		val clear = !clearedThisFrame
 		clearedThisFrame = false
+		seeThroughClearedThisFrame = false
+		openWindow(mainTarget, clear = clear)
 	}
 
 	/**
@@ -137,6 +160,7 @@ class UiPhase(
 		// Drop the window before releasing the target so no caller keeps answering the UI target.
 		isOpen = false
 		clearedThisFrame = false
+		seeThroughClearedThisFrame = false
 		frameMainTarget = null
 		target.close()
 	}

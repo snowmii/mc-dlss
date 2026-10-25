@@ -8,18 +8,17 @@ import me.snowmii.dlss.readout.SessionFacts
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.StreamlineSession
-import me.snowmii.dlss.render.mrt.MotionVectorPipeline
 import me.snowmii.dlss.render.mrt.MotionVectorRoute
-import net.minecraft.client.renderer.entity.state.EntityRenderState
 import org.joml.Matrix4f
-import org.joml.Vector3f
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.blaze3d.systems.RenderSystem
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice
 import com.mojang.renderpearl.api.textures.FilterMode
 import com.mojang.renderpearl.api.textures.GpuTextureView
 import com.mojang.renderpearl.backend.vulkan.VulkanConst
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView
 import net.minecraft.client.Minecraft
+import net.minecraft.client.renderer.ProjectionMatrixBuffer
 import net.minecraft.client.renderer.RenderPipelines
 import java.util.Optional
 
@@ -72,6 +71,8 @@ class WorldPhase(
 
 	/** Snapshotted at [prepare]; Minecraft reuses the seam's live matrices across frames. */
 	private var cameraSample: DlssCameraSample? = null
+	private var unjitteredProjectionBuffer: ProjectionMatrixBuffer? = null
+	private var unjitteredProjectionSlice: GpuBufferSlice? = null
 
 	var isOpen: Boolean = false
 		private set
@@ -82,6 +83,20 @@ class WorldPhase(
 	 */
 	val worldTargetOverride: RenderTarget?
 		get() = if (isOpen) sceneTarget else null
+
+	/**
+	 * Real native-resolution destination target, stashed at [prepare] and [begin].
+	 * Null when outside the world phase.
+	 */
+	val destinationTarget: RenderTarget?
+		get() = if (isOpen) mainRenderTarget else null
+
+	/**
+	 * Unjittered perspective projection buffer slice uploaded during [prepare].
+	 * Read by native see-through text and UI rendering to avoid camera sub-pixel jitter.
+	 */
+	val unjitteredProjection: GpuBufferSlice?
+		get() = if (isOpen) unjitteredProjectionSlice else null
 
 	fun presentStart(): Boolean {
 		runtime.pacing.begin(FramePacingProbe.Span.QUEUE_PRESENT)
@@ -118,73 +133,11 @@ class WorldPhase(
 	fun reflexMarker(type: StreamlineSession.ReflexMarkerType): Boolean =
 		runtime.frameEvaluation?.reflexMarker(type) == true
 
-	/**
-	 * Observes a pipeline whose ownership can change the session's world-motion route.
-	 * Only while [isOpen]: shader reload, GUI, post, and present pipelines must not latch.
-	 *
-	 * Two callers: Vulkan lazy-compile (backstop) and terrain `renderGroup` HEAD (classifies
-	 * before pass shape), so a first foreign pipeline keeps vanilla passthrough.
-	 */
-	fun observePipeline(pipeline: MotionVectorPipeline) {
-		if (isOpen) {
-			runtime.observeWorldPipeline(pipeline)
-		}
-	}
-
-	/**
-	 * Not gated on [isOpen]: `extractVisibleEntities` runs before [begin]. Only a completed
-	 * DLSS frame publishes; vanilla/abandoned/replaced-world/release/close reset instead.
-	 */
-	fun captureEntity(id: Int, x: Double, y: Double, z: Double) {
-		runtime.captureEntity(id, x, y, z)
-	}
-
-	/** Records the returned render-state identity alongside its stable entity id and pose. */
-	fun captureEntity(state: EntityRenderState, id: Int, x: Double, y: Double, z: Double) {
-		runtime.captureEntity(state, id, x, y, z)
-	}
-
-	/**
-	 * Same [isOpen] rule as [captureEntity]. Key is a long in the moving-block domain, so an
-	 * entity id with the same numeric value cannot share this slot.
-	 */
-	fun captureBlock(id: Long, x: Double, y: Double, z: Double) {
-		runtime.captureBlock(id, x, y, z)
-	}
-
-	fun entityId(state: EntityRenderState): Int? = if (isOpen) runtime.entityId(state) else null
-
-	/** Entity-model draws may bind the scene velocity attachment. */
-	val entityVelocityActive: Boolean
-		get() = isOpen && runtime.motionVectorRoute == MotionVectorRoute.VELOCITY_MRT && terrainVelocityView != null
-
 	val activeJitter: DlssJitterOffset?
 		get() = if (isOpen) runtime.activeJitter else null
 
 	val currentViewProjection: Matrix4f?
 		get() = if (isOpen) runtime.currentViewProjection else null
-
-	fun objectMotionDisplacement(entityId: Int): Vector3f? =
-		if (entityVelocityActive) runtime.objectMotion.objectDisplacement(entityId) else null
-
-	/**
-	 * Same velocity-active gate as [objectMotionDisplacement]; resolved in the moving-block
-	 * (long-key) domain of the shared history.
-	 */
-	fun blockMotionDisplacement(blockId: Long): Vector3f? =
-		if (entityVelocityActive) runtime.objectMotion.objectDisplacement(blockId) else null
-
-	/**
-	 * Scene-sized RG16_FLOAT velocity view terrain `renderGroup` may attach, or null to stay
-	 * vanilla. Non-null only while open on VELOCITY_MRT with a companion. Plain field/enum
-	 * reads — the vanilla path cannot throw.
-	 */
-	val terrainVelocityView: GpuTextureView?
-		get() = if (isOpen && runtime.motionVectorRoute == MotionVectorRoute.VELOCITY_MRT) {
-			runtime.activeVelocityView
-		} else {
-			null
-		}
 
 	/**
 	 * Depth of the target the world actually rendered into, for Fabulous cloud depth-test.
@@ -233,6 +186,14 @@ class WorldPhase(
 			)
 		}
 		this.cameraSample = snapshot
+		if (snapshot != null) {
+			val proj = unjitteredProjectionBuffer ?: runCatching {
+				ProjectionMatrixBuffer("DLSS Unjittered Projection").also { unjitteredProjectionBuffer = it }
+			}.getOrNull()
+			unjitteredProjectionSlice = proj?.getBuffer(snapshot.projection)
+		} else {
+			unjitteredProjectionSlice = null
+		}
 		sceneTarget = if (mainTarget.width > 0 && mainTarget.height > 0) {
 			runtime.beginWorldPhase(
 				normalInWorldFrame,
@@ -298,16 +259,14 @@ class WorldPhase(
 		val jitter = runtime.activeJitter
 		val motion = runtime.activeMotion
 		val camera = this.cameraSample
-		// The route and the velocity view behind it are captured while the phase is still open:
-		// [terrainVelocityView] is non-null only inside an open velocity-MRT phase, which is
-		// exactly the handoff the evaluation's motion-source gate needs.
 		val route = runtime.motionVectorRoute
-		val velocityView = terrainVelocityView
+		val velocityView: GpuTextureView? = null
 		isOpen = false
 		projectionPrepared = false
 		sceneTarget = null
 		mainRenderTarget = null
 		this.cameraSample = null
+		unjitteredProjectionSlice = null
 
 		// Evaluation decides whether this frame may become the predecessor for object motion.
 		// Keep the runtime's published phase values alive through evaluation, then disposition
@@ -319,7 +278,7 @@ class WorldPhase(
 				completedDlssFrame = evaluateAndCompose(rendered, destination, jitter, motion, route, velocityView, camera)
 			}
 		} finally {
-			runtime.endWorldPhase(completedDlssFrame)
+			runtime.endWorldPhase()
 		}
 
 		// Present only after close, so the destination is the vanilla target.
@@ -362,6 +321,9 @@ class WorldPhase(
 	override fun close() {
 		discardUnfinishedFrame()
 		lastResolvedTarget = null
+		unjitteredProjectionBuffer?.close()
+		unjitteredProjectionBuffer = null
+		unjitteredProjectionSlice = null
 		runtime.close()
 	}
 
@@ -378,6 +340,7 @@ class WorldPhase(
 		sceneTarget = null
 		mainRenderTarget = null
 		cameraSample = null
+		unjitteredProjectionSlice = null
 		runtime.endWorldPhase()
 		// This frame decided a route and moved the motion predecessor forward, but no image was
 		// ever accumulated from it, so the next frame must start its history again.

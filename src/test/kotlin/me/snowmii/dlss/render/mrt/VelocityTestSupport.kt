@@ -3,7 +3,6 @@ package me.snowmii.dlss.render.mrt
 import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.renderpearl.api.buffers.GpuBuffer
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice
-import com.mojang.renderpearl.api.pipeline.ColorTargetState
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.renderpearl.api.textures.GpuTexture
 import com.mojang.renderpearl.api.textures.GpuTextureView
@@ -40,10 +39,6 @@ import org.lwjgl.util.spvc.SpvcReflectedResource
 internal val repositoryRoot: Path = Path.of("").toAbsolutePath()
 
 internal fun repositorySource(path: String): String = repositoryRoot.resolve(path).readText()
-
-/** A velocity fragment shader asset, by its `core/velocity_*` name. */
-internal fun velocityShaderSource(name: String): String =
-	repositorySource("src/main/resources/assets/mc-dlss/shaders/core/$name.fsh")
 
 internal val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 internal val RENDER_DIMENSIONS = Dimensions(1707, 960)
@@ -109,12 +104,6 @@ internal fun renderFrame(phase: WorldPhase, target: RenderTarget) {
 	phase.prepare(true, target, cameraSample())
 	phase.begin(true, target)
 	phase.end()
-}
-
-internal fun assertVelocityTarget(target: ColorTargetState) {
-	assertTrue(target.blendFunction().isEmpty, "the velocity payload is never blended")
-	assertEquals(GpuFormat.RG16_FLOAT, target.format())
-	assertEquals(ColorTargetState.WRITE_ALL, target.writeMask())
 }
 
 internal class HeadlessRenderTarget(

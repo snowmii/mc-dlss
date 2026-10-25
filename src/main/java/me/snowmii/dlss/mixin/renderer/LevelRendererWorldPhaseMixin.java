@@ -1,12 +1,19 @@
 package me.snowmii.dlss.mixin.renderer;
 
+import com.mojang.blaze3d.ProjectionType;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.render.WorldPhase;
+import me.snowmii.dlss.render.ui.UiPhase;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import org.joml.Vector4f;
 import org.spongepowered.asm.mixin.Mixin;
@@ -41,6 +48,53 @@ public class LevelRendererWorldPhaseMixin {
 
 		final RenderTarget mainTarget = Minecraft.getInstance().gameRenderer.mainRenderTarget();
 		phase.begin(!cameraState.isPanoramicMode, mainTarget);
+	}
+
+	@Inject(method = "executeSeeThrough", at = @At("HEAD"), cancellable = true)
+	private void mcDlssExecuteSeeThroughNative(
+		final FeatureRenderDispatcher.PreparedFrame preparedFrame,
+		final RenderTarget target,
+		final CallbackInfo info
+	) {
+		final WorldPhase worldPhase = ClientRuntime.active().activeWorldPhase();
+		if (worldPhase == null || !worldPhase.isOpen()) {
+			return;
+		}
+		final RenderTarget mainTarget = worldPhase.getDestinationTarget();
+		if (mainTarget == null) {
+			return;
+		}
+		final UiPhase uiPhase = ClientRuntime.renderLoop().uiPhase();
+		if (uiPhase == null) {
+			return;
+		}
+		final RenderTarget uiTarget = uiPhase.beginSeeThrough(mainTarget);
+		if (uiTarget == null) {
+			return;
+		}
+
+		try {
+			final RenderPassDescriptor descriptor = RenderPassDescriptor.builder(() -> "See through features (DLSS Native)")
+				.withColorAttachment(uiTarget.getColorTextureView())
+				.build();
+			final CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+			try (final RenderPass pass = encoder.createRenderPass(descriptor)) {
+				RenderSystem.backupProjectionMatrix();
+				final GpuBufferSlice unjittered = worldPhase.getUnjitteredProjection();
+				if (unjittered != null) {
+					RenderSystem.setProjectionMatrix(unjittered, ProjectionType.PERSPECTIVE);
+				}
+				try {
+					RenderSystem.bindDefaultUniforms(pass);
+					preparedFrame.executeSeeThrough(pass);
+				} finally {
+					RenderSystem.restoreProjectionMatrix();
+				}
+			}
+		} finally {
+			uiPhase.endSeeThrough();
+		}
+		info.cancel();
 	}
 
 	@Inject(method = "render", at = @At("TAIL"))

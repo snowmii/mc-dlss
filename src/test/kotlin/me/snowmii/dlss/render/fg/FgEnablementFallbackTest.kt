@@ -234,7 +234,7 @@ class FgEnablementFallbackTest {
 			),
 			"the supported frame must compose",
 		)
-		harness.runtime.endWorldPhase(completedDlssFrame = true)
+		harness.runtime.endWorldPhase()
 	}
 
 	/** A camera standing still, so consecutive frames are continuous and no reset is fabricated. */

@@ -16,7 +16,6 @@ import me.snowmii.dlss.client.ModConfig
 import me.snowmii.dlss.render.mrt.MotionVectorCompatibility
 import me.snowmii.dlss.render.mrt.MotionVectorPipeline
 import me.snowmii.dlss.render.mrt.MotionVectorRoute
-import me.snowmii.dlss.render.mrt.ObjectMotionState
 import net.minecraft.client.renderer.entity.state.EntityRenderState
 import org.joml.Matrix4f
 import java.util.IdentityHashMap
@@ -93,7 +92,6 @@ class RenderRuntime(
 ) : AutoCloseable {
 	private val frameResources = FrameResources(sceneTarget, frameEvaluation) { bridge?.waitDeviceIdle() }
 	private val worldPhaseState = WorldPhaseState()
-	private val entityIdsByRenderState = IdentityHashMap<EntityRenderState, Int>()
 	private var currentWorldViewProjection: Matrix4f? = null
 	private var startupAttempted = false
 
@@ -167,15 +165,6 @@ class RenderRuntime(
 	var worldTargetRoute: WorldTargetRoute? = null
 		private set
 
-	/**
-	 * Scene-sized velocity view owned by the held scene target, or null when nothing is held.
-	 *
-	 * This is the color-1 attachment terrain passes bind when the session is on the velocity
-	 * route; on a vanilla route or a fallback session nothing is held and the answer is null.
-	 */
-	val activeVelocityView: GpuTextureView?
-		get() = frameResources.currentSceneVelocityView
-
 	var dlssRenderDimensions: Dimensions? = null
 		private set
 
@@ -234,56 +223,6 @@ class RenderRuntime(
 		// here is what keeps the record from being three `if (transition) record()` pairs at the
 		// call sites - the shape where a fourth transition silently skips the record.
 		frameGeneration.recordFrameGenerationOff = { bridge?.recordFrameGenerationOff() }
-	}
-
-	/** Records one pipeline seen at the Vulkan lazy-compile seam while the world phase is open. */
-	internal fun observeWorldPipeline(pipeline: MotionVectorPipeline): MotionVectorRoute {
-		val previous = motionVectors.selectedRoute
-		val route = motionVectors.observe(pipeline)
-		if (route != previous) {
-			motionRouteChanged = true
-		}
-		return route
-	}
-
-	/**
-	 * The frame-boundary object-motion history: the published predecessors and in-flight
-	 * captures behind every dynamic world-pass velocity writer.
-	 *
-	 * Owned by the phase state, which accumulates and breaks it with the jitter and camera
-	 * sequences; this is the read seam the draw path and the lifecycle use.
-	 */
-	internal val objectMotion: ObjectMotionState
-		get() = worldPhaseState.objectMotion
-
-	/** Resolves the stable id retained for an extracted entity render state. */
-	fun entityId(state: EntityRenderState): Int? = entityIdsByRenderState[state]
-
-	/**
-	 * Records one visible entity's interpolated render position for the frame in flight.
-	 *
-	 * Entity extraction runs before the world phase opens, so a capture can land while no
-	 * phase is open; a DLSS frame's open keeps it and its completion publishes it, while the
-	 * vanilla, abandoned, replaced-world, released, and closed paths reset the history.
-	 */
-	internal fun captureEntity(id: Int, x: Double, y: Double, z: Double) {
-		if (motionVectorRoute == MotionVectorRoute.VELOCITY_MRT) worldPhaseState.objectMotion.capturePosition(id, x, y, z)
-	}
-
-	internal fun captureEntity(state: EntityRenderState, id: Int, x: Double, y: Double, z: Double) {
-		if (motionVectorRoute != MotionVectorRoute.VELOCITY_MRT) return
-		entityIdsByRenderState[state] = id
-		worldPhaseState.objectMotion.capturePosition(id, x, y, z)
-	}
-
-	/**
-	 * Records one moving block's absolute render position for the frame in flight, in the
-	 * moving-block (long-keyed) domain of the shared object history. Same lifecycle and
-	 * disposition as [captureEntity]: a DLSS frame's open keeps it and its completion publishes
-	 * it, while the vanilla, abandoned, replaced-world, released, and closed paths reset it.
-	 */
-	internal fun captureBlock(id: Long, x: Double, y: Double, z: Double) {
-		worldPhaseState.objectMotion.capturePosition(id, x, y, z)
 	}
 
 	/**
@@ -359,9 +298,6 @@ class RenderRuntime(
 		val target = frameResources.acquire(route)
 		worldTargetRoute = route
 		worldRenderTarget = target
-		if (target == null) {
-			entityIdsByRenderState.clear()
-		}
 		currentWorldViewProjection = if (target != null && camera != null) {
 			Matrix4f(camera.projection).mul(camera.viewRotation)
 		} else {
@@ -375,16 +311,13 @@ class RenderRuntime(
 	 * Closes the world phase. The scene target stays allocated for reuse across frames.
 	 *
 	 * [completedDlssFrame] is true only after evaluation/composition produced the destination
-	 * Minecraft will display. That outcome publishes this frame's entity captures; false resets
-	 * them without publication. The default is the safe abandonment/release disposition used by
-	 * callers that are not completing an evaluated frame.
+	 * Minecraft will display.
 	 */
-	fun endWorldPhase(completedDlssFrame: Boolean = false) {
+	fun endWorldPhase() {
 		worldTargetRoute = null
 		worldRenderTarget = null
-		worldPhaseState.finish(completedDlssFrame)
+		worldPhaseState.finish()
 		currentWorldViewProjection = null
-		entityIdsByRenderState.clear()
 	}
 
 	/**
@@ -397,7 +330,6 @@ class RenderRuntime(
 	fun resetMotionHistory() {
 		worldPhaseState.resetMotion()
 		currentWorldViewProjection = null
-		entityIdsByRenderState.clear()
 	}
 
 	/**
@@ -409,7 +341,6 @@ class RenderRuntime(
 	fun resetHistory() {
 		worldPhaseState.reset()
 		currentWorldViewProjection = null
-		entityIdsByRenderState.clear()
 	}
 
 	/**
@@ -528,7 +459,6 @@ class RenderRuntime(
 		worldPhaseState.discard()
 		dlssRenderDimensions = null
 		currentWorldViewProjection = null
-		entityIdsByRenderState.clear()
 		session.close()
 	}
 
@@ -770,8 +700,7 @@ class RenderRuntime(
 			// reconfigure degrade through the session state like any other native stage; the FG
 			// records deliberately do not (see SessionBridge and LifecycleAdapter).
 			bridge = adapter,
-			// 26.3 shared passes cannot host the retained private MRT writers.
-			// Use the real camera-only path until that integration is restored.
+			// 26.3 shared passes use camera-only motion compute shader for DLSS-SR and DLSS-RR.
 			motionVectors = MotionVectorCompatibility(diagnostics, objectWritersAvailable = false),
 			// The F12 multiplier cycle invalidates the surface configuration once per real change
 			// through Minecraft's own reconfigure path.

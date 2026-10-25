@@ -12,9 +12,7 @@ import me.snowmii.dlss.render.FrameEvaluation
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneResources
 import me.snowmii.dlss.render.WorldPhase
-import me.snowmii.dlss.render.mrt.MotionVectorPipeline
 import me.snowmii.dlss.render.mrt.MotionVectorRoute
-import me.snowmii.dlss.render.mrt.MotionVectorShader
 import me.snowmii.dlss.DlssSession
 import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.streamline.Dimensions
@@ -129,33 +127,8 @@ class MotionVectorRouteTest {
 	}
 
 	@Test
-	fun `the world phase hands the velocity route and the velocity view into the evaluation`() {
+	fun `the world phase hands camera-only route and no velocity view into the evaluation`() {
 		val runtime = velocityRuntime()
-		var handed: Pair<MotionVectorRoute, GpuTextureView?>? = null
-		val phase = worldPhase(runtime) { _, _, _, _, route, velocity, _ ->
-			handed = route to velocity
-			true
-		}
-
-		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
-		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
-		phase.end()
-
-		val (route, view) = checkNotNull(handed) { "an eligible frame must reach the evaluation" }
-		assertEquals(MotionVectorRoute.VELOCITY_MRT, route)
-		assertNotNull(view, "the velocity route must hand the scene velocity companion")
-		assertEquals(GpuFormat.RG16_FLOAT, view!!.texture().format)
-	}
-
-	@Test
-	fun `the camera-only phase hands camera-only and no velocity view`() {
-		val runtime = velocityRuntime()
-		runtime.observeWorldPipeline(
-			MotionVectorPipeline(
-				"example:pipeline/waving_terrain",
-				listOf(MotionVectorShader("example:core/waving_terrain", "example")),
-			),
-		)
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, runtime.motionVectorRoute)
 		var handed: Pair<MotionVectorRoute, GpuTextureView?>? = null
 		val phase = worldPhase(runtime) { _, _, _, _, route, velocity, _ ->
@@ -170,53 +143,6 @@ class MotionVectorRouteTest {
 		val (route, view) = checkNotNull(handed) { "a camera-only frame still reaches the evaluation" }
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, route)
 		assertNull(view, "the camera-only route must hand no velocity view")
-	}
-
-	@Test
-	fun `the frame after the latch flips breaks the history the previous route accumulated`() {
-		val runtime = velocityRuntime()
-		val resets = mutableListOf<Boolean>()
-		val phase = worldPhase(runtime) { _, _, _, motion, _, _, _ ->
-			resets += motion.reset
-			true
-		}
-
-		// Two frames on the velocity route: the first opens the chain, the second continues it,
-		// so there is accumulated history for the flip to invalidate.
-		repeat(2) {
-			phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
-			phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
-			phase.end()
-		}
-		assertEquals(listOf(true, false), resets, "the second velocity-route frame continues the first")
-
-		// Vulkan compiles the foreign pipeline lazily, so this arrives mid-session, after frames
-		// have already evaluated on the route it replaces.
-		runtime.observeWorldPipeline(
-			MotionVectorPipeline(
-				"example:pipeline/waving_terrain",
-				listOf(MotionVectorShader("example:core/waving_terrain", "example")),
-			),
-		)
-		assertEquals(MotionVectorRoute.CAMERA_ONLY, runtime.motionVectorRoute)
-
-		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
-		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
-		phase.end()
-
-		assertEquals(
-			listOf(true, false, true),
-			resets,
-			"the first frame on the new writer must not continue the previous writer's history",
-		)
-
-		// The flip is consumed once: the frame after it continues the new route's own history
-		// rather than resetting on every frame that follows.
-		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = cameraSample())
-		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
-		phase.end()
-
-		assertEquals(listOf(true, false, true, false), resets, "the reset must not latch on")
 	}
 
 	@Test

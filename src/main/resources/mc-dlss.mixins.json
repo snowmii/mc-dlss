@@ -7,32 +7,23 @@
     "VulkanDeviceMixin",
     "DebugEntryFpsMixin",
     "DebugScreenEntriesInvoker",
-    "renderer.LevelExtractorCaptureMixin",
     "MinecraftMixin",
-    "renderer.ModelFeatureRendererMotionMixin",
-    "renderer.ModelFeatureSubmitMotionMixin",
-    "renderer.MovingBlockFeatureRendererMotionMixin",
     "OptionInstanceEnumRgssMixin",
     "OptionInstanceVideoLockMixin",
     "VideoSettingsScreenMixin",
     "VideoSettingsVsyncLockMixin",
-    "blaze3d.VulkanChunkSectionsToRenderMixin",
-    "blaze3d.PipelineCacheMixin",
     "blaze3d.VulkanGpuSurfaceMixin",
     "blaze3d.VulkanGpuTextureMixin",
     "blaze3d.VulkanInstanceExtensionMixin",
-    "renderer.BlockEntityRenderDispatcherMotionMixin",
-    "renderer.EntityRenderDispatcherMotionMixin",
     "renderer.GameRendererMixin",
     "renderer.GuiRendererMixin",
     "renderer.LevelRendererWorldPhaseMixin",
-    "renderer.RenderTypeFeatureRendererMotionMixin",
-    "renderer.StagedVertexBufferMotionMixin"
+    "renderer.SubmitNodeCollectionMixin"
   ],
   "injectors": {
     "defaultRequire": 1
   },
   "overwrites": {
     "requireAnnotations": true
-	}
+  }
 }
