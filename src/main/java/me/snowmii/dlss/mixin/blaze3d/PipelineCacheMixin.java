@@ -30,7 +30,7 @@ public class PipelineCacheMixin {
 		CallbackInfoReturnable<?> info
 	) {
 		WorldPhase phase = ClientRuntime.active().activeWorldPhase();
-		if (phase == null) {
+		if (phase == null || !phase.getEntityVelocityActive()) {
 			return;
 		}
 

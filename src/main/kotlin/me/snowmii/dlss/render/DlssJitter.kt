@@ -56,13 +56,17 @@ class DlssJitter(
 		}
 	}
 
-	/** Number of distinct offsets before the sequence repeats. */
+	/** SR period; [advance] raises this to at least 32 for ray reconstruction. */
 	val phaseCount: Int = phaseCountFor(renderDimensions, outputDimensions)
 
 	private var index = 0
+	private var previousRayReconstruction = false
 
-	/** Advances to the next phase and returns its offset. */
-	fun advance(): DlssJitterOffset {
+	/** Advances one phase; feature changes restart the sequence, and RR uses at least 32 phases. */
+	fun advance(rayReconstruction: Boolean = false): DlssJitterOffset {
+		if (rayReconstruction != previousRayReconstruction) reset()
+		previousRayReconstruction = rayReconstruction
+		val phases = if (rayReconstruction) maxOf(32, phaseCount) else phaseCount
 		// Halton index 0 is exactly 0 in every base, which would put one sample on the pixel
 		// corner instead of inside the pixel; the sequence therefore starts at 1.
 		val haltonIndex = index + 1
@@ -72,7 +76,7 @@ class DlssJitter(
 			pixelY = radicalInverse(haltonIndex, 3) - 0.5f,
 			renderDimensions = renderDimensions,
 		)
-		index = (index + 1) % phaseCount
+		index = (index + 1) % phases
 		return offset
 	}
 

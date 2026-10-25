@@ -32,9 +32,17 @@ import org.junit.jupiter.api.Test
  * the three [ChunkSectionLayer] pipelines (SOLID, CUTOUT, TRANSLUCENT) plus the WIREFRAME
  * debug override. The terrain pass does not bind velocity twins; camera motion belongs to
  * the fill on VELOCITY_MRT and the compute writer on CAMERA_ONLY. [me.snowmii.dlss.render.mrt.velocityTwin] remains
- * for the object-motion writers (entity, moving block, cloud) and the stress pass.
+ * for the object-motion writers (entity, moving block, cloud).
  */
 class MotionVectorPipelineTest {
+	@Test
+	fun `an engine without object writers uses camera motion even for owned shaders`() {
+		val compatibility = MotionVectorCompatibility(objectWritersAvailable = false)
+		assertEquals(MotionVectorRoute.CAMERA_ONLY,
+			compatibility.observe(pipelineObservation(RenderPipelines.SOLID_TERRAIN)))
+		assertEquals(MotionVectorRoute.CAMERA_ONLY, compatibility.observe(foreignTerrainPipeline()))
+		assertEquals(null, compatibility.firstForeignPipeline)
+	}
 	private val mainTarget = fakeMainTarget()
 
 
@@ -78,7 +86,7 @@ class MotionVectorPipelineTest {
 		assertTrue(diagnostic.contains("camera-only"))
 		assertEquals(foreign, compatibility.firstForeignPipeline)
 
-		val throwingSink = MotionVectorCompatibility { error("broken diagnostic sink") }
+		val throwingSink = MotionVectorCompatibility(diagnostics = { error("broken diagnostic sink") })
 		assertDoesNotThrow { throwingSink.observe(foreignTerrainPipeline()) }
 		assertEquals(MotionVectorRoute.CAMERA_ONLY, throwingSink.selectedRoute)
 	}

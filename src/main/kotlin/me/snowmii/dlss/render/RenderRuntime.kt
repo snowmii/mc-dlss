@@ -3,9 +3,10 @@ import me.snowmii.dlss.DlssFrameDecision
 import me.snowmii.dlss.DlssFrameRoute
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.dlss.readout.FramePacingProbe
-import me.snowmii.vklib.api.VulkanContextRegistry
+import me.snowmii.dlss.vk.VulkanContextRegistry
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.streamline.Dimensions
+import me.snowmii.dlss.ReflexMode
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import me.snowmii.dlss.DlssSession
@@ -123,6 +124,22 @@ class RenderRuntime(
 	 */
 	var dlssEnabled: Boolean = true
 		private set
+
+	var reflexMode: ReflexMode = ModConfig.user.reflexMode
+		private set
+
+	fun setReflexMode(mode: ReflexMode): Boolean {
+		if (session.state == DlssSessionState.READY && bridge?.setReflexMode(mode) == false) {
+			return false
+		}
+		reflexMode = mode
+		ModConfig.user.reflexMode = mode
+		diagnostics("DLSS Reflex mode: ${mode.propertyValue}")
+		return true
+	}
+
+	fun queryReflexState(): StreamlineSession.ReflexStateInfo? =
+		bridge?.queryReflexState()
 
 	/**
 	 * The FG multiplier in effect, in `numFramesToGenerate` units: 1 = 2x, 2 = 3x, and so on.
@@ -250,10 +267,11 @@ class RenderRuntime(
 	 * vanilla, abandoned, replaced-world, released, and closed paths reset the history.
 	 */
 	internal fun captureEntity(id: Int, x: Double, y: Double, z: Double) {
-		worldPhaseState.objectMotion.capturePosition(id, x, y, z)
+		if (motionVectorRoute == MotionVectorRoute.VELOCITY_MRT) worldPhaseState.objectMotion.capturePosition(id, x, y, z)
 	}
 
 	internal fun captureEntity(state: EntityRenderState, id: Int, x: Double, y: Double, z: Double) {
+		if (motionVectorRoute != MotionVectorRoute.VELOCITY_MRT) return
 		entityIdsByRenderState[state] = id
 		worldPhaseState.objectMotion.capturePosition(id, x, y, z)
 	}
@@ -283,7 +301,7 @@ class RenderRuntime(
 	): RenderTarget? {
 		// Switched off takes effect before startup is ever attempted, so a session that begins
 		// switched off never initializes the bridge at all.
-		val started = if (dlssEnabled) startDlssOnce() else false
+		val started = if (dlssEnabled && !me.snowmii.dlss.api.RayReconstruction.referenceMode) startDlssOnce() else false
 
 		// The client's main target is the authority on the output size, so a frame at a size the
 		// session is not configured against reconfigures it rather than routing vanilla forever.
@@ -569,6 +587,7 @@ class RenderRuntime(
 		}
 
 		rebuildForRenderDimensions(dimensions)
+		bridge?.setReflexMode(reflexMode)
 		return true
 	}
 
@@ -751,7 +770,9 @@ class RenderRuntime(
 			// reconfigure degrade through the session state like any other native stage; the FG
 			// records deliberately do not (see SessionBridge and LifecycleAdapter).
 			bridge = adapter,
-			motionVectors = MotionVectorCompatibility(diagnostics),
+			// 26.3 shared passes cannot host the retained private MRT writers.
+			// Use the real camera-only path until that integration is restored.
+			motionVectors = MotionVectorCompatibility(diagnostics, objectWritersAvailable = false),
 			// The F12 multiplier cycle invalidates the surface configuration once per real change
 			// through Minecraft's own reconfigure path.
 			invalidateSurfaceConfiguration = { Minecraft.getInstance().invalidateSurfaceConfiguration() },
@@ -763,7 +784,7 @@ class RenderRuntime(
 			// does not change.
 			fgFrameSupported = { normalInWorldFrame, outputDimensions ->
 				val client = Minecraft.getInstance()
-				val fullscreen = client.window.isFullscreen
+				val fullscreen = client.options.fullscreen().get()
 				val transition = lastFullscreen != null && lastFullscreen != fullscreen
 				lastFullscreen = fullscreen
 				isFgFrameSupported(

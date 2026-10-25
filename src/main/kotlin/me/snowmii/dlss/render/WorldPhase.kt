@@ -1,7 +1,7 @@
 package me.snowmii.dlss.render
 
 import me.snowmii.dlss.api.BeforeDlssEvaluation
-import me.snowmii.vklib.api.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.readout.FramePacingProbe
 import me.snowmii.dlss.readout.SessionFacts
@@ -44,8 +44,7 @@ typealias EvaluateFrame = (
  *
  * [RenderRuntime] decides eligibility and size. This class decides *when* that target is
  * visible: open at `LevelRenderer.render` head, close at its tail; while open,
- * [worldTargetOverride] is what `GameRenderer.mainRenderTarget()` answers. World scene and
- * stress pass land in the low-res target; hand/item, screen effects, crosshair, post, GUI,
+ * [worldTargetOverride] is what `GameRenderer.mainRenderTarget()` answers. World geometry lands in the low-res target; hand/item, screen effects, crosshair, post, GUI,
  * screenshots, and present run after evaluation against the full-size main target.
  *
  * Close evaluates DLSS into the main target. Failed evaluation: nearest-neighbour blit of the
@@ -197,8 +196,7 @@ class WorldPhase(
 		get() = if (isOpen) (sceneTarget ?: mainRenderTarget)?.getDepthTextureView() else null
 
 	/**
-	 * Published camera motion while open. Stress pass reads this at the tail of the world
-	 * phase, before [end] consumes it, so the velocity buffer and the DLSS evaluation share
+	 * Published camera motion while open. Evaluation and velocity writers share
 	 * the same jitter-stripped reprojection.
 	 */
 	val activeMotion: DlssFrameMotion?
@@ -332,7 +330,7 @@ class WorldPhase(
 	}
 
 	/**
-	 * After world geometry and the stress pass, before hand submission. Missing jitter, motion,
+	 * After world geometry, before hand submission. Missing jitter, motion,
 	 * or handles: skip. DLSS reading a stale/absent input is worse than one low-res present.
 	 */
 	private fun evaluateAndCompose(
@@ -404,6 +402,9 @@ class WorldPhase(
 					val destinationImage = (destination.colorTextureView as? VulkanGpuTextureView)
 						?.texture()
 						?.vkImage()
+					val destinationBinding = colorBindingOf(destination)
+					val storageWritable = (destination.colorTexture as? StoragePresentationImage)?.mcDlssStorageWritable() == true
+					val directPresentation = storageWritable && !java.lang.Boolean.getBoolean("mc.dlss.legacy-present")
 					if (evaluation == null || resources == null || destinationImage == null) {
 						false
 					} else {
@@ -415,6 +416,8 @@ class WorldPhase(
 							route,
 							velocityBindingOf(velocityView),
 							camera,
+							destination = destinationBinding,
+							destinationImageUsage = if (directPresentation) org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_STORAGE_BIT else 0,
 						)
 					}
 				},

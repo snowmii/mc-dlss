@@ -1,6 +1,6 @@
 package me.snowmii.dlss.client
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.vklib.api.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
@@ -39,6 +39,20 @@ import java.nio.file.Path
 class RuntimeControlsTest {
 	private val output = Dimensions(2560, 1440)
 	private val mainTarget = HeadlessRenderTarget(output.width, output.height)
+
+	@Test
+	fun `a refused Reflex change keeps the active mode and saved preference`() {
+		val fixture = fixture()
+		fixture.frame()
+		val previous = fixture.controls.reflexMode
+		val saved = ModConfig.user.reflexMode
+		val next = me.snowmii.dlss.ReflexMode.entries.first { it != previous }
+		fixture.native.reflexResult = 0xBAD00005.toInt()
+		fixture.controls.setReflexMode(next)
+		assertEquals(previous, fixture.controls.reflexMode)
+		assertEquals(saved, ModConfig.user.reflexMode)
+		assertEquals(DlssSessionState.READY, fixture.session.state)
+	}
 
 	@Test
 	fun `switching DLSS off returns the world to full resolution and back on resumes it`() {
@@ -281,6 +295,8 @@ class RuntimeControlsTest {
 	 * same size would let a runtime that rebuilt nothing pass.
 	 */
 	private class FakeNative : StreamlineSessionTestDouble() {
+		var reflexResult = StreamlineSession.SUCCESS_RESULT
+		override fun setReflexMode(mode: Int): Int = reflexResult
 		var initializeCalls = 0
 		var releaseImageCalls = 0
 		var waitDeviceIdleCalls = 0

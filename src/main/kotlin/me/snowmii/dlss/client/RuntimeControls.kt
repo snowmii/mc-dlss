@@ -1,5 +1,6 @@
 package me.snowmii.dlss.client
 
+import me.snowmii.dlss.ReflexMode
 import me.snowmii.dlss.api.RayReconstruction
 import me.snowmii.dlss.render.FgSurfacePolicy
 import me.snowmii.dlss.render.RenderRuntime
@@ -7,6 +8,7 @@ import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import me.snowmii.dlss.readout.SessionReadout
+import me.snowmii.streamline.StreamlineSession
 
 /**
  * The reviewer's hands on the running DLSS session.
@@ -153,6 +155,23 @@ class RuntimeControls(
 	val frameGenerationMultiplier: Int
 		get() = runtime.fgMultiplier + 1
 
+	val reflexMode: ReflexMode
+		get() = runtime.reflexMode
+
+	val reflexState: StreamlineSession.ReflexStateInfo?
+		get() = runtime.queryReflexState()
+
+	fun setReflexMode(mode: ReflexMode) {
+		runtime.setReflexMode(mode)
+		emitStatus(readout())
+	}
+
+	fun cycleReflexMode() {
+		val modes = ReflexMode.entries
+		val next = modes[(modes.indexOf(runtime.reflexMode) + 1) % modes.size]
+		setReflexMode(next)
+	}
+
 	fun readout(): String {
 		val state = when {
 			!runtime.config.enabled -> "disabled by ${ModConfig.ENABLED_PROPERTY}"
@@ -165,6 +184,7 @@ class RuntimeControls(
 		} else {
 			"rr=off"
 		}
+		val reflex = "reflex=${runtime.reflexMode.propertyValue}"
 		return SessionReadout.statusLine(
 			state = state,
 			fg = frameGenerationStatus(),
@@ -173,7 +193,7 @@ class RuntimeControls(
 			preset = runtime.renderPreset,
 			internal = internal,
 			output = runtime.outputDimensions,
-		) + " $rr"
+		) + " $rr $reflex"
 	}
 
 	fun fgPresentedFpsSuffix(appFps: Int): String {
@@ -186,6 +206,11 @@ class RuntimeControls(
 
 	/** Live pacing snapshot for F3 — does not reset the probe window. */
 	fun pacingLine(): String? = runtime.pacing.peek()?.removePrefix(", pacing=")
+
+	/** Latest completed native GPU stages; CPU pacing waits are reported separately. */
+	fun gpuTimingLine(): String? = if (runtime.dlssEnabled) {
+		runtime.frameEvaluation?.sampleTimings()?.let { "    DLSS GPU    : $it" }
+	} else null
 
 	/**
 	 * The FG half of the readout: the user's mode, and whether it is composing right now.

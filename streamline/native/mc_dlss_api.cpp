@@ -18,6 +18,7 @@
 #include "internal/session.h"
 #include "internal/sl_dlss.h"
 #include "internal/state.h"
+#include "internal/tonemap.h"
 #include "internal/timing.h"
 
 #include <sl.h>
@@ -35,7 +36,7 @@ using namespace mc_dlss;
 namespace {
 
 constexpr char kProjectId[] = "50f68c51-c7be-49bd-a875-f73045f88d27";
-constexpr char kEngineVersion[] = "Minecraft 26.2";
+constexpr char kEngineVersion[] = "Minecraft 26.3";
 constexpr sl::Feature kStreamlineFeatures[] = {
 	sl::kFeatureDLSS, sl::kFeatureDLSS_RR, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL};
 
@@ -278,6 +279,14 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
     } catch (...) { return kFailure; }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_is_feature_supported(
+    const uint32_t feature, const uint64_t vk_physical_device) {
+    try {
+        const std::lock_guard<std::mutex> lock(g_mutex);
+        return is_feature_supported_sl(feature, vk_physical_device);
+    } catch (...) { return kFailure; }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_feature_12(
     const uint32_t index, char* name, const uint32_t name_capacity,
     uint32_t* feature_count) {
@@ -381,6 +390,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
         std::lock_guard<std::mutex> lock(g_mutex);
         return query_optimal_dimensions_sl(output_width, output_height, quality_mode,
                                            render_width, render_height);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions_rr(
+    const uint32_t output_width, const uint32_t output_height, const uint32_t quality_mode,
+    uint32_t* render_width, uint32_t* render_height) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_optimal_dimensions_rr_sl(output_width, output_height, quality_mode,
+                                              render_width, render_height);
     } catch (...) {
         return kFailure;
     }
@@ -674,8 +695,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
             !valid_image(info->color) || !valid_image(info->depth)) {
             return kInvalidParameter;
         }
-        // The motion image is read and the output image is written, so both have to exist at
-        // the size this frame is being recorded for.
+        // The motion image is read and the selected output image is written, so both have to
+        // exist at the size this frame is being recorded for.
         if (!images_match_configuration()) {
             return kNotInitialized;
         }
@@ -686,42 +707,74 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
         // Inputs into a read state and the output into a storage state, recorded on the
         // engine's own command buffer immediately before the evaluation reads them.
         const uint64_t motionImage = to_uint64(g_state.motionImage.image);
-        const uint64_t outputImage = to_uint64(g_state.outputImage.image);
+        const uint64_t evaluationOutput = to_uint64(
+            g_state.rrArmed ? g_state.rrOutputImage.image : g_state.outputImage.image);
         const VkImageLayout colorEntryLayout = current_layout_of(info->color.image);
         const VkImageLayout depthEntryLayout = current_layout_of(info->depth.image);
-        record_layout_transition(recordingBuffer, from_uint64<VkImage>(info->color.image),
-                                 image_range_of(false), colorEntryLayout, kDlssInputLayout);
-        record_layout_transition(recordingBuffer, from_uint64<VkImage>(info->depth.image),
-                                 image_range_of(true), depthEntryLayout, kDlssInputLayout);
-        record_layout_transition(recordingBuffer, g_state.motionImage.image, image_range_of(false),
-                                 current_layout_of(motionImage), kDlssInputLayout);
-        note_layout_after_transition(motionImage, kDlssInputLayout);
-        record_layout_transition(recordingBuffer, g_state.outputImage.image, image_range_of(false),
-                                 current_layout_of(outputImage), kDlssOutputLayout);
-        note_layout_after_transition(outputImage, kDlssOutputLayout);
+
+        constexpr VkPipelineStageFlags kEvalStages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        constexpr VkAccessFlags kEvalAccess = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+
+        ImageTransitionDesc preDescs[11]{};
+        uint32_t preCount = 0;
+        auto add_pre_transition = [&](const ImageTransitionDesc& desc) {
+            if (desc.image == VK_NULL_HANDLE) return;
+            for (uint32_t i = 0; i < preCount; ++i) {
+                if (preDescs[i].image == desc.image) return;
+            }
+            preDescs[preCount++] = desc;
+        };
+
+        const VkImage colorImg = from_uint64<VkImage>(info->color.image);
+        const VkImage depthImg = from_uint64<VkImage>(info->depth.image);
+        const VkImage motionImg = g_state.motionImage.image;
+        const VkImage outputImg = g_state.rrArmed ? g_state.rrOutputImage.image : g_state.outputImage.image;
+
+        add_pre_transition({colorImg, image_range_of(false), colorEntryLayout, kDlssInputLayout,
+                            kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+        add_pre_transition({depthImg, depth_range_of(info->depth), depthEntryLayout, kDlssInputLayout,
+                            kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+        add_pre_transition({motionImg, image_range_of(false), current_layout_of(motionImage), kDlssInputLayout,
+                            kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+        add_pre_transition({outputImg, image_range_of(false), current_layout_of(evaluationOutput), kDlssOutputLayout,
+                            kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
 
         VkImageLayout rrAlbedoEntry = VK_IMAGE_LAYOUT_UNDEFINED;
         VkImageLayout rrSpecularAlbedoEntry = VK_IMAGE_LAYOUT_UNDEFINED;
         VkImageLayout rrNormalEntry = VK_IMAGE_LAYOUT_UNDEFINED;
         VkImageLayout rrHitDistanceEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout rrSpecularMotionEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        const VkImageLayout rrBiasEntry = current_layout_of(g_state.rrBiasCurrentColor.image);
         if (g_state.rrArmed) {
             rrAlbedoEntry = current_layout_of(g_state.rrDiffuseAlbedo.image);
             rrSpecularAlbedoEntry = current_layout_of(g_state.rrSpecularAlbedo.image);
             rrNormalEntry = current_layout_of(g_state.rrNormalRoughness.image);
-            rrHitDistanceEntry = current_layout_of(g_state.rrSpecularHitDistance.image);
-            record_layout_transition(recordingBuffer,
-                                     from_uint64<VkImage>(g_state.rrDiffuseAlbedo.image),
-                                     image_range_of(false), rrAlbedoEntry, kDlssInputLayout);
-            record_layout_transition(recordingBuffer,
-                                     from_uint64<VkImage>(g_state.rrSpecularAlbedo.image),
-                                     image_range_of(false), rrSpecularAlbedoEntry, kDlssInputLayout);
-            record_layout_transition(recordingBuffer,
-                                     from_uint64<VkImage>(g_state.rrNormalRoughness.image),
-                                     image_range_of(false), rrNormalEntry, kDlssInputLayout);
-            record_layout_transition(recordingBuffer,
-                                     from_uint64<VkImage>(g_state.rrSpecularHitDistance.image),
-                                     image_range_of(false), rrHitDistanceEntry, kDlssInputLayout);
+            add_pre_transition({from_uint64<VkImage>(g_state.rrDiffuseAlbedo.image),
+                                image_range_of(false), rrAlbedoEntry, kDlssInputLayout,
+                                kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            add_pre_transition({from_uint64<VkImage>(g_state.rrSpecularAlbedo.image),
+                                image_range_of(false), rrSpecularAlbedoEntry, kDlssInputLayout,
+                                kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            add_pre_transition({from_uint64<VkImage>(g_state.rrNormalRoughness.image),
+                                image_range_of(false), rrNormalEntry, kDlssInputLayout,
+                                kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            if (valid_image(g_state.rrSpecularMotion) && g_state.rrSpecularMotion.image != 0) {
+                rrSpecularMotionEntry = current_layout_of(g_state.rrSpecularMotion.image);
+                add_pre_transition({from_uint64<VkImage>(g_state.rrSpecularMotion.image),
+                                    image_range_of(false), rrSpecularMotionEntry, kDlssInputLayout,
+                                    kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            } else if (valid_image(g_state.rrSpecularHitDistance) && g_state.rrSpecularHitDistance.image != 0) {
+                rrHitDistanceEntry = current_layout_of(g_state.rrSpecularHitDistance.image);
+                add_pre_transition({from_uint64<VkImage>(g_state.rrSpecularHitDistance.image),
+                                    image_range_of(false), rrHitDistanceEntry, kDlssInputLayout,
+                                    kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            }
         }
+
+        add_pre_transition(rr_bias_current_color_transition(rrBiasEntry, false));
+        record_batched_transitions(recordingBuffer, preDescs, preCount);
+        note_layout_after_transition(motionImage, kDlssInputLayout);
+        note_layout_after_transition(evaluationOutput, kDlssOutputLayout);
 
         const int32_t evaluateResult = record_sr_evaluation(*info, recordingBuffer);
 
@@ -731,24 +784,42 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
         // hands the renderer an image in a layout its next pass does not expect. The two
         // native images keep the layouts DLSS restores them to, which is where the next
         // frame's transitions start from.
-        record_layout_transition(recordingBuffer, from_uint64<VkImage>(info->color.image),
-                                 image_range_of(false), kDlssInputLayout, colorEntryLayout);
-        record_layout_transition(recordingBuffer, from_uint64<VkImage>(info->depth.image),
-                                 image_range_of(true), kDlssInputLayout, depthEntryLayout);
+        ImageTransitionDesc postDescs[9]{};
+        uint32_t postCount = 0;
+        auto add_post_transition = [&](const ImageTransitionDesc& desc) {
+            if (desc.image == VK_NULL_HANDLE) return;
+            for (uint32_t i = 0; i < postCount; ++i) {
+                if (postDescs[i].image == desc.image) return;
+            }
+            postDescs[postCount++] = desc;
+        };
+
+        add_post_transition({colorImg, image_range_of(false), kDlssInputLayout, colorEntryLayout,
+                             kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+        add_post_transition({depthImg, depth_range_of(info->depth), kDlssInputLayout, depthEntryLayout,
+                             kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
         if (g_state.rrArmed) {
-            record_layout_transition(recordingBuffer,
-                                     from_uint64<VkImage>(g_state.rrDiffuseAlbedo.image),
-                                     image_range_of(false), kDlssInputLayout, rrAlbedoEntry);
-            record_layout_transition(recordingBuffer,
-                                     from_uint64<VkImage>(g_state.rrSpecularAlbedo.image),
-                                     image_range_of(false), kDlssInputLayout, rrSpecularAlbedoEntry);
-            record_layout_transition(recordingBuffer,
-                                     from_uint64<VkImage>(g_state.rrNormalRoughness.image),
-                                     image_range_of(false), kDlssInputLayout, rrNormalEntry);
-            record_layout_transition(recordingBuffer,
-                                     from_uint64<VkImage>(g_state.rrSpecularHitDistance.image),
-                                     image_range_of(false), kDlssInputLayout, rrHitDistanceEntry);
+            add_post_transition({from_uint64<VkImage>(g_state.rrDiffuseAlbedo.image),
+                                 image_range_of(false), kDlssInputLayout, rrAlbedoEntry,
+                                 kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            add_post_transition({from_uint64<VkImage>(g_state.rrSpecularAlbedo.image),
+                                 image_range_of(false), kDlssInputLayout, rrSpecularAlbedoEntry,
+                                 kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            add_post_transition({from_uint64<VkImage>(g_state.rrNormalRoughness.image),
+                                 image_range_of(false), kDlssInputLayout, rrNormalEntry,
+                                 kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            if (valid_image(g_state.rrSpecularMotion) && g_state.rrSpecularMotion.image != 0) {
+                add_post_transition({from_uint64<VkImage>(g_state.rrSpecularMotion.image),
+                                     image_range_of(false), kDlssInputLayout, rrSpecularMotionEntry,
+                                     kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            } else if (valid_image(g_state.rrSpecularHitDistance) && g_state.rrSpecularHitDistance.image != 0) {
+                add_post_transition({from_uint64<VkImage>(g_state.rrSpecularHitDistance.image),
+                                     image_range_of(false), kDlssInputLayout, rrHitDistanceEntry,
+                                     kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            }
         }
+        add_post_transition(rr_bias_current_color_transition(rrBiasEntry, true));
+        record_batched_transitions(recordingBuffer, postDescs, postCount);
         mark_frame_timing(recordingBuffer, 2);
         return evaluateResult;
     } catch (...) {
@@ -893,6 +964,26 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_options(uint32_t* mode,
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_reflex_mode(const uint32_t mode) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return record_reflex_mode(mode);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_state(
+    uint32_t* low_latency_available,
+    uint32_t* latency_report_available) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_reflex_state(low_latency_available, latency_report_available);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_camera_constants(McDlssCameraConstants* out) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -945,6 +1036,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_state(
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_vsync_support(uint32_t* vsync_supported) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_fg_vsync_support(vsync_supported);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo* info) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -956,19 +1056,42 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
             return kInvalidParameter;
         }
         // Nothing to present until the output image exists at the size this call names.
-        if (g_state.outputImage.image == VK_NULL_HANDLE ||
+        if (!images_match_configuration() ||
             g_state.imagesOutputWidth != info->width ||
             g_state.imagesOutputHeight != info->height) {
             return kNotInitialized;
         }
         // Copying an image onto itself would be a caller that passed this module's own
         // output back as the engine target, and vkCmdCopyImage forbids the overlap.
-        if (info->image == to_uint64(g_state.outputImage.image)) {
+        if (info->image == to_uint64(g_state.outputImage.image) ||
+            info->image == to_uint64(g_state.rrOutputImage.image)) {
             return kInvalidParameter;
         }
 
         const VkCommandBuffer recordingBuffer =
             from_uint64<VkCommandBuffer>(info->command_buffer);
+        // RR uses the same shader for direct presentation and the scratch fallback. SR
+        // retains its native output copy. The host supplies actual image usage, not just
+        // format support: a storage-capable format alone does not permit storage writes.
+        if (g_state.rrArmed) {
+            const bool direct = info->image_view != 0 &&
+                info->image_format == static_cast<uint32_t>(VK_FORMAT_R8G8B8A8_UNORM) &&
+                (info->image_usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0 &&
+                info->image != info->reflection.image;
+            const McDlssImage toneMapOutput = direct
+                ? McDlssImage{info->image_view, info->image, info->image_format}
+                : McDlssImage{to_uint64(g_state.outputImage.view), to_uint64(g_state.outputImage.image),
+                              static_cast<uint32_t>(kOutputFormat)};
+            const int32_t toneMapResult = record_tone_map(recordingBuffer, g_state.exposure,
+                                                         info->reflection, toneMapOutput);
+            if (toneMapResult != kSuccess) {
+                return toneMapResult;
+            }
+            if (direct) {
+                mark_frame_timing(recordingBuffer, 3);
+                return kSuccess;
+            }
+        }
         const VkImage destination = from_uint64<VkImage>(info->image);
         // The destination is the engine's output-sized colour target - a single-level,
         // single-layer 2D image - so the copy is one mip, one layer, at the same extent, and
@@ -979,17 +1102,20 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
         const VkImageLayout outputEntryLayout =
             current_layout_of(to_uint64(g_state.outputImage.image));
 
-        // This transition is also what orders the copy behind the evaluation that wrote the
-        // output image: it is a full memory dependency, and it always emits, because the layout
-        // DLSS leaves the output in and TRANSFER_SRC_OPTIMAL cannot be the same layout. The
-        // motion pass, whose entry and exit layouts *can* coincide, owns an explicit barrier
-        // for exactly the case this one cannot reach.
-        record_layout_transition(recordingBuffer, g_state.outputImage.image, outputRange,
-                                 outputEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        // This transition is also what orders the copy behind the evaluation (or tone mapping) that
+        // wrote the output image. Output image transition narrows from compute write to transfer read;
+        // destination transitions to transfer write. Both transitions issue in a single batched barrier.
+        const ImageTransitionDesc preCopy[2] = {
+            {g_state.outputImage.image, outputRange, outputEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT},
+            {destination, destinationRange, destinationEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+             VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT}
+        };
+        record_batched_transitions(recordingBuffer, preCopy, 2);
         note_layout_after_transition(to_uint64(g_state.outputImage.image),
                                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        record_layout_transition(recordingBuffer, destination, destinationRange,
-                                 destinationEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
         // One mip, one layer, same extent: the destination is the engine's output-sized target
         // and the output image was allocated at exactly those dimensions, so this is a copy
@@ -1005,10 +1131,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
         // Both images go back where their owners expect them, in the same recording: the
         // engine's target to the layout it arrived in, and the output image to the layout the
         // next evaluation's transitions will start from.
-        record_layout_transition(recordingBuffer, destination, destinationRange,
-                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, destinationEntryLayout);
-        record_layout_transition(recordingBuffer, g_state.outputImage.image, outputRange,
-                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, outputEntryLayout);
+        const ImageTransitionDesc postCopy[2] = {
+            {destination, destinationRange, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, destinationEntryLayout,
+             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT},
+            {g_state.outputImage.image, outputRange, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, outputEntryLayout,
+             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+             VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT}
+        };
+        record_batched_transitions(recordingBuffer, postCopy, 2);
         note_layout_after_transition(to_uint64(g_state.outputImage.image), outputEntryLayout);
         mark_frame_timing(recordingBuffer, 3);
         return kSuccess;
@@ -1022,6 +1153,22 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_motion_probe(
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         return query_motion_probe(motion_x, motion_y, depth, slot);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_exposure(const float exposure) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const float newExposure = exposure > 0.0f ? exposure : 1.0f;
+        if (g_state.exposure != newExposure) {
+            g_state.exposure = newExposure;
+            if (g_state.rrArmed) {
+                record_rr_options();
+            }
+        }
+        return kSuccess;
     } catch (...) {
         return kFailure;
     }
@@ -1041,6 +1188,17 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
         release_images();
         g_state.frameEligibility.invalidate();
         return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+// Query bridges deliberately do not own the process runtime. The host explicitly tears it
+// down before destroying Vulkan, including title-screen exits and failed session startup.
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_shutdown_streamline(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return shutdown_state();
     } catch (...) {
         return kFailure;
     }

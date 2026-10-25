@@ -14,10 +14,11 @@ object VideoOptionLocks {
 	fun rgssAllowed(): Boolean = !srLocksRgss()
 
 	/**
-	 * V-sync cannot be changed while the user has frame generation armed. The stored option is
-	 * not written; FG already reads it as off for the swapchain.
+	 * V-sync cannot be changed while the user has frame generation armed and the device does not
+	 * support FG V-sync. When Streamline DLSS-G reports bIsVsyncSupportAvailable, V-sync remains unlocked.
 	 */
 	@JvmStatic
 	fun fgLocksVsync(): Boolean =
-		ClientRuntime.active().activeControls()?.frameGenerationEnabled == true
+		ClientRuntime.active().activeControls()?.frameGenerationEnabled == true &&
+			!ClientRuntime.active().isFgVsyncSupported()
 }

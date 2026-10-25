@@ -8,7 +8,7 @@ import com.mojang.blaze3d.systems.RenderSystem
  * First-person hand and GUI windows where the transparent full-resolution [UiTarget] stands
  * in for Minecraft's main target.
  *
- * Hand: `GameRenderer.renderItemInHand` HEAD→TAIL. Screen effects and the 3D crosshair run
+ * Hand: `GameRenderer.renderItemInHand` is bracketed with try/finally. Screen effects and the 3D crosshair run
  * after in `renderLevel` and stay on vanilla main. GUI: `GuiRenderer.render` HEAD; TAIL
  * closes and composites UI over the HUD-less world already in the main target (same target
  * as source and dest, so the base copy is skipped).
@@ -60,12 +60,22 @@ class UiPhase(
 
 	/**
 	 * First UI window: always clears. Drops a window left open by a failed frame (exception
-	 * between renderItemInHand HEAD/TAIL) rather than leaking the override to present.
+	 * between UI windows) rather than leaking the override to present.
 	 * Zero-size main target never opens.
 	 */
 	fun beginHand(mainTarget: RenderTarget) {
 		if (openWindow(mainTarget, clear = true)) {
 			clearedThisFrame = true
+		}
+	}
+
+	/** Closes even when vanilla skips the hand in third person or spectator mode. */
+	fun renderHand(mainTarget: RenderTarget, render: Runnable) {
+		beginHand(mainTarget)
+		try {
+			render.run()
+		} finally {
+			end()
 		}
 	}
 
@@ -127,6 +137,7 @@ class UiPhase(
 		// Drop the window before releasing the target so no caller keeps answering the UI target.
 		isOpen = false
 		clearedThisFrame = false
+		frameMainTarget = null
 		target.close()
 	}
 

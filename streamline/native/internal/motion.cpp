@@ -19,22 +19,24 @@ constexpr uint32_t kVelocityFillSpirV[] =
 constexpr uint32_t kMaxDispatchBindings = 5;
 
 // Push-constant block, matching mc_dlss_motion.comp exactly: a column-major mat4 followed by
-// the render size and the probe ring slot.
+// the render size, the probe ring slot, and the FG consuming frame flag.
 struct DlssMotionPushConstants {
     float reprojection[16];
     int32_t renderWidth;
     int32_t renderHeight;
     int32_t probeSlot;
+    int32_t fgConsumingFrame;
 };
 
 // Push-constant block, matching mc_dlss_velocity_fill.comp exactly: the same mat4 and render
-// size, plus the reset flag and the probe ring slot.
+// size, plus the reset flag, the probe ring slot, and the FG consuming frame flag.
 struct DlssVelocityFillPushConstants {
     float reprojection[16];
     int32_t renderWidth;
     int32_t renderHeight;
     int32_t reset;
     int32_t probeSlot;
+    int32_t fgConsumingFrame;
 };
 
 // The two passes this module records declare different descriptor layouts: the camera-only
@@ -57,7 +59,6 @@ constexpr VkDescriptorType kVelocityFillBindingTypes[] = {
 // binding, which DlssMotionPass has no field for, so the pair rides together here.
 struct VelocityFillPass {
     DlssMotionPass pass;
-    uint64_t boundVelocityView = 0;
 };
 
 VelocityFillPass g_velocityFill;
@@ -193,9 +194,9 @@ VkDescriptorSet bind_motion_descriptors(const uint64_t depthView) noexcept {
     DlssMotionPass& pass = g_state.motionPass;
     const uint64_t motionView = to_uint64(g_state.motionImage.view);
     const uint64_t flippedView = to_uint64(g_state.fgMotionImage.view);
-    if (pass.boundSet >= 0 && pass.boundDepthView == depthView &&
-        pass.boundMotionView == motionView && pass.boundFlippedView == flippedView) {
-        return pass.sets[pass.boundSet];
+    const uint64_t views[] = {depthView, motionView, flippedView, 0};
+    for (uint32_t i = 0; i < kMotionDescriptorRing; ++i) {
+        if (std::memcmp(pass.boundViews[i], views, sizeof(views)) == 0) return pass.sets[i];
     }
 
     const uint32_t slot = pass.nextSet;
@@ -236,10 +237,7 @@ VkDescriptorSet bind_motion_descriptors(const uint64_t depthView) noexcept {
     write_probe_binding(writes[3], set, 3, probeInfo);
     vkUpdateDescriptorSets(g_state.device, 4, writes, 0, nullptr);
 
-    pass.boundSet = static_cast<int32_t>(slot);
-    pass.boundDepthView = depthView;
-    pass.boundMotionView = motionView;
-    pass.boundFlippedView = flippedView;
+    std::memcpy(pass.boundViews[slot], views, sizeof(views));
     pass.nextSet = (slot + 1) % kMotionDescriptorRing;
     return set;
 }
@@ -254,10 +252,9 @@ VkDescriptorSet bind_velocity_fill_descriptors(const uint64_t depthView,
     DlssMotionPass& pass = g_velocityFill.pass;
     const uint64_t motionView = to_uint64(g_state.motionImage.view);
     const uint64_t flippedView = to_uint64(g_state.fgMotionImage.view);
-    if (pass.boundSet >= 0 && pass.boundDepthView == depthView &&
-        pass.boundMotionView == motionView && g_velocityFill.boundVelocityView == velocityView &&
-        pass.boundFlippedView == flippedView) {
-        return pass.sets[pass.boundSet];
+    const uint64_t views[] = {depthView, motionView, flippedView, velocityView};
+    for (uint32_t i = 0; i < kMotionDescriptorRing; ++i) {
+        if (std::memcmp(pass.boundViews[i], views, sizeof(views)) == 0) return pass.sets[i];
     }
 
     const uint32_t slot = pass.nextSet;
@@ -310,11 +307,7 @@ VkDescriptorSet bind_velocity_fill_descriptors(const uint64_t depthView,
     write_probe_binding(writes[4], set, 4, probeInfo);
     vkUpdateDescriptorSets(g_state.device, 5, writes, 0, nullptr);
 
-    pass.boundSet = static_cast<int32_t>(slot);
-    pass.boundDepthView = depthView;
-    pass.boundMotionView = motionView;
-    pass.boundFlippedView = flippedView;
-    g_velocityFill.boundVelocityView = velocityView;
+    std::memcpy(pass.boundViews[slot], views, sizeof(views));
     pass.nextSet = (slot + 1) % kMotionDescriptorRing;
     return set;
 }
@@ -499,6 +492,11 @@ int32_t create_dispatch_pass(DlssMotionPass& pass, const uint32_t* spirv, const 
 
 } // namespace
 
+void invalidate_motion_bindings() noexcept {
+    std::memset(g_state.motionPass.boundViews, 0, sizeof(g_state.motionPass.boundViews));
+    std::memset(g_velocityFill.pass.boundViews, 0, sizeof(g_velocityFill.pass.boundViews));
+}
+
 void destroy_motion_pass() noexcept {
     // One shutdown stall covers both live passes before either is destroyed: each pass has
     // been dispatched from, and the shutdown path admits no second device-idle wait. A
@@ -548,25 +546,33 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept {
     // Same recording discipline as the evaluation: transitions and dispatch go onto the
     // engine's command buffer, and nothing here submits, waits, or idles the device.
     const VkCommandBuffer recordingBuffer = from_uint64<VkCommandBuffer>(info.command_buffer);
-    const VkImageSubresourceRange depthRange = image_range_of(true);
-    const VkImageLayout depthEntryLayout = current_layout_of(info.depth.image);
-    record_layout_transition(recordingBuffer, from_uint64<VkImage>(info.depth.image), depthRange,
-                             depthEntryLayout, kDlssInputLayout);
+    const VkImageSubresourceRange depthRange = depth_range_of(info.depth);
     const VkImageSubresourceRange motionRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    record_layout_transition(recordingBuffer, g_state.motionImage.image, motionRange,
-                             g_state.motionImage.layout, VK_IMAGE_LAYOUT_GENERAL);
+    const VkImageLayout depthEntryLayout = current_layout_of(info.depth.image);
+
+    ImageTransitionDesc preMotionDescs[3];
+    uint32_t preCount = 0;
+    preMotionDescs[preCount++] = {from_uint64<VkImage>(info.depth.image), depthRange, depthEntryLayout, kDlssInputLayout,
+         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT};
+    preMotionDescs[preCount++] = {g_state.motionImage.image, motionRange, g_state.motionImage.layout, VK_IMAGE_LAYOUT_GENERAL,
+         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_WRITE_BIT};
+    if (info.fg_consuming_frame != 0) {
+        preMotionDescs[preCount++] = {g_state.fgMotionImage.image, motionRange, g_state.fgMotionImage.layout, VK_IMAGE_LAYOUT_GENERAL,
+             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+             VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_WRITE_BIT};
+        g_state.fgMotionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    record_batched_transitions(recordingBuffer, preMotionDescs, preCount);
     g_state.motionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
-    // The flipped copy the FG tag names gets the same transition discipline: UNDEFINED into
-    // GENERAL on the first frame, a no-op afterwards.
-    record_layout_transition(recordingBuffer, g_state.fgMotionImage.image, motionRange,
-                             g_state.fgMotionImage.layout, VK_IMAGE_LAYOUT_GENERAL);
-    g_state.fgMotionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
 
     DlssMotionPushConstants constants{};
     std::memcpy(constants.reprojection, info.reprojection, sizeof(constants.reprojection));
     constants.renderWidth = static_cast<int32_t>(info.render_width);
     constants.renderHeight = static_cast<int32_t>(info.render_height);
     constants.probeSlot = probe_slot();
+    constants.fgConsumingFrame = static_cast<int32_t>(info.fg_consuming_frame);
 
     vkCmdBindPipeline(recordingBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_state.motionPass.pipeline);
     vkCmdBindDescriptorSets(recordingBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -577,38 +583,22 @@ int32_t record_motion(const McDlssMotionInfo& info) noexcept {
     vkCmdDispatch(recordingBuffer, motion_workgroup_count(info.render_width),
                   motion_workgroup_count(info.render_height), 1);
 
-    // The dispatch's writes are not visible to anything downstream without a barrier of
-    // this pass's own - and that includes both images it wrote: the motion image the
-    // evaluation reads, and the flipped copy the FG tag declares. The evaluation's
-    // transition of the motion image happens to provide one today, but only because GENERAL
-    // and the layout DLSS reads it in differ - make the layouts ever agree and
-    // record_layout_transition emits nothing, leaving the evaluation reading whatever was
-    // in the image before the dispatch. The flipped copy rests in GENERAL with no later
-    // transition of its own ever, so its barrier is the only one it gets. The pass owns the
-    // visibility of its own writes rather than inheriting it from a caller.
-    VkImageMemoryBarrier writeBarriers[2]{};
-    for (uint32_t i = 0; i < 2; ++i) {
-        VkImageMemoryBarrier& barrier = writeBarriers[i];
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.subresourceRange = motionRange;
+    // The dispatch's writes to both motion images and the restore of the depth image
+    // are made visible and ordered ahead of downstream passes in a single batched barrier.
+    ImageTransitionDesc postMotionDescs[3];
+    uint32_t postCount = 0;
+    postMotionDescs[postCount++] = {g_state.motionImage.image, motionRange, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+         VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+    if (info.fg_consuming_frame != 0) {
+        postMotionDescs[postCount++] = {g_state.fgMotionImage.image, motionRange, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
     }
-    writeBarriers[0].image = g_state.motionImage.image;
-    writeBarriers[1].image = g_state.fgMotionImage.image;
-    vkCmdPipelineBarrier(recordingBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 2,
-                         writeBarriers);
-
-    // Depth goes back where Minecraft expects it, in the same recording. The motion image
-    // stays in GENERAL, which is both where the next evaluation's transition starts from
-    // and where a reader of this module's own image expects to find it.
-    record_layout_transition(recordingBuffer, from_uint64<VkImage>(info.depth.image), depthRange,
-                             kDlssInputLayout, depthEntryLayout);
+    postMotionDescs[postCount++] = {from_uint64<VkImage>(info.depth.image), depthRange, kDlssInputLayout, depthEntryLayout,
+         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+    record_batched_transitions(recordingBuffer, postMotionDescs, postCount);
     advance_probe();
     return kSuccess;
 }
@@ -626,41 +616,33 @@ int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept {
     // Same recording discipline as the motion pass: transitions and dispatch go onto the
     // engine's command buffer, and nothing here submits, waits, or idles the device.
     const VkCommandBuffer recordingBuffer = from_uint64<VkCommandBuffer>(info.command_buffer);
-    const VkImageSubresourceRange depthRange = image_range_of(true);
+    const VkImageSubresourceRange depthRange = depth_range_of(info.depth);
     const VkImageSubresourceRange motionRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     const VkImageLayout depthEntryLayout = current_layout_of(info.depth.image);
-    record_layout_transition(recordingBuffer, from_uint64<VkImage>(info.depth.image), depthRange,
-                             depthEntryLayout, kDlssInputLayout);
-    record_layout_transition(recordingBuffer, g_state.motionImage.image, motionRange,
-                             g_state.motionImage.layout, VK_IMAGE_LAYOUT_GENERAL);
-    g_state.motionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
-    // The flipped copy the FG tag names gets the same transition discipline as the camera
-    // pass gives it: UNDEFINED into GENERAL on the first frame, a no-op afterwards.
-    record_layout_transition(recordingBuffer, g_state.fgMotionImage.image, motionRange,
-                             g_state.fgMotionImage.layout, VK_IMAGE_LAYOUT_GENERAL);
-    g_state.fgMotionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
 
     // The velocity companion rests in GENERAL - Minecraft renders its colour attachments in
-    // it - and GENERAL is also where the dispatch samples it, so no layout transition can
-    // order the dispatch behind the scene's velocity writes: layout equality alone is not
-    // synchronization. The fill therefore owns an explicit barrier before the dispatch,
-    // making the writes the scene renderers and clears just recorded visible to its sampled
-    // reads. The broad source stage is deliberate: the scene's velocity producers are render
-    // passes and clears this module cannot see, and ALL_COMMANDS is correct for every
-    // producer.
-    VkImageMemoryBarrier velocityReadBarrier{};
-    velocityReadBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    velocityReadBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-    velocityReadBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    velocityReadBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    velocityReadBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    velocityReadBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    velocityReadBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    velocityReadBarrier.image = from_uint64<VkImage>(info.velocity.image);
-    velocityReadBarrier.subresourceRange = motionRange;
-    vkCmdPipelineBarrier(recordingBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                         &velocityReadBarrier);
+    // it - and GENERAL is also where the dispatch samples it. The transition narrows from
+    // color attachment output write to compute sampled read while preserving same-layout dependency.
+    // Depth, motion, flipped motion, and velocity transitions are consolidated into one batched barrier.
+    ImageTransitionDesc preFillDescs[4];
+    uint32_t preFillCount = 0;
+    preFillDescs[preFillCount++] = {from_uint64<VkImage>(info.depth.image), depthRange, depthEntryLayout, kDlssInputLayout,
+         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT};
+    preFillDescs[preFillCount++] = {g_state.motionImage.image, motionRange, g_state.motionImage.layout, VK_IMAGE_LAYOUT_GENERAL,
+         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_WRITE_BIT};
+    if (info.fg_consuming_frame != 0) {
+        preFillDescs[preFillCount++] = {g_state.fgMotionImage.image, motionRange, g_state.fgMotionImage.layout, VK_IMAGE_LAYOUT_GENERAL,
+             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+             VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_WRITE_BIT};
+        g_state.fgMotionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    preFillDescs[preFillCount++] = {from_uint64<VkImage>(info.velocity.image), motionRange, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT};
+    record_batched_transitions(recordingBuffer, preFillDescs, preFillCount);
+    g_state.motionImage.layout = VK_IMAGE_LAYOUT_GENERAL;
 
     DlssVelocityFillPushConstants constants{};
     std::memcpy(constants.reprojection, info.reprojection, sizeof(constants.reprojection));
@@ -668,6 +650,7 @@ int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept {
     constants.renderHeight = static_cast<int32_t>(info.render_height);
     constants.reset = info.reset;
     constants.probeSlot = probe_slot();
+    constants.fgConsumingFrame = static_cast<int32_t>(info.fg_consuming_frame);
 
     vkCmdBindPipeline(recordingBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                       g_velocityFill.pass.pipeline);
@@ -680,35 +663,22 @@ int32_t record_velocity_fill(const McDlssFillVelocityInfo& info) noexcept {
     vkCmdDispatch(recordingBuffer, motion_workgroup_count(info.render_width),
                   motion_workgroup_count(info.render_height), 1);
 
-    // The dispatch's writes to the motion image and its flipped copy are not visible to the
-    // tag and the evaluation without a barrier of this pass's own: both images stay in
-    // GENERAL, so no later transition of either can provide one. The fill owns the
-    // visibility of its writes, exactly like the motion pass's explicit barrier, and the
-    // flipped copy - which nothing transitions ever - gets its only barrier here.
-    VkImageMemoryBarrier writeBarriers[2]{};
-    for (uint32_t i = 0; i < 2; ++i) {
-        VkImageMemoryBarrier& barrier = writeBarriers[i];
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.subresourceRange = motionRange;
+    // The dispatch's writes to both motion images and the restore of the depth image
+    // are made visible and ordered ahead of downstream passes in a single batched barrier.
+    ImageTransitionDesc postFillDescs[3];
+    uint32_t postFillCount = 0;
+    postFillDescs[postFillCount++] = {g_state.motionImage.image, motionRange, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+         VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+    if (info.fg_consuming_frame != 0) {
+        postFillDescs[postFillCount++] = {g_state.fgMotionImage.image, motionRange, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
     }
-    writeBarriers[0].image = g_state.motionImage.image;
-    writeBarriers[1].image = g_state.fgMotionImage.image;
-    vkCmdPipelineBarrier(recordingBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 2,
-                         writeBarriers);
-
-    // Depth goes back where Minecraft expects it, in the same recording. The velocity
-    // companion stays in GENERAL - the layout the engine rests it in and where the next
-    // frame's scene renderers write it - and the motion image stays in GENERAL, where the
-    // next evaluation's transition starts from.
-    record_layout_transition(recordingBuffer, from_uint64<VkImage>(info.depth.image), depthRange,
-                             kDlssInputLayout, depthEntryLayout);
+    postFillDescs[postFillCount++] = {from_uint64<VkImage>(info.depth.image), depthRange, kDlssInputLayout, depthEntryLayout,
+         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+    record_batched_transitions(recordingBuffer, postFillDescs, postFillCount);
     advance_probe();
     return kSuccess;
 }

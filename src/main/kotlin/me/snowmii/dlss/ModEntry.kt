@@ -5,8 +5,6 @@ import me.snowmii.dlss.client.ModConfig
 import me.snowmii.dlss.mixin.DebugScreenEntriesInvoker
 import me.snowmii.dlss.readout.DlssDebugEntry
 import me.snowmii.dlss.readout.DlssPacingEntry
-import me.snowmii.dlss.readout.DlssDebugSnapshot
-import me.snowmii.dlss.stress.StressRuntime
 import me.snowmii.streamline.Streamline
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
@@ -27,7 +25,7 @@ object ModEntry : ClientModInitializer {
 		// This runs before Vulkan construction mixins, so Streamline is configured before any
 		// native graphics seam can ask for it.
 		Streamline.configure(startupConfig.nativeLibraryPath)
-		me.snowmii.dlss.streamline.VkLibBootstrap.install()
+		me.snowmii.dlss.streamline.VulkanBootstrap.install()
 		startupConfig.warnings.forEach { warning -> LOGGER.warn("DLSS startup configuration: {}", warning) }
 		LOGGER.info(
 			"DLSS SR startup: enabled={} mode={} output={} native-library={}",
@@ -48,12 +46,6 @@ object ModEntry : ClientModInitializer {
 			binding(category, "toggle", InputConstants.KEY_F6) { ClientRuntime.active().activeControls()?.toggleEnabled() },
 			binding(category, "mode", InputConstants.KEY_F7) { ClientRuntime.active().activeControls()?.cycleQualityMode() },
 			binding(category, "preset", InputConstants.KEY_F8) { ClientRuntime.active().activeControls()?.cyclePreset() },
-			binding(category, "stress", InputConstants.KEY_F9) {
-				StressRuntime.togglePasses()?.let { message ->
-					LOGGER.info(message)
-					DlssDebugSnapshot.record(message)
-				}
-			},
 			binding(category, "frame_generation", InputConstants.KEY_F10) {
 				ClientRuntime.active().activeControls()?.toggleFrameGeneration()
 			},

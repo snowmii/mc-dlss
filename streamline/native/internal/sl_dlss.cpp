@@ -74,6 +74,26 @@ void shutdown_streamline() noexcept {
     }
 }
 
+int32_t is_feature_supported_sl(const uint32_t feature, const uint64_t vkPhysicalDevice) noexcept {
+    if (!g_state.streamlineInitialized) {
+        return kNotInitialized;
+    }
+    void* physDev = from_uint64<void*>(vkPhysicalDevice);
+    if (physDev == nullptr && g_state.proxyPhysicalDevice != 0) {
+        physDev = from_uint64<void*>(g_state.proxyPhysicalDevice);
+    }
+    if (physDev == nullptr && g_state.physicalDeviceValue != 0) {
+        physDev = from_uint64<void*>(g_state.physicalDeviceValue);
+    }
+    if (physDev == nullptr) {
+        return kInvalidParameter;
+    }
+    sl::AdapterInfo adapterInfo{};
+    adapterInfo.vkPhysicalDevice = physDev;
+    const sl::Result result = slIsFeatureSupported(static_cast<sl::Feature>(feature), adapterInfo);
+    return result == sl::Result::eOk ? kSuccess : static_cast<int32_t>(result);
+}
+
 int32_t query_optimal_dimensions_sl(const uint32_t outputWidth, const uint32_t outputHeight,
                                     const uint32_t qualityMode, uint32_t* renderWidth,
                                     uint32_t* renderHeight) noexcept {
@@ -113,6 +133,45 @@ int32_t query_optimal_dimensions_sl(const uint32_t outputWidth, const uint32_t o
 
     sl::DLSSOptimalSettings settings{};
     const sl::Result result = slDLSSGetOptimalSettings(options, settings);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    if (!valid_dimensions(outputWidth, outputHeight, settings.optimalRenderWidth,
+                          settings.optimalRenderHeight)) {
+        return kInvalidParameter;
+    }
+    *renderWidth = settings.optimalRenderWidth;
+    *renderHeight = settings.optimalRenderHeight;
+    return kSuccess;
+}
+
+int32_t query_optimal_dimensions_rr_sl(const uint32_t outputWidth, const uint32_t outputHeight,
+                                       const uint32_t qualityMode, uint32_t* renderWidth,
+                                       uint32_t* renderHeight) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    if (renderWidth == nullptr || renderHeight == nullptr ||
+        !valid_dimensions(outputWidth, outputHeight, outputWidth, outputHeight) ||
+        !valid_quality_mode(qualityMode)) {
+        return kInvalidParameter;
+    }
+
+    if (static_cast<NVSDK_NGX_PerfQuality_Value>(qualityMode) ==
+        NVSDK_NGX_PerfQuality_Value_DLAA) {
+        *renderWidth = outputWidth;
+        *renderHeight = outputHeight;
+        return kSuccess;
+    }
+
+    sl::DLSSDOptions options{};
+    options.mode = static_cast<sl::DLSSMode>(qualityMode + 1);
+    options.outputWidth = outputWidth;
+    options.outputHeight = outputHeight;
+    options.colorBuffersHDR = sl::Boolean::eTrue;
+
+    sl::DLSSDOptimalSettings settings{};
+    const sl::Result result = slDLSSDGetOptimalSettings(options, settings);
     if (result != sl::Result::eOk) {
         return static_cast<int32_t>(result);
     }
@@ -192,7 +251,7 @@ sl::DLSSGOptions make_fg_options(const uint32_t numBackBuffers,
     // switch re-record the same stored value, so the options can never drift from the
     // configuration the session cycles.
     options.numFramesToGenerate = g_state.fgOptions.numFramesToGenerate;
-    options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
+    options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff | sl::DLSSGFlags::eEnableFullscreenMenuDetection;
     // eBlockPresentingClientQueue, the SDK default, rather than the Vulkan-only
     // eBlockNoClientQueues this recorded first. The parallel mode's gains are documented for
     // "GPU-limited applications having workload types employing multiple queues for
@@ -544,17 +603,6 @@ int32_t query_reflex_markers(uint32_t* typeCounts, uint32_t* eventCount, uint32_
                                       eventsCapacity);
 }
 
-// The Reflex options record, shared by the READY registration and the frame-limit record:
-// eLowLatency is the mode the contract pins even without a Reflex UI, the cap is the stored
-// frameLimitUs (zero is no Reflex-side cap), and the marker/thread fields stay the SDK
-// defaults.
-sl::ReflexOptions make_reflex_options() noexcept {
-    sl::ReflexOptions options{};
-    options.mode = sl::ReflexMode::eLowLatency;
-    options.frameLimitUs = g_state.reflexFrameLimitUs;
-    return options;
-}
-
 int32_t record_reflex_options() noexcept {
     if (!sl_session_ready()) {
         return kNotInitialized;
@@ -570,7 +618,6 @@ int32_t record_reflex_options() noexcept {
         return static_cast<int32_t>(result);
     }
     g_state.reflexOptionsRecorded = true;
-    g_state.reflexMode = static_cast<uint32_t>(sl::ReflexMode::eLowLatency);
     // PCL stats (NVIDIA overlay FPS / latency) become queryable once Reflex options exist.
     // install_pcl_window often runs before READY and would have stored a zero message id.
     configure_pcl_stats();
@@ -620,6 +667,43 @@ int32_t query_reflex_options(uint32_t* mode, uint32_t* setOptionsCalls) noexcept
     }
     *mode = g_state.reflexMode;
     *setOptionsCalls = g_state.reflexSetOptionsCalls;
+    return kSuccess;
+}
+
+int32_t record_reflex_mode(const uint32_t mode) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    if (mode > 2) {
+        return kInvalidParameter;
+    }
+    const uint32_t previous = g_state.reflexMode;
+    g_state.reflexMode = mode;
+    g_state.reflexSetOptionsCalls += 1;
+    const sl::Result result = slReflexSetOptions(make_reflex_options());
+    if (result != sl::Result::eOk) {
+        g_state.reflexMode = previous;
+        return static_cast<int32_t>(result);
+    }
+    g_state.reflexOptionsRecorded = true;
+    return kSuccess;
+}
+
+int32_t query_reflex_state(uint32_t* lowLatencyAvailable, uint32_t* latencyReportAvailable) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    sl::ReflexState state{};
+    const sl::Result result = slReflexGetState(state);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    if (lowLatencyAvailable != nullptr) {
+        *lowLatencyAvailable = state.lowLatencyAvailable ? 1 : 0;
+    }
+    if (latencyReportAvailable != nullptr) {
+        *latencyReportAvailable = state.latencyReportAvailable ? 1 : 0;
+    }
     return kSuccess;
 }
 
@@ -752,6 +836,22 @@ int32_t query_fg_state(uint32_t* status, uint32_t* numFramesPresented,
     return kSuccess;
 }
 
+int32_t query_fg_vsync_support(uint32_t* vsyncSupported) noexcept {
+    if (!sl_session_ready()) {
+        return kNotInitialized;
+    }
+    if (vsyncSupported == nullptr) {
+        return kInvalidParameter;
+    }
+    sl::DLSSGState state{};
+    const sl::Result result = slDLSSGGetState(sl::ViewportHandle{kFgViewportId}, state, nullptr);
+    if (result != sl::Result::eOk) {
+        return static_cast<int32_t>(result);
+    }
+    *vsyncSupported = state.bIsVsyncSupportAvailable ? 1 : 0;
+    return kSuccess;
+}
+
 // Builds the sl::Resource description for one tagged image. `native` is the VkImage and `view`
 // the VkImageView the ABI carried (or this module allocated), `state` is the layout the
 // feature reads or writes the image in (the layout this module's own transitions establish
@@ -784,10 +884,15 @@ static void record_flip_blit(const VkCommandBuffer commandBuffer, const uint64_t
                              DlssOwnedImage& destination, const uint32_t width,
                              const uint32_t height, const bool isDepth) noexcept {
     const VkImageSubresourceRange range = image_range_of(isDepth);
-    record_layout_transition(commandBuffer, from_uint64<VkImage>(sourceImage), range,
-                             kEngineRestingLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    record_layout_transition(commandBuffer, destination.image, range, destination.layout,
-                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    const ImageTransitionDesc preBlit[2] = {
+        {from_uint64<VkImage>(sourceImage), range, kEngineRestingLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT},
+        {destination.image, range, destination.layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT}
+    };
+    record_batched_transitions(commandBuffer, preBlit, 2);
     destination.layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
     VkImageBlit region{};
@@ -804,10 +909,15 @@ static void record_flip_blit(const VkCommandBuffer commandBuffer, const uint64_t
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region,
                    isDepth ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
 
-    record_layout_transition(commandBuffer, from_uint64<VkImage>(sourceImage), range,
-                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, kEngineRestingLayout);
-    record_layout_transition(commandBuffer, destination.image, range,
-                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kEngineRestingLayout);
+    const ImageTransitionDesc postBlit[2] = {
+        {from_uint64<VkImage>(sourceImage), range, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, kEngineRestingLayout,
+         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+         VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT},
+        {destination.image, range, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kEngineRestingLayout,
+         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+         VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT}
+    };
+    record_batched_transitions(commandBuffer, postBlit, 2);
     destination.layout = kEngineRestingLayout;
 }
 
@@ -854,6 +964,7 @@ int32_t record_rr_options() noexcept {
     options.colorBuffersHDR = sl::Boolean::eTrue;
     options.alphaUpscalingEnabled = sl::Boolean::eFalse;
     options.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;
+    options.exposureScale = g_state.exposure > 0.0f ? g_state.exposure : 1.0f;
     write_matrix(options.worldToCameraView, g_state.rrWorldToCameraView);
     write_matrix(options.cameraViewToWorld, g_state.rrCameraViewToWorld);
 
@@ -874,28 +985,24 @@ int32_t prepare_rr(const McDlssRrPrepareInfo& info) noexcept {
         return kNotInitialized;
     }
     if (info.enabled == 0) {
-        g_state.rrArmed = false;
-        g_state.rrDiffuseAlbedo = {};
-        g_state.rrSpecularAlbedo = {};
-        g_state.rrNormalRoughness = {};
-        g_state.rrSpecularHitDistance = {};
+        store_rr_guides(info);
         return record_sr_options();
     }
     if (!valid_image(info.diffuse_albedo) || !valid_image(info.specular_albedo) ||
-        !valid_image(info.normal_roughness) || !valid_image(info.specular_hit_distance) ||
+        !valid_image(info.normal_roughness) ||
         !valid_rr_preset(info.rr_preset)) {
         return kInvalidParameter;
     }
-    g_state.rrArmed = true;
-    g_state.rrPreset = info.rr_preset;
-    g_state.rrDiffuseAlbedo = info.diffuse_albedo;
-    g_state.rrSpecularAlbedo = info.specular_albedo;
-    g_state.rrNormalRoughness = info.normal_roughness;
-    g_state.rrSpecularHitDistance = info.specular_hit_distance;
-    for (int i = 0; i < 16; ++i) {
-        g_state.rrWorldToCameraView[i] = info.world_to_camera_view[i];
-        g_state.rrCameraViewToWorld[i] = info.camera_view_to_world[i];
+    if ((info.specular_motion.image != 0 || info.specular_motion.view != 0) &&
+        (!valid_image(info.specular_motion) ||
+         (info.specular_motion.format != VK_FORMAT_R16G16_SFLOAT &&
+          info.specular_motion.format != VK_FORMAT_R32G32_SFLOAT))) {
+        return kInvalidParameter;
     }
+    if (!valid_rr_bias_current_color(info.bias_current_color)) {
+        return kInvalidParameter;
+    }
+    store_rr_guides(info);
     return record_rr_options();
 }
 
@@ -1191,12 +1298,14 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
         reinterpret_cast<void*>(g_state.motionImage.view),
         kDlssInputLayout, renderWidth, renderHeight,
         static_cast<uint32_t>(kMotionFormat));
+    const DlssOwnedImage& evaluationOutput =
+        g_state.rrArmed ? g_state.rrOutputImage : g_state.outputImage;
     sl::Resource outputResource = make_tagged_resource(
-        reinterpret_cast<void*>(g_state.outputImage.image),
-        reinterpret_cast<void*>(g_state.outputImage.memory),
-        reinterpret_cast<void*>(g_state.outputImage.view),
+        reinterpret_cast<void*>(evaluationOutput.image),
+        reinterpret_cast<void*>(evaluationOutput.memory),
+        reinterpret_cast<void*>(evaluationOutput.view),
         kDlssOutputLayout, outputWidth, outputHeight,
-        static_cast<uint32_t>(kOutputFormat));
+        static_cast<uint32_t>(g_state.rrArmed ? kRrOutputFormat : kOutputFormat));
 
     // Each resource chains the subresource range its role names. The plugin derives the NGX
     // resource's range from the tag and defaults to a colour aspect when none is chained, which
@@ -1209,7 +1318,7 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     colorRange.baseArrayLayer = 0;
     colorRange.layerCount = 1;
     static sl::SubresourceRange depthRange{};
-    depthRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthRange.aspectMask = depth_range_of(info.depth).aspectMask;
     depthRange.baseMipLevel = 0;
     depthRange.levelCount = 1;
     depthRange.baseArrayLayer = 0;
@@ -1235,9 +1344,8 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     // is the configured output size, and all start at the origin.
     const sl::Extent renderExtent{0, 0, renderWidth, renderHeight};
     const sl::Extent outputExtent{0, 0, outputWidth, outputHeight};
-    // SR: color, depth, [motion, output]. RR adds albedo, specular albedo, normalRoughness,
-    // specular hit distance when armed (color is then the noisy RT input).
-    sl::ResourceTag tags[8]{};
+    // Four base tags, three RR guides, motion OR hit distance, and bias + disocclusion + responsivity tags.
+    sl::ResourceTag tags[14]{};
     uint32_t tagCount = 0;
     tags[tagCount++] = sl::ResourceTag(&colorResource, sl::kBufferTypeScalingInputColor,
                                        sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
@@ -1254,6 +1362,7 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
     sl::Resource specularAlbedoResource{};
     sl::Resource normalRoughnessResource{};
     sl::Resource specularHitDistanceResource{};
+    sl::Resource specularMotionResource{};
     static sl::SubresourceRange guideRange{};
     guideRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     guideRange.baseMipLevel = 0;
@@ -1273,28 +1382,49 @@ int32_t tag_sr_resources(const McDlssTagInfo& info) noexcept {
             from_uint64<void*>(g_state.rrNormalRoughness.image), nullptr,
             from_uint64<void*>(g_state.rrNormalRoughness.view), kDlssInputLayout, renderWidth,
             renderHeight, g_state.rrNormalRoughness.format);
-        specularHitDistanceResource = make_tagged_resource(
-            from_uint64<void*>(g_state.rrSpecularHitDistance.image), nullptr,
-            from_uint64<void*>(g_state.rrSpecularHitDistance.view), kDlssInputLayout, renderWidth,
-            renderHeight, g_state.rrSpecularHitDistance.format);
         albedoResource.next = &guideRange;
         specularAlbedoResource.next = &guideRange;
         normalRoughnessResource.next = &guideRange;
-        specularHitDistanceResource.next = &guideRange;
         tags[tagCount++] = sl::ResourceTag(&albedoResource, sl::kBufferTypeAlbedo,
                                            sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
         tags[tagCount++] = sl::ResourceTag(&specularAlbedoResource, sl::kBufferTypeSpecularAlbedo,
                                            sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
         tags[tagCount++] = sl::ResourceTag(&normalRoughnessResource, sl::kBufferTypeNormalRoughness,
                                            sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
-        tags[tagCount++] =
-            sl::ResourceTag(&specularHitDistanceResource, sl::kBufferTypeSpecularHitDistance,
-                            sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+        if (valid_image(g_state.rrSpecularMotion) && g_state.rrSpecularMotion.image != 0) {
+            specularMotionResource = make_tagged_resource(
+                from_uint64<void*>(g_state.rrSpecularMotion.image), nullptr,
+                from_uint64<void*>(g_state.rrSpecularMotion.view), kDlssInputLayout, renderWidth,
+                renderHeight, g_state.rrSpecularMotion.format);
+            specularMotionResource.next = &guideRange;
+            tags[tagCount++] = sl::ResourceTag(&specularMotionResource, sl::kBufferTypeSpecularMotionVectors,
+                                               sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+        } else if (valid_image(g_state.rrSpecularHitDistance) && g_state.rrSpecularHitDistance.image != 0) {
+            specularHitDistanceResource = make_tagged_resource(
+                from_uint64<void*>(g_state.rrSpecularHitDistance.image), nullptr,
+                from_uint64<void*>(g_state.rrSpecularHitDistance.view), kDlssInputLayout, renderWidth,
+                renderHeight, g_state.rrSpecularHitDistance.format);
+            specularHitDistanceResource.next = &guideRange;
+            tags[tagCount++] =
+                sl::ResourceTag(&specularHitDistanceResource, sl::kBufferTypeSpecularHitDistance,
+                                sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+        }
     }
 
     // The command buffer is the caller's shared recording: slSetTagForFrame takes it as an
     // opaque pointer and this module only ever records on it, never submits.
     // As above, pass the VkCommandBuffer handle, not the address of the local handle variable.
+    // Tag 29 (BiasCurrentColorHint) and Tag 11 (DisocclusionMask) every frame, even SR/disabled/absent,
+    // so repeating tags under the same token cannot retain a prior mask. Pinned SDK
+    // ResourceTaggingForFrame::setTag clears an empty Resource safely.
+    // In dlss_d (Ray Reconstruction), denoiser recurrent state invalidation is driven by Tag 11.
+    sl::Resource biasCurrentColorResource{};
+    tags[tagCount++] = make_rr_bias_current_color_tag(biasCurrentColorResource);
+    sl::Resource disocclusionMaskResource{};
+    tags[tagCount++] = make_rr_disocclusion_mask_tag(disocclusionMaskResource);
+    sl::Resource responsivityMaskResource{};
+    tags[tagCount++] = make_rr_responsivity_mask_tag(responsivityMaskResource);
+
     result = slSetTagForFrame(*frameToken, sl::ViewportHandle{kSrViewportId}, tags, tagCount,
                               commandBuffer);
     if (result != sl::Result::eOk) {

@@ -140,6 +140,9 @@ class MotionVectorCameraOnlyRetirementTest {
 		val registration = repositorySource("src/main/resources/mc-dlss.mixins.json")
 
 		for (retired in listOf(
+			// 26.3 shared passes made these hooks no-ops; keep them out of production.
+			"CloudRendererMotionMixin",
+			"PreparedRenderTypeMotionMixin",
 			"WeatherEffectRendererMotionMixin",
 			"QuadParticleFeatureRendererMotionMixin",
 			// The retired hand/item writer hooks and their submit-identity copies.
@@ -157,8 +160,6 @@ class MotionVectorCameraOnlyRetirementTest {
 			// Retained object-motion writer routes and their seams.
 			"EntityRenderDispatcherMotionMixin",
 			"MovingBlockFeatureRendererMotionMixin",
-			"CloudRendererMotionMixin",
-			"PreparedRenderTypeMotionMixin",
 			"RenderTypeFeatureRendererMotionMixin",
 			"StagedVertexBufferMotionMixin",
 			"ModelFeatureRendererMotionMixin",
@@ -166,7 +167,7 @@ class MotionVectorCameraOnlyRetirementTest {
 			"BlockEntityRenderDispatcherMotionMixin",
 			// The terrain pass clear seam and the compatibility latch backstop.
 			"VulkanChunkSectionsToRenderMixin",
-			"me.snowmii.vklib.mixin.VulkanDeviceMixin",
+			"PipelineCacheMixin",
 		)) {
 			assertTrue(registration.contains(retained), "$retained must stay registered")
 		}

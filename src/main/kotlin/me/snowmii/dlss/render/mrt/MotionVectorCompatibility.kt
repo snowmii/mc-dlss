@@ -32,9 +32,12 @@ data class MotionVectorPipeline(
  */
 class MotionVectorCompatibility(
 	private val diagnostics: (String) -> Unit = {},
+	/** False while the engine integration has no compatible object-writing pass. */
+	objectWritersAvailable: Boolean = true,
 ) {
 	@Volatile
-	var selectedRoute: MotionVectorRoute = MotionVectorRoute.VELOCITY_MRT
+	var selectedRoute: MotionVectorRoute = if (objectWritersAvailable) MotionVectorRoute.VELOCITY_MRT
+		else MotionVectorRoute.CAMERA_ONLY
 		private set
 
 	@Volatile

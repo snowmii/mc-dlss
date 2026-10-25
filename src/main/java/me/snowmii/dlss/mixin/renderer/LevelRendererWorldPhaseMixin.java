@@ -4,7 +4,6 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import me.snowmii.dlss.client.ClientRuntime;
-import me.snowmii.dlss.stress.StressRuntime;
 import me.snowmii.dlss.render.WorldPhase;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
@@ -45,29 +44,8 @@ public class LevelRendererWorldPhaseMixin {
 	}
 
 	@Inject(method = "render", at = @At("TAIL"))
-	private void mcDlssRenderStressPass(
-		final GraphicsResourceAllocator resourceAllocator,
-		final boolean renderOutline,
-		final CameraRenderState cameraState,
-		final GpuBufferSlice terrainFog,
-		final Vector4f fogColor,
-		final boolean shouldRenderSky,
-		final boolean unusedTrailingFlag,
-		final CallbackInfo info
-	) {
-		// Still inside the world phase - the low-resolution scene target on a DLSS frame, the real
-		// main target on a vanilla one - so the stress pass pays its cost at whatever resolution
-		// the world was actually rendered at, which is the comparison it exists to make, and DLSS
-		// upscales the finished scene (stress pass included) rather than a pre-effect one. The
-		// phase is handed along only to supply the velocity-MRT write context: null in exactly
-		// the sessions without a phase, so vanilla and camera-only frames keep the one-target
-		// stress pass and the stress pass itself still renders on every frame. The phase closes
-		// here, before GameRenderer submits hand/item features, so they use vanilla's full-size
-		// target and unjittered HUD projection.
+	private void mcDlssEndWorldPhase(final CallbackInfo info) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
-		StressRuntime.render(Minecraft.getInstance().gameRenderer.mainRenderTarget(), phase);
-		if (phase != null) {
-			phase.end();
-		}
+		if (phase != null) phase.end();
 	}
 }

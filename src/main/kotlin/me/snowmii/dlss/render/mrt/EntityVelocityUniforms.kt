@@ -14,8 +14,8 @@ import com.mojang.renderpearl.api.textures.GpuTextureView
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
 import me.snowmii.dlss.client.ClientRuntime
 import me.snowmii.dlss.render.WorldPhase
+import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.StagedVertexBuffer
-import net.minecraft.client.renderer.rendertype.OutputTarget
 import net.minecraft.client.renderer.rendertype.PreparedRenderType
 import net.minecraft.client.renderer.rendertype.RenderType
 import net.minecraft.resources.Identifier
@@ -179,7 +179,7 @@ object EntityVelocityWriterBindings {
 
 	@JvmStatic
 	fun beginDraw(renderType: RenderType): Boolean =
-		beginDraw(renderType.pipeline(), isEligibleRenderType(renderType, shouldIsolateDraw(renderType.pipeline())))
+		beginDraw(renderType.pipeline())
 
 	@JvmStatic
 	fun beginDraw(pipeline: RenderPipeline): Boolean = beginDraw(pipeline, shouldIsolateDraw(pipeline))
@@ -249,14 +249,6 @@ object EntityVelocityWriterBindings {
 
 	private fun currentEntityId(): Int? = submitContext.get() ?: entityContext.get()
 
-	/**
-	 * Applies the actual RenderType output target to pipeline eligibility at the batching seam.
-	 * Non-main targets must retain vanilla consolidation even when their pipeline is entity-shaped.
-	 */
-	@JvmStatic
-	internal fun isEligibleRenderType(renderType: RenderType, pipelineEligible: Boolean): Boolean =
-		pipelineEligible && true /* 26.3: RenderType no longer carries OutputTarget */
-
 	/** Forces one staged draw per supported entity or static block-entity draw, defeating same-render-type consolidation. */
 	@JvmStatic
 	fun shouldIsolateDraw(pipeline: RenderPipeline): Boolean =
@@ -318,15 +310,14 @@ object EntityVelocityRender {
 		phase: WorldPhase?,
 	): Boolean = EntityVelocityWriterBindings.executeInfoEntityId(info) != null &&
 		phase?.entityVelocityActive == true &&
-		EntityVelocityUniforms.isSupportedPipeline(prepared.pipeline()) &&
-		true /* 26.3: PreparedRenderType no longer carries OutputTarget */
+		EntityVelocityUniforms.isSupportedPipeline(prepared.pipeline())
 
 	@JvmStatic
 	fun draw(prepared: PreparedRenderType, info: StagedVertexBuffer.ExecuteInfo): Boolean = runCatching {
 		val phase = EntityVelocityUniforms.activeVelocityPhase() ?: return@runCatching false
 		if (!canDraw(prepared, info, phase)) return@runCatching false
 		val entityId = EntityVelocityWriterBindings.executeInfoEntityId(info) ?: return@runCatching false
-		val attachments = attachments(prepared, phase) ?: return@runCatching false
+		val attachments = attachments(phase) ?: return@runCatching false
 
 		val encoder = RenderSystem.getDevice().createCommandEncoder()
 		EntityVelocityUniforms.writeFrame(encoder, buffer(), phase, entityId, attachments.velocity)
@@ -344,9 +335,9 @@ object EntityVelocityRender {
 	 * override, no scene-sized velocity companion, or a colour view that is not the held scene
 	 * target's - the identity check that keeps a foreign target off the velocity route.
 	 */
-	private fun attachments(prepared: PreparedRenderType, phase: WorldPhase): Attachments? {
+	private fun attachments(phase: WorldPhase): Attachments? {
 		val scene = phase.worldTargetOverride ?: return null
-		val renderTarget = OutputTarget.MAIN_TARGET.getRenderTarget()
+		val renderTarget = Minecraft.getInstance().gameRenderer.mainRenderTarget()
 		val colorTexture = renderTarget.colorTextureView
 		val depthTexture = if (renderTarget.hasDepth()) {
 			renderTarget.depthTextureView

@@ -8,6 +8,7 @@ import com.mojang.renderpearl.api.commands.GpuFence
 import com.mojang.renderpearl.api.pipeline.BlendFunction
 import com.mojang.renderpearl.api.pipeline.ColorTargetState
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.renderpearl.api.commands.CommandEncoder
 import com.mojang.renderpearl.api.commands.GpuQueryPool
@@ -129,7 +130,7 @@ class UiTargetCompositeTest {
 		val destination = HeadlessRenderTarget(outputWidth, outputHeight)
 		val recording = Recording()
 
-		UiComposite(sampler = { FakeSampler() }).render(recording.encoder(), ui, hudless, destination)
+		UiComposite(sampler = { FakeSampler() }, pipelineResolver = ::FallbackCompiledPipeline).render(recording.encoder(), ui, hudless, destination)
 
 		assertEquals(2, recording.pipelines.size)
 		assertSame(UiComposite.HUDLESS_COPY_PIPELINE, recording.pipelines[0], "the base is the unblended world copy")
@@ -167,7 +168,7 @@ class UiTargetCompositeTest {
 		val hudless = HeadlessRenderTarget(outputWidth, outputHeight)
 		val destination = HeadlessRenderTarget(outputWidth, outputHeight)
 
-		UiComposite(sampler = { FakeSampler() }).render(recording.encoder(), HeadlessRenderTarget(outputWidth, outputHeight, withViews = false), hudless, destination)
+		UiComposite(sampler = { FakeSampler() }, pipelineResolver = ::FallbackCompiledPipeline).render(recording.encoder(), HeadlessRenderTarget(outputWidth, outputHeight, withViews = false), hudless, destination)
 
 		assertTrue(recording.pipelines.isEmpty(), "no pass is recorded when a source has no color view")
 	}
@@ -236,7 +237,7 @@ class UiTargetCompositeTest {
 
 		val clears = mutableListOf<Clear>()
 		val descriptors = mutableListOf<RenderPassDescriptor>()
-		val pipelines = mutableListOf<CompiledRenderPipeline>()
+		val pipelines = mutableListOf<RenderPipeline>()
 		val binds = mutableListOf<Pair<String, GpuTextureView?>>()
 		val draws = mutableListOf<Pair<Int, Int>>()
 		var passCloses = 0
@@ -315,7 +316,7 @@ class UiTargetCompositeTest {
 		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
 
 		override fun setPipeline(pipeline: CompiledRenderPipeline) {
-			recording.pipelines += pipeline
+			recording.pipelines += (pipeline as? FallbackCompiledPipeline)?.source ?: error("unexpected: $pipeline")
 		}
 
 		override fun setUniform(name: String, textureView: GpuTextureView?, sampler: GpuSampler?) {

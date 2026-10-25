@@ -9,8 +9,12 @@ import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.client.RuntimeControls;
 import me.snowmii.dlss.readout.SessionReadout;
 import me.snowmii.dlss.render.WorldPhase;
+import me.snowmii.dlss.streamline.WindowsSurfaceHelper;
 import me.snowmii.streamline.StreamlineVulkanProxies;
+import org.lwjgl.sdl.SDLProperties;
+import org.lwjgl.sdl.SDLVideo;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.system.Platform;
 import org.lwjgl.system.Struct;
 import org.lwjgl.vulkan.*;
 import org.spongepowered.asm.mixin.Mixin;
@@ -32,12 +36,12 @@ import java.nio.LongBuffer;
  * Swapchain image count: raises {@code minImageCount} to the DLSS-G back-buffer requirement
  * while FG is enabled; falls back to vanilla {@code max(3, caps.min)} otherwise.
  *
- * Vulkan proxy routing: wraps {@code vkCreateSwapchainKHR}, {@code vkGetSwapchainImagesKHR},
- * {@code vkAcquireNextImageKHR}, {@code vkQueuePresentKHR}, and {@code vkDestroySwapchainKHR}
- * so every call goes through Streamline's manual-hooking proxies. Streamline is initialized
- * with {@code eUseManualHooking}: no global intercept; the host must forward these calls or
- * {@code presentCommon()} never fires and FG reports {@code presented=0}. Wrappers forward to
- * the driver when the proxy is idle.
+ * Vulkan proxy routing: wraps {@code vkCreateWin32SurfaceKHR}, {@code vkDestroySurfaceKHR},
+ * {@code vkCreateSwapchainKHR}, {@code vkGetSwapchainImagesKHR}, {@code vkAcquireNextImageKHR},
+ * {@code vkQueuePresentKHR}, and {@code vkDestroySwapchainKHR} so every call goes through
+ * Streamline's manual-hooking proxies. Streamline is initialized with {@code eUseManualHooking}:
+ * no global intercept; the host must forward these calls or {@code presentCommon()} never fires
+ * and FG reports {@code presented=0}. Wrappers forward to the driver when the proxy is idle.
  */
 @Mixin(VulkanGpuSurface.class)
 public class VulkanGpuSurfaceMixin {
@@ -94,6 +98,40 @@ public class VulkanGpuSurfaceMixin {
 
 
 	@WrapOperation(
+		method = "<init>(Lcom/mojang/renderpearl/backend/vulkan/VulkanDevice;J)V",
+		at = @At(
+			value = "INVOKE",
+			target = "Lorg/lwjgl/sdl/SDLVulkan;SDL_Vulkan_CreateSurface(JLorg/lwjgl/vulkan/VkInstance;Lorg/lwjgl/vulkan/VkAllocationCallbacks;Ljava/nio/LongBuffer;)Z"
+		)
+	)
+	private boolean mcDlssCreateSurface(
+		final long windowHandle,
+		final VkInstance instance,
+		final VkAllocationCallbacks pAllocator,
+		final LongBuffer pSurface,
+		final Operation<Boolean> original
+	) {
+		if (!StreamlineVulkanProxies.available() || Platform.get() != Platform.WINDOWS) {
+			return original.call(windowHandle, instance, pAllocator, pSurface);
+		}
+		final int props = SDLVideo.SDL_GetWindowProperties(windowHandle);
+		final long hwnd = SDLProperties.SDL_GetPointerProperty(props, SDLVideo.SDL_PROP_WINDOW_WIN32_HWND_POINTER, 0L);
+		if (hwnd == 0L) {
+			return original.call(windowHandle, instance, pAllocator, pSurface);
+		}
+		final int result = WindowsSurfaceHelper.createSurface(
+			instance.address(),
+			hwnd,
+			address(pAllocator),
+			address(pSurface)
+		);
+		if (result == VK10.VK_SUCCESS) {
+			return true;
+		}
+		return original.call(windowHandle, instance, pAllocator, pSurface);
+	}
+
+	@WrapOperation(
 		method = "configure(Lcom/mojang/renderpearl/api/device/GpuSurface$Configuration;)V",
 		at = @At(
 			value = "INVOKE",
@@ -110,6 +148,8 @@ public class VulkanGpuSurfaceMixin {
 		if (!StreamlineVulkanProxies.available()) {
 			return original.call(device, pCreateInfo, pAllocator, pSwapchain);
 		}
+		// Streamline creates views for intercepted swapchain images; transfer-only images cannot have views.
+		pCreateInfo.imageUsage(pCreateInfo.imageUsage() | VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 		return StreamlineVulkanProxies.createSwapchain(
 			device.address(), pCreateInfo.address(), address(pAllocator), address(pSwapchain)
 		);
@@ -202,6 +242,26 @@ public class VulkanGpuSurfaceMixin {
 			return;
 		}
 		StreamlineVulkanProxies.destroySwapchain(device.address(), swapchain, address(pAllocator));
+	}
+
+	@WrapOperation(
+		method = "close()V",
+		at = @At(
+			value = "INVOKE",
+			target = "Lorg/lwjgl/vulkan/KHRSurface;vkDestroySurfaceKHR(Lorg/lwjgl/vulkan/VkInstance;JLorg/lwjgl/vulkan/VkAllocationCallbacks;)V"
+		)
+	)
+	private void mcDlssDestroySurface(
+		final VkInstance instance,
+		final long surface,
+		final VkAllocationCallbacks pAllocator,
+		final Operation<Void> original
+	) {
+		if (!StreamlineVulkanProxies.available()) {
+			original.call(instance, surface, pAllocator);
+			return;
+		}
+		StreamlineVulkanProxies.destroySurface(instance.address(), surface, address(pAllocator));
 	}
 
 	@Unique

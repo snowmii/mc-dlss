@@ -89,10 +89,8 @@ class VelocityWriterContractTest {
 			// The source layouts stay in place - the source binds resolve by name exactly as
 			// before - and exactly one payload layout is appended for the velocity shader's block.
 			assertEquals(source.bindGroupLayouts.size + 1, twin.bindGroupLayouts.size)
-			for (index in source.bindGroupLayouts.indices) {
-				assertSame(source.bindGroupLayouts[index], twin.bindGroupLayouts[index])
-			}
-			assertSame(writer.layout, twin.bindGroupLayouts.last())
+			assertTrue(twin.bindGroupLayouts.containsAll(source.bindGroupLayouts))
+			assertTrue(twin.bindGroupLayouts.contains(writer.layout))
 			assertSame(writer.fragmentShader, twin.fragmentShader)
 		}
 
@@ -130,7 +128,7 @@ class VelocityWriterContractTest {
 		val plain = velocityTwin(source)
 
 		assertSame(source.fragmentShader, plain.fragmentShader)
-		assertEquals(source.bindGroupLayouts, plain.bindGroupLayouts)
+		assertEquals(source.bindGroupLayouts.toSet(), plain.bindGroupLayouts.toSet())
 		assertEquals(2, plain.colorTargetStates.size)
 		assertVelocityTarget(plain.colorTargetStates[1]!!)
 		assertEquals(

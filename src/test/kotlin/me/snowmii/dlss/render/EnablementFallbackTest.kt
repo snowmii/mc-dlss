@@ -1,6 +1,6 @@
 package me.snowmii.dlss.render
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.vklib.api.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.EvaluationImages

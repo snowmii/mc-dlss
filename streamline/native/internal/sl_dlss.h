@@ -4,6 +4,7 @@
 #include "internal/state.h"
 
 #include <cstdint>
+#include <sl_reflex.h>
 
 /*
  * Everything that talks to the Streamline DLSS feature: the optimal-dimension query, the
@@ -24,12 +25,20 @@ bool sl_session_ready() noexcept;
 // flag with the rest of the struct, so a later mc_dlss_bootstrap_streamline re-runs slInit.
 void shutdown_streamline() noexcept;
 
+// Checks whether a feature is supported on the physical device via slIsFeatureSupported.
+int32_t is_feature_supported_sl(uint32_t feature, uint64_t vkPhysicalDevice) noexcept;
+
 // Answers from slDLSSGetOptimalSettings. Validates like the NGX query it replaces: non-zero
 // output dimensions, a valid NGX-valued quality mode, and sane dimensions coming back. DLAA
 // is anti-aliasing at native resolution, so it returns the output dimensions without asking.
 int32_t query_optimal_dimensions_sl(uint32_t outputWidth, uint32_t outputHeight,
                                     uint32_t qualityMode, uint32_t* renderWidth,
                                     uint32_t* renderHeight) noexcept;
+
+// Answers from slDLSSDGetOptimalSettings for Ray Reconstruction.
+int32_t query_optimal_dimensions_rr_sl(uint32_t outputWidth, uint32_t outputHeight,
+                                       uint32_t qualityMode, uint32_t* renderWidth,
+                                       uint32_t* renderHeight) noexcept;
 
 // Records the configuration currently stored with slDLSSSetOptions, mapping the NGX-valued
 // quality mode onto sl::DLSSMode and the render preset onto the preset field sl::DLSSOptions
@@ -121,8 +130,17 @@ int32_t reflex_marker(uint32_t markerType) noexcept;
 int32_t query_reflex_markers(uint32_t* typeCounts, uint32_t* eventCount, uint32_t* events,
                              uint32_t eventsCapacity) noexcept;
 
+// Exact SDK payload shared by registration, mode changes and frame-limit changes.
+// eOff is a real user choice, never an uninitialized sentinel.
+inline sl::ReflexOptions make_reflex_options() noexcept {
+    sl::ReflexOptions options{};
+    options.mode = static_cast<sl::ReflexMode>(g_state.reflexMode);
+    options.frameLimitUs = g_state.reflexFrameLimitUs;
+    return options;
+}
+
 // Records the Reflex options registration the READY transition makes: one slReflexSetOptions
-// call carrying sl::ReflexMode::eLowLatency and the SDK-default frame-limit and marker
+// call carrying the stored mode (eLowLatency by default) and SDK-default frame-limit and marker
 // fields - the single call the pinned Reflex guide requires even when Reflex Low Latency
 // would be off and there is no Reflex UI, and which the guide says not to repeat per frame
 // while the options do not change. Requires sl_session_ready (kNotInitialized). On success
@@ -148,6 +166,12 @@ int32_t record_reflex_frame_limit(uint32_t frameLimitUs) noexcept;
 // nor the per-frame path called the plugin again. Answers kNotInitialized while the
 // Streamline session is not ready and kInvalidParameter while no record exists or either
 // out-pointer is null.
+// Sets the Reflex mode (0 = eOff, 1 = eLowLatency, 2 = eLowLatencyWithBoost).
+int32_t record_reflex_mode(uint32_t mode) noexcept;
+
+// Queries whether Reflex low-latency mode and latency report are available via slReflexGetState.
+int32_t query_reflex_state(uint32_t* lowLatencyAvailable, uint32_t* latencyReportAvailable) noexcept;
+
 int32_t query_reflex_options(uint32_t* mode, uint32_t* setOptionsCalls) noexcept;
 
 // The present-marker oracle: reports how many PRESENT_START and PRESENT_END markers this
@@ -239,6 +263,9 @@ int32_t wait_fg_inputs_value(uint64_t vkDevice, uint64_t semaphore, uint64_t val
 int32_t query_fg_state(uint32_t* status, uint32_t* numFramesPresented,
                        uint64_t* lastPresentInputsProcessingFenceValue,
                        uint64_t* inputsProcessingCompletionFence) noexcept;
+
+// Queries whether VSync support is available with Frame Generation via DLSSGState::bIsVsyncSupportAvailable.
+int32_t query_fg_vsync_support(uint32_t* vsyncSupported) noexcept;
 
 } // namespace mc_dlss
 

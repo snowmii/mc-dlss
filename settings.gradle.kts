@@ -17,9 +17,3 @@ pluginManagement {
 rootProject.name = "mc-dlss"
 
 include("streamline")
-includeBuild("../vk-lib") {
-	dependencySubstitution {
-		substitute(module("me.snowmii:vk-lib")).using(project(":"))
-		substitute(module("me.snowmii:vk-lib-api")).using(project(":api"))
-	}
-}

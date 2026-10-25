@@ -86,3 +86,12 @@ TEST_CASE("image_range_of derives aspect and the constant {0,1,0,1} range") {
 	CHECK(color.baseArrayLayer == 0);
 	CHECK(color.layerCount == 1);
 }
+
+TEST_CASE("virtual RR depth uses a color aspect while raster depth keeps its depth aspect") {
+    McDlssImage image{};
+    image.format = VK_FORMAT_D32_SFLOAT;
+    CHECK(depth_range_of(image).aspectMask == VK_IMAGE_ASPECT_DEPTH_BIT);
+    image.format = VK_FORMAT_R32_SFLOAT;
+    CHECK(depth_range_of(image).aspectMask == VK_IMAGE_ASPECT_COLOR_BIT);
+    CHECK(depth_range_of(image).levelCount == 1);
+}

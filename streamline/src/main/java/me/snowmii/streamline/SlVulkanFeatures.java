@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * Streamline's Vulkan feature-bit table as plain engine-free data.
  *
- * <p>The name tables mirror the complete {@code SL_VK_FEATURE} lists in Streamline 2.12.0's
+ * <p>The name tables mirror the complete {@code SL_VK_FEATURE} lists in Streamline 2.14.1's
  * {@code sl_helpers_vk.h} ({@code getVkPhysicalDeviceVulkan12Features} and
  * {@code getVkPhysicalDeviceVulkan13Features}); each name maps to the offset of the matching
  * {@code VkBool32} member inside its Vulkan struct, which is what Streamline's

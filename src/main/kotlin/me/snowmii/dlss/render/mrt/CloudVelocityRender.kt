@@ -5,7 +5,10 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice
 import com.mojang.blaze3d.buffers.Std140Builder
 import com.mojang.blaze3d.buffers.Std140SizeCalculator
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout
+import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline
 import com.mojang.renderpearl.api.pipeline.RenderPipeline
+import com.mojang.renderpearl.api.pipeline.ShaderSource
+import com.mojang.renderpearl.api.pipeline.ShaderType
 import com.mojang.renderpearl.api.pipeline.UniformType
 import com.mojang.renderpearl.api.commands.CommandEncoder
 import com.mojang.renderpearl.api.device.GpuDevice
@@ -453,7 +456,7 @@ object CloudVelocityRender {
 		if (CLOUD_VELOCITY_PASS.get() === pass) {
 			val twin = twinFor(pipeline)
 			if (twin != null) {
-				pass.setPipeline(RenderSystem.getCompiledPipeline(twin))
+				pass.setPipeline(compilePipeline(twin) ?: RenderSystem.getCompiledPipeline(twin))
 			} else {
 				// Unreachable in the mapped render call, which binds exactly the two
 				// preflighted statics. A pipeline the preflight never covered cannot take the
@@ -463,10 +466,10 @@ object CloudVelocityRender {
 					"Cloud velocity pass bound unexpected pipeline {}; the source pipeline binds and the attachment mismatch fails loudly",
 					pipeline.location,
 				)
-				pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline))
+				pass.setPipeline(compilePipeline(pipeline) ?: RenderSystem.getCompiledPipeline(pipeline))
 			}
 		} else {
-			pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline))
+			pass.setPipeline(compilePipeline(pipeline) ?: RenderSystem.getCompiledPipeline(pipeline))
 		}
 	}
 
@@ -608,10 +611,10 @@ object CloudVelocityRender {
 		val twins = HashMap<RenderPipeline, RenderPipeline>()
 		for (source in CLOUD_PIPELINES) {
 			val twin = writerTwin(source, VelocityWriter.CLOUD)
-			val compiled = RenderSystem.getCompiledPipelineNullable(twin)
+			val compiled = compilePipeline(twin)
 			check(compiled != null && !compiled.isClosed) { "cloud twin ${twin.location} failed to compile" }
 			val occlude = cloudSceneDepthTwin(source)
-			val occludeCompiled = RenderSystem.getCompiledPipelineNullable(occlude)
+			val occludeCompiled = compilePipeline(occlude)
 			check(occludeCompiled != null && !occludeCompiled.isClosed) {
 				"cloud scene-depth twin ${occlude.location} failed to compile"
 			}
@@ -619,6 +622,21 @@ object CloudVelocityRender {
 		}
 		preflightedTwins.clear()
 		preflightedTwins.putAll(twins)
+	}
+
+	private val EMPTY_SHADER_SOURCE = object : ShaderSource {
+		override fun getShader(id: Identifier, type: ShaderType) = ""
+		override fun getInclude(id: Identifier): ShaderSource.CachedIncludeSource? = null
+		override fun close() = Unit
+	}
+
+	private fun compilePipeline(pipeline: RenderPipeline): CompiledRenderPipeline? {
+		val cached = runCatching { RenderSystem.getCompiledPipelineNullable(pipeline) }.getOrNull()
+		if (cached != null) {
+			return cached
+		}
+		val device = deviceProvider()
+		return device.compilePipeline(pipeline, EMPTY_SHADER_SOURCE, Runnable::run).join()?.finishCompile()
 	}
 
 	/**

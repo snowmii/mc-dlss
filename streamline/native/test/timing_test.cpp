@@ -34,7 +34,7 @@ TEST_CASE("begin_frame_timing no-ops without a device") {
 	CHECK(g_timing.nextSlot == 0);
 	CHECK(g_timing.recordingSlot == 0);
 	for (uint32_t i = 0; i < kTimingSlotCount; ++i) {
-		CHECK_FALSE(g_timing.pending[i]);
+		CHECK(g_timing.recordedStamps[i] == 0);
 	}
 }
 
@@ -85,6 +85,6 @@ TEST_CASE("destroy_timing returns g_timing to its defaults") {
 	CHECK(g_timing.motionMs == 0.0f);
 	CHECK(g_timing.evaluateMs == 0.0f);
 	for (uint32_t i = 0; i < kTimingSlotCount; ++i) {
-		CHECK_FALSE(g_timing.pending[i]);
+		CHECK(g_timing.recordedStamps[i] == 0);
 	}
 }

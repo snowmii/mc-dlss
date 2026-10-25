@@ -50,6 +50,8 @@ interface ActiveView {
 
 	/** The reviewer's controls once the render loop has built the phase, or null before it has. */
 	fun activeControls(): RuntimeControls?
+
+	fun isFgVsyncSupported(): Boolean
 }
 
 /**
@@ -104,6 +106,8 @@ object ClientRuntime : RenderLoopView, ActiveView {
 	override fun activeUiPhase(): UiPhase? = uiPhaseInstance
 
 	override fun activeControls(): RuntimeControls? = runtimeControls
+
+	override fun isFgVsyncSupported(): Boolean = nativeBridge?.isFgVsyncSupported() ?: false
 
 	/**
 	 * Resolves what `GameRenderer.mainRenderTarget()` must answer: the world phase's scene target
@@ -162,6 +166,7 @@ object ClientRuntime : RenderLoopView, ActiveView {
 				if (ModConfig.user.frameGeneration) controls.setFrameGenerationEnabled(true)
 				controls.setRrModelPreset(ModConfig.user.rrModelPreset)
 				if (ModConfig.user.rayReconstruction) controls.setRayReconstructionEnabled(true)
+				controls.setReflexMode(ModConfig.user.reflexMode)
 			}
 			WorldPhase.forMinecraft(runtime, readout)
 		} catch (error: Throwable) {
@@ -206,6 +211,8 @@ object ClientRuntime : RenderLoopView, ActiveView {
 		close("world phase", world)
 		// Last: the world phase releases native images through this bridge on its way down.
 		close("native bridge", bridge)
+		// Bootstrap/proxy activation precedes world rendering and may never reach a READY session.
+		close("Streamline bootstrap", AutoCloseable { Streamline.shutdown() })
 	}
 
 	private fun close(what: String, resource: AutoCloseable?) {

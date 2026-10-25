@@ -1,6 +1,6 @@
 package me.snowmii.streamline;
 
-import me.snowmii.vklib.api.ImageBinding;
+import me.snowmii.dlss.api.ImageBinding;
 
 import java.util.Objects;
 

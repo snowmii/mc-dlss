@@ -11,12 +11,12 @@ import me.snowmii.streamline.SlVulkanFeatures
  * set Minecraft passes to `vkCreateDevice`.
  *
  * The name→(sType, structSize, offset) table lives in the SDK as plain data
- * ([SlVulkanFeatures.requirements]); this object adds the Blaze3D mapping and the engine
- * knowledge of what Minecraft 26.2 already enables.
+ * ([SlVulkanFeatures.requirements]); this object adds the RenderPearl mapping and the engine
+ * knowledge of what Minecraft 26.3 already enables.
  */
 object StreamlineFeatureMapping {
 	/**
-	 * Feature names Minecraft 26.2 already enables in its own `REQUIRED_DEVICE_FEATURES`.
+	 * Feature names Minecraft 26.3 already enables in its own `REQUIRED_DEVICE_FEATURES`.
 	 * Re-adding them would either duplicate an identical [VulkanFeature] record or enable the
 	 * same feature through a second struct (synchronization2, dynamicRendering); skipping
 	 * keeps the merged set from growing past what the mod adds.

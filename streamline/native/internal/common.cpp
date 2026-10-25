@@ -50,10 +50,21 @@ bool valid_image(const McDlssImage& image) noexcept {
            image.format != static_cast<uint32_t>(VK_FORMAT_UNDEFINED);
 }
 
+bool valid_rr_bias_current_color(const McDlssImage& image) noexcept {
+    if (image.image == 0 && image.view == 0) return true;
+    return valid_image(image) &&
+           (image.format == VK_FORMAT_R8_UNORM || image.format == VK_FORMAT_R16_SFLOAT ||
+            image.format == VK_FORMAT_R8G8B8A8_UNORM);
+}
+
 VkImageSubresourceRange image_range_of(const bool isDepth) noexcept {
     const VkImageAspectFlags aspect =
         isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
     return VkImageSubresourceRange{aspect, 0, 1, 0, 1};
+}
+
+VkImageSubresourceRange depth_range_of(const McDlssImage& image) noexcept {
+    return image_range_of(image.format != static_cast<uint32_t>(VK_FORMAT_R32_SFLOAT));
 }
 
 } // namespace mc_dlss

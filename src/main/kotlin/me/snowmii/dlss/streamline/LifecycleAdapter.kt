@@ -18,8 +18,11 @@ import me.snowmii.dlss.DlssNativeFailure
 import me.snowmii.dlss.DlssNativeStage
 import me.snowmii.dlss.DlssSession
 import me.snowmii.dlss.DlssSessionState
+import me.snowmii.dlss.ReflexMode
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
+import me.snowmii.dlss.api.RayReconstruction
+import me.snowmii.dlss.readout.SessionReadout
 import java.nio.file.Path
 
 /**
@@ -55,13 +58,18 @@ class LifecycleAdapter(
 			return null
 		}
 
-		val queriedDimensions = invokeDimensions {
-			native.queryOptimalDimensions(
-				session.outputDimensions.width,
-				session.outputDimensions.height,
-				session.config.qualityMode.sdkValue,
-			)
-		} ?: return null
+		try {
+			val dlssSupported = native.isFeatureSupported(StreamlineSession.FEATURE_DLSS, vkPhysicalDevice) == StreamlineSession.SUCCESS_RESULT
+			val fgSupported = native.isFeatureSupported(StreamlineSession.FEATURE_DLSS_G, vkPhysicalDevice) == StreamlineSession.SUCCESS_RESULT
+			val rrSupported = native.isFeatureSupported(StreamlineSession.FEATURE_DLSS_RR, vkPhysicalDevice) == StreamlineSession.SUCCESS_RESULT
+			val reflexSupported = native.isFeatureSupported(StreamlineSession.FEATURE_REFLEX, vkPhysicalDevice) ==
+				StreamlineSession.SUCCESS_RESULT
+			SessionReadout.emit("Streamline feature support: DLSS=$dlssSupported, DLSS-G=$fgSupported, " +
+				"DLSS-RR=$rrSupported, Reflex=$reflexSupported")
+		} catch (_: Throwable) {
+		}
+
+		val queriedDimensions = queryDimensions(session.config.qualityMode) ?: return null
 
 		if (!invokeStatus(DlssNativeStage.CONFIGURE) {
 				native.configureSuperResolution(
@@ -93,13 +101,7 @@ class LifecycleAdapter(
 			return null
 		}
 
-		val queriedDimensions = invokeDimensions {
-			native.queryOptimalDimensions(
-				session.outputDimensions.width,
-				session.outputDimensions.height,
-				qualityMode.sdkValue,
-			)
-		} ?: return null
+		val queriedDimensions = queryDimensions(qualityMode) ?: return null
 
 		if (!invokeStatus(DlssNativeStage.CONFIGURE) {
 				native.configureSuperResolution(
@@ -224,7 +226,9 @@ class LifecycleAdapter(
 
 		val dimensions = renderDimensions ?: return false
 		return invokeStatus(DlssNativeStage.WRITE_MOTION) {
-			native.writeMotion(MotionRequest(request.commandBuffer, request.depth, request.reprojection, dimensions))
+			native.writeMotion(MotionRequest(
+				request.commandBuffer, request.depth, request.reprojection, request.fgConsumingFrame, dimensions,
+			))
 		}
 	}
 
@@ -249,7 +253,10 @@ class LifecycleAdapter(
 		val dimensions = renderDimensions ?: return false
 		return invokeStatus(DlssNativeStage.WRITE_MOTION) {
 			native.fillVelocity(
-				FillVelocityRequest(request.commandBuffer, request.depth, request.velocity, request.reprojection, request.reset, dimensions),
+				FillVelocityRequest(
+					request.commandBuffer, request.depth, request.velocity, request.reprojection,
+					request.reset, request.fgConsumingFrame, dimensions,
+				),
 			)
 		}
 	}
@@ -263,22 +270,31 @@ class LifecycleAdapter(
 	 * constants and feature evaluation against the token this call obtained, and evaluating
 	 * with no retained token fails.
 	 */
-	fun tagSrResources(request: SrTagRequest): Boolean {
+	fun tagSrResources(request: SrTagRequest, allowFallback: Boolean = false): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
 		}
 
-		return invokeStatus(DlssNativeStage.TAG) {
-			native.tagSrResources(request)
-		}
+		return if (allowFallback) attemptOptionalReconstruction { native.tagSrResources(request) }
+		else invokeStatus(DlssNativeStage.TAG) { native.tagSrResources(request) }
 	}
 
 	fun prepareRayReconstruction(request: RrPrepareRequest): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
 		}
-		return invokeStatus(DlssNativeStage.CONFIGURE) {
-			native.prepareRayReconstruction(request)
+		return if (request.enabled) attemptOptionalReconstruction { native.prepareRayReconstruction(request) }
+		else invokeStatus(DlssNativeStage.CONFIGURE) { native.prepareRayReconstruction(request) }
+	}
+
+	fun setExposure(exposure: Float): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			native.setExposure(exposure) == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
 		}
 	}
 
@@ -451,16 +467,6 @@ class LifecycleAdapter(
 	}
 
 	/**
-	 * Records a new FG multiplier with the bridge, validated natively against the device
-	 * ceiling.
-	 *
-	 * Deliberately non-latching like [recordFrameGenerationOff]: a refused record (the device does
-	 * not support the value, or the session cannot answer) keeps the current multiplier in
-	 * effect and must not send the SR session to FALLBACK_LATCHED - the caller's readout
-	 * then reports the multiplier actually in effect, which is the contract's "a refusal
-	 * changes nothing" half.
-	 */
-	/**
 	 * Records the Reflex frame-rate cap. Never latches: a cap the plugin refuses is a session
 	 * that keeps Minecraft's own limiter, which is what the false answer tells the caller, not a
 	 * frame-route stage failure.
@@ -476,6 +482,38 @@ class LifecycleAdapter(
 		}
 	}
 
+	override fun setReflexMode(mode: ReflexMode): Boolean {
+		if (session.state != DlssSessionState.READY) {
+			return false
+		}
+		return try {
+			native.setReflexMode(mode.sdkValue) == NATIVE_SUCCESS
+		} catch (_: Throwable) {
+			false
+		}
+	}
+
+	override fun queryReflexState(): StreamlineSession.ReflexStateInfo? {
+		if (session.state != DlssSessionState.READY) {
+			return null
+		}
+		return try {
+			native.queryReflexState()
+		} catch (_: Throwable) {
+			null
+		}
+	}
+
+	/**
+	 * Records a new FG multiplier with the bridge, validated natively against the device
+	 * ceiling.
+	 *
+	 * Deliberately non-latching like [recordFrameGenerationOff]: a refused record (the device does
+	 * not support the value, or the session cannot answer) keeps the current multiplier in
+	 * effect and must not send the SR session to FALLBACK_LATCHED - the caller's readout
+	 * then reports the multiplier actually in effect, which is the contract's "a refusal
+	 * changes nothing" half.
+	 */
 	override fun setFgMultiplier(numFramesToGenerate: Int): Boolean {
 		if (session.state != DlssSessionState.READY) {
 			return false
@@ -501,9 +539,17 @@ class LifecycleAdapter(
 
 		return invokeStatus(DlssNativeStage.PRESENT_OUTPUT) {
 			native.presentOutput(
-				PresentTarget(destination.commandBuffer, destination.image, session.outputDimensions),
+				PresentTarget(destination.commandBuffer, destination.image, session.outputDimensions, destination.reflection,
+					destination.imageView, destination.imageFormat, destination.imageUsage),
 			)
 		}
+	}
+
+	/** An optional RR guide may be refused; only a failed SR recovery latches the session. */
+	private fun attemptOptionalReconstruction(operation: () -> Int): Boolean = try {
+		operation() == NATIVE_SUCCESS
+	} catch (_: StreamlineException) {
+		false
 	}
 
 	private fun invokeStatus(stage: DlssNativeStage, operation: () -> Int): Boolean {
@@ -523,6 +569,18 @@ class LifecycleAdapter(
 
 		session.latchFailure(DlssNativeFailure(stage, result))
 		return false
+	}
+
+	private fun queryDimensions(mode: SRMode): Dimensions? = invokeDimensions {
+		val output = session.outputDimensions
+		if (RayReconstruction.enabled) {
+			try {
+				return@invokeDimensions native.queryOptimalDimensionsRr(output.width, output.height, mode.sdkValue)
+			} catch (_: StreamlineException) {
+				// Optional RR may be unsupported; the ordinary SR query remains authoritative.
+			}
+		}
+		native.queryOptimalDimensions(output.width, output.height, mode.sdkValue)
 	}
 
 	private fun invokeDimensions(operation: () -> Dimensions): Dimensions? {

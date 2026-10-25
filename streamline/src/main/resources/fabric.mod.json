@@ -6,7 +6,7 @@
   "description": "JVM binding for the NVIDIA Streamline SDK, nested inside mc-dlss rather than shipped standalone.",
   "environment": "*",
   "depends": {
-    "fabricloader": ">=0.19.3",
+    "fabricloader": ">=0.19.5",
     "java": ">=25"
   },
   "custom": {

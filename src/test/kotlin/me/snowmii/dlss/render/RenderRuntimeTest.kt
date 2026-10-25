@@ -18,6 +18,28 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class RenderRuntimeTest {
+	@Test
+	fun `reference accumulation bypasses DLSS without changing the user mode and resumes cleanly`() {
+		val previous = me.snowmii.dlss.api.RayReconstruction.referenceMode
+		val session = session(enabled = true)
+		val runtime = runtime(session) { markReady(session); render }
+		try {
+			me.snowmii.dlss.api.RayReconstruction.referenceMode = false
+			assertTrue(runtime.beginWorldPhase(true, output) != null)
+			runtime.endWorldPhase()
+			me.snowmii.dlss.api.RayReconstruction.referenceMode = true
+			assertNull(runtime.beginWorldPhase(true, output))
+			assertNull(runtime.activeJitter)
+			assertNull(runtime.worldRenderTarget)
+			assertTrue(runtime.dlssEnabled)
+			me.snowmii.dlss.api.RayReconstruction.referenceMode = false
+			assertTrue(runtime.beginWorldPhase(true, output) != null)
+			assertEquals(1, startupCalls)
+		} finally {
+			me.snowmii.dlss.api.RayReconstruction.referenceMode = previous
+		}
+	}
+
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1707, 960)
 

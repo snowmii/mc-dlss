@@ -1,6 +1,6 @@
 package me.snowmii.streamline;
 
-import me.snowmii.vklib.api.ImageBinding;
+import me.snowmii.dlss.api.ImageBinding;
 
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -45,7 +45,28 @@ public interface StreamlineSession extends AutoCloseable {
 		Path dataPath
 	);
 
+	int FEATURE_DLSS = 0;
+	int FEATURE_REFLEX = 3;
+	int FEATURE_PCL = 4;
+	int FEATURE_DLSS_G = 1000;
+	int FEATURE_DLSS_RR = 1001;
+
+	/**
+	 * Checks whether a Streamline feature is supported on the physical device via slIsFeatureSupported.
+	 */
+	int isFeatureSupported(int feature, long vkPhysicalDevice);
+
 	Dimensions queryOptimalDimensions(
+		int outputWidth,
+		int outputHeight,
+		int qualityMode
+	);
+
+	/**
+	 * Queries the DLSS Ray Reconstruction optimal render dimensions for an output size and quality mode via
+	 * slDLSSDGetOptimalSettings.
+	 */
+	Dimensions queryOptimalDimensionsRr(
 		int outputWidth,
 		int outputHeight,
 		int qualityMode
@@ -226,6 +247,11 @@ public interface StreamlineSession extends AutoCloseable {
 	int prepareRayReconstruction(RrPrepareRequest request);
 
 	/**
+	 * Sets the exposure value applied during HDR-to-SDR tone mapping.
+	 */
+	default int setExposure(float exposure) { return 0; }
+
+	/**
 	 * Tags one frame's DLSS-G resources on the caller's command buffer, through Streamline's
 	 * frame-based resource tagging ({@code slGetNewFrameToken} + {@code slSetTagForFrame}).
 	 *
@@ -384,6 +410,18 @@ public interface StreamlineSession extends AutoCloseable {
 	ReflexRegistration queryReflexOptions();
 
 	/**
+	 * Sets the Reflex mode: 0 = eOff, 1 = eLowLatency, 2 = eLowLatencyWithBoost.
+	 */
+	int setReflexMode(int mode);
+
+	/**
+	 * Live capability state reported by slReflexGetState.
+	 */
+	record ReflexStateInfo(boolean lowLatencyAvailable, boolean latencyReportAvailable) {}
+
+	ReflexStateInfo queryReflexState();
+
+	/**
 	 * Re-records the Reflex options with a frame-rate cap: {@code frameLimitUs} microseconds per
 	 * frame, {@code 0} for no Reflex-side cap.
 	 *
@@ -453,6 +491,11 @@ public interface StreamlineSession extends AutoCloseable {
 	 * The read performs no GPU work and never blocks.
 	 */
 	FgState queryFgState();
+
+	/**
+	 * Queries whether VSync support is available with Frame Generation via DLSSGState::bIsVsyncSupportAvailable.
+	 */
+	boolean isFgVsyncSupported();
 
 	/**
 	 * Centre-pixel GPU motion and depth from the probe ring, or throws if the native bridge

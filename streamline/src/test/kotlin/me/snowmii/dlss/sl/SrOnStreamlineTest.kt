@@ -4,7 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ExtensionBootstrap
-import me.snowmii.vklib.api.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.StreamlineException
@@ -21,7 +21,7 @@ import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
 /**
- * Canonical live Streamline SR path: DLSS Super Resolution runs on the signed Streamline 2.12.0
+ * Canonical live Streamline SR path: DLSS Super Resolution runs on the signed Streamline 2.14.1
  * stack, with no direct-NGX fallback.
  *
  * The live frame drives the whole SL path on a headless device: bootstrap, proxy activation,
@@ -37,7 +37,7 @@ import org.lwjgl.vulkan.VK10
  * activated through slSetVulkanInfo.
  *
  * Methods are ordered because the fork is one process and the live session's close shuts
- * Streamline down (slShutdown, while the fixture device is still alive). On SL 2.12.0 a
+ * Streamline down (slShutdown, while the fixture device is still alive). On SL 2.14.1 a
  * bootstrap after that shutdown re-runs slInit but cannot serve the DLSS feature again in the
  * same process (slGetFeatureRequirements answers eErrorFeatureMissing), so bootstrap-
  * dependent methods must run before the live session, and nothing bootstraps after it.
@@ -207,7 +207,7 @@ class SrOnStreamlineTest {
 		}
 
 		// The build links Streamline and the Vulkan loader and nothing from the NGX SDK: the
-		// reference-only 310.7.0 headers stay on the include path, the library never reaches
+		// reference-only 310.9.1 headers stay on the include path, the library never reaches
 		// the link line.
 		val buildScript = Files.readString(Path.of("build.gradle.kts"))
 		assertTrue(

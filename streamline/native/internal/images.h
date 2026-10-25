@@ -4,8 +4,8 @@
 #include "internal/state.h"
 
 /*
- * The six images this module allocates for itself: the motion image the engine's depth is
- * reprojected into, the output image DLSS writes its upscaled frame into, and the four FG
+ * The seven images this module allocates for itself: the motion image the engine's depth is
+ * reprojected into, the RGBA8 output scratch, the RR-only RGBA16F output, and the four FG
  * orientation copies the DLSS-G tag names.
  *
  * All are sized from the configuration and owned here for the life of that configuration.

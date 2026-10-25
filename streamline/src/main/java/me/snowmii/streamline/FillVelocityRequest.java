@@ -1,6 +1,6 @@
 package me.snowmii.streamline;
 
-import me.snowmii.vklib.api.ImageBinding;
+import me.snowmii.dlss.api.ImageBinding;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -34,6 +34,7 @@ public record FillVelocityRequest(
 	ImageBinding velocity,
 	float[] reprojection,
 	boolean reset,
+	boolean fgConsumingFrame,
 	/** Stamped by the session adapter; see the class comment. */
 	Dimensions renderDimensions
 ) {
@@ -43,19 +44,24 @@ public record FillVelocityRequest(
 		Objects.requireNonNull(reprojection, "reprojection");
 	}
 
+	public FillVelocityRequest(long commandBuffer, ImageBinding depth, ImageBinding velocity, float[] reprojection, boolean reset, Dimensions renderDimensions) {
+		this(commandBuffer, depth, velocity, reprojection, reset, false, renderDimensions);
+	}
+
 	/**
 	 * Compares the reprojection payload, not array identity.
 	 */
 	@Override
 	public boolean equals(Object other) {
 		return other instanceof FillVelocityRequest(
-			long buffer, ImageBinding depth1, ImageBinding velocity1, float[] reprojection1, boolean reset1, Dimensions dimensions
+			long buffer, ImageBinding depth1, ImageBinding velocity1, float[] reprojection1, boolean reset1, boolean fgConsuming1, Dimensions dimensions
 		)
 			&& buffer == commandBuffer
 			&& depth1.equals(depth)
 			&& velocity1.equals(velocity)
 			&& Arrays.equals(reprojection1, reprojection)
 			&& reset1 == reset
+			&& fgConsuming1 == fgConsumingFrame
 			&& Objects.equals(dimensions, renderDimensions);
 	}
 
@@ -66,16 +72,21 @@ public record FillVelocityRequest(
 		result = 31 * result + velocity.hashCode();
 		result = 31 * result + Arrays.hashCode(reprojection);
 		result = 31 * result + Boolean.hashCode(reset);
+		result = 31 * result + Boolean.hashCode(fgConsumingFrame);
 		result = 31 * result + Objects.hashCode(renderDimensions);
 		return result;
 	}
 
 	public FillVelocityRequest() {
-		this(0L, new ImageBinding(0L, 0L, 0), new ImageBinding(0L, 0L, 0), new float[16], false, null);
+		this(0L, new ImageBinding(0L, 0L, 0), new ImageBinding(0L, 0L, 0), new float[16], false, false, null);
 	}
 
 	/** Dimensions left null for the adapter to stamp. Fresh reprojection array each call. */
 	public FillVelocityRequest(long commandBuffer, ImageBinding depth, ImageBinding velocity, float[] reprojection, boolean reset) {
-		this(commandBuffer, depth, velocity, reprojection, reset, null);
+		this(commandBuffer, depth, velocity, reprojection, reset, false, null);
+	}
+
+	public FillVelocityRequest(long commandBuffer, ImageBinding depth, ImageBinding velocity, float[] reprojection, boolean reset, boolean fgConsumingFrame) {
+		this(commandBuffer, depth, velocity, reprojection, reset, fgConsumingFrame, null);
 	}
 }

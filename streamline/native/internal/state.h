@@ -21,11 +21,8 @@
  */
 namespace mc_dlss {
 
-// The number of descriptor sets the motion pass rotates through. The pass writes its
-// descriptor set only when the depth or motion view actually changes, which happens when
-// Minecraft recreates its scene target and never per frame. A small ring means such a
-// rewrite lands on a set no in-flight submission is still reading, without the pass having
-// to track frame completion it has no way to observe.
+// Cache both physical and RR virtual depth bindings. Stable frames reuse immutable sets;
+// target recreation already waits for the device before retiring the old images.
 constexpr uint32_t kMotionDescriptorRing = 4;
 
 // The two Streamline viewport ids this module's records name. SR records - options, tags,
@@ -241,14 +238,8 @@ struct DlssMotionPass {
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet sets[kMotionDescriptorRing] = {};
     uint32_t nextSet = 0;
-    // Which ring slot currently describes boundDepthView/boundMotionView, or -1 when no set
-    // has been written yet.
-    int32_t boundSet = -1;
-    uint64_t boundDepthView = 0;
-    uint64_t boundMotionView = 0;
-    // Which flipped-motion view the current ring slot's last storage binding describes, so
-    // the flipped write target participates in the same reuse comparison as the other two.
-    uint64_t boundFlippedView = 0;
+    // depth, motion, flipped motion, optional object velocity for each immutable set.
+    uint64_t boundViews[kMotionDescriptorRing][4] = {};
 };
 
 struct DlssState {
@@ -290,8 +281,8 @@ struct DlssState {
     // The DLSS-G options record every later record re-records from; make_fg_options reads it.
     FgOptionsRecord fgOptions;
     // The Reflex options registration the READY transition records: one slReflexSetOptions
-    // call carrying sl::ReflexMode::eLowLatency, which the pinned Reflex guide requires
-    // even when Reflex Low Latency is off and there is no Reflex UI ("call at least once";
+    // call using the default sl::ReflexMode::eLowLatency. The guide requires an options
+    // registration even when Reflex Low Latency is off and there is no Reflex UI ("call at least once";
     // the call need not repeat per frame while the options do not change).
     // reflexOptionsRecorded is whether that call answered eOk, reflexMode is the mode value
     // it recorded (1 = eLowLatency), and reflexSetOptionsCalls counts every slReflexSetOptions
@@ -299,7 +290,7 @@ struct DlssState {
     // idempotent re-initialize and the per-frame path must not add calls. reset_state clears
     // all three with the rest of the struct.
     bool reflexOptionsRecorded = false;
-    uint32_t reflexMode = 0;
+    uint32_t reflexMode = 1;
     uint32_t reflexSetOptionsCalls = 0;
     // The Reflex frame-rate cap the options carry, in microseconds per frame; zero is no
     // Reflex-side cap, which is what the READY registration starts at. The host re-records it
@@ -312,7 +303,10 @@ struct DlssState {
     // sub-interval carrying the whole error.
     uint32_t reflexFrameLimitUs = 0;
     DlssOwnedImage motionImage;
+    // SR and the final Minecraft copy stay RGBA8. RR writes its HDR result into this separate
+    // RGBA16F image, then the native tone-map pass fills outputImage before the copy.
     DlssOwnedImage outputImage;
+    DlssOwnedImage rrOutputImage;
     // The FG orientation copies: the DLSS-G viewport consumes the frame in the backbuffer's
     // orientation, which is the engine's mirrored about the horizontal axis (Minecraft's
     // present blit inverts y between the main target and the swapchain image), so the FG tag
@@ -379,14 +373,27 @@ struct DlssState {
     McDlssImage rrSpecularAlbedo{};
     McDlssImage rrNormalRoughness{};
     McDlssImage rrSpecularHitDistance{};
+    McDlssImage rrSpecularMotion{};
+    McDlssImage rrBiasCurrentColor{};
     float rrWorldToCameraView[16]{};
     float rrCameraViewToWorld[16]{};
+    float exposure = 1.0f;
 };
 
 extern DlssState g_state;
 extern std::mutex g_mutex;
 
 void reset_state() noexcept;
+
+// Copy validated, borrowed RR guides; disabling drops all guide bindings without a reset.
+void store_rr_guides(const McDlssRrPrepareInfo& info) noexcept;
+
+// Always returns a tag, including an empty Resource on absent/disabled/SR frames. SDK
+// frame tagging safely clears native=nullptr; keeping Resource itself non-null is also
+// safe if Streamline later reads the tag as a local evaluation input.
+sl::ResourceTag make_rr_bias_current_color_tag(sl::Resource& resource) noexcept;
+sl::ResourceTag make_rr_disocclusion_mask_tag(sl::Resource& resource) noexcept;
+sl::ResourceTag make_rr_responsivity_mask_tag(sl::Resource& resource) noexcept;
 
 // Records the DLSS-G frame multiplier (implemented in sl_dlss.cpp, where the sl:: vocabulary
 // lives): re-records the stored options in the eOn mode with numFramesToGenerate set to
@@ -411,6 +418,33 @@ bool images_match_configuration() noexcept;
 // the stall is affordable because none of them runs per frame - they run when the
 // configuration changes or the session ends.
 void wait_device_idle() noexcept;
+
+// One descriptor for an image barrier within a batched pipeline barrier.
+struct ImageTransitionDesc {
+    VkImage image = VK_NULL_HANDLE;
+    VkImageSubresourceRange subresourceRange{};
+    VkImageLayout oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageLayout newLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkPipelineStageFlags srcStage = 0;
+    VkPipelineStageFlags dstStage = 0;
+    VkAccessFlags srcAccess = 0;
+    VkAccessFlags dstAccess = 0;
+};
+
+// Same read/restore barrier as other borrowed RR guides; absent/disabled returns null image.
+ImageTransitionDesc rr_bias_current_color_transition(VkImageLayout entryLayout,
+                                                     bool restore) noexcept;
+
+// Batches multiple image memory barriers into a single vkCmdPipelineBarrier call.
+// Safety rules:
+// - Zero access masks with non-zero execution stages express execution-only dependencies
+//   (such as write-after-read ordering) and are preserved.
+// - An entry is a true no-op only when layout does not change, no memory visibility is
+//   requested, and no execution stages are specified.
+// - Preserves same-layout execution and memory dependencies when oldLayout == newLayout.
+void record_batched_transitions(VkCommandBuffer commandBuffer,
+                                const ImageTransitionDesc* transitions,
+                                uint32_t count) noexcept;
 
 // One barrier per transition, on the caller's command buffer and nowhere else: the whole
 // point of taking Minecraft's shared VkCommandBuffer is that DLSS work is ordered by the

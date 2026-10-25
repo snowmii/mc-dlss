@@ -30,6 +30,9 @@ import java.nio.ByteBuffer
 import java.nio.IntBuffer
 import java.util.Optional
 import java.util.OptionalDouble
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executor
+import java.util.function.BooleanSupplier
 import java.util.function.Supplier
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.render.DlssFrameMotion
@@ -616,8 +619,7 @@ class MotionVectorCloudTest {
 
 		val payloadBuffer = FakeBuffer()
 		val renderPassDescriptors = mutableListOf<RenderPassDescriptor>()
-		/** 26.3: `RenderPass.setPipeline` now takes the compiled form; callers resolve it via [RenderSystem]. */
-		var pipeline: CompiledRenderPipeline? = null
+		var pipeline: Any? = null
 		val uniforms = mutableListOf<Pair<String, GpuBufferSlice>>()
 		var payloadBytes: Int = -1
 		var passCloses = 0
@@ -633,7 +635,7 @@ class MotionVectorCloudTest {
 			DeviceLimits(16, 4, 65536, 1L shl 30, 1, 8, 1),
 			DeviceFeatures(true, false, false, false, false, true, false, false),
 			emptySet(),
-			HintsAndWorkarounds(false, false, false),
+			HintsAndWorkarounds(false, false, false, false),
 			DeviceType.OTHER,
 		)
 
@@ -642,6 +644,7 @@ class MotionVectorCloudTest {
 
 		fun failIf(point: String) {
 			if (failAt == point) {
+				if (point == "precompilePipeline") failAt = null
 				error("injected $point failure")
 			}
 		}
@@ -653,7 +656,8 @@ class MotionVectorCloudTest {
 		private val encoder: CommandEncoder,
 		private val info: DeviceInfo,
 	) : GpuDevice {
-		override fun createSurface(windowHandle: Long): GpuSurface = throw UnsupportedOperationException("test backend never creates surfaces")
+		override fun createSurface(windowHandle: Long, isIconified: BooleanSupplier): GpuSurface =
+			throw UnsupportedOperationException("test backend never creates surfaces")
 
 		override fun createCommandEncoder(): CommandEncoder = encoder
 
@@ -689,13 +693,16 @@ class MotionVectorCloudTest {
 
 		override fun isDebuggingEnabled(): Boolean = false
 
-		override fun compilePipeline(pipeline: RenderPipeline, shaderSource: ShaderSource): CompiledRenderPipeline? {
+		override fun compilePipeline(
+			pipeline: RenderPipeline,
+			shaderSource: ShaderSource,
+			executor: Executor,
+		): CompletableFuture<CompiledRenderPipeline.Pending> {
 			backend.failIf("precompilePipeline")
 			backend.precompiledPipelines.add(pipeline)
-			return object : CompiledRenderPipeline {
-				override fun isClosed() = backend.precompileInvalid
-				override fun close() = Unit
-			}
+			val compiled = CloudTestCompiledPipeline(pipeline, backend.precompileInvalid)
+			val pending = CompiledRenderPipeline.Pending { compiled }
+			return CompletableFuture.completedFuture(pending)
 		}
 
 		override fun close() = Unit
@@ -789,7 +796,7 @@ class MotionVectorCloudTest {
 
 		override fun setPipeline(pipeline: CompiledRenderPipeline) {
 			backend.failIf("setPipeline")
-			backend.pipeline = pipeline
+			backend.pipeline = (pipeline as? CloudTestCompiledPipeline)?.source ?: pipeline
 		}
 
 		override fun setUniform(name: String, textureView: GpuTextureView?, sampler: GpuSampler?) = Unit
@@ -834,6 +841,14 @@ class MotionVectorCloudTest {
 		override fun multiDraw(firstVertices: IntBuffer, vertexCounts: IntBuffer, drawCount: Int) = Unit
 
 		override fun drawIndirect(commands: GpuBufferSlice, drawCount: Int) = Unit
+	}
+
+	private class CloudTestCompiledPipeline(
+		val source: RenderPipeline,
+		private val isInvalid: Boolean,
+	) : CompiledRenderPipeline {
+		override fun isClosed() = isInvalid
+		override fun close() = Unit
 	}
 
 	private companion object {

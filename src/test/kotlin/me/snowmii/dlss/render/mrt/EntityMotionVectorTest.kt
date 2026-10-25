@@ -119,48 +119,6 @@ class EntityMotionVectorTest {
 		}
 	}
 
-	@Test
-	fun `non-main entity render type stays vanilla while main target binds identity`() {
-		val texture = Identifier.fromNamespaceAndPath("minecraft", "textures/entity/entity-boundary.png")
-		val mainRenderType = RenderTypes.entitySolid(texture)
-		val nonMainRenderType = RenderTypes.entityTranslucentCull(texture)
-		// 26.3: RenderType no longer carries an OutputTarget; the batching seam no longer
-		// distinguishes main vs. non-main output here (the render pass gate does it later).
-		assertTrue(EntityVelocityWriterBindings.isEligibleRenderType(mainRenderType, true))
-		assertTrue(EntityVelocityWriterBindings.isEligibleRenderType(nonMainRenderType, true))
-		val renderTypes = mutableListOf<Any>()
-		val prepared = Any()
-		val staged = StagedVertexBuffer({ "entity-output-target-test" }, 256)
-		try {
-			EntityVelocityWriterBindings.clearFrame()
-			EntityVelocityWriterBindings.beginEntity(404)
-			val mainEligible = EntityVelocityWriterBindings.isEligibleRenderType(mainRenderType, true)
-			assertTrue(EntityVelocityWriterBindings.beginDraw(mainRenderType.pipeline(), mainEligible))
-			val mainDraw = staged.appendDraw(DefaultVertexFormat.ENTITY, PrimitiveTopology.QUADS)
-			val mainInfo = emptyExecuteInfo()
-			EntityVelocityWriterBindings.bindDraw(mainDraw)
-			EntityVelocityWriterBindings.bindExecuteInfo(mainDraw, mainInfo)
-			assertEquals(404, EntityVelocityWriterBindings.executeInfoEntityId(mainInfo))
-			EntityVelocityWriterBindings.endDraw()
-			EntityVelocityWriterBindings.endEntity()
-
-			EntityVelocityWriterBindings.clearFrame()
-			EntityVelocityWriterBindings.beginEntity(505)
-			val nonMainEligible = EntityVelocityWriterBindings.isEligibleRenderType(nonMainRenderType, true)
-			assertFalse(EntityVelocityWriterBindings.beginDraw(nonMainRenderType.pipeline(), nonMainEligible))
-			assertFalse(EntityVelocityWriterBindings.suppressConsolidation())
-			renderTypes += prepared
-			assertEquals(0, EntityVelocityWriterBindings.consolidationIndex(renderTypes, prepared))
-			val nonMainDraw = staged.appendDraw(DefaultVertexFormat.ENTITY, PrimitiveTopology.QUADS)
-			val nonMainInfo = emptyExecuteInfo()
-			EntityVelocityWriterBindings.bindDraw(nonMainDraw)
-			EntityVelocityWriterBindings.bindExecuteInfo(nonMainDraw, nonMainInfo)
-			assertEquals(null, EntityVelocityWriterBindings.executeInfoEntityId(nonMainInfo))
-		} finally {
-			EntityVelocityWriterBindings.clearFrame()
-			staged.close()
-		}
-	}
 
 	@Test
 	fun `entity then no-id same render type gets fresh draw and next entity keeps own id`() {

@@ -1,5 +1,6 @@
 package me.snowmii.dlss.render.ui
 
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology
 import com.mojang.renderpearl.api.pipeline.BlendFunction
 import com.mojang.renderpearl.api.pipeline.ColorTargetState
@@ -10,6 +11,7 @@ import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.renderpearl.api.textures.FilterMode
 import com.mojang.renderpearl.api.textures.GpuSampler
 import java.util.Optional
+import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline
 import net.minecraft.client.renderer.BindGroupLayouts
 import net.minecraft.resources.Identifier
 
@@ -21,6 +23,9 @@ import net.minecraft.resources.Identifier
 class UiComposite(
 	/** Injectable; production uses the render-loop sampler cache. */
 	private val sampler: () -> GpuSampler = { RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST) },
+	private val pipelineResolver: (RenderPipeline) -> CompiledRenderPipeline = { pipeline ->
+		RenderSystem.getCompiledPipeline(pipeline)
+	},
 ) {
 	/**
 	 * Missing color view on any input: write nothing. Aliased hudless/destination: overlay only.
@@ -34,13 +39,13 @@ class UiComposite(
 
 		if (hudlessColor !== destinationColor) {
 			encoder.createRenderPass({ "DLSS UI composite base" }, destinationColor, Optional.empty()).use { pass ->
-				pass.setPipeline(RenderSystem.getCompiledPipeline(HUDLESS_COPY_PIPELINE))
+				pass.setPipeline(pipelineResolver(HUDLESS_COPY_PIPELINE))
 				pass.setUniform("InSampler", hudlessColor, nearest)
 				pass.draw(3, 1, 0, 0)
 			}
 		}
 		encoder.createRenderPass({ "DLSS UI composite overlay" }, destinationColor, Optional.empty()).use { pass ->
-			pass.setPipeline(RenderSystem.getCompiledPipeline(UI_OVERLAY_PIPELINE))
+			pass.setPipeline(pipelineResolver(UI_OVERLAY_PIPELINE))
 			pass.setUniform("InSampler", uiColor, nearest)
 			pass.draw(3, 1, 0, 0)
 		}
@@ -53,6 +58,7 @@ class UiComposite(
 			.withVertexShader("core/screenquad")
 			.withFragmentShader("core/blit_screen")
 			.withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
+			.withColorTargetState(ColorTargetState(Optional.empty(), GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_ALL))
 			.withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
 			.build()
 

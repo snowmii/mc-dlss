@@ -346,6 +346,22 @@ class MotionJitterTest {
 	}
 
 	@Test
+	fun `RR uses at least 32 phases and changing features restarts the sequence`() {
+		for (dimensions in listOf(output, Dimensions(1707, 960), Dimensions(640, 360))) {
+			val jitter = DlssJitter(dimensions, output)
+			val phases = maxOf(32, jitter.phaseCount)
+			val cycle = List(phases) { jitter.advance(rayReconstruction = true) }
+			assertEquals((0 until phases).toList(), cycle.map { it.index })
+			assertEquals(phases, cycle.map { it.pixelX to it.pixelY }.toSet().size)
+			assertEquals(cycle.first(), jitter.advance(rayReconstruction = true))
+			assertEquals(0, jitter.advance(rayReconstruction = false).index)
+			repeat(jitter.phaseCount - 1) { jitter.advance() }
+			assertEquals(0, jitter.advance().index)
+			assertEquals(0, jitter.advance(rayReconstruction = true).index)
+		}
+	}
+
+	@Test
 	fun `jitter reset restarts the sequence`() {
 		val qualityDimensions = Dimensions(1707, 960)
 		val jitter = DlssJitter(qualityDimensions, output)

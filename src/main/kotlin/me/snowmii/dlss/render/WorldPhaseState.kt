@@ -1,6 +1,7 @@
 package me.snowmii.dlss.render
 
 import com.mojang.blaze3d.pipeline.RenderTarget
+import me.snowmii.dlss.api.RayReconstruction
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.render.mrt.ObjectMotionState
 
@@ -65,7 +66,7 @@ class WorldPhaseState {
 	 */
 	fun open(target: RenderTarget?, camera: DlssCameraSample?, nowNanos: Long) {
 		val offset = if (target != null) {
-			jitter?.advance()
+			jitter?.advance(RayReconstruction.enabled)
 		} else {
 			jitter?.reset()
 			// A vanilla frame renders no DLSS image and the object poses extracted for it were

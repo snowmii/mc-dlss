@@ -6,6 +6,7 @@ import com.mojang.renderpearl.api.buffers.GpuBuffer
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice
 import com.mojang.renderpearl.api.commands.GpuFence
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline
+import com.mojang.renderpearl.api.pipeline.RenderPipeline
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.renderpearl.api.commands.CommandEncoder
 import com.mojang.renderpearl.api.commands.GpuQueryPool
@@ -80,7 +81,7 @@ class UiCompositeFrameWiringTest {
 		val hudless = HeadlessRenderTarget(outputWidth, outputHeight)
 		val destination = HeadlessRenderTarget(outputWidth, outputHeight)
 
-		UiComposite(sampler = { FakeSampler() }).render(harness.recording.encoder(), ui, hudless, destination)
+		UiComposite(sampler = { FakeSampler() }, pipelineResolver = ::FallbackCompiledPipeline).render(harness.recording.encoder(), ui, hudless, destination)
 
 		assertEquals(
 			listOf(UiComposite.HUDLESS_COPY_PIPELINE, UiComposite.UI_OVERLAY_PIPELINE),
@@ -133,7 +134,7 @@ class UiCompositeFrameWiringTest {
 		val allocated = mutableListOf<HeadlessRenderTarget>()
 		val released = mutableListOf<HeadlessRenderTarget>()
 		val recording = Recording()
-		private val frameComposite = UiComposite(sampler = { FakeSampler() })
+		private val frameComposite = UiComposite(sampler = { FakeSampler() }, pipelineResolver = ::FallbackCompiledPipeline)
 		val phaseOpenAtComposite = mutableListOf<Boolean>()
 
 		var phase: UiPhase
@@ -214,7 +215,7 @@ class UiCompositeFrameWiringTest {
 
 		val clears = mutableListOf<Clear>()
 		val descriptors = mutableListOf<RenderPassDescriptor>()
-		val pipelines = mutableListOf<CompiledRenderPipeline>()
+		val pipelines = mutableListOf<RenderPipeline>()
 		val binds = mutableListOf<Pair<String, GpuTextureView?>>()
 
 		fun encoder() = RecordingEncoder(this)
@@ -289,7 +290,7 @@ class UiCompositeFrameWiringTest {
 		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
 
 		override fun setPipeline(pipeline: CompiledRenderPipeline) {
-			recording.pipelines += pipeline
+			recording.pipelines += (pipeline as? FallbackCompiledPipeline)?.source ?: error("unexpected: $pipeline")
 		}
 
 		override fun setUniform(name: String, textureView: GpuTextureView?, sampler: GpuSampler?) {

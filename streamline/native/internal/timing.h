@@ -31,7 +31,10 @@ struct DlssFrameTiming {
     uint32_t nextSlot = 0;
     /** Stamps written into the recording slot so far, which is also the next stamp's index. */
     uint32_t writtenStamps = 0;
-    bool pending[kTimingSlotCount] = {};
+    uint32_t recordedStamps[kTimingSlotCount] = {};
+    uint64_t sequences[kTimingSlotCount] = {};
+    uint64_t nextSequence = 1;
+    uint64_t lastResultSequence = 0;
     bool hasResult = false;
     float motionMs = 0.0f;
     float evaluateMs = 0.0f;

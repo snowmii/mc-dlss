@@ -8,6 +8,7 @@
 // non-null pointers or integers, and the one call that could reach the driver
 // (record_layout_transition) is exercised only on its equal-layout early return.
 #include "internal/state.h"
+#include "internal/sl_dlss.h"
 
 #include "doctest.h"
 
@@ -39,7 +40,7 @@ TEST_CASE("reset_state returns every recorded field to its default") {
 	g_state.fgOptions.numBackBuffers = 3;
 	g_state.fgOptions.numFramesToGenerate = 3;
 	g_state.reflexOptionsRecorded = true;
-	g_state.reflexMode = 1;
+	g_state.reflexMode = 0;
 	g_state.reflexSetOptionsCalls = 4;
 	g_state.reflexFrameLimitUs = 5000;
 	g_state.motionImage.image = reinterpret_cast<VkImage>(std::uintptr_t{0x1234});
@@ -85,6 +86,8 @@ TEST_CASE("reset_state returns every recorded field to its default") {
 	// Fresh allocations rest at VK_IMAGE_LAYOUT_UNDEFINED.
 	CHECK(g_state.motionImage.layout == VK_IMAGE_LAYOUT_UNDEFINED);
 	CHECK(g_state.outputImage.layout == VK_IMAGE_LAYOUT_UNDEFINED);
+	CHECK(g_state.rrOutputImage.image == VK_NULL_HANDLE);
+	CHECK(g_state.rrOutputImage.layout == VK_IMAGE_LAYOUT_UNDEFINED);
 	CHECK(g_state.imagesOutputWidth == defaults.imagesOutputWidth);
 	CHECK(g_state.presentMarkers.eventCount == 0);
 	CHECK(g_state.presentMarkers.typeCounts[mc_dlss::kPresentMarkerStart] == 0);
@@ -101,10 +104,28 @@ TEST_CASE("reset_state returns every recorded field to its default") {
 	CHECK(g_state.lastCameraConstants.pos[0] == defaults.lastCameraConstants.pos[0]);
 }
 
+TEST_CASE("Reflex off reaches the SDK payload and survives frame-limit changes") {
+    reset_state();
+    g_state.reflexMode = 2;
+    CHECK(make_reflex_options().mode == sl::ReflexMode::eLowLatencyWithBoost);
+    g_state.reflexMode = 0;
+    CHECK(make_reflex_options().mode == sl::ReflexMode::eOff);
+    g_state.reflexFrameLimitUs = 5000;
+    const auto capped = make_reflex_options();
+    CHECK(capped.mode == sl::ReflexMode::eOff);
+    CHECK(capped.frameLimitUs == 5000);
+    g_state.reflexFrameLimitUs = 0;
+    const auto uncapped = make_reflex_options();
+    CHECK(uncapped.mode == sl::ReflexMode::eOff);
+    CHECK(uncapped.frameLimitUs == 0);
+    reset_state();
+}
+
 TEST_CASE("images_match_configuration requires views and matching dimensions") {
 	reset_state();
 	g_state.motionImage.view = fake_view(1);
 	g_state.outputImage.view = fake_view(2);
+	g_state.rrOutputImage.view = fake_view(3);
 	g_state.imagesRenderWidth = g_state.renderWidth = 960;
 	g_state.imagesRenderHeight = g_state.renderHeight = 540;
 	g_state.imagesOutputWidth = g_state.outputWidth = 1920;
@@ -152,15 +173,19 @@ TEST_CASE("current_layout_of and note_layout_after_transition track known images
 	reset_state();
 	g_state.motionImage.image = reinterpret_cast<VkImage>(std::uintptr_t{0x1234});
 	g_state.outputImage.image = reinterpret_cast<VkImage>(std::uintptr_t{0x5678});
+	g_state.rrOutputImage.image = reinterpret_cast<VkImage>(std::uintptr_t{0x9ABC});
 
 	// Fresh allocations rest at UNDEFINED until the first transition notes a layout.
 	CHECK(current_layout_of(0x1234) == VK_IMAGE_LAYOUT_UNDEFINED);
 	CHECK(current_layout_of(0x5678) == VK_IMAGE_LAYOUT_UNDEFINED);
+	CHECK(current_layout_of(0x9ABC) == VK_IMAGE_LAYOUT_UNDEFINED);
 
 	note_layout_after_transition(0x1234, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	CHECK(current_layout_of(0x1234) == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	note_layout_after_transition(0x5678, VK_IMAGE_LAYOUT_GENERAL);
 	CHECK(current_layout_of(0x5678) == VK_IMAGE_LAYOUT_GENERAL);
+	note_layout_after_transition(0x9ABC, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	CHECK(current_layout_of(0x9ABC) == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 	// Anything else came from the engine and rests where Minecraft leaves its textures.
 	CHECK(current_layout_of(0xFFFF) == kEngineRestingLayout);
@@ -168,4 +193,53 @@ TEST_CASE("current_layout_of and note_layout_after_transition track known images
 	note_layout_after_transition(0xFFFF, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	CHECK(current_layout_of(0xFFFF) == kEngineRestingLayout);
 	CHECK(current_layout_of(0x1234) == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+TEST_CASE("record_batched_transitions early-returns on null buffer, null desc, or zero count") {
+	reset_state();
+	const VkCommandBuffer garbage =
+		reinterpret_cast<VkCommandBuffer>(std::uintptr_t{0xDEADBEEF});
+	ImageTransitionDesc desc{};
+	desc.image = reinterpret_cast<VkImage>(std::uintptr_t{0x1234});
+	desc.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	desc.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+	// Null command buffer returns early without touching transitions
+	record_batched_transitions(VK_NULL_HANDLE, &desc, 1);
+	// Null pointer returns early
+	record_batched_transitions(garbage, nullptr, 1);
+	// Count 0 returns early
+	record_batched_transitions(garbage, &desc, 0);
+	CHECK(g_state.motionImage.layout == VK_IMAGE_LAYOUT_UNDEFINED);
+}
+
+TEST_CASE("record_batched_transitions filters true no-ops when layout, access, and stages are unchanged/zero") {
+	reset_state();
+	const VkCommandBuffer garbage =
+		reinterpret_cast<VkCommandBuffer>(std::uintptr_t{0xDEADBEEF});
+	const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+	// 1) Same layout, zero access, zero stage -> pure no-op, filtered out, does not touch driver
+	ImageTransitionDesc noopDesc{};
+	noopDesc.image = reinterpret_cast<VkImage>(std::uintptr_t{0x1234});
+	noopDesc.subresourceRange = range;
+	noopDesc.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+	noopDesc.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	noopDesc.srcStage = 0;
+	noopDesc.dstStage = 0;
+	noopDesc.srcAccess = 0;
+	noopDesc.dstAccess = 0;
+
+	record_batched_transitions(garbage, &noopDesc, 1);
+
+	// 2) Null image handle is filtered out
+	ImageTransitionDesc nullImgDesc{};
+	nullImgDesc.image = VK_NULL_HANDLE;
+	nullImgDesc.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	nullImgDesc.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	nullImgDesc.srcStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	nullImgDesc.dstStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+
+	record_batched_transitions(garbage, &nullImgDesc, 1);
+	CHECK(g_state.motionImage.layout == VK_IMAGE_LAYOUT_UNDEFINED);
 }

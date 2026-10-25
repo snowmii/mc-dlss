@@ -40,7 +40,7 @@ data class DlssStartupConfig(
  * [DEFAULT] leaves the model to NGX / NVIDIA App / OTA (`eDefault`). Named presets lock the
  * model so App overrides cannot change it.
  *
- * Only the presets SDK 310.7.0 documents as usable are offered besides [DEFAULT]. A through D
+ * Only the presets SDK 310.9.1 documents as usable are offered besides [DEFAULT]. A through D
  * were removed from the SR SDK, E and F are deprecated, and G through I and N and O revert to
  * default behaviour, so none of them is a choice this mod offers for SR.
  */
@@ -71,8 +71,8 @@ enum class SRModelPreset(
  * DLSS Ray Reconstruction model presets (`sl::DLSSDPreset`).
  *
  * [DEFAULT] leaves the model to NGX / NVIDIA App / OTA (`eDefault`). Named D/E/F lock the
- * model. Public headers still label E “latest” and F “reverts to default”; DLSS 4.5 guidance
- * treats F as the current RR transformer — keep all three for comparison.
+ * model. Streamline 2.14.1 headers designate F as the latest and default transformer model;
+ * keep all three for comparison.
  */
 enum class RRModelPreset(
 	val sdkValue: Int,
@@ -118,4 +118,21 @@ enum class SRMode(
 	BALANCED(1, "balanced"),
 	PERFORMANCE(0, "performance"),
 	ULTRA_PERFORMANCE(3, "ultra-performance"),
+}
+
+/**
+ * NVIDIA Reflex low-latency modes (`sl::ReflexMode`).
+ */
+enum class ReflexMode(
+	val sdkValue: Int,
+	val propertyValue: String,
+) {
+	OFF(0, "off"),
+	ON(1, "on"),
+	BOOST(2, "boost");
+
+	companion object {
+		fun fromPropertyValue(value: String): ReflexMode? =
+			entries.firstOrNull { it.propertyValue.equals(value, ignoreCase = true) }
+	}
 }

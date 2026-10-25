@@ -1,6 +1,6 @@
 package me.snowmii.streamline;
 
-import me.snowmii.vklib.api.ImageBinding;
+import me.snowmii.dlss.api.ImageBinding;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -21,6 +21,7 @@ public record MotionRequest(
 	ImageBinding depth,
 	/** 16 column-major floats: this frame's jittered clip to previous unjittered clip. */
 	float[] reprojection,
+	boolean fgConsumingFrame,
 	/** Stamped by the session adapter; see the class comment. */
 	Dimensions renderDimensions
 ) {
@@ -29,16 +30,21 @@ public record MotionRequest(
 		Objects.requireNonNull(reprojection, "reprojection");
 	}
 
+	public MotionRequest(long commandBuffer, ImageBinding depth, float[] reprojection, Dimensions renderDimensions) {
+		this(commandBuffer, depth, reprojection, false, renderDimensions);
+	}
+
 	/**
 	 * Compares the reprojection payload, not array identity — two requests holding the same
 	 * step in different arrays must be equal.
 	 */
 	@Override
 	public boolean equals(Object other) {
-		return other instanceof MotionRequest(long buffer, ImageBinding depth1, float[] reprojection1, Dimensions dimensions)
+		return other instanceof MotionRequest(long buffer, ImageBinding depth1, float[] reprojection1, boolean fgConsuming1, Dimensions dimensions)
 			&& buffer == commandBuffer
 			&& depth1.equals(depth)
 			&& Arrays.equals(reprojection1, reprojection)
+			&& fgConsuming1 == fgConsumingFrame
 			&& Objects.equals(dimensions, renderDimensions);
 	}
 
@@ -47,16 +53,21 @@ public record MotionRequest(
 		int result = Long.hashCode(commandBuffer);
 		result = 31 * result + depth.hashCode();
 		result = 31 * result + Arrays.hashCode(reprojection);
+		result = 31 * result + Boolean.hashCode(fgConsumingFrame);
 		result = 31 * result + Objects.hashCode(renderDimensions);
 		return result;
 	}
 
 	public MotionRequest() {
-		this(0L, new ImageBinding(0L, 0L, 0), new float[16], null);
+		this(0L, new ImageBinding(0L, 0L, 0), new float[16], false, null);
 	}
 
 	/** Dimensions left null for the adapter to stamp. Fresh reprojection array each call. */
 	public MotionRequest(long commandBuffer, ImageBinding depth, float[] reprojection) {
-		this(commandBuffer, depth, reprojection, null);
+		this(commandBuffer, depth, reprojection, false, null);
+	}
+
+	public MotionRequest(long commandBuffer, ImageBinding depth, float[] reprojection, boolean fgConsumingFrame) {
+		this(commandBuffer, depth, reprojection, fgConsumingFrame, null);
 	}
 }

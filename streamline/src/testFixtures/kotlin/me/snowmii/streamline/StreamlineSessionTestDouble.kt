@@ -20,11 +20,18 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 		dataPath: Path,
 	): Int = notStubbed("initialize")
 
+	override fun isFeatureSupported(feature: Int, vkPhysicalDevice: Long): Int = notStubbed("isFeatureSupported")
 	override fun queryOptimalDimensions(
 		outputWidth: Int,
 		outputHeight: Int,
 		qualityMode: Int,
 	): Dimensions = notStubbed("queryOptimalDimensions")
+
+	override fun queryOptimalDimensionsRr(
+		outputWidth: Int,
+		outputHeight: Int,
+		qualityMode: Int,
+	): Dimensions = notStubbed("queryOptimalDimensionsRr")
 
 	override fun configureSuperResolution(
 		outputWidth: Int,
@@ -62,7 +69,8 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 
 	override fun tagSrResources(request: SrTagRequest): Int = notStubbed("tagSrResources")
 
-	override fun prepareRayReconstruction(request: RrPrepareRequest): Int = notStubbed("prepareRayReconstruction")
+	override fun prepareRayReconstruction(request: RrPrepareRequest): Int =
+		if (!request.enabled) StreamlineSession.SUCCESS_RESULT else notStubbed("prepareRayReconstruction")
 
 	override fun tagFrameGenerationResources(request: FgTagRequest): Int = notStubbed("tagFgResources")
 
@@ -84,6 +92,10 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 
 	override fun queryReflexOptions(): StreamlineSession.ReflexRegistration = notStubbed("queryReflexOptions")
 
+	override fun setReflexMode(mode: Int): Int = notStubbed("setReflexMode")
+
+	override fun queryReflexState(): StreamlineSession.ReflexStateInfo = notStubbed("queryReflexState")
+
 	override fun recordReflexFrameLimit(frameLimitUs: Int): Int = notStubbed("recordReflexFrameLimit")
 
 	override fun waitFgInputsIdle(): Int = notStubbed("waitFgInputsIdle")
@@ -92,6 +104,8 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 		notStubbed("waitFgInputsValue")
 
 	override fun queryFgState(): FgState = notStubbed("queryFgState")
+
+	override fun isFgVsyncSupported(): Boolean = false
 
 	override fun queryMotionProbe(): MotionProbeSample = notStubbed("queryMotionProbe")
 

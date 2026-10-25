@@ -4,6 +4,7 @@
 #include "internal/motion.h"
 #include "internal/sl_dlss.h"
 #include "internal/state.h"
+#include "internal/tonemap.h"
 #include "internal/timing.h"
 
 namespace mc_dlss {
@@ -15,6 +16,7 @@ int32_t shutdown_state() noexcept {
     destroy_timing();
     // Pipeline, descriptors, and sampler belong to the device Minecraft is about to destroy,
     // and none of them is known to Streamline, so they go first and independently of it.
+    destroy_tone_map_pass();
     destroy_motion_pass();
     // Images belong to the device Minecraft is about to destroy, so they die first.
     release_images();

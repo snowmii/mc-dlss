@@ -6,7 +6,7 @@ import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.vklib.api.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget

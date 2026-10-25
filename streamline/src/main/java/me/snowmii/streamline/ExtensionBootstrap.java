@@ -12,7 +12,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
-import me.snowmii.vklib.api.VulkanContext;
+import me.snowmii.dlss.vk.VulkanContext;
 
 /** Queries Streamline's exact Vulkan requirements at the game's pre-creation bootstrap seams. */
 public final class ExtensionBootstrap {
@@ -47,6 +47,7 @@ public final class ExtensionBootstrap {
 	private static volatile Path configuredNativeLibrary;
 	private static volatile Path extracted;
 	private static volatile boolean streamlineRuntimeLoaded;
+	private static volatile boolean streamlineBootstrapped;
 
 	private ExtensionBootstrap() {
 	}
@@ -129,6 +130,16 @@ public final class ExtensionBootstrap {
 		}
 	}
 
+	/** Must run after frame teardown and before the game's Vulkan device is destroyed. */
+	public static synchronized void shutdown() {
+		if (!streamlineBootstrapped) return;
+		try (Native nativeBridge = Native.open(nativeLibrary())) {
+			final int result = nativeBridge.shutdownStreamline();
+			if (result != StreamlineSession.SUCCESS_RESULT) throw new StreamlineException("shutdown-streamline", result);
+			streamlineBootstrapped = false;
+		}
+	}
+
 	private static void loadStreamlineRuntime() {
 		if (streamlineRuntimeLoaded) return;
 		synchronized (ExtensionBootstrap.class) {
@@ -146,6 +157,7 @@ public final class ExtensionBootstrap {
 		if (result != StreamlineSession.SUCCESS_RESULT) {
 			throw new StreamlineException("bootstrap-streamline", result);
 		}
+		streamlineBootstrapped = true;
 	}
 
 	/**

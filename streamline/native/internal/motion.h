@@ -52,6 +52,7 @@ int32_t create_velocity_fill_pass() noexcept;
 // Destroys both passes in the reverse of creation order. Every handle is checked because the
 // underlying destroy also runs as the cleanup path of a partially created pass.
 void destroy_motion_pass() noexcept;
+void invalidate_motion_bindings() noexcept;
 
 // Records the dispatch that fills the motion image from `info.depth`, plus the transitions
 // around it and the barrier that makes its writes visible to the evaluation. The depth image

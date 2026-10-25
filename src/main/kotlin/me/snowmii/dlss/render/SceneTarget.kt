@@ -9,7 +9,7 @@ import com.mojang.blaze3d.pipeline.TextureTarget
 /**
  * Owns the mod's low-resolution world scene target.
  *
- * Minecraft 26.2 has no render-scale API: `GameRenderer.mainRenderTarget()` is built at
+ * Minecraft 26.3 has no render-scale API: `GameRenderer.mainRenderTarget()` is built at
  * window size and is used by the world frame graph, post chains, screenshots, the GUI, and
  * presentation. Rendering the world lower-resolution therefore needs a *companion* target
  * rather than a resize of the vanilla one, which is exactly the invariant this class holds:
@@ -106,15 +106,14 @@ class SceneTarget(
 		/**
 		 * Production seam. [TextureTarget] allocates color plus depth with vanilla's usage
 		 * flags and asserts the render thread, matching how Minecraft builds its own
-		 * screen-sized companion targets in `LevelRenderer.render`. The velocity companion is a
-		 * depthless [TextureTarget] at the same render dimensions in RG16_FLOAT, so its color
-		 * view is directly bindable as the color-1 attachment of the terrain passes.
+		 * screen-sized companion targets in `LevelRenderer.render`. The shared 26.3 passes currently use camera-only motion, so production allocates
+		 * no velocity companion.
 		 */
 		@JvmStatic
 		fun forMinecraft(): SceneTarget = SceneTarget(
 			allocate = { width, height -> TextureTarget(LABEL, width, height, GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) },
 			release = RenderTarget::destroyBuffers,
-			allocateVelocity = { width, height -> TextureTarget("$LABEL Velocity", width, height, VELOCITY_FORMAT, null) },
+			// Minecraft 26.3 uses shared passes; no live MRT writer consumes a companion.
 		)
 	}
 }

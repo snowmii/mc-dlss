@@ -6,7 +6,7 @@ import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgTagRequest
 import me.snowmii.streamline.FgState
 import me.snowmii.streamline.FillVelocityRequest
-import me.snowmii.vklib.api.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
@@ -14,8 +14,9 @@ import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.RrPrepareRequest
 import me.snowmii.streamline.Vec2
-import me.snowmii.vklib.api.VulkanContext
+import me.snowmii.dlss.vk.VulkanContext
 import me.snowmii.dlss.api.RayReconstruction
+import me.snowmii.dlss.api.RayReconstructionGuides
 import me.snowmii.dlss.render.mrt.MotionVectorRoute
 import me.snowmii.dlss.readout.SessionReadout
 import me.snowmii.dlss.streamline.LifecycleAdapter
@@ -58,20 +59,23 @@ data class FgFrameInputs(
  * was actually rasterized with, bob and skew included: for any perspective matrix
  * m00 = 1/(aspect * tan(fov/2)) and m11 = 1/tan(fov/2), so aspect is m11/m00.
  */
-internal fun dlssFrustum(projection: Matrix4f): FloatArray {
-	val inverse = Matrix4f(projection).invert()
+internal fun dlssFrustum(
+        projection: Matrix4f,
+        inverse: Matrix4f = Matrix4f(projection).invert(),
+        output: FloatArray = FloatArray(4),
+): FloatArray {
+        require(output.size >= 4) { "frustum output needs four values" }
 	val atDepthZero = inverse.transform(Vector4f(0f, 0f, 0f, 1f))
 	val atDepthOne = inverse.transform(Vector4f(0f, 0f, 1f, 1f))
 	// View space looks down -Z, so the distance to a plane is the negated view-space z.
 	val firstPlane = abs(atDepthZero.z / atDepthZero.w)
 	val secondPlane = abs(atDepthOne.z / atDepthOne.w)
 	val aspect = if (projection.m00() != 0f) projection.m11() / projection.m00() else 0f
-	return floatArrayOf(
-		minOf(firstPlane, secondPlane),
-		maxOf(firstPlane, secondPlane),
-		projection.perspectiveFov(),
-		aspect,
-	)
+        output[0] = minOf(firstPlane, secondPlane)
+        output[1] = maxOf(firstPlane, secondPlane)
+        output[2] = projection.perspectiveFov()
+        output[3] = aspect
+        return output
 }
 
 /**
@@ -107,6 +111,10 @@ class FrameEvaluation(
 	private var nativeEvaluationImages: EvaluationImages? = null
 	private var firstEvaluationReported = false
 	private var lastConfiguredBackBuffers = 0
+        // Frustum values are copied into CameraConstants scalars, so this scratch never escapes.
+        private val frustumScratch = FloatArray(4)
+	// SR and RR own separate histories; neither may reuse history across a skipped feature frame.
+	private var previousEvaluationUsedRr: Boolean? = null
 
 	fun presentStart(): Boolean = adapter.presentStart()
 	fun presentEnd(): Boolean = adapter.presentEnd()
@@ -133,31 +141,63 @@ class FrameEvaluation(
 		route: MotionVectorRoute = MotionVectorRoute.CAMERA_ONLY,
 		velocity: ImageBinding? = null,
 		camera: DlssCameraSample? = null,
+		destination: ImageBinding? = null,
+		destinationImageUsage: Int = 0,
 	): Boolean {
 		val vulkan = context() ?: return false
 		val held = nativeEvaluationImages ?: adapter.acquireImages()?.also { nativeEvaluationImages = it } ?: return false
 
+		// Resolve producer callbacks before allocating a recording that must be returned.
+		val frame = EvaluationFrame(scene, jitter, motion, camera, route, velocity,
+			if (RayReconstruction.enabled && camera != null) RayReconstruction.guides?.get() else null,
+			if (frameGeneration.effective) fgInputs() else null)
 		val buffer = vulkan.allocateRecordingCommandBuffer()
-		// The FG frame composes its DLSS-G record around the SR evaluation, and only when the
-		// policy is active AND the runtime resolved this frame's FG inputs. An inactive frame or
-		// one without both output-sized targets records SR-only: no FG options, no FG tags, no
-		// handoff. Resolved here rather than inside [record] because the record's two halves
-		// straddle the output copy — see [recordFrameGenerationStart] and
-		// [recordFrameGenerationEnd].
-		val fg = if (frameGeneration.effective) fgInputs() else null
-		val handle = buffer.address()
-		// The motion stage opens the recording, ahead of the FG record: it fills the module's
-		// motion copy, which the FG tag below names as the frame's motion source.
-		val recorded = recordMotion(handle, scene, route, velocity, motion) &&
-			recordFrameGenerationStart(handle, scene, fg) &&
-			recordSuperResolution(buffer, scene, jitter, motion, camera) &&
-			(destinationImage == NO_DESTINATION || copyDlssOutput(buffer, destinationImage)) &&
-			recordFrameGenerationEnd(handle, scene, fg)
-		// Submitted on every path: see the class comment - an abandoned buffer is what actually
-		// breaks the renderer, not a failed evaluation.
-		vulkan.enqueueOnEngineEncoder(buffer)
+		var recorded = false
+		try {
+			recorded = recordFrame(buffer, frame, destinationImage, destination, destinationImageUsage)
+		} finally {
+			if (!recorded) previousEvaluationUsedRr = null
+			// Even a producer/profiler exception must return already-recorded layout transitions.
+			vulkan.enqueueOnEngineEncoder(buffer)
+		}
 		reportFirstEvaluation(recorded, scene, held)
 		return recorded
+	}
+
+	private class EvaluationFrame(
+		val scene: SceneResources,
+		val jitter: DlssJitterOffset,
+		val motion: DlssFrameMotion,
+		val camera: DlssCameraSample?,
+		val route: MotionVectorRoute,
+		val velocity: ImageBinding?,
+		val rr: RayReconstructionGuides?,
+		val fg: FgFrameInputs?,
+	)
+
+	private fun timed(buffer: VkCommandBuffer, name: String, record: () -> Boolean): Boolean =
+		me.snowmii.dlss.api.GpuProfiling.begin?.invoke(buffer, name).use { record() }
+
+	private fun recordFrame(
+		buffer: VkCommandBuffer,
+		frame: EvaluationFrame,
+		destinationImage: Long,
+		destination: ImageBinding?,
+		destinationImageUsage: Int,
+	): Boolean = timed(buffer, "g-dlss-total") {
+		val scene = frame.scene
+		val fg = frame.fg
+		val motionScene = if (fg == null && frame.rr?.depth != null) scene.copy(depth = frame.rr.depth) else scene
+		val handle = buffer.address()
+		timed(buffer, "g-dlss-motion") {
+			recordMotion(handle, motionScene, frame.route, frame.velocity, frame.motion, fg != null)
+		} && (fg == null || timed(buffer, "g-dlss-fg-start") { recordFrameGenerationStart(handle, scene, fg) }) &&
+			timed(buffer, if (frame.rr != null) "g-dlss-rr" else "g-dlss-sr") {
+				recordSuperResolution(buffer, frame, motionScene.depth)
+			} && (destinationImage == NO_DESTINATION || timed(buffer, "g-dlss-output-copy") {
+				val reflection = if (previousEvaluationUsedRr == true) frame.rr?.reflection else null
+				copyDlssOutput(buffer, destinationImage, reflection, destination, destinationImageUsage)
+			}) && (fg == null || timed(buffer, "g-dlss-fg-end") { recordFrameGenerationEnd(handle, scene, fg) })
 	}
 
 	/**
@@ -181,6 +221,7 @@ class FrameEvaluation(
 	 * the images are sized from the configuration and outlive nothing that changes it.
 	 */
 	override fun close() {
+		previousEvaluationUsedRr = null
 		if (nativeEvaluationImages == null) {
 			return
 		}
@@ -198,89 +239,103 @@ class FrameEvaluation(
 	 * copy has to sit behind the evaluation in one recording, and this is the only place holding
 	 * that recording.
 	 */
-	private fun copyDlssOutput(buffer: VkCommandBuffer, destinationImage: Long): Boolean = adapter.presentOutput(
-		PresentTarget(buffer.address(), destinationImage),
+	private fun copyDlssOutput(
+		buffer: VkCommandBuffer,
+		destinationImage: Long,
+		reflection: ImageBinding?,
+		destination: ImageBinding?,
+		imageUsage: Int,
+	): Boolean = adapter.presentOutput(
+		if (destination != null) PresentTarget(buffer.address(), destination, null, reflection, imageUsage)
+		else PresentTarget(buffer.address(), destinationImage, null, reflection),
 	)
 
 	private fun recordSuperResolution(
 		buffer: VkCommandBuffer,
-		scene: SceneResources,
-		jitter: DlssJitterOffset,
-		motion: DlssFrameMotion,
-		camera: DlssCameraSample?,
+		frame: EvaluationFrame,
+		initialMotionDepth: ImageBinding,
 	): Boolean {
 		val handle = buffer.address()
-		val rr = if (RayReconstruction.enabled) RayReconstruction.guides?.get() else null
+		val scene = frame.scene
+		val rr = frame.rr
+		val useRr = rr != null
+		val externalReset = RayReconstruction.consumeReset() || (rr?.resetHistory == true)
+		if (!prepareReconstruction(frame)) {
+			return recordSuperResolutionSrOnly(handle, frame, initialMotionDepth, externalReset)
+		}
+
+		val depth = rr?.depth ?: scene.depth
+		if (!recordDepthMotion(handle, frame, initialMotionDepth, depth)) return false
 		val color = rr?.noisyColor ?: scene.color
-		if (rr != null && camera != null) {
-			val worldToView = CameraConstants.rowMajorOf(camera.viewRotation)
-			val viewToWorld = CameraConstants.rowMajorOf(Matrix4f(camera.viewRotation).invert())
-			if (!adapter.prepareRayReconstruction(
-					RrPrepareRequest(
-						enabled = true,
-						rrPreset = RayReconstruction.modelPreset.sdkValue,
-						diffuseAlbedo = rr.diffuseAlbedo,
-						specularAlbedo = rr.specularAlbedo,
-						normalRoughness = rr.normalRoughness,
-						specularHitDistance = rr.specularHitDistance,
-						worldToCameraView = worldToView,
-						cameraViewToWorld = viewToWorld,
-					),
-				)
-			) {
-				adapter.prepareRayReconstruction(RrPrepareRequest(enabled = false))
-				return recordSuperResolutionSrOnly(handle, scene, jitter, motion, camera)
-			}
-		} else {
-			adapter.prepareRayReconstruction(RrPrepareRequest(enabled = false))
+		if (!adapter.tagSrResources(SrTagRequest(handle, color, depth), allowFallback = useRr)) {
+			return useRr && recordSuperResolutionSrOnly(handle, frame, depth, externalReset)
 		}
-
-		val tagged = adapter.tagSrResources(SrTagRequest(handle, color, scene.depth))
-		if (!tagged) {
-			if (rr != null) {
-				adapter.prepareRayReconstruction(RrPrepareRequest(enabled = false))
-				return recordSuperResolutionSrOnly(handle, scene, jitter, motion, camera)
-			}
-			return false
-		}
-
-		readout?.recordFrameJitter(jitter.index, jitter.pixelX, jitter.pixelY, motion.reset)
-		return adapter.evaluate(
-			EvaluationRequest.builder()
-				.commandBuffer(handle)
-				.color(color)
-				.depth(scene.depth)
-				.jitter(Vec2(jitter.pixelX, jitter.pixelY))
-				.motionScale(Vec2(motion.motionScaleX, motion.motionScaleY))
-				.frameTimeMilliseconds(motion.frameTimeMillis)
-				.resetHistory(motion.reset)
-				.camera(camera?.let { cameraConstants(it, motion) })
-				.build(),
-		)
+		val succeeded = recordEvaluation(handle, frame, color, depth, useRr, externalReset)
+		// DLSS-G consumes physical scene motion even when RR used virtual mirror depth.
+		val restored = frame.fg == null || recordDepthMotion(handle, frame, depth, scene.depth)
+		return succeeded && restored
 	}
+
+	private fun prepareReconstruction(frame: EvaluationFrame): Boolean {
+		val rr = frame.rr ?: return adapter.prepareRayReconstruction(RrPrepareRequest(enabled = false))
+		val camera = checkNotNull(frame.camera)
+		adapter.setExposure(RayReconstruction.exposure)
+		val worldToView = Matrix4f(camera.viewRotation).translate(
+			-camera.cameraX.toFloat(), -camera.cameraY.toFloat(), -camera.cameraZ.toFloat(),
+		)
+		return adapter.prepareRayReconstruction(RrPrepareRequest(
+			enabled = true,
+			rrPreset = RayReconstruction.modelPreset.sdkValue,
+			diffuseAlbedo = rr.diffuseAlbedo,
+			specularAlbedo = rr.specularAlbedo,
+			normalRoughness = rr.normalRoughness,
+			specularHitDistance = rr.specularHitDistance,
+			specularMotion = rr.specularMotion ?: ImageBinding(0L, 0L, 0),
+			biasCurrentColor = rr.biasCurrentColor ?: ImageBinding(0L, 0L, 0),
+			worldToCameraView = CameraConstants.rowMajorOf(worldToView),
+			cameraViewToWorld = CameraConstants.rowMajorOf(Matrix4f(worldToView).invert()),
+		))
+	}
+
+	private fun recordDepthMotion(handle: Long, frame: EvaluationFrame, previous: ImageBinding, depth: ImageBinding): Boolean =
+		previous == depth || recordMotion(handle, frame.scene.copy(depth = depth), frame.route, frame.velocity,
+			frame.motion, frame.fg != null)
 
 	private fun recordSuperResolutionSrOnly(
 		handle: Long,
-		scene: SceneResources,
-		jitter: DlssJitterOffset,
-		motion: DlssFrameMotion,
-		camera: DlssCameraSample?,
+		frame: EvaluationFrame,
+		motionDepth: ImageBinding,
+		externalReset: Boolean,
 	): Boolean {
-		val tagged = adapter.tagSrResources(SrTagRequest(handle, scene.color, scene.depth))
-		if (!tagged) return false
-		readout?.recordFrameJitter(jitter.index, jitter.pixelX, jitter.pixelY, motion.reset)
-		return adapter.evaluate(
-			EvaluationRequest.builder()
-				.commandBuffer(handle)
-				.color(scene.color)
-				.depth(scene.depth)
-				.jitter(Vec2(jitter.pixelX, jitter.pixelY))
-				.motionScale(Vec2(motion.motionScaleX, motion.motionScaleY))
-				.frameTimeMilliseconds(motion.frameTimeMillis)
-				.resetHistory(motion.reset)
-				.camera(camera?.let { cameraConstants(it, motion) })
-				.build(),
-		)
+		if (!adapter.prepareRayReconstruction(RrPrepareRequest(enabled = false))) return false
+		if (!recordDepthMotion(handle, frame, motionDepth, frame.scene.depth)) return false
+		if (!adapter.tagSrResources(SrTagRequest(handle, frame.scene.color, frame.scene.depth))) return false
+		return recordEvaluation(handle, frame, frame.scene.color, frame.scene.depth, false, externalReset)
+	}
+
+	private fun recordEvaluation(
+		handle: Long,
+		frame: EvaluationFrame,
+		color: ImageBinding,
+		depth: ImageBinding,
+		useRr: Boolean,
+		externalReset: Boolean,
+	): Boolean {
+		val motion = frame.motion
+		val jitter = frame.jitter
+		val resetHistory = motion.reset || previousEvaluationUsedRr != useRr || externalReset
+		readout?.recordFrameJitter(jitter.index, jitter.pixelX, jitter.pixelY, resetHistory)
+		return adapter.evaluate(EvaluationRequest.builder()
+			.commandBuffer(handle)
+			.color(color)
+			.depth(depth)
+			.jitter(Vec2(jitter.pixelX, jitter.pixelY))
+			.motionScale(Vec2(motion.motionScaleX, motion.motionScaleY))
+			.frameTimeMilliseconds(motion.frameTimeMillis)
+			.resetHistory(resetHistory)
+			.camera(frame.camera?.let { cameraConstants(it, motion) })
+			.build()
+		).also { succeeded -> previousEvaluationUsedRr = if (succeeded) useRr else null }
 	}
 
 	/**
@@ -298,6 +353,7 @@ class FrameEvaluation(
 		route: MotionVectorRoute,
 		velocity: ImageBinding?,
 		motion: DlssFrameMotion,
+		fgConsumingFrame: Boolean = false,
 	): Boolean = when (route) {
 		// The fill comes first in the frame's recording, before the tag: it opens the native
 		// timing chain with a real motion stage, and the tag must find the native motion image
@@ -309,6 +365,7 @@ class FrameEvaluation(
 				velocity,
 				FloatArray(16).also { motion.reprojection.get(it) },
 				motion.reset,
+				fgConsumingFrame,
 				null,
 			),
 		)
@@ -318,6 +375,7 @@ class FrameEvaluation(
 				handle,
 				scene.depth,
 				FloatArray(16).also { motion.reprojection.get(it) },
+				fgConsumingFrame,
 				null,
 			),
 		)
@@ -431,10 +489,11 @@ class FrameEvaluation(
 	 */
 	private fun cameraConstants(camera: DlssCameraSample, motion: DlssFrameMotion): CameraConstants {
 		val rotation = camera.viewRotation
-		val frustum = dlssFrustum(camera.projection)
+		val invProj = Matrix4f(camera.projection).invert()
+                val frustum = dlssFrustum(camera.projection, invProj, frustumScratch)
 		return CameraConstants(
 			CameraConstants.rowMajorOf(camera.projection),
-			CameraConstants.rowMajorOf(Matrix4f(camera.projection).invert()),
+			CameraConstants.rowMajorOf(invProj),
 			floatArrayOf(
 				camera.cameraX.toFloat(),
 				camera.cameraY.toFloat(),

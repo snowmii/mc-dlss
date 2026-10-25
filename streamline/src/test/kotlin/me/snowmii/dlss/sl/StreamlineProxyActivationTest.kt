@@ -33,6 +33,23 @@ import org.lwjgl.vulkan.VkQueueFamilyProperties
  */
 @NativeBridge
 class StreamlineProxyActivationTest {
+	@Test
+	fun `bootstrap without a session shuts down explicitly and can start again`() {
+		ExtensionBootstrap.queryInstanceExtensions()
+		try {
+			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
+				assertEquals(StreamlineSession.SUCCESS_RESULT, bridge.shutdownStreamline())
+				org.junit.jupiter.api.Assertions.assertThrows(me.snowmii.streamline.StreamlineException::class.java) {
+					bridge.queryInstanceExtensions()
+				}
+				assertEquals(StreamlineSession.SUCCESS_RESULT,
+					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()))
+				assertTrue(bridge.queryInstanceExtensions().isNotEmpty())
+			}
+		} finally {
+			ExtensionBootstrap.shutdown()
+		}
+	}
 
 	@Test
 	fun `activation returns success against live headless device and repeats success`(
@@ -78,6 +95,14 @@ class StreamlineProxyActivationTest {
 				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}
+	}
+
+	@Test
+	fun `Streamline present-chain and surface proxies bind when staged runtime is present`() {
+		assertTrue(
+			me.snowmii.streamline.StreamlineVulkanProxies.available(),
+			"Vulkan proxies must bind from staged sl.interposer.dll",
+		)
 	}
 
 	@Test

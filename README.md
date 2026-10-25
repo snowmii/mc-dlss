@@ -2,9 +2,11 @@
 
 DLSS for Minecraft Java Edition powered by NVIDIA [Streamline](https://github.com/NVIDIA-RTX/Streamline). 
 
-![Stress-pass framerate with DLSS off vs on](assets/comparison.png)
+Works on Minecraft 26.3 with Fabric Loader 0.19.5 or newer and the Vulkan backend.
+Uses NVIDIA Streamline SDK 2.14.1.
 
-Works on Minecraft 26.2 with Fabric loader and vulkan backend.
+Motion vectors currently use camera reprojection. Object and cloud velocity writers need
+adaptation to Minecraft 26.3's shared render passes.
 
 Made with compatibility in mind. mc-dlss is expected to work with any modification that doesn't
 fully replace minecraft's game renderer (sodium, immediately fast, entity culling, shader loaders 
@@ -14,10 +16,10 @@ Comes with a few keybinds you can use to toggle through things quickly:<br>
 F6: Toggles DLSS on/off<br>
 F7: Cycle through Super Resolution modes (DLAA → Quality → Balanced → Performance → Ultra Performance)<br>
 F8: Cycle through Super Resolution presets (K / L / M)<br>
-F9: Toggles built-in stress test on/off<br>
 F10: Toggles Frame Generation on/off<br>
 F12: Cycle through Frame Generation multiplier (2x ~ up to 6x if supported)<br>
-F5: Toggles Ray Reconstruction on/off (needs a guide producer such as Lumina)
+F5: Toggles Ray Reconstruction on/off (needs a guide producer such as Lumina)<br>
+F4: Cycle through Ray Reconstruction presets (default / D / E / F)
 
 ## Build from source
 

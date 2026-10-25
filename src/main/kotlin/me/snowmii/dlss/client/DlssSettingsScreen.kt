@@ -1,5 +1,6 @@
 package me.snowmii.dlss.client
 
+import me.snowmii.dlss.ReflexMode
 import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
@@ -17,10 +18,11 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 	private lateinit var multiplierButton: Button
 	private lateinit var rrButton: Button
 	private lateinit var rrPresetButton: Button
+	private lateinit var reflexButton: Button
 
 	override fun init() {
 		val x = (width - BUTTON_WIDTH) / 2
-		val y = height / 2 - 94
+		val y = height / 2 - 106
 		val title = StringWidget(title, font)
 		title.setPosition((width - title.width) / 2, y - 28)
 		addRenderableWidget(title)
@@ -32,12 +34,13 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		multiplierButton = optionButton(x, y + 96) { controls()?.cycleFgMultiplier() }
 		rrButton = optionButton(x, y + 120, ::toggleRayReconstruction)
 		rrPresetButton = optionButton(x, y + 144, ::cycleRrPreset)
+		reflexButton = optionButton(x, y + 168, ::cycleReflex)
 		if (controls() == null) {
 			val restart = StringWidget(Component.translatable("mc-dlss.options.restart_required"), font)
-			restart.setPosition((width - restart.width) / 2, y + 164)
+			restart.setPosition((width - restart.width) / 2, y + 188)
 			addRenderableWidget(restart)
 		}
-		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE) { onClose() }.bounds(x, y + 178, BUTTON_WIDTH, 20).build())
+		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE) { onClose() }.bounds(x, y + 202, BUTTON_WIDTH, 20).build())
 		refreshLabels()
 	}
 
@@ -100,6 +103,16 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		}
 	}
 
+	private fun cycleReflex() {
+		val controls = controls()
+		if (controls != null) {
+			controls.cycleReflexMode()
+		} else {
+			val modes = ReflexMode.entries
+			user.reflexMode = modes[(modes.indexOf(user.reflexMode) + 1) % modes.size]
+		}
+	}
+
 	private fun refreshLabels() {
 		val controls = controls()
 		enabledButton.message = label("mc-dlss.options.enabled", controls?.enabled ?: user.enabled)
@@ -119,6 +132,13 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 			"mc-dlss.options.rr_preset",
 			(controls?.rrModelPreset ?: user.rrModelPreset).propertyValue,
 		)
+		val reflexState = controls?.reflexState
+		val reflexLabel = if (reflexState != null && !reflexState.lowLatencyAvailable()) {
+			Component.translatable("mc-dlss.options.reflex").append(": ").append(Component.translatable("options.off")).append(" (N/A)")
+		} else {
+			valueLabel("mc-dlss.options.reflex", (controls?.reflexMode ?: user.reflexMode).propertyValue)
+		}
+		reflexButton.message = reflexLabel
 	}
 
 	private fun controls(): RuntimeControls? = ClientRuntime.active().activeControls()

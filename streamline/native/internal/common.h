@@ -31,6 +31,7 @@ constexpr int32_t kNotInitialized = static_cast<int32_t>(NVSDK_NGX_Result_FAIL_N
 // copy rather than a conversion.
 constexpr VkFormat kMotionFormat = VK_FORMAT_R16G16_SFLOAT;
 constexpr VkFormat kOutputFormat = VK_FORMAT_R8G8B8A8_UNORM;
+constexpr VkFormat kRrOutputFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 // Minecraft 26.2 rests every GpuTexture in VK_IMAGE_LAYOUT_GENERAL: VulkanGpuTexture
 // transitions the freshly created image straight to it, VulkanCommandEncoder binds colour
@@ -73,9 +74,15 @@ bool valid_dimensions(uint32_t outputWidth, uint32_t outputHeight, uint32_t rend
 // options, enforces those formats at its own call site.
 bool valid_image(const McDlssImage& image) noexcept;
 
+// Optional RR current-color bias: absent only when both handles are zero. The producer
+// supplies input-sized binary pixels; CPU can validate only handles and SDK-named formats.
+bool valid_rr_bias_current_color(const McDlssImage& image) noexcept;
+
 // Engine images are single-level, single-layer 2D; module images are full-range. Every
 // subresource range is {0, 1, 0, 1}. Aspect follows role: colour/motion/output vs depth.
 VkImageSubresourceRange image_range_of(bool isDepth) noexcept;
+// RR virtual device depth is an R32 colour image; raster depth has a depth aspect.
+VkImageSubresourceRange depth_range_of(const McDlssImage& image) noexcept;
 
 } // namespace mc_dlss
 

@@ -1,6 +1,7 @@
 package me.snowmii.dlss.client
 
 import me.snowmii.dlss.DlssStartupConfig
+import me.snowmii.dlss.ReflexMode
 import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
@@ -19,11 +20,7 @@ import java.util.Properties
  * The mod's one configuration handle: every `-Dmc.dlss.*` knob is named here, parsed here in one
  * pass, and surfaced here as the values the rest of the mod consumes.
  *
- * The raw property namespace and its parsing live nowhere else. The two domain configs derive
- * from this single parse: [startupConfig] is the DLSS contract the session runs under (assembled
- * here, because it is the mod's front door), while the stress instrument keeps its own
- * `mc.dlss.stress-*` keys here only as raw knobs - the instrument builds [me.snowmii.dlss.stress.StressConfig]
- * itself from this handle, so a measurement scaffold never leaks into the session contract.
+ * The raw property namespace and its parsing live nowhere else. [startupConfig] is the DLSS contract derived from this parse.
  *
  * File-backed user choices live on [user]. They share this type's mode and preset parsing, and
  * [fromSystemProperties] fills those two knobs from the file only when the command line left them
@@ -36,26 +33,6 @@ import java.util.Properties
  * config the session later builds. Every invalid value is collected into [warnings], which the
  * entrypoint logs, so a mistyped knob names itself instead of failing or defaulting silently.
  */
-/**
- * Debug and stress-instrument knobs grouped so [ModConfig] stays under the parameter-count limit.
- */
-data class DiagnosticsConfig(
-	/** Whether session readout lines are emitted to the log. */
-	val debugLog: Boolean = false,
-	/** Whether the stress measurement pass runs at all. */
-	val stressEnabled: Boolean = false,
-	/** Primary raymarch steps per pixel. The dominant cost. */
-	val stressSteps: Int = 24,
-	/** FBM octaves per density sample. Multiplies the cost of every step. */
-	val stressOctaves: Int = 5,
-	/** Radial godray taps. Screen-space, so its cost is independent of the march. */
-	val stressGodrayTaps: Int = 24,
-	/** Scales the stress effect's contribution; 0 renders the scene unchanged but still pays for it. */
-	val stressIntensity: Float = 1.0f,
-	/** Sign applied to the reconstructed NDC y; -1 when the backend's viewport is y-flipped. */
-	val stressNdcYSign: Float = 1.0f,
-)
-
 class ModConfig(
 	val enabled: Boolean,
 	val qualityMode: SRMode,
@@ -67,16 +44,9 @@ class ModConfig(
 	val sdkPath: Path?,
 	val nativeLibraryPath: Path?,
 	val dataPath: Path?,
-	val diagnostics: DiagnosticsConfig = DiagnosticsConfig(),
+	val debugLog: Boolean = false,
 	val warnings: List<String>,
 ) {
-	val debugLog: Boolean get() = diagnostics.debugLog
-	val stressEnabled: Boolean get() = diagnostics.stressEnabled
-	val stressSteps: Int get() = diagnostics.stressSteps
-	val stressOctaves: Int get() = diagnostics.stressOctaves
-	val stressGodrayTaps: Int get() = diagnostics.stressGodrayTaps
-	val stressIntensity: Float get() = diagnostics.stressIntensity
-	val stressNdcYSign: Float get() = diagnostics.stressNdcYSign
 	/** The session's DLSS contract config, derived from this one parse. */
 	val startupConfig: DlssStartupConfig
 		get() = DlssStartupConfig(
@@ -96,6 +66,7 @@ class ModConfig(
 		const val MODE_PROPERTY = "mc.dlss.mode"
 		const val PRESET_PROPERTY = "mc.dlss.preset"
 		const val RR_PRESET_PROPERTY = "mc.dlss.rr-preset"
+		const val REFLEX_PROPERTY = "mc.dlss.reflex"
 		const val OUTPUT_WIDTH_PROPERTY = "mc.dlss.output-width"
 		const val OUTPUT_HEIGHT_PROPERTY = "mc.dlss.output-height"
 		const val SDK_PATH_PROPERTY = "mc.dlss.sdk-path"
@@ -104,18 +75,9 @@ class ModConfig(
 
 		const val DEBUG_LOG_PROPERTY = "mc.dlss.debug-log"
 
-		const val STRESS_ENABLED_PROPERTY = "mc.dlss.stress"
-		const val STRESS_STEPS_PROPERTY = "mc.dlss.stress-steps"
-		const val STRESS_OCTAVES_PROPERTY = "mc.dlss.stress-octaves"
-		const val STRESS_GODRAYS_PROPERTY = "mc.dlss.stress-godrays"
-		const val STRESS_INTENSITY_PROPERTY = "mc.dlss.stress-intensity"
-		const val STRESS_FLIP_Y_PROPERTY = "mc.dlss.stress-flip-y"
 
 		private const val DEFAULT_OUTPUT_WIDTH = 2560
 		private const val DEFAULT_OUTPUT_HEIGHT = 1440
-		// Every step pays the secondary sun march, so cost is flat in step count. Re-tune with
-		// mc.dlss.stress-steps.
-		private val DEFAULT_DIAGNOSTICS = DiagnosticsConfig()
 
 		/** File-backed user settings. JVM properties remain explicit overrides. */
 		val user: UserSettings = UserSettings(configFile())
@@ -148,15 +110,7 @@ class ModConfig(
 				sdkPath = readPath(properties, SDK_PATH_PROPERTY, warnings),
 				nativeLibraryPath = readPath(properties, NATIVE_LIBRARY_PROPERTY, warnings),
 				dataPath = readPath(properties, DATA_PATH_PROPERTY, warnings),
-				diagnostics = DiagnosticsConfig(
-					debugLog = readBoolean(properties, DEBUG_LOG_PROPERTY, user.debugLog, warnings),
-					stressEnabled = readBoolean(properties, STRESS_ENABLED_PROPERTY, false, warnings),
-					stressSteps = readInt(properties, STRESS_STEPS_PROPERTY, DEFAULT_DIAGNOSTICS.stressSteps, 1, 192),
-					stressOctaves = readInt(properties, STRESS_OCTAVES_PROPERTY, DEFAULT_DIAGNOSTICS.stressOctaves, 1, 8),
-					stressGodrayTaps = readInt(properties, STRESS_GODRAYS_PROPERTY, DEFAULT_DIAGNOSTICS.stressGodrayTaps, 0, 48),
-					stressIntensity = readFloat(properties, STRESS_INTENSITY_PROPERTY, DEFAULT_DIAGNOSTICS.stressIntensity, 0.0f, 4.0f),
-					stressNdcYSign = if (readBoolean(properties, STRESS_FLIP_Y_PROPERTY, false, warnings)) -1.0f else 1.0f,
-				),
+				debugLog = readBoolean(properties, DEBUG_LOG_PROPERTY, user.debugLog, warnings),
 				warnings = warnings.toList(),
 			)
 		}
@@ -219,14 +173,6 @@ class ModConfig(
 			}
 		}
 
-		/** A bounded integer knob; out-of-range values clamp rather than warn, by design. */
-		private fun readInt(properties: Properties, name: String, default: Int, min: Int, max: Int): Int =
-			properties.getProperty(name)?.trim()?.toIntOrNull()?.coerceIn(min, max) ?: default
-
-		/** A bounded float knob; out-of-range values clamp rather than warn, by design. */
-		private fun readFloat(properties: Properties, name: String, default: Float, min: Float, max: Float): Float =
-			properties.getProperty(name)?.trim()?.toFloatOrNull()?.coerceIn(min, max) ?: default
-
 		private fun readPath(properties: Properties, name: String, warnings: MutableList<String>): Path? {
 			val value = properties.getProperty(name)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
 			return try {
@@ -259,6 +205,7 @@ class UserSettings internal constructor(private val file: Path?) {
 	private var _frameGeneration = false
 	private var _rayReconstruction = false
 	private var _rrModelPreset = RRModelPreset.DEFAULT
+	private var _reflexMode = ReflexMode.ON
 	private var _debugLog = false
 
 	var enabled: Boolean
@@ -303,6 +250,13 @@ class UserSettings internal constructor(private val file: Path?) {
 			save()
 		}
 
+	var reflexMode: ReflexMode
+		get() = _reflexMode
+		set(value) {
+			_reflexMode = value
+			save()
+		}
+
 	var debugLog: Boolean
 		get() = _debugLog
 		set(value) {
@@ -321,6 +275,7 @@ class UserSettings internal constructor(private val file: Path?) {
 		merged.putIfAbsent(ModConfig.MODE_PROPERTY, qualityMode.propertyValue)
 		merged.putIfAbsent(ModConfig.PRESET_PROPERTY, renderPreset.propertyValue)
 		merged.putIfAbsent(ModConfig.RR_PRESET_PROPERTY, rrModelPreset.propertyValue)
+		merged.putIfAbsent(ModConfig.REFLEX_PROPERTY, reflexMode.propertyValue)
 		return merged
 	}
 
@@ -336,6 +291,7 @@ class UserSettings internal constructor(private val file: Path?) {
 			_frameGeneration = jsonBoolean(fields["frameGeneration"]) == true
 			_rayReconstruction = jsonBoolean(fields["rayReconstruction"]) == true
 			_rrModelPreset = fields["rrModelPreset"]?.let(::parseRrPreset) ?: RRModelPreset.DEFAULT
+			_reflexMode = fields["reflexMode"]?.let(::parseReflexMode) ?: ReflexMode.ON
 			_debugLog = jsonBoolean(fields["debugLog"]) == true
 		} catch (_: IOException) {
 			// Keep safe defaults when an older or manually edited file is invalid.
@@ -353,15 +309,7 @@ class UserSettings internal constructor(private val file: Path?) {
 			Files.createDirectories(file.parent)
 			Files.writeString(
 				temporary,
-				writeUserSettingsJson(
-					enabled = _enabled,
-					qualityMode = _qualityMode.propertyValue,
-					renderPreset = _renderPreset.propertyValue,
-					frameGeneration = _frameGeneration,
-					rayReconstruction = _rayReconstruction,
-					rrModelPreset = _rrModelPreset.propertyValue,
-					debugLog = _debugLog,
-				),
+				writeUserSettingsJson(this),
 				StandardCharsets.UTF_8,
 			)
 			Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING)
@@ -402,6 +350,11 @@ private fun parseRrPreset(value: String): RRModelPreset? {
 	return RRModelPreset.fromPropertyValue(trimmed)
 }
 
+private fun parseReflexMode(value: String): ReflexMode? {
+	val trimmed = value.trim().lowercase(Locale.ROOT)
+	return ReflexMode.fromPropertyValue(trimmed)
+}
+
 private fun jsonBoolean(value: String?): Boolean? =
 	when (value?.trim()?.lowercase(Locale.ROOT)) {
 		null -> null
@@ -412,24 +365,19 @@ private fun jsonBoolean(value: String?): Boolean? =
 
 private val USER_SETTINGS_FIELD = Regex(""""(\w+)"\s*:\s*(true|false|null|"([^"\\]*)")""")
 
-private fun writeUserSettingsJson(
-	enabled: Boolean,
-	qualityMode: String,
-	renderPreset: String,
-	frameGeneration: Boolean,
-	rayReconstruction: Boolean,
-	rrModelPreset: String,
-	debugLog: Boolean,
-): String = buildString {
-	append("{\n")
-	append("  \"enabled\": ").append(enabled).append(",\n")
-	append("  \"qualityMode\": \"").append(qualityMode).append("\",\n")
-	append("  \"renderPreset\": \"").append(renderPreset).append("\",\n")
-	append("  \"frameGeneration\": ").append(frameGeneration).append(",\n")
-	append("  \"rayReconstruction\": ").append(rayReconstruction).append(",\n")
-	append("  \"rrModelPreset\": \"").append(rrModelPreset).append("\",\n")
-	append("  \"debugLog\": ").append(debugLog).append('\n')
-	append("}\n")
+private fun writeUserSettingsJson(settings: UserSettings): String = with(settings) {
+	buildString {
+		append("{\n")
+		append("  \"enabled\": ").append(enabled).append(",\n")
+		append("  \"qualityMode\": \"").append(qualityMode.propertyValue).append("\",\n")
+		append("  \"renderPreset\": \"").append(renderPreset.propertyValue).append("\",\n")
+		append("  \"frameGeneration\": ").append(frameGeneration).append(",\n")
+		append("  \"rayReconstruction\": ").append(rayReconstruction).append(",\n")
+		append("  \"rrModelPreset\": \"").append(rrModelPreset.propertyValue).append("\",\n")
+		append("  \"reflexMode\": \"").append(reflexMode.propertyValue).append("\",\n")
+		append("  \"debugLog\": ").append(debugLog).append('\n')
+		append("}\n")
+	}
 }
 
 private fun readUserSettingsJson(text: String): Map<String, String?> {

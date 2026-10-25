@@ -18,10 +18,11 @@ import me.snowmii.dlss.render.DlssJitterOffset
 import me.snowmii.dlss.render.WorldPhase
 import net.minecraft.client.renderer.StagedVertexBuffer
 import net.minecraft.client.renderer.blockentity.PistonHeadRenderer
+import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.blockentity.state.PistonHeadRenderState
-import net.minecraft.client.renderer.rendertype.OutputTarget
 import net.minecraft.client.renderer.rendertype.PreparedRenderType
 import net.minecraft.client.renderer.rendertype.RenderType
+import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.core.BlockPos
 import net.minecraft.resources.Identifier
 import org.joml.Matrix4f
@@ -177,7 +178,7 @@ object MovingBlockVelocityRender {
 	): Boolean = MovingBlockVelocityWriterBindings.executeInfoMovingBlockId(info) != null &&
 		phase?.terrainVelocityView != null &&
 		isSupportedPipeline(prepared.pipeline()) &&
-		true /* 26.3: PreparedRenderType no longer carries OutputTarget */
+		prepared.pipeline() != RenderPipelines.TRANSLUCENT_BLOCK
 
 	/**
 	 * Classifies and computes the reprojection one moving-block draw writes, or null when the
@@ -275,7 +276,7 @@ object MovingBlockVelocityRender {
 		// Target preflight: the scene, its textures, and the velocity companion. Still pure
 		// reads; a missing or foreign target is the ineligible passthrough, not a failure.
 		val scene = phase.worldTargetOverride ?: return false
-		val renderTarget = OutputTarget.MAIN_TARGET.getRenderTarget()
+		val renderTarget = Minecraft.getInstance().gameRenderer.mainRenderTarget()
 		val colorTexture = renderTarget.colorTextureView
 		val depthTexture = if (renderTarget.hasDepth()) {
 			renderTarget.depthTextureView
@@ -470,7 +471,7 @@ object MovingBlockVelocityWriterBindings {
 
 	@JvmStatic
 	fun beginDraw(renderType: RenderType): Boolean =
-		beginDraw(renderType.pipeline(), isEligibleRenderType(renderType, shouldIsolateDraw(renderType.pipeline())))
+		beginDraw(renderType.pipeline())
 
 	@JvmStatic
 	fun beginDraw(pipeline: RenderPipeline): Boolean = beginDraw(pipeline, shouldIsolateDraw(pipeline))
@@ -556,9 +557,6 @@ object MovingBlockVelocityWriterBindings {
 		indexes[preparedRenderType] = renderTypes.size
 		return -1
 	}
-
-	private fun isEligibleRenderType(renderType: RenderType, pipelineEligible: Boolean): Boolean =
-		pipelineEligible && true /* 26.3: RenderType no longer carries OutputTarget */
 
 	/** Forces one staged draw per supported moving-block draw, defeating same-render-type consolidation. */
 	@JvmStatic

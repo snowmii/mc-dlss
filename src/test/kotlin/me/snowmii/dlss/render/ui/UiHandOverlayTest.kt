@@ -124,6 +124,28 @@ class UiHandOverlayTest {
 		assertEquals(1, harness.recording.clears.size, "the GUI window reuses the hand window's frame clear")
 	}
 
+	@Test
+	fun `a skipped hand closes before third-person spectator or menu GUI resolves main`() {
+		val harness = Harness()
+		val main = HeadlessRenderTarget(outputWidth, outputHeight)
+		harness.phase.renderHand(main, Runnable { })
+		assertFalse(harness.phase.isOpen)
+		assertNull(harness.phase.uiTargetOverride)
+		harness.phase.begin(main)
+		assertSame(harness.allocated.single(), harness.phase.uiTargetOverride)
+		assertEquals(1, harness.recording.clears.size)
+	}
+
+	@Test
+	fun `a throwing hand cannot leak its target into later GUI rendering`() {
+		val harness = Harness()
+		org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException::class.java) {
+			harness.phase.renderHand(HeadlessRenderTarget(outputWidth, outputHeight), Runnable { error("draw failed") })
+		}
+		assertFalse(harness.phase.isOpen)
+		assertNull(harness.phase.uiTargetOverride)
+	}
+
 	private class Harness {
 		val allocated = mutableListOf<HeadlessRenderTarget>()
 		val released = mutableListOf<HeadlessRenderTarget>()

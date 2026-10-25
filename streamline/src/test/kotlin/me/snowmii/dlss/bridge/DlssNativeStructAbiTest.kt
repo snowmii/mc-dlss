@@ -6,11 +6,12 @@ import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FillVelocityRequest
-import me.snowmii.vklib.api.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
+import me.snowmii.streamline.RrPrepareRequest
 import me.snowmii.streamline.Vec2
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -31,6 +32,23 @@ class DlssNativeStructAbiTest {
 		// padding declaration, a transposed pair, a field of the wrong width - reads back as a
 		// value the probe rejects rather than as a silently wrong frame.
 		NativeTestAccess.open(compileAbiProbe()).use { native ->
+			val rr = RrPrepareRequest(
+				enabled = true,
+				rrPreset = 6,
+				diffuseAlbedo = ImageBinding(901L, 902L, 903),
+				specularAlbedo = ImageBinding(911L, 912L, 913),
+				normalRoughness = ImageBinding(921L, 922L, 923),
+				specularHitDistance = ImageBinding(931L, 932L, 933),
+				worldToCameraView = FloatArray(16) { (it + 1).toFloat() },
+				cameraViewToWorld = FloatArray(16) { (it + 101).toFloat() },
+				specularMotion = ImageBinding(941L, 942L, 943),
+				biasCurrentColor = ImageBinding(951L, 952L, 9),
+			)
+			assertEquals(StreamlineSession.SUCCESS_RESULT, native.prepareRayReconstruction(rr))
+			// Reused FFM scratch must overwrite a populated hint with absence, including on disable.
+			assertEquals(StreamlineSession.SUCCESS_RESULT, native.prepareRayReconstruction(rr.copy(biasCurrentColor = ImageBinding(0L, 0L, 0))))
+			assertEquals(StreamlineSession.SUCCESS_RESULT, native.prepareRayReconstruction(rr))
+			assertEquals(StreamlineSession.SUCCESS_RESULT, native.prepareRayReconstruction(RrPrepareRequest(enabled = false)))
 			assertEquals(StreamlineSession.SUCCESS_RESULT, native.evaluateSuperResolution(request))
 			// The camera's six arrays are fixed-length ABI fields: a malformed array is a
 			// caller bug the boundary must refuse before any byte of the reused scratch is
@@ -50,6 +68,7 @@ class DlssNativeStructAbiTest {
 						101L,
 						ImageBinding(301L, 302L, 303),
 						FloatArray(16) { it.toFloat() },
+						true,
 						Dimensions(1280, 720),
 					),
 				),
@@ -65,20 +84,20 @@ class DlssNativeStructAbiTest {
 						ImageBinding(701L, 702L, 124),
 						FloatArray(16) { it.toFloat() },
 						true,
+						true,
 						Dimensions(1280, 720),
 					),
 				),
 			)
-			assertEquals(
-				StreamlineSession.SUCCESS_RESULT,
-				native.presentOutput(
-					PresentTarget(
-						101L,
-						601L,
-						Dimensions(2560, 1440),
-					),
-				),
-			)
+			// Direct metadata and a subsequent handle-only call share the same FFM scratch.
+			// The latter must clear the former's storage permission and destination view.
+			assertEquals(StreamlineSession.SUCCESS_RESULT, native.presentOutput(PresentTarget(
+				101L, ImageBinding(602L, 601L, 37), Dimensions(2560, 1440),
+				ImageBinding(801L, 802L, 97), 8,
+			)))
+			assertEquals(StreamlineSession.SUCCESS_RESULT, native.presentOutput(PresentTarget(
+				101L, 601L, Dimensions(2560, 1440), ImageBinding(801L, 802L, 97),
+			)))
 			// The out-parameter direction of the same struct: the bridge fills two McDlssImage
 			// values and the binding has to read back exactly what was written.
 			assertEquals(
@@ -98,10 +117,33 @@ class DlssNativeStructAbiTest {
 		Files.createDirectories(directory)
 		Files.writeString(source, """
 			#include "mc_dlss.h"
+			#include <cstddef>
+			static_assert(sizeof(McDlssPresentInfo) == 64);
+			static_assert(offsetof(McDlssPresentInfo, image_view) == 48);
+			static_assert(offsetof(McDlssPresentInfo, image_format) == 56);
+			static_assert(offsetof(McDlssPresentInfo, image_usage) == 60);
 
 			extern "C" {
 			__declspec(dllexport) int __cdecl mc_dlss_initialize(
 				uint64_t, uint64_t, uint64_t, const char*, const char*) { return 1; }
+			__declspec(dllexport) int __cdecl mc_dlss_prepare_rr(const McDlssRrPrepareInfo* info) {
+				if (info == nullptr || sizeof(*info) != 280 || offsetof(McDlssRrPrepareInfo, bias_current_color) != 256) return 0;
+				const auto& bias = info->bias_current_color;
+				const bool empty = bias.view == 0 && bias.image == 0 && bias.format == 0;
+				if (info->enabled == 0) return empty;
+				if (!(info->enabled == 1 && info->rr_preset == 6 &&
+					info->diffuse_albedo.view == 901 && info->diffuse_albedo.image == 902 && info->diffuse_albedo.format == 903 &&
+					info->specular_albedo.view == 911 && info->specular_albedo.image == 912 && info->specular_albedo.format == 913 &&
+					info->normal_roughness.view == 921 && info->normal_roughness.image == 922 && info->normal_roughness.format == 923 &&
+					info->specular_hit_distance.view == 931 && info->specular_hit_distance.image == 932 && info->specular_hit_distance.format == 933 &&
+					info->specular_motion.view == 941 && info->specular_motion.image == 942 && info->specular_motion.format == 943 &&
+					(empty || (bias.view == 951 && bias.image == 952 && bias.format == 9)))) return 0;
+				for (int i = 0; i < 16; ++i) {
+					if (info->world_to_camera_view[i] != static_cast<float>(i + 1)) return 0;
+					if (info->camera_view_to_world[i] != static_cast<float>(i + 101)) return 0;
+				}
+				return 1;
+			}
 			__declspec(dllexport) int __cdecl mc_dlss_query_optimal_dimensions(
 				uint32_t, uint32_t, uint32_t, uint32_t*, uint32_t*) { return 1; }
 			__declspec(dllexport) int __cdecl mc_dlss_configure(
@@ -142,7 +184,8 @@ class DlssNativeStructAbiTest {
 				}
 				return info->command_buffer == 101 &&
 					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
-					info->render_width == 1280 && info->render_height == 720;
+					info->render_width == 1280 && info->render_height == 720 &&
+					info->fg_consuming_frame == 1;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_fill_velocity(const McDlssFillVelocityInfo* info) {
 				if (info == nullptr || info->reprojection == nullptr) return 0;
@@ -152,12 +195,16 @@ class DlssNativeStructAbiTest {
 				return info->command_buffer == 101 &&
 					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
 					info->velocity.view == 701 && info->velocity.image == 702 && info->velocity.format == 124 &&
-					info->render_width == 1280 && info->render_height == 720 && info->reset == 1;
+					info->render_width == 1280 && info->render_height == 720 && info->reset == 1 &&
+					info->fg_consuming_frame == 1;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_present_output(const McDlssPresentInfo* info) {
 				if (info == nullptr) return 0;
+				const bool metadata = (info->image_view == 602 && info->image_format == 37 && info->image_usage == 8) ||
+					(info->image_view == 0 && info->image_format == 0 && info->image_usage == 0);
 				return info->command_buffer == 101 && info->image == 601 &&
-					info->width == 2560 && info->height == 1440;
+					info->width == 2560 && info->height == 1440 &&
+                    info->reflection.view == 801 && info->reflection.image == 802 && info->reflection.format == 97 && metadata;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_acquire_images(
 				McDlssImage* motion, McDlssImage* output) {
