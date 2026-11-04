@@ -6,7 +6,6 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice
 import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.renderpearl.api.textures.GpuTexture
 import com.mojang.renderpearl.api.textures.GpuTextureView
-import java.nio.ByteBuffer
 import java.nio.file.Path
 import kotlin.io.path.readText
 import me.snowmii.streamline.Dimensions
@@ -18,13 +17,6 @@ import me.snowmii.dlss.DlssSession
 import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.SRMode
 import org.joml.Matrix4f
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertTrue
-import org.lwjgl.system.MemoryStack
-import org.lwjgl.system.MemoryUtil
-import org.lwjgl.util.shaderc.Shaderc
-import org.lwjgl.util.spvc.Spvc
-import org.lwjgl.util.spvc.SpvcReflectedResource
 
 /**
  * Shared fixtures for the velocity-MRT suites: the headless Blaze3D doubles, the world-phase
@@ -175,155 +167,3 @@ internal open class FakeBuffer(
 	override fun map(offset: Long, length: Long, read: Boolean, write: Boolean): GpuBufferSlice.MappedView =
 		throw UnsupportedOperationException("test buffer is never mapped")
 }
-
-/**
- * Compiles a fragment shader exactly the way `GlslCompiler.createIntermediary` does: the global
- * defines injected after the `#version` line, then shaderc with the Vulkan 1.2 target and
- * automatic location/uniform mapping. Returns a copy of the SPIR-V bytes, which the caller owns
- * and must [MemoryUtil.memFree].
- */
-internal fun compileFragmentShader(source: String, filename: String = "velocity.fsh"): ByteBuffer {
-	val compiler = Shaderc.shaderc_compiler_initialize()
-	val options = Shaderc.shaderc_compile_options_initialize()
-	try {
-		Shaderc.shaderc_compile_options_set_target_env(options, Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2)
-		Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true)
-		Shaderc.shaderc_compile_options_set_auto_map_locations(options, true)
-		Shaderc.shaderc_compile_options_set_generate_debug_info(options)
-		Shaderc.shaderc_compile_options_set_optimization_level(options, 0)
-
-		val sourceBuffer = MemoryUtil.memUTF8(minecraftFragmentSource(source), false)
-		val filenameBuffer = MemoryUtil.memUTF8(filename)
-		val entrypointBuffer = MemoryUtil.memUTF8("main")
-		try {
-			val result = Shaderc.shaderc_compile_into_spv(
-				compiler, sourceBuffer, Shaderc.shaderc_fragment_shader, filenameBuffer, entrypointBuffer, options,
-			)
-			try {
-				val status = Shaderc.shaderc_result_get_compilation_status(result)
-				check(status == 0) { "shaderc failed on $filename (status $status): ${Shaderc.shaderc_result_get_error_message(result)}" }
-				val compiled = checkNotNull(Shaderc.shaderc_result_get_bytes(result)) { "shaderc returned no SPIR-V bytes" }
-				val copy = MemoryUtil.memCalloc(compiled.remaining())
-				MemoryUtil.memCopy(compiled, copy)
-				return copy
-			} finally {
-				Shaderc.shaderc_result_release(result)
-			}
-		} finally {
-			MemoryUtil.memFree(entrypointBuffer)
-			MemoryUtil.memFree(filenameBuffer)
-			MemoryUtil.memFree(sourceBuffer)
-		}
-	} finally {
-		Shaderc.shaderc_compile_options_release(options)
-		Shaderc.shaderc_compiler_release(compiler)
-	}
-}
-
-/**
- * The exact preprocessed source `compileShader` hands `createIntermediary`: Minecraft's resource
- * preprocessor resolves the `#moj_import` includes, then the global defines are injected right
- * after the `#version` line. The defines alias vertex-only builtins and are inert for fragment
- * output emission, but keeping them makes the compiled module match the game's.
- *
- * Most velocity shaders inline the vanilla blocks they need and carry no import at all; the ones
- * that do import get the exact vanilla body substituted here, which is all the game's preprocessor
- * does.
- */
-internal fun minecraftFragmentSource(source: String): String {
-	val resolved = MOJ_IMPORT.replace(source) { match -> vanillaInclude(match.groupValues[1]) }
-	val versionLineEnd = resolved.indexOf('\n')
-	check(versionLineEnd >= 0) { "shader source must start with a #version line" }
-	return resolved.substring(0, versionLineEnd + 1) +
-		"#define gl_VertexID gl_VertexIndex\n#define gl_InstanceID gl_InstanceIndex\n#line 1 0\n" +
-		resolved.substring(versionLineEnd + 1)
-}
-
-private val MOJ_IMPORT = Regex("""#moj_import <minecraft:([A-Za-z0-9_]+\.glsl)>""")
-
-/**
- * The vanilla include body, read from Minecraft's own shipped assets exactly where its resource
- * preprocessor reads it, minus the include's own `#version` line (the importing shader already
- * carries one). Reading the real asset means a vanilla uniform-block change reaches these tests
- * the same way it reaches the game, instead of drifting against a hand-copied snapshot.
- */
-private fun vanillaInclude(name: String): String {
-	val path = "/assets/minecraft/shaders/include/$name"
-	val body = checkNotNull(OutputReflection::class.java.getResourceAsStream(path)) {
-		"vanilla shader include $path is not on the test classpath"
-	}.use { it.readBytes().decodeToString() }
-	return body.lineSequence().filterNot { it.trimStart().startsWith("#version") }.joinToString("\n")
-}
-
-/** A stage output as spirv-cross reflects it, plus the byte offset of its Location decoration. */
-internal class OutputReflection(val name: String, val locationOffset: Int, val location: Int)
-
-/**
- * Reflects the stage outputs of a compiled module the way `createFromSpirv` does: parse the
- * SPIR-V, list STAGE_OUTPUT resources, and read each output's Location decoration value and the
- * binary word offset where that decoration lives. The list comes back in module declaration
- * order, which is glslang's first-assignment order inside `main()`.
- */
-internal fun reflectOutputs(spirv: ByteBuffer): List<OutputReflection> {
-	MemoryStack.stackPush().use { stack ->
-		val contextPointer = stack.callocPointer(1)
-		spvcCheck(Spvc.spvc_context_create(contextPointer), "spvc_context_create")
-		val context = contextPointer.get(0)
-		try {
-			val intSpirv = spirv.asIntBuffer()
-			val irPointer = stack.callocPointer(1)
-			spvcCheck(
-				Spvc.spvc_context_parse_spirv(context, intSpirv, intSpirv.remaining().toLong(), irPointer),
-				"spvc_context_parse_spirv",
-			)
-			val compilerPointer = stack.callocPointer(1)
-			spvcCheck(
-				Spvc.spvc_context_create_compiler(context, 0, irPointer.get(0), 1, compilerPointer),
-				"spvc_context_create_compiler",
-			)
-			val compiler = compilerPointer.get(0)
-			val resourcesPointer = stack.callocPointer(1)
-			spvcCheck(Spvc.spvc_compiler_create_shader_resources(compiler, resourcesPointer), "spvc_compiler_create_shader_resources")
-			val listPointer = stack.callocPointer(1)
-			val countPointer = stack.callocPointer(1)
-			spvcCheck(
-				Spvc.spvc_resources_get_resource_list_for_type(
-					resourcesPointer.get(0), Spvc.SPVC_RESOURCE_TYPE_STAGE_OUTPUT, listPointer, countPointer,
-				),
-				"spvc_resources_get_resource_list_for_type",
-			)
-			val resources = SpvcReflectedResource.create(listPointer.get(0), countPointer.get(0).toInt())
-			val offsetBuffer = stack.callocInt(1)
-			return (0 until resources.capacity()).map { index ->
-				val resource = resources.get(index)
-				val name = resource.nameString()
-				check(Spvc.spvc_compiler_get_binary_offset_for_decoration(compiler, resource.id(), LOCATION_DECORATION, offsetBuffer)) {
-					"no Location decoration on $name"
-				}
-				OutputReflection(
-					name = name,
-					locationOffset = offsetBuffer.get(0),
-					location = Spvc.spvc_compiler_get_decoration(compiler, resource.id(), LOCATION_DECORATION),
-				)
-			}
-		} finally {
-			Spvc.spvc_context_destroy(context)
-		}
-	}
-}
-
-private fun spvcCheck(result: Int, step: String) {
-	check(result == Spvc.SPVC_SUCCESS) {
-		val name = when (result) {
-			Spvc.SPVC_ERROR_INVALID_ARGUMENT -> "SPVC_ERROR_INVALID_ARGUMENT"
-			Spvc.SPVC_ERROR_OUT_OF_MEMORY -> "SPVC_ERROR_OUT_OF_MEMORY"
-			Spvc.SPVC_ERROR_UNSUPPORTED_SPIRV -> "SPVC_ERROR_UNSUPPORTED_SPIRV"
-			Spvc.SPVC_ERROR_INVALID_SPIRV -> "SPVC_ERROR_INVALID_SPIRV"
-			else -> result.toString()
-		}
-		"$step failed ($name)"
-	}
-}
-
-/** SPIR-V DecorationLocation, the decoration `createFromSpirv` rewrites and these suites read back. */
-internal const val LOCATION_DECORATION = 30

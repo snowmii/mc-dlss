@@ -12,7 +12,6 @@ import me.snowmii.dlss.render.FrameEvaluation
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneResources
 import me.snowmii.dlss.render.WorldPhase
-import me.snowmii.dlss.render.mrt.MotionVectorRoute
 import me.snowmii.dlss.DlssSession
 import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.streamline.Dimensions

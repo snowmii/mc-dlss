@@ -15,7 +15,7 @@ that don't yet exist, etc.).
 Comes with a few keybinds you can use to toggle through things quickly:<br>
 F6: Toggles DLSS on/off<br>
 F7: Cycle through Super Resolution modes (DLAA → Quality → Balanced → Performance → Ultra Performance)<br>
-F8: Cycle through Super Resolution presets (K / L / M)<br>
+F8: Cycle through Super Resolution presets (default / K / L / M)<br>
 F10: Toggles Frame Generation on/off<br>
 F12: Cycle through Frame Generation multiplier (2x ~ up to 6x if supported)<br>
 F5: Toggles Ray Reconstruction on/off (needs a guide producer such as Lumina)<br>
