@@ -180,11 +180,11 @@ class RuntimeControls(
 		}
 		val internal = runtime.dlssRenderDimensions?.toString() ?: "not chosen yet"
 		val rr = if (RayReconstruction.enabled) {
-			"rr=on/${RayReconstruction.modelPreset.propertyValue}"
+			"on at ${RayReconstruction.modelPreset.propertyValue}"
 		} else {
-			"rr=off"
+			"off"
 		}
-		val reflex = "reflex=${runtime.reflexMode.propertyValue}"
+		val reflex = runtime.reflexMode.propertyValue
 		return SessionReadout.statusLine(
 			state = state,
 			fg = frameGenerationStatus(),
@@ -193,7 +193,9 @@ class RuntimeControls(
 			preset = runtime.renderPreset,
 			internal = internal,
 			output = runtime.outputDimensions,
-		) + " $rr $reflex"
+			rr = rr,
+			reflex = reflex,
+		)
 	}
 
 	fun fgPresentedFpsSuffix(appFps: Int): String {

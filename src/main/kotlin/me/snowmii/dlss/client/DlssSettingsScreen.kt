@@ -116,8 +116,8 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 	private fun refreshLabels() {
 		val controls = controls()
 		enabledButton.message = label("mc-dlss.options.enabled", controls?.enabled ?: user.enabled)
-		modeButton.message = valueLabel("mc-dlss.options.mode", (controls?.qualityMode ?: user.qualityMode).propertyValue)
-		presetButton.message = valueLabel("mc-dlss.options.preset", (controls?.renderPreset ?: user.renderPreset).propertyValue)
+		modeButton.message = valueLabel("mc-dlss.options.mode", (controls?.qualityMode ?: user.qualityMode).displayName)
+		presetButton.message = valueLabel("mc-dlss.options.preset", (controls?.renderPreset ?: user.renderPreset).displayName)
 		fgButton.message = label("mc-dlss.options.frame_generation", controls?.frameGenerationEnabled ?: user.frameGeneration)
 		multiplierButton.message = valueLabel(
 			"mc-dlss.options.fg_multiplier",
@@ -130,13 +130,14 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		)
 		rrPresetButton.message = valueLabel(
 			"mc-dlss.options.rr_preset",
-			(controls?.rrModelPreset ?: user.rrModelPreset).propertyValue,
+			(controls?.rrModelPreset ?: user.rrModelPreset).displayName,
 		)
 		val reflexState = controls?.reflexState
 		val reflexLabel = if (reflexState != null && !reflexState.lowLatencyAvailable()) {
-			Component.translatable("mc-dlss.options.reflex").append(": ").append(Component.translatable("options.off")).append(" (N/A)")
+			CommonComponents.optionStatus(Component.translatable("mc-dlss.options.reflex"), false)
+				.copy().append(" (N/A)")
 		} else {
-			valueLabel("mc-dlss.options.reflex", (controls?.reflexMode ?: user.reflexMode).propertyValue)
+			valueLabel("mc-dlss.options.reflex", (controls?.reflexMode ?: user.reflexMode).displayName)
 		}
 		reflexButton.message = reflexLabel
 	}
@@ -144,9 +145,10 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 	private fun controls(): RuntimeControls? = ClientRuntime.active().activeControls()
 
 	private fun label(key: String, value: Boolean): Component =
-		Component.translatable(key).append(": ").append(Component.translatable(if (value) "options.on" else "options.off"))
+		CommonComponents.optionStatus(Component.translatable(key), value)
 
-	private fun valueLabel(key: String, value: String): Component = Component.translatable(key).append(": $value")
+	private fun valueLabel(key: String, value: String): Component =
+		CommonComponents.optionNameValue(Component.translatable(key), Component.literal(value))
 
 	private companion object {
 		const val BUTTON_WIDTH = 220

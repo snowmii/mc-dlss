@@ -47,18 +47,19 @@ data class DlssStartupConfig(
 enum class SRModelPreset(
 	val sdkValue: Int,
 	val propertyValue: String,
+	val displayName: String,
 ) {
 	/** NVIDIA App / OTA may select the model (`NVSDK_NGX_DLSS_Hint_Render_Preset_Default`). */
-	DEFAULT(0, "default"),
+	DEFAULT(0, "default", "Default"),
 
 	/** Transformer; NVIDIA's documented Quality/Balanced/DLAA model. Heavier temporal history. */
-	K(11, "k"),
+	K(11, "k", "Preset K"),
 
 	/** Transformer; NVIDIA's documented Ultra Performance model. */
-	L(12, "l"),
+	L(12, "l", "Preset L"),
 
 	/** Transformer; NVIDIA's documented Performance model. */
-	M(13, "m"),
+	M(13, "m", "Preset M"),
 	;
 
 	companion object {
@@ -77,18 +78,19 @@ enum class SRModelPreset(
 enum class RRModelPreset(
 	val sdkValue: Int,
 	val propertyValue: String,
+	val displayName: String,
 ) {
 	/** NVIDIA App / OTA may select the RR model (`sl::DLSSDPreset::eDefault`). */
-	DEFAULT(0, "default"),
+	DEFAULT(0, "default", "Default"),
 
 	/** Default transformer model in public Streamline RR headers. */
-	D(4, "d"),
+	D(4, "d", "Preset D"),
 
 	/** Prior “latest” transformer; required when a DoF guide is needed per public headers. */
-	E(5, "e"),
+	E(5, "e", "Preset E"),
 
 	/** DLSS 4.5 RR model selection target. */
-	F(6, "f"),
+	F(6, "f", "Preset F"),
 	;
 
 	companion object {
@@ -112,12 +114,13 @@ enum class RRModelPreset(
 enum class SRMode(
 	val sdkValue: Int,
 	val propertyValue: String,
+	val displayName: String,
 ) {
-	DLAA(5, "dlaa"),
-	QUALITY(2, "quality"),
-	BALANCED(1, "balanced"),
-	PERFORMANCE(0, "performance"),
-	ULTRA_PERFORMANCE(3, "ultra-performance"),
+	DLAA(5, "dlaa", "DLAA"),
+	QUALITY(2, "quality", "Quality"),
+	BALANCED(1, "balanced", "Balanced"),
+	PERFORMANCE(0, "performance", "Performance"),
+	ULTRA_PERFORMANCE(3, "ultra-performance", "Ultra Performance"),
 }
 
 /**
@@ -126,10 +129,11 @@ enum class SRMode(
 enum class ReflexMode(
 	val sdkValue: Int,
 	val propertyValue: String,
+	val displayName: String,
 ) {
-	OFF(0, "off"),
-	ON(1, "on"),
-	BOOST(2, "boost");
+	OFF(0, "off", "Off"),
+	ON(1, "on", "On"),
+	BOOST(2, "boost", "On + Boost");
 
 	companion object {
 		fun fromPropertyValue(value: String): ReflexMode? =

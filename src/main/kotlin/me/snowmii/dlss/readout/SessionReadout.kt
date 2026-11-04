@@ -237,12 +237,19 @@ class SessionReadout(
 			preset: SRModelPreset,
 			internal: String,
 			output: Dimensions,
-		): String = "DLSS $state" +
-			" | fg $fg at ${multiplier}x" +
-			" | mode ${mode.propertyValue}" +
-			" | preset ${preset.propertyValue}" +
-			" | internal $internal" +
-			" | output $output"
+			rr: String? = null,
+			reflex: String? = null,
+		): String {
+			val line = StringBuilder("DLSS $state")
+				.append(" | fg $fg at ${multiplier}x")
+				.append(" | mode ${mode.propertyValue}")
+				.append(" | preset ${preset.propertyValue}")
+			if (rr != null) line.append(" | rr $rr")
+			if (reflex != null) line.append(" | reflex $reflex")
+			line.append(" | internal $internal")
+				.append(" | output $output")
+			return line.toString()
+		}
 
 		fun frameGenerationStatus(userEnabled: Boolean, effective: Boolean): String = when {
 			!userEnabled -> "off"

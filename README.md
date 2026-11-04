@@ -12,14 +12,7 @@ Made with compatibility in mind. mc-dlss is expected to work with any modificati
 fully replace minecraft's game renderer (sodium, immediately fast, entity culling, shader loaders 
 that don't yet exist, etc.). 
 
-Comes with a few keybinds you can use to toggle through things quickly:<br>
-F6: Toggles DLSS on/off<br>
-F7: Cycle through Super Resolution modes (DLAA → Quality → Balanced → Performance → Ultra Performance)<br>
-F8: Cycle through Super Resolution presets (default / K / L / M)<br>
-F10: Toggles Frame Generation on/off<br>
-F12: Cycle through Frame Generation multiplier (2x ~ up to 6x if supported)<br>
-F5: Toggles Ray Reconstruction on/off (needs a guide producer such as Lumina)<br>
-F4: Cycle through Ray Reconstruction presets (default / D / E / F)
+All settings are configured in-game via **Options → Video Settings → DLSS Settings…** (or through Sodium's Video Settings if installed), with live status and metrics visible on the F3 debug screen.
 
 ## Build from source
 
