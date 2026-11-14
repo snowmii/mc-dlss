@@ -1,4 +1,3 @@
-import groovy.json.JsonSlurper
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.OutputStream
 import java.net.URI
@@ -36,9 +35,11 @@ val fastutilVersion = providers.gradleProperty("fastutil_version").get()
 
 dependencies {
 	implementation("org.joml:joml:$jomlVersion")
-	implementation("org.lwjgl:lwjgl-vulkan:$lwjglVersion")
+	api("org.lwjgl:lwjgl:$lwjglVersion")
+	api("org.lwjgl:lwjgl-vulkan:$lwjglVersion")
 
 	testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
+	testImplementation(kotlin("test"))
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:$junitPlatformVersion")
 	testRuntimeOnly("org.lwjgl:lwjgl:$lwjglVersion:natives-windows")
 	testFixturesImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
@@ -47,12 +48,19 @@ dependencies {
 }
 
 val streamlineSdkVersion = providers.gradleProperty("streamline_sdk_version").get()
-val streamlineDir = File(gradle.gradleUserHomeDir, "caches").resolve("streamline/$streamlineSdkVersion")
-val streamlineArchive = streamlineDir.resolve("sdk.zip")
+val streamlineCachesDir = File(gradle.gradleUserHomeDir, "caches/streamline")
+val streamlineDir = streamlineCachesDir.resolve(streamlineSdkVersion)
+val streamlineArchive = streamlineCachesDir.resolve("streamline-sdk-v$streamlineSdkVersion.zip")
 
 
 fun open(url: String): URLConnection = URI(url).toURL().openConnection().apply {
 	setRequestProperty("User-Agent", "mc-dlss")
+	val token = providers.environmentVariable("GITHUB_TOKEN")
+		.orElse(providers.environmentVariable("GH_TOKEN"))
+		.orNull
+	if (token != null) {
+		setRequestProperty("Authorization", "Bearer $token")
+	}
 }
 
 fun get(url: String, output: File) {
@@ -77,42 +85,30 @@ fun sha256(file: File): String {
 	return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
-@Suppress("UNCHECKED_CAST")
-fun githubAsset(repo: String, tag: String, name: String, output: File) {
-	val release = open("https://api.github.com/repos/$repo/releases/tags/$tag").getInputStream().use { it.reader().readText() }
-	val assets = (JsonSlurper().parseText(release) as Map<*, *>)["assets"] as List<Map<*, *>>
-	val asset = assets.first { it["name"] == name }
-	val expectedSize = (asset["size"] as Number).toLong()
-	val expected = asset["digest"]?.toString()?.removePrefix("sha256:")
-	check(expected != null) { "GitHub release $tag is missing a SHA-256 digest for $name" }
-	if (!output.exists() || output.length() != expectedSize || sha256(output) != expected) {
-		get(asset["browser_download_url"].toString(), output)
-	}
-	val actual = sha256(output)
-	check(output.length() == expectedSize && actual == expected) {
-		"SHA-256 mismatch: $name (expected $expected / $expectedSize bytes, got $actual / ${output.length()} bytes)"
-	}
-}
-
 val downloadStreamlineSdk = tasks.register("downloadStreamlineSdk") {
+	val digest = providers.gradleProperty("streamline_sdk_sha256").get()
+	inputs.property("version", streamlineSdkVersion)
+	inputs.property("sha256", digest)
 	outputs.file(streamlineArchive)
+
 	doLast {
-		githubAsset(
-			"NVIDIA-RTX/Streamline",
-			"v$streamlineSdkVersion",
-			"streamline-sdk-v$streamlineSdkVersion.zip",
-			streamlineArchive,
-		)
+		if (streamlineArchive.isFile && sha256(streamlineArchive) == digest) return@doLast
+		get("https://github.com/NVIDIA-RTX/Streamline/releases/download/v$streamlineSdkVersion/" +
+			"streamline-sdk-v$streamlineSdkVersion.zip", streamlineArchive)
+		check(sha256(streamlineArchive) == digest) {
+			"SHA-256 mismatch for Streamline $streamlineSdkVersion; expected $digest"
+		}
 	}
 }
 val provisionStreamlineSdk = tasks.register<Sync>("provisionStreamlineSdk") {
 	dependsOn(downloadStreamlineSdk)
+	inputs.file(streamlineArchive)
+	outputs.dir(streamlineDir)
 	from({ zipTree(streamlineArchive) })
 	into(streamlineDir)
 }
 val provisionedStreamlineSdk = providers.provider { streamlineDir }
 
-// I'm not even gonna pretend that I understand wtf is going on down below
 fun toolchainRoot(property: String, environment: String, fallback: Provider<File>? = null) =
 	providers.gradleProperty(property)
 		.orElse(providers.environmentVariable(environment))
@@ -132,10 +128,17 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 	val nativeSources = nativeDirectory.asFileTree.matching { include("**/*.cpp"); exclude("test/**") }
 	val nativeHeaders = nativeDirectory.asFileTree.matching { include("**/*.h"); exclude("test/**") }
 	val motionShader = nativeDirectory.file("mc_dlss_motion.comp")
-	val velocityFillShader = nativeDirectory.file("mc_dlss_velocity_fill.comp")
+	val toneMapShader = nativeDirectory.file("mc_dlss_tonemap.comp")
 	val outputDirectory = layout.buildDirectory.dir("native")
-	inputs.files(nativeSources, nativeHeaders, motionShader, velocityFillShader)
-	outputs.file(outputDirectory.map { it.file("mc_dlss.dll") })
+	inputs.files(nativeSources, nativeHeaders, motionShader, toneMapShader)
+	inputs.property("streamlineSdkVersion", streamlineSdkVersion)
+	inputs.dir(toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk).map { it.resolve("include") })
+	inputs.dir(toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk).map { it.resolve("external/ngx-sdk/include") })
+	inputs.file(toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk).map { it.resolve("lib/x64/sl.interposer.lib") })
+	inputs.file(nativeDirectory.file("highlight_compression.glsl"))
+	outputs.files(outputDirectory.map { dir ->
+		listOf("mc_dlss.dll", "sl.interposer.dll", "sl.common.dll").map(dir::file)
+	})
 
 	doFirst {
 		val vsDevCmd = toolchainRoot("mc.dlss.vs-dev-cmd", "VSDEVCMD").get()
@@ -162,7 +165,7 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
 		val output = outputDir.resolve("mc_dlss.dll")
 		val motionSpirV = outputDir.resolve("mc_dlss_motion.spv.h")
-		val velocityFillSpirV = outputDir.resolve("mc_dlss_velocity_fill.spv.h")
+		val toneMapSpirV = outputDir.resolve("mc_dlss_tonemap.spv.h")
 		val objectDir = outputDir.resolve("obj").apply { mkdirs() }
 		val objectDirArgument = objectDir.absolutePath.replace('\\', '/') + "/"
 		val sourceArguments = nativeSources.files.sorted().joinToString(" ") { "\"${it.absolutePath}\"" }
@@ -172,7 +175,7 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 				"\"${glslc.absolutePath}\" -O --target-env=vulkan1.2 -mfmt=c " +
 				"-o \"${motionSpirV.absolutePath}\" \"${motionShader.asFile.absolutePath}\" && " +
 				"\"${glslc.absolutePath}\" -O --target-env=vulkan1.2 -mfmt=c " +
-				"-o \"${velocityFillSpirV.absolutePath}\" \"${velocityFillShader.asFile.absolutePath}\" && " +
+				"-o \"${toneMapSpirV.absolutePath}\" \"${toneMapShader.asFile.absolutePath}\" && " +
 				"cl.exe /nologo /std:c++17 /EHsc /LD /O2 /DNOMINMAX /Fo\"${objectDirArgument}\" " +
 				"/I\"${nativeDirectory.asFile.absolutePath}\" " +
 				"/I\"${outputDir.absolutePath}\" " +
@@ -206,6 +209,9 @@ val nativeTestCompile = tasks.register<Exec>("nativeTestCompile") {
 	val testSources = nativeDirectory.asFileTree.matching { include("test/*.cpp") }
 	val outputDirectory = layout.buildDirectory.dir("native-test")
 	inputs.files(internalSources, nativeHeaders, testSources, testHeaders)
+	inputs.property("streamlineSdkVersion", streamlineSdkVersion)
+	inputs.dir(toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk).map { it.resolve("include") })
+	inputs.dir(toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk).map { it.resolve("external/ngx-sdk/include") })
 	outputs.file(outputDirectory.map { it.file("native_tests.exe") })
 
 	doFirst {
@@ -262,14 +268,12 @@ tasks.test {
 val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 	group = "verification"
 	testClassesDirs = sourceSets.test.get().output.classesDirs
-	// Prepend the loose processResources output so the native DLLs are found as plain
-	// file:// resources rather than inside a jar — ExtensionBootstrap loads them in place
-	// instead of extracting to a temp directory, avoiding temp-dir accumulation.
 	classpath = files(sourceSets.main.get().output.resourcesDir!!) +
 		sourceSets.test.get().runtimeClasspath
 	useJUnitPlatform { includeTags(nativeBridgeTag) }
 	forkEvery = 1
 	jvmArgs("--enable-native-access=ALL-UNNAMED")
+	systemProperty("mc.dlss.streamline-sdk-version", streamlineSdkVersion)
 }
 
 tasks.named("check") {
@@ -280,9 +284,9 @@ val streamlineRuntime = toolchainRoot(
 	"mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk
 ).map { it.resolve("bin/x64") }
 val streamlineRuntimeFiles = listOf(
-	"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
-	"sl.pcl.dll",
-	"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
+	"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_d.dll", "sl.dlss_g.dll",
+	"sl.reflex.dll", "sl.pcl.dll",
+	"nvngx_dlss.dll", "nvngx_dlssd.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
 )
 
 tasks.processResources {
@@ -294,9 +298,12 @@ tasks.processResources {
 	}
 
 	from(buildNativeDlss) {
+		include("mc_dlss.dll")
 		into("assets/streamline-api/native")
 	}
-	from(streamlineRuntimeFiles.map { name -> streamlineRuntime.map { it.resolve(name) } }) {
+	from(streamlineRuntimeFiles.map { name ->
+		streamlineRuntime.map { it.resolve(name) }
+	}) {
 		into("assets/streamline-api/native")
 	}
 }

@@ -1,5 +1,7 @@
 package me.snowmii.streamline;
 
+import me.snowmii.dlss.api.ImageBinding;
+
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -27,23 +29,8 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private static final ValueLayout.OfFloat JAVA_FLOAT = ValueLayout.JAVA_FLOAT;
 	private static final Linker LINKER = Linker.nativeLinker();
 
-	/**
-	 * One native-library lookup per absolute path, each pinned for the JVM lifetime.
-	 *
-	 * <p>The bootstrap/query/activation bridges ExtensionBootstrap opens close before the
-	 * runtime bridge opens, and the native module's globals (Streamline bootstrap state, the
-	 * activated proxy tuple) have to survive those closes: Streamline stays process-wide, and
-	 * a module instance that unloaded with its arena would lose the tuple the runtime bridge's
-	 * {@code mc_dlss_initialize} must match. Pinning the lookup with {@link Arena#global()}
-	 * keeps the native module loaded, the path key keeps it loaded exactly once, and each
-	 * {@link Native} still owns its scratch arena and close behavior.
-	 */
 	private static final Map<Path, SymbolLookup> PINNED_LOOKUPS = new ConcurrentHashMap<>();
 
-	/**
-	 * Trailing padding declared: 20 bytes of fields, 24-byte struct (8-byte alignment).
-	 * Omitting it would describe a 20-byte layout and misplace every following field.
-	 */
 	private static final StructLayout IMAGE_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("view"),
 		JAVA_LONG.withName("image"),
@@ -51,7 +38,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		MemoryLayout.paddingLayout(4)
 	).withName("McDlssImage");
 
-	/** {@code McDlssVec2}: two floats, 8 bytes, 4-byte aligned - no padding of its own. */
 	private static final StructLayout VEC2_LAYOUT = MemoryLayout.structLayout(
 		JAVA_FLOAT.withName("x"),
 		JAVA_FLOAT.withName("y")
@@ -91,42 +77,41 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		IMAGE_LAYOUT.withName("depth"),
 		ValueLayout.ADDRESS.withName("reprojection"),
 		JAVA_INT.withName("render_width"),
-		JAVA_INT.withName("render_height")
-	).withName("McDlssMotionInfo");
-
-	/**
-	 * Trailing padding declared: 76 bytes of fields, 80-byte struct (pointer alignment).
-	 */
-	private static final StructLayout FILL_LAYOUT = MemoryLayout.structLayout(
-		JAVA_LONG.withName("command_buffer"),
-		IMAGE_LAYOUT.withName("depth"),
-		IMAGE_LAYOUT.withName("velocity"),
-		ValueLayout.ADDRESS.withName("reprojection"),
-		JAVA_INT.withName("render_width"),
 		JAVA_INT.withName("render_height"),
-		JAVA_INT.withName("reset"),
+		JAVA_INT.withName("fg_consuming_frame"),
 		MemoryLayout.paddingLayout(4)
-	).withName("McDlssFillVelocityInfo");
+	).withName("McDlssMotionInfo");
 
 	private static final StructLayout PRESENT_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
 		JAVA_LONG.withName("image"),
 		JAVA_INT.withName("width"),
-		JAVA_INT.withName("height")
+		JAVA_INT.withName("height"),
+        IMAGE_LAYOUT.withName("reflection"),
+        JAVA_LONG.withName("image_view"),
+        JAVA_INT.withName("image_format"),
+        JAVA_INT.withName("image_usage")
 	).withName("McDlssPresentInfo");
 
-	/**
-	 * Motion is never carried: native always tags the module's own motion image.
-	 */
 	private static final StructLayout TAG_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
 		IMAGE_LAYOUT.withName("color"),
 		IMAGE_LAYOUT.withName("depth")
 	).withName("McDlssTagInfo");
 
-	/**
-	 * Depth, HUD-less colour, UI colour+alpha. Motion is never carried, same as the SR tag.
-	 */
+	private static final StructLayout RR_PREPARE_LAYOUT = MemoryLayout.structLayout(
+		JAVA_INT.withName("enabled"),
+		JAVA_INT.withName("rr_preset"),
+		IMAGE_LAYOUT.withName("diffuse_albedo"),
+		IMAGE_LAYOUT.withName("specular_albedo"),
+		IMAGE_LAYOUT.withName("normal_roughness"),
+		IMAGE_LAYOUT.withName("specular_hit_distance"),
+		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("world_to_camera_view"),
+		MemoryLayout.sequenceLayout(16, JAVA_FLOAT).withName("camera_view_to_world"),
+		IMAGE_LAYOUT.withName("specular_motion"),
+		IMAGE_LAYOUT.withName("bias_current_color")
+	).withName("McDlssRrPrepareInfo");
+
 	private static final StructLayout FG_TAG_LAYOUT = MemoryLayout.structLayout(
 		JAVA_LONG.withName("command_buffer"),
 		IMAGE_LAYOUT.withName("depth"),
@@ -186,18 +171,8 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private static final VarHandle MOTION_REPROJECTION = field(MOTION_LAYOUT, "reprojection");
 	private static final VarHandle MOTION_RENDER_WIDTH = field(MOTION_LAYOUT, "render_width");
 	private static final VarHandle MOTION_RENDER_HEIGHT = field(MOTION_LAYOUT, "render_height");
+	private static final VarHandle MOTION_FG_CONSUMING_FRAME = field(MOTION_LAYOUT, "fg_consuming_frame");
 
-	private static final VarHandle FILL_COMMAND_BUFFER = field(FILL_LAYOUT, "command_buffer");
-	private static final VarHandle FILL_DEPTH_VIEW = field(FILL_LAYOUT, "depth", "view");
-	private static final VarHandle FILL_DEPTH_IMAGE = field(FILL_LAYOUT, "depth", "image");
-	private static final VarHandle FILL_DEPTH_FORMAT = field(FILL_LAYOUT, "depth", "format");
-	private static final VarHandle FILL_VELOCITY_VIEW = field(FILL_LAYOUT, "velocity", "view");
-	private static final VarHandle FILL_VELOCITY_IMAGE = field(FILL_LAYOUT, "velocity", "image");
-	private static final VarHandle FILL_VELOCITY_FORMAT = field(FILL_LAYOUT, "velocity", "format");
-	private static final VarHandle FILL_REPROJECTION = field(FILL_LAYOUT, "reprojection");
-	private static final VarHandle FILL_RENDER_WIDTH = field(FILL_LAYOUT, "render_width");
-	private static final VarHandle FILL_RENDER_HEIGHT = field(FILL_LAYOUT, "render_height");
-	private static final VarHandle FILL_RESET = field(FILL_LAYOUT, "reset");
 
 	private static final VarHandle IMAGE_VIEW = field(IMAGE_LAYOUT, "view");
 	private static final VarHandle IMAGE_IMAGE = field(IMAGE_LAYOUT, "image");
@@ -207,6 +182,12 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private static final VarHandle PRESENT_IMAGE = field(PRESENT_LAYOUT, "image");
 	private static final VarHandle PRESENT_WIDTH = field(PRESENT_LAYOUT, "width");
 	private static final VarHandle PRESENT_HEIGHT = field(PRESENT_LAYOUT, "height");
+    private static final VarHandle PRESENT_IMAGE_VIEW = field(PRESENT_LAYOUT, "image_view");
+    private static final VarHandle PRESENT_IMAGE_FORMAT = field(PRESENT_LAYOUT, "image_format");
+    private static final VarHandle PRESENT_IMAGE_USAGE = field(PRESENT_LAYOUT, "image_usage");
+    private static final VarHandle PRESENT_REFLECTION_VIEW = field(PRESENT_LAYOUT, "reflection", "view");
+    private static final VarHandle PRESENT_REFLECTION_IMAGE = field(PRESENT_LAYOUT, "reflection", "image");
+    private static final VarHandle PRESENT_REFLECTION_FORMAT = field(PRESENT_LAYOUT, "reflection", "format");
 
 	private static final VarHandle TAG_COMMAND_BUFFER = field(TAG_LAYOUT, "command_buffer");
 	private static final VarHandle TAG_COLOR_VIEW = field(TAG_LAYOUT, "color", "view");
@@ -215,6 +196,34 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private static final VarHandle TAG_DEPTH_VIEW = field(TAG_LAYOUT, "depth", "view");
 	private static final VarHandle TAG_DEPTH_IMAGE = field(TAG_LAYOUT, "depth", "image");
 	private static final VarHandle TAG_DEPTH_FORMAT = field(TAG_LAYOUT, "depth", "format");
+
+	private static final VarHandle RR_ENABLED = field(RR_PREPARE_LAYOUT, "enabled");
+	private static final VarHandle RR_PRESET = field(RR_PREPARE_LAYOUT, "rr_preset");
+	private static final VarHandle RR_DIFFUSE_VIEW = field(RR_PREPARE_LAYOUT, "diffuse_albedo", "view");
+	private static final VarHandle RR_DIFFUSE_IMAGE = field(RR_PREPARE_LAYOUT, "diffuse_albedo", "image");
+	private static final VarHandle RR_DIFFUSE_FORMAT = field(RR_PREPARE_LAYOUT, "diffuse_albedo", "format");
+	private static final VarHandle RR_SPECULAR_VIEW = field(RR_PREPARE_LAYOUT, "specular_albedo", "view");
+	private static final VarHandle RR_SPECULAR_IMAGE = field(RR_PREPARE_LAYOUT, "specular_albedo", "image");
+	private static final VarHandle RR_SPECULAR_FORMAT = field(RR_PREPARE_LAYOUT, "specular_albedo", "format");
+	private static final VarHandle RR_NORMAL_VIEW = field(RR_PREPARE_LAYOUT, "normal_roughness", "view");
+	private static final VarHandle RR_NORMAL_IMAGE = field(RR_PREPARE_LAYOUT, "normal_roughness", "image");
+	private static final VarHandle RR_NORMAL_FORMAT = field(RR_PREPARE_LAYOUT, "normal_roughness", "format");
+	private static final VarHandle RR_HIT_VIEW = field(RR_PREPARE_LAYOUT, "specular_hit_distance", "view");
+	private static final VarHandle RR_HIT_IMAGE = field(RR_PREPARE_LAYOUT, "specular_hit_distance", "image");
+	private static final VarHandle RR_HIT_FORMAT = field(RR_PREPARE_LAYOUT, "specular_hit_distance", "format");
+	private static final VarHandle RR_MOTION_VIEW = field(RR_PREPARE_LAYOUT, "specular_motion", "view");
+	private static final VarHandle RR_MOTION_IMAGE = field(RR_PREPARE_LAYOUT, "specular_motion", "image");
+	private static final VarHandle RR_MOTION_FORMAT = field(RR_PREPARE_LAYOUT, "specular_motion", "format");
+	private static final VarHandle RR_BIAS_VIEW = field(RR_PREPARE_LAYOUT, "bias_current_color", "view");
+	private static final VarHandle RR_BIAS_IMAGE = field(RR_PREPARE_LAYOUT, "bias_current_color", "image");
+	private static final VarHandle RR_BIAS_FORMAT = field(RR_PREPARE_LAYOUT, "bias_current_color", "format");
+
+	private static final long RR_WORLD_TO_VIEW_OFFSET = RR_PREPARE_LAYOUT.byteOffset(
+		MemoryLayout.PathElement.groupElement("world_to_camera_view")
+	);
+	private static final long RR_VIEW_TO_WORLD_OFFSET = RR_PREPARE_LAYOUT.byteOffset(
+		MemoryLayout.PathElement.groupElement("camera_view_to_world")
+	);
 
 	private static final VarHandle FG_TAG_COMMAND_BUFFER = field(FG_TAG_LAYOUT, "command_buffer");
 	private static final VarHandle FG_TAG_DEPTH_VIEW = field(FG_TAG_LAYOUT, "depth", "view");
@@ -229,6 +238,7 @@ public final class Native implements AutoCloseable, StreamlineSession {
 
 	private final Arena nativeArena;
 	private final MethodHandle bootstrapStreamline;
+	private final MethodHandle shutdownStreamline;
 	private final MethodHandle activateVulkanProxies;
 	private final MethodHandle queryInstanceExtension;
 	private final MethodHandle queryDeviceExtension;
@@ -248,32 +258,38 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	private final MethodHandle queryCameraConstants;
 	private final MethodHandle queryFgCameraConstants;
 	private final MethodHandle queryFgImages;
+	private final MethodHandle isFeatureSupported;
 	private final MethodHandle initialize;
 	private final MethodHandle queryOptimalDimensions;
+	private final MethodHandle queryOptimalDimensionsRr;
 	private final MethodHandle configureSuperResolution;
 	private final MethodHandle configureFg;
 	private final MethodHandle setFgMode;
 	private final MethodHandle setFgMultiplier;
 	private final MethodHandle queryFgMultiplier;
+	private final MethodHandle setReflexMode;
+	private final MethodHandle queryReflexState;
+	private final MethodHandle queryFgVsyncSupport;
 	private final MethodHandle acquireImages;
 	private final MethodHandle releaseImages;
 	private final MethodHandle waitDeviceIdle;
 	private final MethodHandle queryFrameTimings;
-	/** Per-frame staging, owned by {@link #nativeArena} so no call allocates a confined arena. */
 	private final MemorySegment reprojectionScratch;
 	private final MemorySegment evaluateScratch;
 	private final MemorySegment motionScratch;
-	private final MemorySegment fillScratch;
 	private final MemorySegment presentScratch;
 	private final MemorySegment tagScratch;
+	private final MemorySegment rrPrepareScratch;
 	private final MemorySegment fgTagScratch;
 	private final MethodHandle writeMotion;
-	private final MethodHandle fillVelocity;
 	private final MethodHandle presentOutput;
 	private final MethodHandle evaluateSuperResolution;
 	private final MethodHandle tagSrResources;
+	private final MethodHandle prepareRayReconstruction;
 	private final MethodHandle tagFgResources;
 	private final MethodHandle presentHandoff;
+	private final MethodHandle setExposure;
+	private final MethodHandle setTonemapOperator;
 	private final MethodHandle presentStart;
 	private final MethodHandle presentEnd;
 	private final MethodHandle waitFgInputsIdle;
@@ -294,13 +310,13 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_activate_vulkan_proxies",
 			FunctionDescriptor.of(
 				JAVA_INT,
-				JAVA_LONG, // vk_instance
-				JAVA_LONG, // vk_physical_device
-				JAVA_LONG, // vk_device
-				JAVA_INT, // graphics_queue_family
-				JAVA_INT, // graphics_queue_index
-				JAVA_INT, // compute_queue_family
-				JAVA_INT // compute_queue_index
+				JAVA_LONG,
+				JAVA_LONG,
+				JAVA_LONG,
+				JAVA_INT,
+				JAVA_INT,
+				JAVA_INT,
+				JAVA_INT
 			)
 		);
 		this.queryInstanceExtension = bind(
@@ -338,11 +354,11 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_query_present_markers",
 			FunctionDescriptor.of(
 				JAVA_INT,
-				ValueLayout.ADDRESS, // start_count
-				ValueLayout.ADDRESS, // end_count
-				ValueLayout.ADDRESS, // event_count
-				ValueLayout.ADDRESS, // events
-				JAVA_INT // events_capacity
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS,
+				JAVA_INT
 			)
 		);
 		this.installPclWindow = bindOptional(
@@ -357,16 +373,21 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_query_reflex_markers",
 			FunctionDescriptor.of(
 				JAVA_INT,
-				ValueLayout.ADDRESS, // type_counts
-				ValueLayout.ADDRESS, // event_count
-				ValueLayout.ADDRESS, // events
-				JAVA_INT // events_capacity
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS,
+				JAVA_INT
 			)
 		);
 		this.queryReflexOptions = bindOptional(
 			lookup,
 			"mc_dlss_query_reflex_options",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
+		);
+		this.isFeatureSupported = bindOptional(
+			lookup,
+			"mc_dlss_is_feature_supported",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_LONG)
 		);
 		this.initialize = bind(
 			lookup,
@@ -378,6 +399,11 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_query_optimal_dimensions",
 			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
+		this.queryOptimalDimensionsRr = bindOptional(
+			lookup,
+			"mc_dlss_query_optimal_dimensions_rr",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
+		);
 		this.configureSuperResolution = bind(
 			lookup,
 			"mc_dlss_configure",
@@ -386,30 +412,45 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		this.configureFg = bindOptional(
 			lookup,
 			"mc_dlss_configure_fg",
-			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // num_back_buffers
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT)
 		);
 		this.setFgMode = bindOptional(
 			lookup,
 			"mc_dlss_set_fg_mode",
-			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // fg_enabled
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT)
 		);
 		this.setFgMultiplier = bindOptional(
 			lookup,
 			"mc_dlss_set_fg_multiplier",
-			FunctionDescriptor.of(JAVA_INT, JAVA_INT) // num_frames_to_generate
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT)
 		);
 		this.queryFgMultiplier = bindOptional(
 			lookup,
 			"mc_dlss_query_fg_multiplier",
 			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
 		);
+		this.setReflexMode = bindOptional(
+			lookup,
+			"mc_dlss_set_reflex_mode",
+			FunctionDescriptor.of(JAVA_INT, JAVA_INT)
+		);
+		this.queryReflexState = bindOptional(
+			lookup,
+			"mc_dlss_query_reflex_state",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
+		);
+		this.queryFgVsyncSupport = bindOptional(
+			lookup,
+			"mc_dlss_query_fg_vsync_support",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
+		);
 		this.acquireImages = bind(
 			lookup,
 			"mc_dlss_acquire_images",
 			FunctionDescriptor.of(
 				JAVA_INT,
-				ValueLayout.ADDRESS, // McDlssImage* motion
-				ValueLayout.ADDRESS // McDlssImage* output
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS
 			)
 		);
 		this.releaseImages = bind(lookup, "mc_dlss_release_images", FunctionDescriptor.of(JAVA_INT));
@@ -419,41 +460,41 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			"mc_dlss_query_frame_timings",
 			FunctionDescriptor.of(
 				JAVA_INT,
-				ValueLayout.ADDRESS, // motion_ms
-				ValueLayout.ADDRESS, // evaluate_ms
-				ValueLayout.ADDRESS, // present_ms
-				ValueLayout.ADDRESS // total_ms
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS
 			)
 		);
 		this.writeMotion = bind(
 			lookup,
 			"mc_dlss_write_motion",
-			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssMotionInfo*
-		);
-		this.fillVelocity = bind(
-			lookup,
-			"mc_dlss_fill_velocity",
-			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssFillVelocityInfo*
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
 		);
 		this.presentOutput = bind(
 			lookup,
 			"mc_dlss_present_output",
-			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssPresentInfo*
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
 		);
 		this.evaluateSuperResolution = bind(
 			lookup,
 			"mc_dlss_evaluate",
-			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssEvaluateInfo*
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
 		);
 		this.tagSrResources = bind(
 			lookup,
 			"mc_dlss_tag_sr_resources",
-			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssTagInfo*
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
+		);
+		this.prepareRayReconstruction = bind(
+			lookup,
+			"mc_dlss_prepare_rr",
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
 		);
 		this.tagFgResources = bindOptional(
 			lookup,
 			"mc_dlss_tag_fg_resources",
-			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // const McDlssFgTagInfo*
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
 		);
 		this.presentHandoff = bindOptional(
 			lookup,
@@ -490,32 +531,35 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		this.queryCameraConstants = bindOptional(
 			lookup,
 			"mc_dlss_query_camera_constants",
-			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // McDlssCameraConstants*
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
 		);
 		this.queryFgCameraConstants = bindOptional(
 			lookup,
 			"mc_dlss_query_fg_camera_constants",
-			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS) // McDlssCameraConstants*
+			FunctionDescriptor.of(JAVA_INT, ValueLayout.ADDRESS)
 		);
 		this.queryFgImages = bindOptional(
 			lookup,
 			"mc_dlss_query_fg_images",
 			FunctionDescriptor.of(
 				JAVA_INT,
-				ValueLayout.ADDRESS, // McDlssImage* depth
-				ValueLayout.ADDRESS, // McDlssImage* hudless
-				ValueLayout.ADDRESS, // McDlssImage* ui
-				ValueLayout.ADDRESS // McDlssImage* motion
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS,
+				ValueLayout.ADDRESS
 			)
 		);
 		this.reset = bind(lookup, "mc_dlss_reset", FunctionDescriptor.of(JAVA_INT));
 		this.close = bind(lookup, "mc_dlss_close", FunctionDescriptor.of(JAVA_INT));
+		this.shutdownStreamline = bindOptional(lookup, "mc_dlss_shutdown_streamline", FunctionDescriptor.of(JAVA_INT));
+		this.setExposure = bindOptional(lookup, "mc_dlss_set_exposure", FunctionDescriptor.of(JAVA_INT, JAVA_FLOAT));
+		this.setTonemapOperator = bindOptional(lookup, "mc_dlss_set_tonemap_operator", FunctionDescriptor.of(JAVA_INT, JAVA_INT));
 		this.reprojectionScratch = arena.allocate(JAVA_FLOAT, 16);
 		this.evaluateScratch = arena.allocate(EVALUATE_LAYOUT);
 		this.motionScratch = arena.allocate(MOTION_LAYOUT);
-		this.fillScratch = arena.allocate(FILL_LAYOUT);
 		this.presentScratch = arena.allocate(PRESENT_LAYOUT);
 		this.tagScratch = arena.allocate(TAG_LAYOUT);
+		this.rrPrepareScratch = arena.allocate(RR_PREPARE_LAYOUT);
 		this.fgTagScratch = arena.allocate(FG_TAG_LAYOUT);
 	}
 
@@ -530,8 +574,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		}
 		final Arena arena = Arena.ofShared();
 		try {
-			// The lookup is shared and pinned, never tied to this bridge's arena: closing the
-			// bridge must not unload the module the next bridge's calls run against.
 			final SymbolLookup lookup = PINNED_LOOKUPS.computeIfAbsent(
 				absoluteLibrary,
 				path -> SymbolLookup.libraryLookup(path, Arena.global())
@@ -540,6 +582,17 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		} catch (Throwable error) {
 			arena.close();
 			throw new StreamlineException("load-library", error);
+		}
+	}
+
+	/** Explicit process-runtime teardown; unlike close(), also handles bootstrap-only clients. */
+	public int shutdownStreamline() {
+		if (shutdownStreamline == null) throw new StreamlineException("shutdown-streamline",
+			new IllegalStateException("Native bridge lacks bootstrap teardown"));
+		try {
+			return (int)this.shutdownStreamline.invokeExact();
+		} catch (Throwable error) {
+			throw nativeError("shutdown-streamline", error);
 		}
 	}
 
@@ -812,6 +865,47 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	}
 
 	@Override
+	public int setReflexMode(final int mode) {
+		if (setReflexMode == null) throw new StreamlineException("set-reflex-mode", new IllegalStateException("Native bridge lacks set reflex mode"));
+		try {
+			return (int)this.setReflexMode.invokeExact(mode);
+		} catch (Throwable error) {
+			throw nativeError("set-reflex-mode", error);
+		}
+	}
+
+	@Override
+	public StreamlineSession.ReflexStateInfo queryReflexState() {
+		if (queryReflexState == null) throw new StreamlineException("query-reflex-state", new IllegalStateException("Native bridge lacks reflex state query"));
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment lowLatency = callArena.allocate(JAVA_INT);
+			final MemorySegment latencyReport = callArena.allocate(JAVA_INT);
+			final int result = (int)this.queryReflexState.invokeExact(lowLatency, latencyReport);
+			if (result != SUCCESS) {
+				throw new StreamlineException("query-reflex-state", result);
+			}
+			return new StreamlineSession.ReflexStateInfo(
+				lowLatency.get(JAVA_INT, 0) != 0,
+				latencyReport.get(JAVA_INT, 0) != 0
+			);
+		} catch (StreamlineException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-reflex-state", error);
+		}
+	}
+
+	@Override
+	public int isFeatureSupported(final int feature, final long vkPhysicalDevice) {
+		if (isFeatureSupported == null) throw new StreamlineException("is-feature-supported", new IllegalStateException("Native bridge lacks feature support query"));
+		try {
+			return (int)this.isFeatureSupported.invokeExact(feature, vkPhysicalDevice);
+		} catch (Throwable error) {
+			throw nativeError("is-feature-supported", error);
+		}
+	}
+
+	@Override
 	public int initialize(
 		final long vkInstance,
 		final long vkPhysicalDevice,
@@ -852,6 +946,36 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-dimensions", error);
+		}
+	}
+
+	@Override
+	public Dimensions queryOptimalDimensionsRr(
+		final int outputWidth,
+		final int outputHeight,
+		final int qualityMode
+	) {
+		if (queryOptimalDimensionsRr == null) {
+			throw new StreamlineException("query-dimensions-rr", new IllegalStateException("Native bridge lacks RR optimal dimensions query"));
+		}
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment renderWidth = callArena.allocate(JAVA_INT);
+			final MemorySegment renderHeight = callArena.allocate(JAVA_INT);
+			final int result = (int)this.queryOptimalDimensionsRr.invokeExact(
+				outputWidth,
+				outputHeight,
+				qualityMode,
+				renderWidth,
+				renderHeight
+			);
+			if (result != SUCCESS) {
+				throw new StreamlineException("query-dimensions-rr", result);
+			}
+			return new Dimensions(renderWidth.get(JAVA_INT, 0), renderHeight.get(JAVA_INT, 0));
+		} catch (StreamlineException error) {
+			throw error;
+		} catch (Throwable error) {
+			throw nativeError("query-dimensions-rr", error);
 		}
 	}
 
@@ -993,8 +1117,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			final MemorySegment total = callArena.allocate(JAVA_FLOAT);
 			final int result = (int)this.queryFrameTimings.invokeExact(motion, evaluate, present, total);
 			if (result != SUCCESS) {
-				// No completed frame yet, or a device that cannot timestamp. Both mean "no
-				// measurement", which is not a native failure the session should latch.
 				return null;
 			}
 			return new FrameTimings(
@@ -1024,33 +1146,10 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			MOTION_REPROJECTION.set(info, 0L, matrix);
 			MOTION_RENDER_WIDTH.set(info, 0L, render.width());
 			MOTION_RENDER_HEIGHT.set(info, 0L, render.height());
+			MOTION_FG_CONSUMING_FRAME.set(info, 0L, request.fgConsumingFrame() ? 1 : 0);
 			return (int)this.writeMotion.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("write-motion", error);
-		}
-	}
-
-	@Override
-	public int fillVelocity(final FillVelocityRequest request) {
-		final float[] reprojection = request.reprojection();
-		if (reprojection.length != 16) {
-			throw new IllegalArgumentException("Reprojection must be 16 column-major floats");
-		}
-		final Dimensions render = requireDimensions(request.renderDimensions(), "fill-velocity");
-		try {
-			final MemorySegment matrix = this.reprojectionScratch;
-			MemorySegment.copy(reprojection, 0, matrix, JAVA_FLOAT, 0, reprojection.length);
-			final MemorySegment info = this.fillScratch;
-			FILL_COMMAND_BUFFER.set(info, 0L, request.commandBuffer());
-			writeImage(info, FILL_DEPTH_VIEW, FILL_DEPTH_IMAGE, FILL_DEPTH_FORMAT, request.depth());
-			writeImage(info, FILL_VELOCITY_VIEW, FILL_VELOCITY_IMAGE, FILL_VELOCITY_FORMAT, request.velocity());
-			FILL_REPROJECTION.set(info, 0L, matrix);
-			FILL_RENDER_WIDTH.set(info, 0L, render.width());
-			FILL_RENDER_HEIGHT.set(info, 0L, render.height());
-			FILL_RESET.set(info, 0L, request.reset() ? 1 : 0);
-			return (int)this.fillVelocity.invokeExact(info);
-		} catch (Throwable error) {
-			throw nativeError("fill-velocity", error);
 		}
 	}
 
@@ -1075,6 +1174,11 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			PRESENT_IMAGE.set(info, 0L, target.image());
 			PRESENT_WIDTH.set(info, 0L, output.width());
 			PRESENT_HEIGHT.set(info, 0L, output.height());
+            PRESENT_IMAGE_VIEW.set(info, 0L, target.imageView());
+            PRESENT_IMAGE_FORMAT.set(info, 0L, target.imageFormat());
+            PRESENT_IMAGE_USAGE.set(info, 0L, target.imageUsage());
+            writeImage(info, PRESENT_REFLECTION_VIEW, PRESENT_REFLECTION_IMAGE, PRESENT_REFLECTION_FORMAT,
+                target.reflection() != null ? target.reflection() : new ImageBinding(0L, 0L, 0));
 			return (int)this.presentOutput.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("present-output", error);
@@ -1084,11 +1188,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 	@Override
 	public int evaluateSuperResolution(final EvaluationRequest request) {
 		final Dimensions render = requireDimensions(request.renderDimensions(), "evaluate");
-		// The camera's six arrays are fixed-length fields of the ABI struct: an array of any
-		// other length would either read past its field or leave the field's tail holding the
-		// previous frame's floats through the reused scratch - a partially-written camera no
-		// diagnostic would catch. The check runs before any byte of the scratch is written,
-		// so a refused camera never half-corrupts the struct a later valid call reads.
 		final CameraConstants camera = request.camera();
 		if (camera != null) {
 			requireCameraLength(camera.viewToClip(), 16, "viewToClip");
@@ -1113,10 +1212,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			EVALUATE_RENDER_HEIGHT.set(info, 0L, render.height());
 			EVALUATE_FRAME_TIME.set(info, 0L, request.frameTimeMilliseconds());
 			EVALUATE_RESET_HISTORY.set(info, 0L, request.resetHistory() ? 1 : 0);
-			// The frame's camera travels in the same struct so the evaluation's single
-			// slSetConstants records it together with the jitter and reset flag under the frame's
-			// retained token. The scratch is reused across calls, so a null camera zeroes the
-			// region rather than leaking the previous frame's camera into this one.
 			if (camera == null) {
 				info.asSlice(EVALUATE_CAMERA_OFFSET, CAMERA_LAYOUT.byteSize()).fill((byte)0);
 			} else {
@@ -1160,6 +1255,47 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			return (int)this.tagSrResources.invokeExact(info);
 		} catch (Throwable error) {
 			throw nativeError("tag-sr-resources", error);
+		}
+	}
+
+	@Override
+	public int prepareRayReconstruction(final RrPrepareRequest request) {
+		try {
+			final MemorySegment info = this.rrPrepareScratch;
+			info.fill((byte) 0);
+			RR_ENABLED.set(info, 0L, request.getEnabled() ? 1 : 0);
+			RR_PRESET.set(info, 0L, request.getRrPreset());
+			writeImage(info, RR_DIFFUSE_VIEW, RR_DIFFUSE_IMAGE, RR_DIFFUSE_FORMAT, request.getDiffuseAlbedo());
+			writeImage(info, RR_SPECULAR_VIEW, RR_SPECULAR_IMAGE, RR_SPECULAR_FORMAT, request.getSpecularAlbedo());
+			writeImage(info, RR_NORMAL_VIEW, RR_NORMAL_IMAGE, RR_NORMAL_FORMAT, request.getNormalRoughness());
+			writeImage(info, RR_HIT_VIEW, RR_HIT_IMAGE, RR_HIT_FORMAT, request.getSpecularHitDistance());
+			writeImage(info, RR_MOTION_VIEW, RR_MOTION_IMAGE, RR_MOTION_FORMAT, request.getSpecularMotion());
+			writeImage(info, RR_BIAS_VIEW, RR_BIAS_IMAGE, RR_BIAS_FORMAT, request.getBiasCurrentColor());
+			writeCameraFloats(info, RR_WORLD_TO_VIEW_OFFSET, request.getWorldToCameraView());
+			writeCameraFloats(info, RR_VIEW_TO_WORLD_OFFSET, request.getCameraViewToWorld());
+			return (int) this.prepareRayReconstruction.invokeExact(info);
+		} catch (Throwable error) {
+			throw nativeError("prepare-rr", error);
+		}
+	}
+
+	@Override
+	public int setExposure(final float exposure) {
+		if (this.setExposure == null) return SUCCESS;
+		try {
+			return (int) this.setExposure.invokeExact(exposure);
+		} catch (Throwable error) {
+			throw nativeError("set-exposure", error);
+		}
+	}
+
+	@Override
+	public int setTonemapOperator(final int op) {
+		if (this.setTonemapOperator == null) return SUCCESS;
+		try {
+			return (int) this.setTonemapOperator.invokeExact(op);
+		} catch (Throwable error) {
+			throw nativeError("set-tonemap-operator", error);
 		}
 	}
 
@@ -1253,6 +1389,23 @@ public final class Native implements AutoCloseable, StreamlineSession {
 			throw error;
 		} catch (Throwable error) {
 			throw nativeError("query-fg-state", error);
+		}
+	}
+
+	@Override
+	public boolean isFgVsyncSupported() {
+		if (queryFgVsyncSupport == null) {
+			return false;
+		}
+		try (Arena callArena = Arena.ofConfined()) {
+			final MemorySegment vsyncSupported = callArena.allocate(JAVA_INT);
+			final int result = (int)this.queryFgVsyncSupport.invokeExact(vsyncSupported);
+			if (result != SUCCESS) {
+				return false;
+			}
+			return vsyncSupported.get(JAVA_INT, 0) != 0;
+		} catch (Throwable error) {
+			return false;
 		}
 	}
 
@@ -1401,7 +1554,6 @@ public final class Native implements AutoCloseable, StreamlineSession {
 		try {
 			final int result = (int)this.close.invokeExact();
 			if (result != SUCCESS) {
-				// Keep arena and downcall handles alive so native shutdown can be retried.
 				throw new StreamlineException("close", result);
 			}
 			this.closed = true;

@@ -2,13 +2,6 @@ package me.snowmii.dlss.client
 
 import net.minecraft.client.TextureFilteringMethod
 
-/**
- * RGSS is vanilla/Sodium spatial AA. Stacking it with SR smears on camera motion.
- *
- * The stored Texture Filtering option is not rewritten: while SR is on, reads of RGSS behave as
- * None (so vanilla {@code UseRgss} and Sodium {@code u_UseRGSS} stay off) and the cycle skips
- * RGSS. Turning SR off restores the stored value, including RGSS.
- */
 object TextureFilteringPolicy {
 	@JvmStatic
 	fun withoutRgss(

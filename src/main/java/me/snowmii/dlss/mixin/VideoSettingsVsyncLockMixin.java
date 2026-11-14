@@ -12,14 +12,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Greys vanilla V-sync while frame generation is armed. The stored option is not written;
- * {@link OptionInstanceVideoLockMixin} also ignores {@code set} so Sodium's binding cannot
- * toggle it either.
- *
- * {@code list} lives on {@link OptionsSubScreen}, so this mixin extends that parent instead of
- * {@code @Shadow}ing a field {@code VideoSettingsScreen} does not declare.
- */
 @Mixin(VideoSettingsScreen.class)
 public abstract class VideoSettingsVsyncLockMixin extends OptionsSubScreen {
 	public VideoSettingsVsyncLockMixin(final Screen lastScreen, final Options options, final Component title) {

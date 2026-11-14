@@ -4,7 +4,7 @@ import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.SRMode
 import me.snowmii.streamline.Dimensions
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -12,15 +12,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * A replaced scene is a discontinuity the frames themselves cannot show.
- *
- * A world load, a dimension change, and a disconnect can leave the camera exactly where it stood
- * while every surface in the frame becomes a different one, so the camera-displacement test that
- * catches a teleport sees nothing at all. Minecraft's own level swap is the only signal: break
- * the accumulated history, restart the jitter sequence, and drop a frame prepared against the
- * world being left.
- */
 class LevelChangeResetTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1280, 720)
@@ -78,8 +69,6 @@ class LevelChangeResetTest {
 		val runtime = readyRuntime()
 		val phase = phase(runtime)
 
-		// The projection seam runs for a frame LevelRenderer.render never reaches, and the level is
-		// swapped in between: the prepared phase belongs to the world that is gone.
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample())
 		phase.resetHistory()
 
@@ -95,7 +84,6 @@ class LevelChangeResetTest {
 		val runtime = readyRuntime()
 		val phase = phase(runtime)
 
-		// Minecraft loads a level long before the first world frame, so this is the ordinary case.
 		phase.resetHistory()
 
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample())
@@ -149,7 +137,7 @@ class LevelChangeResetTest {
 		)
 	}
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height

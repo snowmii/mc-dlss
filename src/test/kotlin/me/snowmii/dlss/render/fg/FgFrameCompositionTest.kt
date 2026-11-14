@@ -1,6 +1,5 @@
 package me.snowmii.dlss.render.fg
 
-import me.snowmii.dlss.render.mrt.MotionVectorRoute
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitter
@@ -18,15 +17,14 @@ import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgTagRequest
-import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.FrameTimings
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.SrTagRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.streamline.VulkanContext
+import me.snowmii.dlss.vk.VulkanContext
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -39,15 +37,6 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * An active FG frame records the DLSS-G record around the SR evaluation: FG options and FG
- * tag before the SR tag, the SR evaluation, the FG re-tag, and one present handoff, all on
- * one command buffer under one retained frame token. An inactive frame, or an active frame
- * without FG inputs, records SR only and makes no FG calls.
- *
- * Live Streamline coverage proves the native composition. This test pins the production
- * recording order and the requests it hands the adapter, off the render thread.
- */
 class FgFrameCompositionTest {
 
 	@Test
@@ -59,25 +48,9 @@ class FgFrameCompositionTest {
 		policy.setFrameGenerationActive(true)
 
 		assertTrue(
-			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
+			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION),
 			"an active FG frame with both output-sized targets must compose and hand off",
 		)
-		// Two orderings are asserted here and each one is load-bearing.
-		//
-		// The first FG tag lands BEFORE the SR tag: it obtains the frame token the SR tag then
-		// reuses, and the native evaluation reads "an FG tag recorded" to decide both whether to
-		// give the FG viewport its camera constants and whether to retain the token for the
-		// handoff. An FG tag that only appeared after the evaluation left the frame with no FG
-		// constants and a fresh token, so the handoff saw mismatched SR and FG frame indexes and
-		// refused - which latched the fallback and took SR down with FG.
-		//
-		// The re-tag lands AFTER the output copy, because tag_fg_resources records the HUD-less
-		// flip-blit on that second call and the plugin reads the blitted copy at present. Blitted
-		// before the copy it would capture the main target as it stood at frame start - the
-		// previous frame's finished image, HUD composited in. DLSS-G then interpolated the HUD as
-		// world content and recomposited the clean UI on top of it, which is the doubled
-		// crosshair on generated frames. After the copy the main target holds this frame's world
-		// and nothing else.
 		assertEquals(
 			listOf("writeMotion", "configureFg", "fgTag", "srTag", "evaluate", "present", "fgTag", "handoff"),
 			calls.order,
@@ -87,8 +60,6 @@ class FgFrameCompositionTest {
 		assertEquals(1, calls.handoffs, "one active FG frame must hand off exactly once")
 		assertEquals(1, harness.buffers, "one frame must record on exactly one command buffer")
 		assertEquals(1, harness.submits, "the single buffer must be submitted")
-		// The FG tag names the frame's render-sized depth and the two output-sized targets the
-		// runtime resolved, exactly as the native side's tag contract reads them.
 		assertEquals(
 			1,
 			calls.fgTags.map { it.commandBuffer }.distinct().size,
@@ -122,7 +93,7 @@ class FgFrameCompositionTest {
 		val harness = harness(calls, FgSurfacePolicy(), fgInputs())
 
 		assertTrue(
-			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
+			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION),
 			"an FG-off frame must still record the SR frame",
 		)
 		assertEquals(
@@ -144,7 +115,7 @@ class FgFrameCompositionTest {
 		policy.setFrameGenerationActive(true)
 
 		assertTrue(
-			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
+			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION),
 			"an active FG frame whose targets are not resolved yet must still record the SR frame",
 		)
 		assertEquals(
@@ -165,17 +136,10 @@ class FgFrameCompositionTest {
 		policy.setFrameGenerationActive(true)
 
 		assertFalse(
-			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION, MotionVectorRoute.CAMERA_ONLY),
+			harness.evaluation.evaluateFrame(scene(), jitter(), motion(), DESTINATION),
 			"a refused FG tag must report the frame as not composed",
 		)
-		// The opening FG tag is the frame's token: a refusal there leaves nothing for the SR tag
-		// to reuse, so the frame stops on the spot rather than evaluating against a half-built
-		// record and presenting against a partial tag set.
-		assertEquals(
-			listOf("writeMotion", "configureFg", "fgTag"),
-			calls.order,
-			"a refused opening FG tag must abandon the frame before the SR tag",
-		)
+		assertEquals(listOf("writeMotion", "configureFg", "fgTag"), calls.order, "a refused opening FG tag must abandon the frame before the SR tag")
 		assertEquals(0, calls.handoffs, "a frame whose FG tag was refused must never hand off")
 		assertEquals(1, harness.submits, "a failed recording still hands its buffer back")
 	}
@@ -185,8 +149,6 @@ class FgFrameCompositionTest {
 		val calls = RecordingNativeApi()
 		val harness = harness(calls, FgSurfacePolicy(), null)
 
-		// A yawed camera, so the view rotation's columns and rows differ: extracting the rows
-		// instead of the columns hands the plugin the transpose of the basis.
 		val yaw = Math.toRadians(37.0).toFloat()
 		val rotation = Matrix4f().rotationY(yaw)
 		val projection = Matrix4f().perspective(1.2f, 16f / 9f, 0.05f, 1000f)
@@ -204,7 +166,6 @@ class FgFrameCompositionTest {
 				jitter(),
 				motion(),
 				DESTINATION,
-				MotionVectorRoute.CAMERA_ONLY,
 				camera = sample,
 			),
 			"the frame's camera must travel with the evaluation exactly as the production wiring sends it",
@@ -212,10 +173,6 @@ class FgFrameCompositionTest {
 
 		val constants = calls.evaluateRequests.single().camera
 		requireNotNull(constants)
-		// JOML names its elements m<column><row>, so the view rotation's column c is
-		// (m0c, m1c, m2c): the view-space axes expressed in world coordinates. Column 0 is
-		// the camera's right, column 1 its up, and column 2 is view-space +Z - behind the
-		// camera, hence the sign flip for fwd.
 		assertTrue(
 			constants.right.contentEquals(floatArrayOf(rotation.m00(), rotation.m10(), rotation.m20())),
 			"cameraRight must be the view rotation's column 0 (view-space +X in world)",
@@ -228,9 +185,6 @@ class FgFrameCompositionTest {
 			constants.fwd.contentEquals(floatArrayOf(-rotation.m02(), -rotation.m12(), -rotation.m22())),
 			"cameraFwd must be the negated view rotation's column 2 (view-space +Z is behind)",
 		)
-		// A yawed rotation discriminates columns from rows: extracting rows would flip the z
-		// sign of right and the x sign of fwd - the transpose, which only coincides with the
-		// basis for the identity.
 		assertTrue(
 			contentEqualsTolerant(
 				constants.right,
@@ -247,9 +201,6 @@ class FgFrameCompositionTest {
 			"a yawed camera's fwd must be its world-space view direction, got " +
 				constants.fwd.contentToString(),
 		)
-		// The ABI payload carries the engine's own projection, unaltered: no Y flip, no
-		// transpose. FgCameraConstantsCompletenessTest pins the rest of the non-optional
-		// sl::Constants surface - the clip-to-prev-clip pair and the frustum scalars.
 		assertTrue(
 			constants.viewToClip.contentEquals(CameraConstants.rowMajorOf(projection)),
 			"viewToClip must be the sample's unjittered projection in row-major ABI layout",
@@ -283,8 +234,6 @@ class FgFrameCompositionTest {
 			cameraY = 2.0,
 			cameraZ = 3.0,
 		)
-		// A real camera step, not the identity: the fields under test are exactly the ones a
-		// still camera would let pass unnoticed.
 		val step = Matrix4f().translation(0.03f, -0.02f, 0.01f).rotateY(0.05f)
 		val motion = DlssFrameMotion(
 			Matrix4f(),
@@ -301,7 +250,6 @@ class FgFrameCompositionTest {
 				jitter(),
 				motion,
 				DESTINATION,
-				MotionVectorRoute.CAMERA_ONLY,
 				camera = sample,
 			),
 		)
@@ -321,9 +269,6 @@ class FgFrameCompositionTest {
 			constants.prevClipToClip.contentEquals(CameraConstants.rowMajorOf(Matrix4f(step).invert())),
 			"prevClipToClip must be its inverse - sl_consts.h defines it as exactly that",
 		)
-		// The frustum scalars describe the projection the frame rasterized with. Minecraft
-		// renders reversed-Z, so near is the smaller distance whichever way the matrix orders
-		// the planes.
 		assertEquals(0.05f, constants.near, 1e-4f, "cameraNear")
 		assertEquals(1000f, constants.far, 0.5f, "cameraFar")
 		assertEquals(Math.toRadians(70.0).toFloat(), constants.fovRadians, 1e-3f, "cameraFOV")
@@ -333,11 +278,6 @@ class FgFrameCompositionTest {
 		}
 	}
 
-	/**
-	 * Element-wise float compare that treats -0.0f as 0.0f and tolerates rounding, so a
-	 * basis vector whose components the matrix stores as exact zeros (or their negations)
-	 * compares against the literal expectation.
-	 */
 	private fun contentEqualsTolerant(actual: FloatArray, expected: FloatArray): Boolean {
 		if (actual.size != expected.size) {
 			return false
@@ -350,11 +290,6 @@ class FgFrameCompositionTest {
 		return true
 	}
 
-	/**
-	 * Builds the production evaluation seam over a recording fake: a READY session through the
-	 * real [LifecycleAdapter], a fake context that counts buffer recordings and submissions,
-	 * and the runtime's FG inputs supplier resolved per frame.
-	 */
 	private fun harness(
 		calls: RecordingNativeApi,
 		policy: FgSurfacePolicy,
@@ -400,7 +335,6 @@ class FgFrameCompositionTest {
 		)
 	}
 
-	/** A [VkCommandBuffer] instance whose address() answers without any Vulkan device. */
 	private fun fakeCommandBuffer(): VkCommandBuffer {
 		val unsafeField = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe")
 		unsafeField.isAccessible = true
@@ -441,11 +375,6 @@ class FgFrameCompositionTest {
 		var submits = 0
 	}
 
-	/**
-	 * Records every per-frame native call in submission order so the FG composition seam is
-	 * assertable off the render thread; everything else is the lifecycle [LifecycleAdapter]
-	 * drives to READY.
-	 */
 	private class RecordingNativeApi(
 		private val failFgTag: Boolean = false,
 	) : StreamlineSessionTestDouble() {
@@ -514,11 +443,6 @@ class FgFrameCompositionTest {
 			return StreamlineSession.SUCCESS_RESULT
 		}
 
-		override fun fillVelocity(request: FillVelocityRequest): Int {
-			order += "fillVelocity"
-			return StreamlineSession.SUCCESS_RESULT
-		}
-
 		override fun presentOutput(target: PresentTarget): Int {
 			order += "present"
 			return StreamlineSession.SUCCESS_RESULT
@@ -535,7 +459,6 @@ class FgFrameCompositionTest {
 		val RENDER_DIMENSIONS = Dimensions(1280, 720)
 		val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 
-		/** The engine's output-sized main target image the frame's SR output copy records into. */
 		const val DESTINATION = 900L
 	}
 }

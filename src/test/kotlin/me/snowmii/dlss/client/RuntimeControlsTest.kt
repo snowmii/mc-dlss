@@ -1,6 +1,6 @@
 package me.snowmii.dlss.client
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
@@ -20,7 +20,7 @@ import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.readout.SessionReadout
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -31,14 +31,23 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
-/**
- * Controls, runtime, lifecycle adapter, session, and world phase change configuration without
- * restarting the session: dependent resources update, refused changes are atomic, and the
- * readout reports the state actually in use.
- */
 class RuntimeControlsTest {
 	private val output = Dimensions(2560, 1440)
 	private val mainTarget = HeadlessRenderTarget(output.width, output.height)
+
+	@Test
+	fun `a refused Reflex change keeps the active mode and saved preference`() {
+		val fixture = fixture()
+		fixture.frame()
+		val previous = fixture.controls.reflexMode
+		val saved = ModConfig.user.reflexMode
+		val next = me.snowmii.dlss.ReflexMode.entries.first { it != previous }
+		fixture.native.reflexResult = 0xBAD00005.toInt()
+		fixture.controls.setReflexMode(next)
+		assertEquals(previous, fixture.controls.reflexMode)
+		assertEquals(saved, ModConfig.user.reflexMode)
+		assertEquals(DlssSessionState.READY, fixture.session.state)
+	}
 
 	@Test
 	fun `switching DLSS off returns the world to full resolution and back on resumes it`() {
@@ -62,7 +71,6 @@ class RuntimeControlsTest {
 		fixture.frame()
 		fixture.events.clear()
 
-		// The three controls, each of which releases the scene target the frames just drawn into.
 		fixture.controls.cycleQualityMode()
 		fixture.frame()
 		fixture.controls.toggleEnabled()
@@ -194,12 +202,11 @@ class RuntimeControlsTest {
 
 	private fun fixture() = Fixture()
 
-	/** Wired the way `RenderRuntime.forMinecraft` wires it. */
 	private inner class Fixture {
 		val diagnostics = mutableListOf<String>()
 		val announced = mutableListOf<String>()
 		val events = mutableListOf<String>()
-		val native = FakeNative().apply { log = events::add }
+		val native = ModeScalingFakeNative().apply { log = events::add }
 		var released = 0
 		var motion: DlssFrameMotion? = null
 		private var now = 0L
@@ -262,7 +269,7 @@ class RuntimeControlsTest {
 		)
 	}
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height
@@ -276,16 +283,13 @@ class RuntimeControlsTest {
 		override fun destroyBuffers() = Unit
 	}
 
-	/**
-	 * The render size answers per mode the way NGX does, because a mode change that returned the
-	 * same size would let a runtime that rebuilt nothing pass.
-	 */
-	private class FakeNative : StreamlineSessionTestDouble() {
+	private class ModeScalingFakeNative : StreamlineSessionTestDouble() {
+		var reflexResult = StreamlineSession.SUCCESS_RESULT
+		override fun setReflexMode(mode: Int): Int = reflexResult
 		var initializeCalls = 0
 		var releaseImageCalls = 0
 		var waitDeviceIdleCalls = 0
 
-		/** Records the calls whose *order* is the invariant, not just their count. */
 		var log: ((String) -> Unit)? = null
 		var configureResult = StreamlineSession.SUCCESS_RESULT
 		var lastConfiguredRender: Dimensions? = null

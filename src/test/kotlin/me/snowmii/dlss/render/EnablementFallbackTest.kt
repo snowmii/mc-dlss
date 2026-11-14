@@ -1,6 +1,6 @@
 package me.snowmii.dlss.render
 import me.snowmii.streamline.StreamlineSessionTestDouble
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.PresentTarget
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.EvaluationImages
@@ -17,7 +17,7 @@ import me.snowmii.dlss.DlssNativeStage
 import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.dlss.readout.SessionReadout
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -56,9 +56,6 @@ class EnablementFallbackTest {
 		assertEquals("unsupported-frame", fixture.route?.frame?.reason)
 	}
 
-	// A size the session is not configured against renders full-resolution *for that frame*. This
-	// runtime has no bridge, so there is no native side to reconfigure and the refusal is the
-	// whole story.
 	@Test
 	fun `a window the session is not configured against renders full-resolution`() {
 		val fixture = fixture()
@@ -191,7 +188,6 @@ class EnablementFallbackTest {
 
 		private var now = 0L
 
-		/** One world frame through both seams: the projection upload, then the phase itself. */
 		fun frame(
 			normalInWorldFrame: Boolean,
 			target: RenderTarget = mainTarget,
@@ -199,15 +195,12 @@ class EnablementFallbackTest {
 		): RenderTarget {
 			phase.prepare(normalInWorldFrame, target, camera(cameraX))
 			val resolved = phase.begin(normalInWorldFrame, target)
-			// Read inside the phase: closing it drops the route, the jitter, and the motion, which
-			// is exactly the window the renderer itself sees them in.
 			route = runtime.worldTargetRoute
 			motion = runtime.activeMotion
 			phase.end()
 			return resolved
 		}
 
-		/** The fallback diagnostics alone; the phase reports its first decision on the same sink. */
 		fun latchDiagnostics() = diagnostics.filter { it.startsWith("DLSS fallback latched") }
 
 		fun evaluate(): Boolean = adapter.evaluate(EvaluationRequest.builder()
@@ -223,7 +216,7 @@ class EnablementFallbackTest {
 		)
 	}
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height

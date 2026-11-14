@@ -20,7 +20,6 @@ import java.nio.file.Path;
  * mirroring the unconditional {@code slInit} at the instance seam.
  */
 public final class StreamlineVulkanProvider {
-	/** LWJGL system property overriding the Vulkan library name; an absolute path is loaded as-is. */
 	static final String LWJGL_VULKAN_LIBNAME = "org.lwjgl.vulkan.libname";
 	private static final String INTERPOSER_NAME = "sl.interposer.dll";
 

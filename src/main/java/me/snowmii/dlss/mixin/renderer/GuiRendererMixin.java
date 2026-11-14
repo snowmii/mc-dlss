@@ -10,10 +10,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * GUI UI window: HEAD only if {@code level != null} (menu/panorama stay on vanilla main).
- * TAIL always closes and composites. Read main at HEAD while the redirect is still inactive.
- */
 @Mixin(GuiRenderer.class)
 public class GuiRendererMixin {
 	@Inject(method = "render", at = @At("HEAD"))

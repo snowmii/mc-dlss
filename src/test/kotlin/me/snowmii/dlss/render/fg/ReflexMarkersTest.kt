@@ -6,7 +6,7 @@ import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.dlss.render.RenderRuntime
 import me.snowmii.dlss.render.SceneTarget
@@ -54,10 +54,6 @@ class ReflexMarkersTest {
 			"the five marker entries must reach the native side in call order",
 		)
 
-		// A failed native marker call reports false without latching: the markers are the
-		// PCL/Reflex diagnostic surface, not a frame-route stage, and a session that
-		// rendered the frame anyway must keep rendering rather than degrade because a ping
-		// did not reach the plugin.
 		calls.failReflex = true
 		assertFalse(adapter.reflexInputSample(), "a failed native marker call must report false")
 		assertEquals(
@@ -76,8 +72,6 @@ class ReflexMarkersTest {
 		adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data"))
 		val evaluation = FrameEvaluation(adapter, { null })
 
-		// The world phase is the seam the Minecraft mixins call; a runtime carrying the
-		// production evaluation is the wiring that connects it to the adapter.
 		val phase = WorldPhase(
 			runtime = RenderRuntime(
 				session = session,
@@ -119,10 +113,6 @@ class ReflexMarkersTest {
 		),
 	)
 
-	/**
-	 * Records every reflex marker call in order so the delegation chain is assertable off the
-	 * render thread; everything else the lifecycle needs answers success.
-	 */
 	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		val reflexCalls = mutableListOf<String>()
 		var failReflex = false
@@ -181,7 +171,7 @@ class ReflexMarkersTest {
 		}
 	}
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height

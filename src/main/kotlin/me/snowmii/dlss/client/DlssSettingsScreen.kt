@@ -1,5 +1,7 @@
 package me.snowmii.dlss.client
 
+import me.snowmii.dlss.ReflexMode
+import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import net.minecraft.client.gui.components.Button
@@ -14,10 +16,13 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 	private lateinit var presetButton: Button
 	private lateinit var fgButton: Button
 	private lateinit var multiplierButton: Button
+	private lateinit var rrButton: Button
+	private lateinit var rrPresetButton: Button
+	private lateinit var reflexButton: Button
 
 	override fun init() {
 		val x = (width - BUTTON_WIDTH) / 2
-		val y = height / 2 - 70
+		val y = height / 2 - 106
 		val title = StringWidget(title, font)
 		title.setPosition((width - title.width) / 2, y - 28)
 		addRenderableWidget(title)
@@ -27,12 +32,15 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		presetButton = optionButton(x, y + 48, ::cyclePreset)
 		fgButton = optionButton(x, y + 72, ::toggleFrameGeneration)
 		multiplierButton = optionButton(x, y + 96) { controls()?.cycleFgMultiplier() }
+		rrButton = optionButton(x, y + 120, ::toggleRayReconstruction)
+		rrPresetButton = optionButton(x, y + 144, ::cycleRrPreset)
+		reflexButton = optionButton(x, y + 168, ::cycleReflex)
 		if (controls() == null) {
 			val restart = StringWidget(Component.translatable("mc-dlss.options.restart_required"), font)
-			restart.setPosition((width - restart.width) / 2, y + 116)
+			restart.setPosition((width - restart.width) / 2, y + 188)
 			addRenderableWidget(restart)
 		}
-		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE) { onClose() }.bounds(x, y + 130, BUTTON_WIDTH, 20).build())
+		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE) { onClose() }.bounds(x, y + 202, BUTTON_WIDTH, 20).build())
 		refreshLabels()
 	}
 
@@ -76,25 +84,71 @@ class DlssSettingsScreen(private val parent: Screen) : Screen(Component.translat
 		if (controls != null) controls.toggleFrameGeneration() else user.frameGeneration = !user.frameGeneration
 	}
 
+	private fun toggleRayReconstruction() {
+		val controls = controls()
+		if (controls != null) {
+			controls.toggleRayReconstruction()
+		} else {
+			user.rayReconstruction = !user.rayReconstruction
+		}
+	}
+
+	private fun cycleRrPreset() {
+		val controls = controls()
+		if (controls != null) {
+			controls.cycleRrPreset()
+		} else {
+			val presets = RRModelPreset.entries
+			user.rrModelPreset = presets[(presets.indexOf(user.rrModelPreset) + 1) % presets.size]
+		}
+	}
+
+	private fun cycleReflex() {
+		val controls = controls()
+		if (controls != null) {
+			controls.cycleReflexMode()
+		} else {
+			val modes = ReflexMode.entries
+			user.reflexMode = modes[(modes.indexOf(user.reflexMode) + 1) % modes.size]
+		}
+	}
+
 	private fun refreshLabels() {
 		val controls = controls()
 		enabledButton.message = label("mc-dlss.options.enabled", controls?.enabled ?: user.enabled)
-		modeButton.message = valueLabel("mc-dlss.options.mode", (controls?.qualityMode ?: user.qualityMode).propertyValue)
-		presetButton.message = valueLabel("mc-dlss.options.preset", (controls?.renderPreset ?: user.renderPreset).propertyValue)
+		modeButton.message = valueLabel("mc-dlss.options.mode", (controls?.qualityMode ?: user.qualityMode).displayName)
+		presetButton.message = valueLabel("mc-dlss.options.preset", (controls?.renderPreset ?: user.renderPreset).displayName)
 		fgButton.message = label("mc-dlss.options.frame_generation", controls?.frameGenerationEnabled ?: user.frameGeneration)
 		multiplierButton.message = valueLabel(
 			"mc-dlss.options.fg_multiplier",
 			controls?.let { "${it.frameGenerationMultiplier}x" } ?: Component.translatable("mc-dlss.options.in_world").string,
 		)
 		multiplierButton.active = controls != null
+		rrButton.message = label(
+			"mc-dlss.options.ray_reconstruction",
+			controls?.rayReconstructionEnabled ?: user.rayReconstruction,
+		)
+		rrPresetButton.message = valueLabel(
+			"mc-dlss.options.rr_preset",
+			(controls?.rrModelPreset ?: user.rrModelPreset).displayName,
+		)
+		val reflexState = controls?.reflexState
+		val reflexLabel = if (reflexState != null && !reflexState.lowLatencyAvailable()) {
+			CommonComponents.optionStatus(Component.translatable("mc-dlss.options.reflex"), false)
+				.copy().append(" (N/A)")
+		} else {
+			valueLabel("mc-dlss.options.reflex", (controls?.reflexMode ?: user.reflexMode).displayName)
+		}
+		reflexButton.message = reflexLabel
 	}
 
 	private fun controls(): RuntimeControls? = ClientRuntime.active().activeControls()
 
 	private fun label(key: String, value: Boolean): Component =
-		Component.translatable(key).append(": ").append(Component.translatable(if (value) "options.on" else "options.off"))
+		CommonComponents.optionStatus(Component.translatable(key), value)
 
-	private fun valueLabel(key: String, value: String): Component = Component.translatable(key).append(": $value")
+	private fun valueLabel(key: String, value: String): Component =
+		CommonComponents.optionNameValue(Component.translatable(key), Component.literal(value))
 
 	private companion object {
 		const val BUTTON_WIDTH = 220

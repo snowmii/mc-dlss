@@ -1,13 +1,14 @@
 package me.snowmii.streamline;
 
+import me.snowmii.dlss.api.ImageBinding;
+
 import java.util.Objects;
 
 /**
  * One frame's DLSS SR resources, tagged on the caller's command buffer.
  *
  * <p>Motion is never carried: it is always the bridge's own motion image, tagged from native
- * state once acquired. Camera-only fills it with {@link MotionRequest}; velocity-MRT merges
- * the scene companion with {@link FillVelocityRequest}.
+ * state once acquired. Camera-only motion fills it with {@link MotionRequest}.
  */
 public record SrTagRequest(
 	long commandBuffer,

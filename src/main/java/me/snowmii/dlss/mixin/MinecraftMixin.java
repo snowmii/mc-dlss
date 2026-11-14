@@ -3,7 +3,7 @@ package me.snowmii.dlss.mixin;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import com.mojang.blaze3d.systems.CommandEncoder;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.client.RuntimeControls;
 import me.snowmii.dlss.render.WorldPhase;
@@ -17,30 +17,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * All {@code Minecraft} intercepts in one mixin.
- *
- * Level change: resets DLSS history on {@code setLevel} and {@code clearClientLevel}. Camera
- * motion continuity does not cover a world swap — coordinates can match while every surface is
- * new.
- *
- * Shutdown: injects at {@code close} HEAD, before window/device teardown. Scene/UI targets,
- * native images, and Streamline's present hook must be released before
- * {@code windowSurface.close()} and {@code RenderSystem.shutdownRenderer()}.
- *
- * Surface configuration: overrides the vsync flag read during {@code renderFrame} so FG can
- * suppress FIFO while armed. The stored setting is never written, so it survives FG on/off
- * cycles transparently.
- *
- * Reflex/PCL markers: input sample after GLFW poll in {@code run}; simulation START/END
- * bracketing {@code runTick}; render-submit START/END wrapping {@code CommandEncoder.submit()}
- * in {@code renderFrame}. The submit wrap uses {@code finally} so a throwing submit still
- * closes the bracket.
- */
 @Mixin(Minecraft.class)
 public class MinecraftMixin {
-
-	// --- level change ---
 
 	@Inject(method = "setLevel", at = @At("HEAD"))
 	private void mcDlssResetHistoryOnLevelLoad(final ClientLevel level, final CallbackInfo info) {
@@ -60,14 +38,10 @@ public class MinecraftMixin {
 		}
 	}
 
-	// --- shutdown ---
-
 	@Inject(method = "close", at = @At("HEAD"))
 	private void mcDlssShutdown(final CallbackInfo info) {
 		ClientRuntime.shutdown();
 	}
-
-	// --- surface configuration ---
 
 	@ModifyExpressionValue(
 		method = "renderFrame",
@@ -85,17 +59,6 @@ public class MinecraftMixin {
 	}
 
 
-	// --- frame rate limiter suppression ---
-
-	/**
-	 * Suppresses Minecraft's own FramerateLimiter sleep while FG is composing.
-	 *
-	 * Reflex's slReflexSleep (fired at reflexInputSample) is already pacing the app to the
-	 * correct base rate. Letting Minecraft's limiter also sleep stacks two independent pacers,
-	 * causing double-sleep stutter. Returning MAX_VALUE makes FramerateLimiter compute a
-	 * near-zero target interval, so its sleep becomes a no-op. frameLimitUs stays 0 — we do not
-	 * hand any cap to Reflex, only suppress the engine's own one.
-	 */
 	@ModifyExpressionValue(
 		method = "renderFrame",
 		at = @At(
@@ -111,13 +74,11 @@ public class MinecraftMixin {
 		return original;
 	}
 
-	// --- Reflex/PCL markers ---
-
 	@Inject(
 		method = "run",
 		at = @At(
 			value = "INVOKE",
-			target = "Lcom/mojang/blaze3d/systems/RenderSystem;pollEvents()V",
+			target = "Lcom/mojang/blaze3d/systems/RenderSystem;pollEvents(Lcom/mojang/blaze3d/platform/SDLEventHandler;)V",
 			shift = At.Shift.AFTER
 		)
 	)
@@ -149,7 +110,7 @@ public class MinecraftMixin {
 		method = "renderFrame",
 		at = @At(
 			value = "INVOKE",
-			target = "Lcom/mojang/blaze3d/systems/CommandEncoder;submit()V"
+			target = "Lcom/mojang/renderpearl/api/commands/CommandEncoder;submit()V"
 		)
 	)
 	private void mcDlssReflexRenderSubmit(final CommandEncoder encoder, final Operation<Void> original) {

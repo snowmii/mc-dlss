@@ -23,16 +23,6 @@ import org.lwjgl.vulkan.VkInstance
 import org.lwjgl.vulkan.VkInstanceCreateInfo
 import org.lwjgl.vulkan.VkPhysicalDevice
 
-/**
- * Streamline's Vulkan 1.2/1.3 feature names and the summed DLSS_G queue counts surface
- * through the bridge, and proxy activation succeeds against a device that holds the merged
- * queue layout.
- *
- * Methods are ordered because the fork is one process: the live-device test's close shuts
- * Streamline down (slShutdown, while the fixture device is still alive), and the
- * bootstrap-dependent queries need the runtime up, so they run before it and nothing
- * bootstraps after it.
- */
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 @NativeBridge
 class StreamlineRequirementsMergeTest {
@@ -40,12 +30,6 @@ class StreamlineRequirementsMergeTest {
 	@Order(1)
 	@Test
 	fun `SL features12 and 13 surface through the bridge`() {
-		// queryInstanceExtensions runs the same pre-Vulkan bootstrap Minecraft's instance seam
-		// performs, so the feature queries run against a live Streamline runtime. The bridge
-		// closes between the two seams and the native module is pinned for the JVM lifetime, so
-		// the module's bootstrap state survives the close; the fresh bridge still bootstraps in
-		// place because slInit is idempotent and every production seam (ExtensionBootstrap)
-		// does the same.
 		ExtensionBootstrap.queryInstanceExtensions()
 		NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
@@ -54,8 +38,6 @@ class StreamlineRequirementsMergeTest {
 			)
 			val features12 = bridge.queryDeviceFeatures12()
 			val features13 = bridge.queryDeviceFeatures13()
-			// The observed workstation set from the live probe; if a different driver/runtime
-			// reports a different set the delta is reported rather than silently asserted away.
 			assertTrue(
 				features12.containsAll(listOf("timelineSemaphore", "descriptorIndexing", "bufferDeviceAddress")),
 				"SL-required Vulkan 1.2 features must include the observed set, got $features12",
@@ -77,8 +59,6 @@ class StreamlineRequirementsMergeTest {
 				bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 			)
 			val requirements = bridge.queryQueueRequirements()
-			// Summed across the loaded features (DLSS, DLSS-G, Reflex); the observed workstation
-			// totals come from the live probe.
 			assertEquals(1, requirements.graphicsQueues, "summed extra graphics queues")
 			assertEquals(2, requirements.computeQueues, "summed extra compute queues")
 			assertEquals(1, requirements.opticalFlowQueues, "summed extra optical-flow queues")
@@ -91,8 +71,6 @@ class StreamlineRequirementsMergeTest {
 		@TempDir dataPath: Path,
 	) {
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
-		// The query bridge closes before the device exists, when its close path is a no-op;
-		// the pinned module keeps the bootstrap state for the activation bridge below.
 		val requirements = NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
 				StreamlineSession.SUCCESS_RESULT,
@@ -101,10 +79,6 @@ class StreamlineRequirementsMergeTest {
 			bridge.queryQueueRequirements()
 		}
 
-		// The production merge starts from Minecraft's {graphicsFamily: 1} queue map and adds
-		// SL's extra graphics and compute queues to the families Streamline would record at
-		// activation. The first graphics family is compute-capable on this workstation, so
-		// both merges land in the same family - exactly the layout the fixture must hold.
 		val graphicsFamily = probeGraphicsQueueFamily()
 		val extras = requirements.graphicsQueues + requirements.computeQueues
 		HeadlessVulkanFixture(
@@ -117,15 +91,11 @@ class StreamlineRequirementsMergeTest {
 			false,
 			mapOf(graphicsFamily to extras),
 		).use { fixture ->
-			// The fixture outlives the bridge: close's slShutdown must run while the
-			// device is still alive.
 			NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 				assertEquals(
 					StreamlineSession.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 				)
-				// The fixture creates one host queue in the family, so Streamline's own queues
-				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
 				val hostQueueCount = 1
 				val layout = {
 					bridge.activateVulkanProxies(
@@ -143,15 +113,12 @@ class StreamlineRequirementsMergeTest {
 					layout(),
 					"activation must succeed against the merged queue layout",
 				)
-				// Idempotent: the same seven values must not re-call slSetVulkanInfo.
 				assertEquals(
 					StreamlineSession.SUCCESS_RESULT,
 					layout(),
 					"repeated activation must succeed",
 				)
 
-				// The device must actually hold the queues Streamline was told about: the host's
-				// queue, then SL's graphics + compute queues after it, and nothing beyond.
 				assertNotNull(
 					vkGetDeviceQueue(fixture, graphicsFamily, hostQueueCount),
 					"first SL-owned graphics queue must exist on the merged device",
@@ -165,18 +132,11 @@ class StreamlineRequirementsMergeTest {
 					"the device must not exceed the merged queue count",
 				)
 
-				// Record the activated tuple so close runs slShutdown while the device is
-				// still alive. Last (Order 4): nothing in this fork may bootstrap after shutdown.
 				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}
 	}
 
-	/**
-	 * The queue handle at [index] in [family] of the fixture's device, or null when the index
-	 * is out of range - which is exactly how the test proves the device holds the merged count
-	 * and nothing beyond it.
-	 */
 	private fun vkGetDeviceQueue(fixture: HeadlessVulkanFixture, family: Int, index: Int): Long? {
 		MemoryStack.stackPush().use { stack ->
 			val instance = VkInstance(fixture.instanceAddress(), VkInstanceCreateInfo.calloc(stack))
@@ -189,10 +149,6 @@ class StreamlineRequirementsMergeTest {
 		}
 	}
 
-	/**
-	 * The family the fixture creates its queues in, discovered with a throwaway default fixture
-	 * so the augmented fixture can be built with the extras keyed by the right family.
-	 */
 	private fun probeGraphicsQueueFamily(): Int =
 		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 }

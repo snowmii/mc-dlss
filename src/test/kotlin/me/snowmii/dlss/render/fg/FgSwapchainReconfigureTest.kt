@@ -6,7 +6,7 @@ import me.snowmii.dlss.render.SceneTarget
 import me.snowmii.dlss.DlssSession
 import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.SRMode
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import me.snowmii.dlss.render.FgSurfacePolicy
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -14,19 +14,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * DLSS-G must run on a swapchain that is recreated on every FG mode transition, presents
- * non-FIFO while FG is active, and has at least the declared back-buffer count. Minecraft owns
- * all of that machinery - the reconfigure happens in `Minecraft.renderFrame` after
- * `invalidateSurfaceConfiguration`, the present mode is chosen from the vsync read, and the
- * swapchain is created by `VulkanGpuSurface.configure` - so this test pins the mod-owned
- * policy object those seams delegate to: transitions invalidate exactly once, the reconfigure
- * reads vsync false without touching the stored option, and the minimum image count covers
- * the declared back buffers.
- *
- * The mixins that read the policy are thin handlers by design and are not unit tested; this
- * pins the object they delegate to, plus the controls toggle that drives it.
- */
 class FgSwapchainReconfigureTest {
 	@Test
 	fun `a mode transition invalidates the surface configuration exactly once`() {
@@ -80,8 +67,6 @@ class FgSwapchainReconfigureTest {
 		val policy = FgSurfacePolicy()
 		policy.setFrameGenerationActive(true)
 
-		// One present per generated frame plus one for the rendered frame, plus the headroom that
-		// keeps the presenter from starving - a fixed count paces worse the higher the multiplier.
 		assertEquals(4, policy.requiredSwapchainImages, "2x presents two frames per app frame")
 		policy.numFramesToGenerate = 2
 		assertEquals(5, policy.requiredSwapchainImages, "3x presents three")
@@ -168,7 +153,7 @@ class FgSwapchainReconfigureTest {
 		),
 	)
 
-	private class HeadlessRenderTarget : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		override fun createBuffers(width: Int, height: Int) {
 			this.width = width
 			this.height = height

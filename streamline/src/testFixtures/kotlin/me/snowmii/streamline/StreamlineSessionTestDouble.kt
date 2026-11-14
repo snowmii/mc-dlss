@@ -2,13 +2,6 @@ package me.snowmii.streamline
 
 import java.nio.file.Path
 
-/**
- * [StreamlineSession] test double: override only the calls the test exercises.
- *
- * The production interface is all-abstract. Unoverridden calls throw
- * `UnsupportedOperationException` naming the call, so a forgotten stub fails instead of
- * silently no-oping.
- */
 open class StreamlineSessionTestDouble : StreamlineSession {
 	override fun close() = Unit
 
@@ -20,11 +13,18 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 		dataPath: Path,
 	): Int = notStubbed("initialize")
 
+	override fun isFeatureSupported(feature: Int, vkPhysicalDevice: Long): Int = notStubbed("isFeatureSupported")
 	override fun queryOptimalDimensions(
 		outputWidth: Int,
 		outputHeight: Int,
 		qualityMode: Int,
 	): Dimensions = notStubbed("queryOptimalDimensions")
+
+	override fun queryOptimalDimensionsRr(
+		outputWidth: Int,
+		outputHeight: Int,
+		qualityMode: Int,
+	): Dimensions = notStubbed("queryOptimalDimensionsRr")
 
 	override fun configureSuperResolution(
 		outputWidth: Int,
@@ -49,18 +49,18 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 
 	override fun waitDeviceIdle(): Int = notStubbed("waitDeviceIdle")
 
-	// Native.frameTimings answers null for "no measurement yet"; that is not a latched failure.
 	override fun frameTimings(): FrameTimings? = notStubbed("frameTimings")
 
 	override fun writeMotion(request: MotionRequest): Int = notStubbed("writeMotion")
-
-	override fun fillVelocity(request: FillVelocityRequest): Int = notStubbed("fillVelocity")
 
 	override fun presentOutput(target: PresentTarget): Int = notStubbed("presentOutput")
 
 	override fun evaluateSuperResolution(request: EvaluationRequest): Int = notStubbed("evaluate")
 
 	override fun tagSrResources(request: SrTagRequest): Int = notStubbed("tagSrResources")
+
+	override fun prepareRayReconstruction(request: RrPrepareRequest): Int =
+		if (!request.enabled) StreamlineSession.SUCCESS_RESULT else notStubbed("prepareRayReconstruction")
 
 	override fun tagFrameGenerationResources(request: FgTagRequest): Int = notStubbed("tagFgResources")
 
@@ -82,6 +82,10 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 
 	override fun queryReflexOptions(): StreamlineSession.ReflexRegistration = notStubbed("queryReflexOptions")
 
+	override fun setReflexMode(mode: Int): Int = notStubbed("setReflexMode")
+
+	override fun queryReflexState(): StreamlineSession.ReflexStateInfo = notStubbed("queryReflexState")
+
 	override fun recordReflexFrameLimit(frameLimitUs: Int): Int = notStubbed("recordReflexFrameLimit")
 
 	override fun waitFgInputsIdle(): Int = notStubbed("waitFgInputsIdle")
@@ -90,6 +94,8 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 		notStubbed("waitFgInputsValue")
 
 	override fun queryFgState(): FgState = notStubbed("queryFgState")
+
+	override fun isFgVsyncSupported(): Boolean = false
 
 	override fun queryMotionProbe(): MotionProbeSample = notStubbed("queryMotionProbe")
 

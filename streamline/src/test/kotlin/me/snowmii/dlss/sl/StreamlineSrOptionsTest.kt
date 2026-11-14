@@ -4,7 +4,7 @@ import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
 import me.snowmii.streamline.ExtensionBootstrap
 import me.snowmii.dlss.bridge.HeadlessVulkanFixture
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.Native
 import me.snowmii.streamline.NativeTestAccess
 import me.snowmii.streamline.StreamlineSession
@@ -15,23 +15,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
-/**
- * DLSS SR options and resource tagging through the native Streamline bridge.
- *
- * Optimal render dimensions come from slDLSSGetOptimalSettings. Configure records the ABI's
- * NGX-valued mode/preset on sl::DLSSOptions through slDLSSSetOptions. The frame's SR resources
- * tag on the caller's live command buffer via slGetNewFrameToken + slSetTagForFrame.
- *
- * The tag call does not require the module's motion/output images: engine colour and depth
- * tag from the start, and module images join once acquired for the configured size. This live
- * test tags engine images only; the buffer must still submit clean.
- *
- * The whole device-backed scenario runs in one test method (one fork). The fixture outlives
- * the bridge: after assertions the test records the activated tuple through
- * mc_dlss_initialize so close runs slShutdown while the device is still alive. An unclean
- * exit leaves the plugin manager initialized, so the next fork's slSetVulkanInfo answers
- * eErrorInvalidIntegration.
- */
 @NativeBridge
 class StreamlineSrOptionsTest {
 
@@ -42,9 +25,6 @@ class StreamlineSrOptionsTest {
 		withLiveSession(dataPath) { bridge, fixture ->
 			val outputWidth = 2560
 			val outputHeight = 1440
-			// MaxQuality = 2 (NVSDK_NGX_PerfQuality_Value), which the bridge maps onto
-			// sl::DLSSMode::eMaxQuality; preset K = 11 lands directly on the qualityPreset
-			// field of sl::DLSSOptions for that mode.
 			val dimensions = bridge.queryOptimalDimensions(outputWidth, outputHeight, 2)
 			assertTrue(
 				dimensions.width in 1..outputWidth,
@@ -67,9 +47,6 @@ class StreamlineSrOptionsTest {
 				"configure must record the SL options for the stored configuration",
 			)
 
-			// The engine's render-sized colour and depth, standing in for Minecraft's main
-			// target and depth texture; the fixture leaves them in VK_IMAGE_LAYOUT_GENERAL,
-			// which is the layout the tags name and the one validation checks them against.
 			val color = fixture.createEngineImage(
 				dimensions.width,
 				dimensions.height,
@@ -106,8 +83,6 @@ class StreamlineSrOptionsTest {
 				"the engine's colour and depth must tag on the caller's command buffer",
 			)
 
-			// Tagging records nothing of its own to submit, so the recording must still be a
-			// complete, valid command buffer the device accepts.
 			fixture.endSubmitAndWait(commandBuffer)
 			if (fixture.validationEnabled()) {
 				val errors = fixture.validationErrorsAbout(color.image(), depth.image())
@@ -119,23 +94,9 @@ class StreamlineSrOptionsTest {
 		}
 	}
 
-	/**
-	 * Bootstraps Streamline and activates the Vulkan proxies against a headless device holding
-	 * the merged queue layout, then executes [block] with the live bridge and fixture, and
-	 * finally records the activated tuple through mc_dlss_initialize so the bridge's close
-	 * shuts the Streamline runtime down.
-	 *
-	 * The fixture outlives the bridge: Native.close runs mc_dlss_close, which shuts Streamline
-	 * down, and that must happen while the Vulkan device is still alive. The queue
-	 * requirements come from a throwaway bridge closed before the device exists, when its
-	 * close path is a no-op.
-	 */
 	private fun withLiveSession(dataPath: Path, block: (Native, HeadlessVulkanFixture) -> Unit) {
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
 
-		// The production merge starts from Minecraft's {graphicsFamily: 1} queue map and
-		// adds SL's extra graphics and compute queues; the first graphics family is
-		// compute-capable on this workstation, so both merges land in the same family.
 		val graphicsFamily = probeGraphicsQueueFamily()
 		HeadlessVulkanFixture(
 			instanceExtensions,
@@ -152,8 +113,6 @@ class StreamlineSrOptionsTest {
 					StreamlineSession.SUCCESS_RESULT,
 					bridge.bootstrapStreamline(ExtensionBootstrap.streamlineRuntimeDirectory()),
 				)
-				// The fixture creates one host queue in the family, so Streamline's own queues
-				// start at index 1 - right after the host's, as slSetVulkanInfo records them.
 				val hostQueueCount = 1
 				assertEquals(
 					StreamlineSession.SUCCESS_RESULT,
@@ -169,13 +128,11 @@ class StreamlineSrOptionsTest {
 					"activation must succeed against the merged queue layout",
 				)
 				block(bridge, fixture)
-				// initialize so close runs slShutdown while the device is still alive.
 				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}
 	}
 
-	/** The summed extra graphics + compute queues the loaded SL features require. */
 	private fun requirementsExtras(): Int {
 		val requirements = NativeTestAccess.open(ExtensionBootstrap.nativeLibrary()).use { bridge ->
 			assertEquals(
@@ -187,10 +144,6 @@ class StreamlineSrOptionsTest {
 		return requirements.graphicsQueues + requirements.computeQueues
 	}
 
-	/**
-	 * The family the fixture creates its queues in, discovered with a throwaway default fixture
-	 * so the augmented fixture can be built with the extras keyed by the right family.
-	 */
 	private fun probeGraphicsQueueFamily(): Int =
 		HeadlessVulkanFixture().use { it.graphicsQueueFamilyIndex() }
 }

@@ -4,12 +4,18 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 
+import me.snowmii.dlss.vk.VulkanContext;
+
 /** Java entry point for Streamline configuration, requirements, and sessions. */
 public final class Streamline {
 	private Streamline() {}
 
 	public static void configure(final Path nativeLibrary) {
 		ExtensionBootstrap.setNativeLibraryPath(nativeLibrary);
+	}
+
+	public static void shutdown() {
+		ExtensionBootstrap.shutdown();
 	}
 
 	public static StreamlineSession open() {

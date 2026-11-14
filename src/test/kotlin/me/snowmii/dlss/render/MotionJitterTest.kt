@@ -4,7 +4,7 @@ import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.SRMode
 import me.snowmii.streamline.Dimensions
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.joml.Matrix4f
 import org.joml.Vector3f
@@ -19,18 +19,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.math.abs
 
-/**
- * The two halves have to agree or DLSS collapses silently. The world is rendered through a
- * jittered projection, so a pixel's clip position carries this frame's offset; the motion vector
- * NGX reads must not, because NGX is told the jitter separately and would otherwise count it
- * twice. Assertions read motion the way the evaluation will -
- * `ndc(reprojection * clip) - ndc(clip)` against clip positions taken from the *jittered*
- * projection - so any leak between the two shows up as motion where there is none.
- *
- * The projection is built the way Minecraft 26.2 builds the world projection: `Projection.getMatrix`
- * passes `near = zFar, far = zNear` into JOML with zero-to-one depth, which is what makes the
- * projection's depth reversed.
- */
 class MotionJitterTest {
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1280, 720)
@@ -44,11 +32,9 @@ class MotionJitterTest {
 		true,
 	)
 
-	/** The two frames jitter differently, so neither offset can quietly cancel the other. */
 	private val previousOffset = DlssJitterOffset(0, pixelX = -0.44f, pixelY = 0.31f, renderDimensions = render)
 	private val currentOffset = DlssJitterOffset(1, pixelX = 0.37f, pixelY = -0.21f, renderDimensions = render)
 
-	/** Sample points spread across the frustum, from near the eye to the far plane. */
 	private val probes = listOf(
 		Vector3f(0f, 0f, -1f),
 		Vector3f(3f, -2f, -12f),
@@ -89,8 +75,6 @@ class MotionJitterTest {
 		for (probe in probes) {
 			val clip = current.transform(Vector4f(probe.x, probe.y, probe.z, 1f))
 			val mapped = frame.clipToPrevClip.transform(Vector4f(clip))
-			// Camera-relative: the camera moved +0.5 along x, so the point sits that much
-			// further along x measured from the previous camera.
 			val expected = ndc(previous, Vector3f(probe).add(0.5f, 0f, 0f))
 			assertEquals(expected.x, mapped.x / mapped.w, tolerance, "x at $probe")
 			assertEquals(expected.y, mapped.y / mapped.w, tolerance, "y at $probe")
@@ -116,15 +100,11 @@ class MotionJitterTest {
 		val frame = motion.advance(sample(x = 0.5), currentOffset, nanos(16))
 
 		for (probe in probes) {
-			// Camera-relative: the camera moved +0.5 along x, so the same world point sits half a
-			// block further along x when measured from the previous camera.
 			val expected = ndc(projection, Vector3f(probe).add(0.5f, 0f, 0f)).sub(ndc(projection, probe))
 			val actual = motionOf(frame, probe)
 			assertEquals(expected.x, actual.x, tolerance, "x motion at $probe")
 			assertEquals(expected.y, actual.y, tolerance, "y motion at $probe")
 		}
-		// A sideways camera must actually move the image, or the loop above would also pass on a
-		// reprojection that reported nothing at all.
 		assertTrue(abs(motionOf(frame, probes[1]).x) > tolerance)
 	}
 
@@ -152,7 +132,6 @@ class MotionJitterTest {
 		motion.advance(sample(), previousOffset, nanos(0))
 		val frame = motion.advance(sample(z = -0.25), currentOffset, nanos(16))
 
-		// Reversed-Z: nearer geometry produces the larger depth value.
 		val near = ndc(projection, probes.first()).z
 		val far = ndc(projection, probes.last()).z
 		assertTrue(near > far, "expected reversed-Z depth, got $near then $far")
@@ -160,14 +139,10 @@ class MotionJitterTest {
 		for (probe in probes) {
 			val clip = clipOf(probe)
 			val reprojected = frame.reprojection.transform(Vector4f(clip))
-			// The camera moved, so depth changes - but it stays a reversed-Z depth in front of
-			// the eye rather than being flipped or driven behind it by the reprojection itself.
 			assertTrue(reprojected.w > 0f, "point at $probe reprojected behind the eye")
 			val depth = reprojected.z / reprojected.w
 			assertTrue(depth in 0f..1f, "depth at $probe left [0,1]: $depth")
 		}
-		// A camera that moved toward the geometry reports it nearer. In reversed-Z that is a
-		// larger current depth than the previous-frame depth the reprojection maps back to.
 		val probe = probes[1]
 		val clip = clipOf(probe)
 		val reprojected = frame.reprojection.transform(Vector4f(clip))
@@ -284,8 +259,6 @@ class MotionJitterTest {
 		runtime.endWorldPhase()
 	}
 
-	// ── Jitter sequence ──────────────────────────────────────────────────────────────────────────
-
 	@Test
 	fun `the jitter sequence is a pure function of its phase`() {
 		val qualityDimensions = Dimensions(1707, 960)
@@ -346,6 +319,22 @@ class MotionJitterTest {
 	}
 
 	@Test
+	fun `RR uses at least 32 phases and changing features restarts the sequence`() {
+		for (dimensions in listOf(output, Dimensions(1707, 960), Dimensions(640, 360))) {
+			val jitter = DlssJitter(dimensions, output)
+			val phases = maxOf(32, jitter.phaseCount)
+			val cycle = List(phases) { jitter.advance(rayReconstruction = true) }
+			assertEquals((0 until phases).toList(), cycle.map { it.index })
+			assertEquals(phases, cycle.map { it.pixelX to it.pixelY }.toSet().size)
+			assertEquals(cycle.first(), jitter.advance(rayReconstruction = true))
+			assertEquals(0, jitter.advance(rayReconstruction = false).index)
+			repeat(jitter.phaseCount - 1) { jitter.advance() }
+			assertEquals(0, jitter.advance().index)
+			assertEquals(0, jitter.advance(rayReconstruction = true).index)
+		}
+	}
+
+	@Test
 	fun `jitter reset restarts the sequence`() {
 		val qualityDimensions = Dimensions(1707, 960)
 		val jitter = DlssJitter(qualityDimensions, output)
@@ -354,8 +343,6 @@ class MotionJitterTest {
 		jitter.reset()
 		assertEquals(first, jitter.advance())
 	}
-
-	// ── Projection jitter ─────────────────────────────────────────────────────────────────────
 
 	@Test
 	fun `the projection shifts the image by exactly the clip offset`() {
@@ -417,8 +404,6 @@ class MotionJitterTest {
 		assertSame(destination, result)
 		assertEquals(projection, source)
 	}
-
-	// ── Camera discontinuity ──────────────────────────────────────────────────────────────────
 
 	@Test
 	fun `a camera that teleported resets history instead of reprojecting across the jump`() {
@@ -499,8 +484,6 @@ class MotionJitterTest {
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
 
-		// No begin: renderLevel threw between the projection upload and LevelRenderer.render.
-		// This frame decided a route and moved the predecessor, but produced no image.
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample(x = 3.0))
 
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = sample(x = 3.0))
@@ -522,10 +505,6 @@ class MotionJitterTest {
 
 	private fun nanos(millis: Long) = millis * 1_000_000L
 
-	/**
-	 * Camera motion the way the evaluation reads it: the normalized-device difference between
-	 * where a point reprojects to and where the rendered - therefore jittered - frame put it.
-	 */
 	private fun motionOf(frame: DlssFrameMotion, probe: Vector3f, view: Matrix4f = Matrix4f()): Vector4f {
 		val clip = clipOf(probe, view)
 		val reprojected = frame.reprojection.transform(Vector4f(clip))
@@ -537,7 +516,6 @@ class MotionJitterTest {
 		)
 	}
 
-	/** Where the jittered world projection actually put [probe] this frame. */
 	private fun clipOf(probe: Vector3f, view: Matrix4f = Matrix4f()): Vector4f {
 		val jittered = DlssProjectionJitter.apply(Matrix4f(projection).mul(view), currentOffset, Matrix4f())
 		return jittered.transform(Vector4f(probe.x, probe.y, probe.z, 1f))
@@ -583,7 +561,7 @@ class MotionJitterTest {
 		)
 	}
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height

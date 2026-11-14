@@ -55,16 +55,15 @@ dependencies {
 	implementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
 	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
-	implementation(project(":streamline"))
+	api(project(":streamline"))
 	testImplementation(testFixtures(project(":streamline")))
 	include(project(":streamline"))
 	testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
+	testImplementation(kotlin("test"))
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:$junitPlatformVersion")
 
 	runtimeMod("modmenu_version") { "maven.modrinth:modmenu:$it" }
-	providers.gradleProperty("sodium_version").orNull?.let {
-		compileOnly("maven.modrinth:sodium:$it") { isTransitive = false }
-	}
+	compileOnly("maven.modrinth:sodium:${providers.gradleProperty("sodium_version").get()}") { isTransitive = false }
 	runtimeMod("sodium_version") { "maven.modrinth:sodium:$it" }
 	runtimeMod("devauth_version") { "me.djtheredstoner:DevAuth-fabric:$it" }
 
@@ -72,6 +71,7 @@ dependencies {
 }
 
 tasks.test {
+	jvmArgs("--enable-native-access=ALL-UNNAMED")
 	useJUnitPlatform()
 }
 
@@ -123,6 +123,7 @@ val detekt = tasks.register<JavaExec>("detekt") {
 	val sources = listOf(
 		"src/main/kotlin",
 		"src/test/kotlin",
+		"streamline/src/main/kotlin",
 		"streamline/src/test/kotlin",
 		"streamline/src/testFixtures/kotlin",
 	).map(layout.projectDirectory::dir)
@@ -143,6 +144,7 @@ val detekt = tasks.register<JavaExec>("detekt") {
 }
 
 tasks.jar {
+	includeEmptyDirs = false
 	val projectName = project.name
 	inputs.property("projectName", projectName)
 

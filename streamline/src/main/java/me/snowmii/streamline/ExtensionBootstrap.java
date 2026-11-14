@@ -9,42 +9,33 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.zip.CRC32;
+
+import me.snowmii.dlss.vk.VulkanContext;
 
 /** Queries Streamline's exact Vulkan requirements at the game's pre-creation bootstrap seams. */
 public final class ExtensionBootstrap {
-	/**
-	 * Namespaced under the SDK's own asset namespace, so it resolves as the classloader resource
-	 * {@code /assets/streamline-api/native/mc_dlss.dll}. These seams run before any game-side
-	 * asset manager exists, so the SDK reads it off the classloader instead.
-	 */
 	private static final String RESOURCE_DIRECTORY = "/assets/streamline-api/native/";
 	static final String RESOURCE_PATH = RESOURCE_DIRECTORY + "mc_dlss.dll";
 	static final String STREAMLINE_RESOURCE_PATH = RESOURCE_DIRECTORY + "sl.interposer.dll";
 
-	/**
-	 * The colocated flat runtime set: the bridge plus every Streamline/NGX runtime dll that must
-	 * sit beside it on disk for Windows dependency resolution. Mirrors the nine files staged by
-	 * {@code :streamline}'s processResources into {@code assets/streamline-api/native/}.
-	 */
 	private static final List<String> FLAT_RUNTIME_FILES = List.of(
-		"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_g.dll", "sl.reflex.dll",
-		"sl.pcl.dll",
-		"nvngx_dlss.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
+		"sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "sl.dlss_d.dll", "sl.dlss_g.dll",
+		"sl.reflex.dll", "sl.pcl.dll",
+		"nvngx_dlss.dll", "nvngx_dlssd.dll", "nvngx_dlssg.dll", "NvLowLatencyVk.dll"
 	);
 
 	private static final Path RELATIVE_STREAMLINE = Path.of("build", "resources", "main", "assets", "streamline-api", "native");
 
-	/**
-	 * Knob name for error messages. The mod reads {@code -Dmc.dlss.native-library} in its
-	 * config and injects via {@link #setNativeLibraryPath}; this seam runs first.
-	 */
 	private static final String NATIVE_LIBRARY_PROPERTY = "mc.dlss.native-library";
 
 	private static volatile Path configuredNativeLibrary;
 	private static volatile Path extracted;
 	private static volatile boolean streamlineRuntimeLoaded;
+	private static volatile boolean streamlineBootstrapped;
 
 	private ExtensionBootstrap() {
 	}
@@ -127,6 +118,16 @@ public final class ExtensionBootstrap {
 		}
 	}
 
+	/** Must run after frame teardown and before the game's Vulkan device is destroyed. */
+	public static synchronized void shutdown() {
+		if (!streamlineBootstrapped) return;
+		try (Native nativeBridge = Native.open(nativeLibrary())) {
+			final int result = nativeBridge.shutdownStreamline();
+			if (result != StreamlineSession.SUCCESS_RESULT) throw new StreamlineException("shutdown-streamline", result);
+			streamlineBootstrapped = false;
+		}
+	}
+
 	private static void loadStreamlineRuntime() {
 		if (streamlineRuntimeLoaded) return;
 		synchronized (ExtensionBootstrap.class) {
@@ -144,6 +145,7 @@ public final class ExtensionBootstrap {
 		if (result != StreamlineSession.SUCCESS_RESULT) {
 			throw new StreamlineException("bootstrap-streamline", result);
 		}
+		streamlineBootstrapped = true;
 	}
 
 	/**
@@ -160,16 +162,16 @@ public final class ExtensionBootstrap {
 				throw new StreamlineException("bootstrap-streamline", error);
 			}
 		}
+		for (Path directory = Path.of("").toAbsolutePath(); directory != null; directory = directory.getParent()) {
+			final Path candidate = directory.resolve(RELATIVE_STREAMLINE);
+			if (Files.isRegularFile(candidate.resolve("sl.interposer.dll"))) return candidate;
+		}
 		if (resource != null) {
 			try {
 				return extractedDirectory();
 			} catch (IOException error) {
 				throw new StreamlineException("bootstrap-streamline", error);
 			}
-		}
-		for (Path directory = Path.of("").toAbsolutePath(); directory != null; directory = directory.getParent()) {
-			final Path candidate = directory.resolve(RELATIVE_STREAMLINE);
-			if (Files.isRegularFile(candidate.resolve("sl.interposer.dll"))) return candidate;
 		}
 		throw new StreamlineException("bootstrap-streamline", new IllegalStateException("Staged Streamline runtime not found; run ./gradlew.bat processResources"));
 	}
@@ -206,10 +208,6 @@ public final class ExtensionBootstrap {
 		);
 	}
 
-	/**
-	 * {@link java.lang.foreign.SymbolLookup#libraryLookup(Path, Arena)} cannot load from a jar.
-	 * Loose classpath file: in place. Packaged: extract once with the colocated flat directory.
-	 */
 	private static Path packagedLibrary() {
 		final URL resource = ExtensionBootstrap.class.getResource(RESOURCE_PATH);
 		if (resource == null) {
@@ -224,6 +222,11 @@ public final class ExtensionBootstrap {
 			}
 		}
 
+		for (Path directory = Path.of("").toAbsolutePath(); directory != null; directory = directory.getParent()) {
+			final Path candidate = directory.resolve(RELATIVE_STREAMLINE).resolve("mc_dlss.dll");
+			if (Files.isRegularFile(candidate)) return candidate;
+		}
+
 		try {
 			return extractedDirectory().resolve("mc_dlss.dll");
 		} catch (IOException error) {
@@ -231,11 +234,6 @@ public final class ExtensionBootstrap {
 		}
 	}
 
-	/**
-	 * JVM-lifetime temp dir: bridge plus colocated Streamline/NGX dlls (Windows load-from-same-
-	 * directory). Classloader-served, so the same extract covers a test classpath jar and the
-	 * Fabric-nested jar.
-	 */
 	private static Path extractedDirectory() throws IOException {
 		final Path cached = extracted;
 		if (cached != null && Files.isDirectory(cached)) {
@@ -246,25 +244,86 @@ public final class ExtensionBootstrap {
 			if (extracted != null && Files.isDirectory(extracted)) {
 				return extracted;
 			}
-			final Path directory = Files.createTempDirectory("mc-dlss-native");
-			directory.toFile().deleteOnExit();
-			extract(directory, "mc_dlss.dll");
+			final String checksum = computeNativeChecksum();
+			final Path baseDirectory = Path.of(System.getProperty("java.io.tmpdir"), "mc-dlss-native");
+			final Path directory = baseDirectory.resolve(checksum);
+			Files.createDirectories(directory);
+
+			extractIfMissing(directory, "mc_dlss.dll");
 			for (String name : FLAT_RUNTIME_FILES) {
-				extract(directory, name);
+				extractIfMissing(directory, name);
 			}
+
+			cleanStaleVersions(baseDirectory, checksum);
+
 			extracted = directory;
 			return directory;
 		}
 	}
 
-	private static void extract(final Path directory, final String name) throws IOException {
+	private static String computeNativeChecksum() {
+		try (InputStream source = ExtensionBootstrap.class.getResourceAsStream(RESOURCE_PATH)) {
+			if (source == null) {
+				return "unknown";
+			}
+			final CRC32 crc = new CRC32();
+			final byte[] buffer = new byte[8192];
+			int read;
+			long total = 0;
+			while ((read = source.read(buffer)) != -1) {
+				crc.update(buffer, 0, read);
+				total += read;
+			}
+			return Long.toHexString(crc.getValue()) + "-" + total;
+		} catch (IOException error) {
+			return "fallback";
+		}
+	}
+
+	private static void extractIfMissing(final Path directory, final String name) throws IOException {
+		final Path target = directory.resolve(name);
+		if (Files.isRegularFile(target) && Files.size(target) > 0) {
+			return;
+		}
 		try (InputStream source = ExtensionBootstrap.class.getResourceAsStream(RESOURCE_DIRECTORY + name)) {
 			if (source == null) {
 				throw new IOException("Staged native missing from packaged resources: " + name);
 			}
-			final Path target = directory.resolve(name);
-			Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
-			target.toFile().deleteOnExit();
+			final Path tempFile = directory.resolve(name + ".tmp." + ProcessHandle.current().pid());
+			Files.copy(source, tempFile, StandardCopyOption.REPLACE_EXISTING);
+			try {
+				Files.move(tempFile, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			} catch (IOException e) {
+				if (!Files.isRegularFile(target)) {
+					Files.move(tempFile, target, StandardCopyOption.REPLACE_EXISTING);
+				} else {
+					Files.deleteIfExists(tempFile);
+				}
+			}
+		}
+	}
+
+	private static void cleanStaleVersions(final Path baseDirectory, final String currentChecksum) {
+		try (var entries = Files.newDirectoryStream(baseDirectory)) {
+			for (Path entry : entries) {
+				if (Files.isDirectory(entry) && !entry.getFileName().toString().equals(currentChecksum)) {
+					deleteDirectoryBestEffort(entry);
+				}
+			}
+		} catch (IOException ignored) {
+		}
+	}
+
+	private static void deleteDirectoryBestEffort(final Path directory) {
+		try (var stream = Files.walk(directory)) {
+			stream.sorted(Comparator.reverseOrder())
+				.forEach(path -> {
+					try {
+						Files.deleteIfExists(path);
+					} catch (IOException ignored) {
+					}
+				});
+		} catch (IOException ignored) {
 		}
 	}
 }

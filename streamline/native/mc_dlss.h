@@ -2,6 +2,7 @@
 #define MC_DLSS_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #if defined(_WIN32)
 #define MC_DLSS_API __declspec(dllexport)
@@ -129,6 +130,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
     uint32_t* extension_count);
 
 /*
+ * Checks whether a Streamline feature (e.g. kFeatureDLSS=0, kFeatureReflex=3, kFeaturePCL=4,
+ * kFeatureDLSS_G=1000, kFeatureDLSS_RR=1001) is supported on the given Vulkan physical device
+ * via slIsFeatureSupported. Returns SUCCESS (1) if supported, or an NGX/SL error code.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_is_feature_supported(
+    uint32_t feature,
+    uint64_t vk_physical_device);
+
+/*
  * Pre-creation Streamline device-feature requirements.
  *
  * Must be called after mc_dlss_bootstrap_streamline and before the Vulkan device is created.
@@ -225,6 +235,17 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
     uint32_t* render_height);
 
 /*
+ * Queries the DLSS Ray Reconstruction optimal render dimensions for an output size and quality mode,
+ * answered by Streamline's slDLSSDGetOptimalSettings.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions_rr(
+    uint32_t output_width,
+    uint32_t output_height,
+    uint32_t quality_mode,
+    uint32_t* render_width,
+    uint32_t* render_height);
+
+/*
  * Stores the dimensions, the NGX-valued performance/quality mode, and the DLSS render preset
  * the SR configuration uses, and records them with Streamline's slDLSSSetOptions.
  *
@@ -234,9 +255,9 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
  * `quality_mode` is an NVSDK_NGX_PerfQuality_Value: MaxPerf, Balanced, MaxQuality,
  * UltraPerformance, or DLAA. UltraQuality is defined by NGX and not implemented by it, so it
  * is rejected here rather than passed through. The bridge maps the mode onto sl::DLSSMode and
- * writes `render_preset` (an NVSDK_NGX_DLSS_Hint_Render_Preset: J, K, L, or M) onto the
+ * writes `render_preset` (an NVSDK_NGX_DLSS_Hint_Render_Preset: Default, J, K, L, or M) onto the
  * preset field sl::DLSSOptions carries for that mode; every other preset field stays the SDK
- * default.
+ * default. Default (0) lets NVIDIA App / OTA select the model.
  *
  * These dimensions are the single source of truth for everything sized from them: the images
  * mc_dlss_acquire_images allocates, the tags mc_dlss_tag_sr_resources records, and the sizes
@@ -321,12 +342,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_multiplier(uint32_t* current,
 /*
  * Native-owned evaluation images.
  *
- * DLSS writes its upscaled result into an image the engine does not own, and
- * reads camera motion from one the engine has to fill. Both are allocated here,
- * from the dimensions the last mc_dlss_configure stored: the motion image at
- * render size and the output image at output size, each storage-capable, backed
- * by device-local memory, and carrying a full colour image view. The same call
- * also allocates the four FG orientation copies the DLSS-G tag names - the flipped
+ * DLSS writes its upscaled result into images the engine does not own, and
+ * reads camera motion from one the engine has to fill. Both the RGBA8 output scratch and the
+ * RR-only RGBA16F output are allocated here, from the dimensions the last mc_dlss_configure
+ * stored. The reported output is always the RGBA8 scratch, which the native RR tone-map pass
+ * fills before the existing copy. The same call also allocates the four FG orientation copies the DLSS-G tag names - the flipped
  * depth (render-sized D32_SFLOAT), HUD-less and UI colours (output-sized RGBA8),
  * and flipped motion (render-sized R16G16_SFLOAT) - reported by
  * mc_dlss_query_fg_images.
@@ -406,58 +426,10 @@ typedef struct McDlssMotionInfo {
     const float* reprojection;
     uint32_t render_width;
     uint32_t render_height;
+    uint32_t fg_consuming_frame;
 } McDlssMotionInfo;
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(const McDlssMotionInfo* info);
-
-/*
- * Post-scene velocity merge for the velocity-MRT route, recorded on the caller's command
- * buffer.
- *
- * The engine's render-sized RG16_FLOAT velocity companion carries genuine object motion from
- * the scene writers and the invalid sentinel everywhere else. One compute dispatch samples
- * that companion (a render-attachment and sampled input, never a storage image) and the
- * engine's depth image, copies every non-sentinel object vector unchanged into the module's
- * own motion image, and reconstructs jitter-stripped camera reprojection for every pixel
- * whose payload is still the sentinel - including newly observed dynamic geometry without
- * object history. The complete merged field lands in the motion image
- * mc_dlss_acquire_images returned, which is the sole Streamline motion source on every
- * route.
- *
- * `reset` marks a frame with no valid predecessor, whose reprojection is the identity. Such
- * a frame must not read the identity as a still camera, and the destination still holds the
- * previous frame's merged field, so the dispatch writes the invalid sentinel everywhere
- * instead of reconstructing anything. The flipped motion copy receives the same field,
- * mirrored vertically with its y component negated - the sentinel's y included - so the FG
- * tag's motion source agrees with the engine-space field on every route.
- *
- * `reprojection` is 16 floats in column-major order, the same layout as McDlssMotionInfo.
- * `render_width` and `render_height` must be the configured render dimensions, a check that
- * the caller and the configuration still agree.
- *
- * The companion stays in GENERAL, the layout the engine rests it in: the fill owns an
- * explicit barrier from the scene's color-attachment writes to its sampled reads, because
- * layout equality alone is not synchronization. The motion image is left in GENERAL like the
- * camera-only writer leaves it, and the depth image is handed back in the layout it arrived
- * in.
- *
- * Records and never submits: like the other recording calls, the work is ordered by
- * Minecraft's own graphics submission. Must precede mc_dlss_tag_sr_resources for the same
- * frame on the same command buffer: the tag names the module's motion image as the
- * motion-vector buffer, and the evaluation reads it. Calling before initialize, before
- * configure, or before the images are acquired records nothing and fails.
- */
-typedef struct McDlssFillVelocityInfo {
-    uint64_t command_buffer;
-    McDlssImage depth;
-    McDlssImage velocity;
-    const float* reprojection;
-    uint32_t render_width;
-    uint32_t render_height;
-    int32_t reset;
-} McDlssFillVelocityInfo;
-
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_fill_velocity(const McDlssFillVelocityInfo* info);
 
 /*
  * Copies the upscaled DLSS output into an engine image, recorded on the caller's command
@@ -474,14 +446,19 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_fill_velocity(const McDlssFillVelocityI
  * initialize, before configure, or before the images are acquired records nothing and fails.
  *
  * The destination is the engine's output-sized colour target, a single-level, single-layer
- * 2D image; the subresource range is therefore derived, not carried, and only the image
- * handle is needed - never a view or a format.
+ * 2D image; the subresource range is therefore derived, not carried. A destination view,
+ * format, and actual Vulkan usage enable direct RR tone mapping. Zero metadata retains
+ * the scratch-and-copy path for callers whose target cannot accept storage writes.
  */
 typedef struct McDlssPresentInfo {
     uint64_t command_buffer;
     uint64_t image;
     uint32_t width;
     uint32_t height;
+    McDlssImage reflection; /* Optional weighted HDR layer, RR presentation only. */
+    uint64_t image_view;
+    uint32_t image_format;
+    uint32_t image_usage;
 } McDlssPresentInfo;
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo* info);
@@ -629,8 +606,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_camera_constants(McDlssCameraC
  *
  * `color` and `depth` are the engine's render-sized colour and depth images, tagged as the
  * scaling-input colour and the depth. The motion source is always the module's own motion
- * image - filled by mc_dlss_write_motion on the camera-only route and by
- * mc_dlss_fill_velocity on the velocity-MRT route - so no engine velocity companion is
+ * image - filled by mc_dlss_write_motion on the camera-only route - so no engine velocity companion is
  * carried or tagged. When the module's own output image
  * has been acquired for the configured dimensions (mc_dlss_acquire_images), it is tagged as
  * the scaling-output colour as well; until then the call still succeeds with just the
@@ -653,6 +629,58 @@ typedef struct McDlssTagInfo {
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* info);
 
 /*
+ * Arms (or clears) DLSS Ray Reconstruction for the next tag + evaluate on the SR viewport.
+ *
+ * When `enabled` is non-zero, the next mc_dlss_tag_sr_resources tags the guide images as
+ * Streamline RR inputs and mc_dlss_evaluate runs kFeatureDLSS_RR instead of kFeatureDLSS.
+ * `color` on the tag/evaluate remains ScalingInputColor and must be the noisy ray-traced
+ * image (HDR float). Matrices are 16 floats row-major (sl::float4x4 layout).
+ *
+ * When `enabled` is zero, RR is cleared and the next evaluate uses Super Resolution again.
+ * Guide image fields may be zeroed when disabling.
+ */
+typedef struct McDlssRrPrepareInfo {
+    int32_t enabled;
+    /** sl::DLSSDPreset: 0 = NVIDIA App / OTA default; D=4, E=5, F=6 lock the RR model. */
+    uint32_t rr_preset;
+    McDlssImage diffuse_albedo;
+    McDlssImage specular_albedo;
+    McDlssImage normal_roughness;
+    McDlssImage specular_hit_distance;
+    float world_to_camera_view[16];
+    float camera_view_to_world[16];
+    /** Optional RG16F/RG32F reflection motion, using the main motion field's NDC scale. */
+    McDlssImage specular_motion;
+    /**
+     * Optional sl::kBufferTypeBiasCurrentColorHint (29), NOT ReactiveMask/Responsivity.
+     * Pinned Streamline 2.14.1 RR guide §3.10 refers to DLSS guide §3.15: input-color-sized
+     * binary R channel, 1.0 biases current color, 0.0 elsewhere. Accepted Vulkan formats:
+     * R8_UNORM, R16_SFLOAT, R8G8B8A8_UNORM. Producer owns dimensions/pixel validity and
+     * image lifetime through present; CPU validates handles/format, never reads pixels.
+     * Both handles zero omit the hint; every SR/RR tag explicitly clears an omitted binding.
+     * SDK warns support is model-dependent (only Preset F stated), no guaranteed effect.
+     */
+    McDlssImage bias_current_color;
+} McDlssRrPrepareInfo;
+
+#ifdef __cplusplus
+static_assert(sizeof(McDlssImage) == 24, "McDlssImage FFM ABI drift");
+static_assert(sizeof(McDlssRrPrepareInfo) == 280, "McDlssRrPrepareInfo FFM ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, enabled) == 0, "RR enabled ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, rr_preset) == 4, "RR preset ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, diffuse_albedo) == 8, "RR albedo ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, specular_albedo) == 32, "RR specular albedo ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, normal_roughness) == 56, "RR normal ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, specular_hit_distance) == 80, "RR hit distance ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, world_to_camera_view) == 104, "RR view matrix ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, camera_view_to_world) == 168, "RR inverse matrix ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, specular_motion) == 232, "RR motion ABI drift");
+static_assert(offsetof(McDlssRrPrepareInfo, bias_current_color) == 256, "RR bias ABI drift");
+#endif
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_prepare_rr(const McDlssRrPrepareInfo* info);
+
+/*
  * Tags one frame's DLSS-G resources on the caller's command buffer, through Streamline's
  * frame-based tagging (slGetNewFrameToken + slSetTagForFrame).
  *
@@ -665,9 +693,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
  * its own flipped copies (depth at render size, the two colours at output size) and tags the copies;
  * the engine images are read as transfer sources, never written or relabeled, and handed
  * back in the layout they arrived in. The motion source is always the module's own flipped
- * motion copy - filled by mc_dlss_write_motion on the camera-only route and by
- * mc_dlss_fill_velocity on the velocity-MRT route, both of which mirror the field and negate
- * its y component into that copy - so no engine velocity companion is carried or tagged.
+ * motion copy - filled by mc_dlss_write_motion on the camera-only route, which mirrors the field
+ * and negates its y component into that copy - so no engine velocity companion is carried or tagged.
  * The backbuffer/output chain is present interception rather than a tag, so no output image
  * is carried or tagged here.
  *
@@ -878,6 +905,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_options(uint32_t* mode,
                                                                uint32_t* set_options_calls);
 
 /*
+ * Sets the Reflex mode: 0 = eOff, 1 = eLowLatency, 2 = eLowLatencyWithBoost.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_reflex_mode(uint32_t mode);
+
+/*
+ * Queries whether Reflex low-latency mode and latency reports are available via slReflexGetState.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_state(
+    uint32_t* low_latency_available,
+    uint32_t* latency_report_available);
+
+/*
  * Emits the PRESENT_END Reflex marker of the armed present bracket under the frame's
  * retained token, on the caller's (present) thread immediately after the queue present
  * returned, and consumes the bracket.
@@ -927,16 +966,10 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_present_markers(
 
 /*
  * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
- * completed, on the caller's (present/render) thread and through the Vulkan device.
- *
- * The DLSS-G options record eBlockNoClientQueues, under which the DLSS-G plugin reads the
- * tagged inputs of a presented frame on its own queues after Present; the programming guide
- * requires the host to wait on DLSSGState::inputsProcessingCompletionFence - a Vulkan
- * timeline semaphore on this API, read together with its value
- * DLSSGState::lastPresentInputsProcessingCompletionFenceValue via slDLSSGGetState - before it
- * modifies or destroys those inputs in a later frame. This is the call the mod makes at the
- * start of an FG-active frame, before the world phase rewrites the tagged depth, motion,
- * HUD-less, and UI inputs.
+ * completed, on the caller's (present/render) thread and through the Vulkan device, waiting
+ * on DLSSGState::inputsProcessingCompletionFence at
+ * DLSSGState::lastPresentInputsProcessingCompletionFenceValue via slDLSSGGetState when
+ * non-null.
  *
  * Refuses FAIL_NotInitialized while the Streamline session is not ready (bootstrap and proxy
  * activation not both complete, or the Vulkan device tuple never recorded) and
@@ -985,6 +1018,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_state(uint32_t* status,
                                                          uint64_t* inputs_processing_completion_fence);
 
 /*
+ * Queries whether VSync support is available with Frame Generation via DLSSGState::bIsVsyncSupportAvailable.
+ */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_vsync_support(uint32_t* vsync_supported);
+
+/*
  * Centre-pixel GPU motion (NDC xy), reversed-Z depth, and the probe ring slot two records old.
  * The CPU side stores that frame's reprojection under the same slot. Never waits; refuses
  * FAIL_NotInitialized until three motion dispatches have written the ring, and
@@ -993,19 +1031,13 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_state(uint32_t* status,
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_motion_probe(float* motion_x, float* motion_y,
                                                              float* depth, int32_t* slot);
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_exposure(const float exposure);
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_tonemap_operator(const int32_t op);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);
+/* Explicit host teardown, even before initialize. Caller must quiesce the live device first. */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_shutdown_streamline(void);
 
-/*
- * mc_dlss_reset releases the module-owned images and drops the retained Streamline frame
- * token and the SR/FG tag records, so the next tag obtains a fresh token and a handoff
- * cannot accept a tag set recorded before the reset; the session stays ready for the next
- * acquire. mc_dlss_close releases the module-owned Vulkan resources (timing, motion pass,
- * images) and the retained frame token, shuts the process-wide Streamline runtime down
- * (while the caller's device is still alive), and forgets the bootstrap, proxy, and session
- * bookkeeping - a later mc_dlss_bootstrap_streamline then reinitializes the runtime.
- * Neither releases direct-NGX ownership, because there is none.
- */
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);
 
 #ifdef __cplusplus
 }

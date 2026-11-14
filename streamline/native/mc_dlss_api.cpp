@@ -1,12 +1,3 @@
-/*
- * The exported ABI surface, and nothing else.
- *
- * Every function here does the same four things and delegates the rest: take the lock, check
- * the session and the caller's arguments, drive the units that own the work, and translate
- * whatever comes back into a result code. The frame-stage timestamps are stamped here too, so
- * the recorded sequence for a frame - motion, evaluation, copy - reads in one place rather
- * than being spread across the units that make it up.
- */
 #include "mc_dlss.h"
 
 #include <cstdlib>
@@ -18,6 +9,7 @@
 #include "internal/session.h"
 #include "internal/sl_dlss.h"
 #include "internal/state.h"
+#include "internal/tonemap.h"
 #include "internal/timing.h"
 
 #include <sl.h>
@@ -35,32 +27,19 @@ using namespace mc_dlss;
 namespace {
 
 constexpr char kProjectId[] = "50f68c51-c7be-49bd-a875-f73045f88d27";
-constexpr char kEngineVersion[] = "Minecraft 26.2";
-constexpr sl::Feature kStreamlineFeatures[] = {sl::kFeatureDLSS, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL};
+constexpr char kEngineVersion[] = "Minecraft 26.3";
+constexpr sl::Feature kStreamlineFeatures[] = {
+	sl::kFeatureDLSS, sl::kFeatureDLSS_RR, sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL};
 
-// The manual-hook Vulkan preferences this module always uses, shared by every bootstrap (a
-// close's slShutdown tears the runtime down and reset_state forgets the bootstrap, so the
-// next mc_dlss_bootstrap_streamline runs slInit again). `paths` is the caller-owned one-element
-// array the pointer must stay valid for the duration of slInit.
 sl::Preferences make_streamline_preferences(const std::wstring& plugin_path, const wchar_t** paths) {
     paths[0] = plugin_path.c_str();
     sl::Preferences preferences{};
     preferences.pathsToPlugins = paths;
     preferences.numPathsToPlugins = 1;
-    // Streamline writes sl.log next to the staged plugins when logging is on. The DLSS-G plugin
-    // reports every reason it declines to generate a frame there and nowhere else: the mod's own
-    // readout can only observe the outcome (status, presented count, fence), never the cause. It
-    // is the only instrument that explains a stuck fence - "Streamline presentCommon() was not
-    // observed" is what identified the unrouted present chain - so it stays reachable rather
-    // than being deleted after the investigation that needed it.
-    //
-    // Off by default: verbose logging writes a file every frame and belongs to debugging, not to
-    // a shipped session. Set MC_DLSS_SL_LOG to any value to turn it on.
     if (std::getenv("MC_DLSS_SL_LOG") != nullptr) {
         preferences.logLevel = sl::LogLevel::eVerbose;
         preferences.pathToLogsAndData = plugin_path.c_str();
     } else {
-        // A null path is how Streamline is told not to write a log file at all.
         preferences.logLevel = sl::LogLevel::eOff;
         preferences.pathToLogsAndData = nullptr;
     }
@@ -76,9 +55,6 @@ sl::Preferences make_streamline_preferences(const std::wstring& plugin_path, con
     return preferences;
 }
 
-// Whether slInit's answer means the runtime is up: eOk, or the two errors it reports when the
-// plugin manager is already initialized by a previous bootstrap (the SL runtime is loaded for
-// the whole process while this module is pinned for the JVM lifetime).
 bool streamline_initialized_after(const sl::Result slInitResult) {
     return slInitResult == sl::Result::eOk ||
            slInitResult == sl::Result::eErrorInitNotCalled ||
@@ -104,7 +80,7 @@ int32_t collect_streamline_extensions(const bool device, const uint32_t index, c
     std::vector<const char*> extensions;
     for (const sl::Feature feature : kStreamlineFeatures) {
         sl::FeatureRequirements requirements{};
-        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) return kFailure;
+        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) continue;
         const uint32_t size = device ? requirements.vkNumDeviceExtensions : requirements.vkNumInstanceExtensions;
         const char* const* values = device ? requirements.vkDeviceExtensions : requirements.vkInstanceExtensions;
         for (uint32_t i = 0; i < size; ++i) {
@@ -116,15 +92,13 @@ int32_t collect_streamline_extensions(const bool device, const uint32_t index, c
     return copy_streamline_extension(index, name, nameCapacity, count, extensions);
 }
 
-// The Vulkan 1.2/1.3 feature names the loaded features require, deduplicated across features
-// and copied through the same index/name/capacity/count copier as the extension queries.
 int32_t collect_streamline_feature_names(const bool features13, const uint32_t index, char* name,
                                          const uint32_t nameCapacity, uint32_t* count) {
     if (!g_state.streamlineInitialized) return kNotInitialized;
     std::vector<const char*> names;
     for (const sl::Feature feature : kStreamlineFeatures) {
         sl::FeatureRequirements requirements{};
-        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) return kFailure;
+        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) continue;
         const uint32_t size = features13 ? requirements.vkNumFeatures13 : requirements.vkNumFeatures12;
         const char* const* values = features13 ? requirements.vkFeatures13 : requirements.vkFeatures12;
         for (uint32_t i = 0; i < size; ++i) {
@@ -136,9 +110,6 @@ int32_t collect_streamline_feature_names(const bool features13, const uint32_t i
     return copy_streamline_extension(index, name, nameCapacity, count, names);
 }
 
-// The extra graphics/compute/optical-flow queue counts the loaded features require, summed
-// across features. The host is expected to create these queues itself before the device
-// exists; optical flow is reported but the host may skip it (DLSS-G falls back to interop).
 int32_t collect_streamline_queue_requirements(uint32_t* extra_graphics_queues,
                                               uint32_t* extra_compute_queues,
                                               uint32_t* extra_optical_flow_queues) {
@@ -152,7 +123,7 @@ int32_t collect_streamline_queue_requirements(uint32_t* extra_graphics_queues,
     uint32_t opticalFlow = 0;
     for (const sl::Feature feature : kStreamlineFeatures) {
         sl::FeatureRequirements requirements{};
-        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) return kFailure;
+        if (slGetFeatureRequirements(feature, requirements) != sl::Result::eOk) continue;
         graphics += requirements.vkNumGraphicsQueuesRequired;
         compute += requirements.vkNumComputeQueuesRequired;
         opticalFlow += requirements.vkNumOpticalFlowQueuesRequired;
@@ -163,15 +134,12 @@ int32_t collect_streamline_queue_requirements(uint32_t* extra_graphics_queues,
     return kSuccess;
 }
 
-// The recording calls all name the render dimensions they believe are configured. The value is
-// never used as a size - everything is sized from the configuration - so this is purely the
-// check that the caller has not lost track of what it configured.
 bool matches_configured_render_size(const uint32_t width, const uint32_t height) noexcept {
     return width != 0 && height != 0 && width == g_state.renderWidth &&
            height == g_state.renderHeight;
 }
 
-} // namespace
+}
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin_path) {
     try {
@@ -182,11 +150,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_bootstrap_streamline(const char* plugin
         const wchar_t* paths[1] = {pluginPath.c_str()};
         const sl::Preferences preferences = make_streamline_preferences(pluginPath, paths);
         const sl::Result slInitResult = slInit(preferences);
-        // The module is pinned for the JVM lifetime (one native-library lookup per path,
-        // Arena.global), so a fresh bridge shares the module instance an earlier bridge
-        // bootstrapped. The two errors slInit reports in that state both mean the plugin
-        // manager is already up, and every query below works against it. Anything else - a
-        // missing plugin, a bad path - still fails loudly.
         if (!streamline_initialized_after(slInitResult)) return kFailure;
         g_state.streamlineInitialized = true;
         return kSuccess;
@@ -215,21 +178,12 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_activate_vulkan_proxies(
             return kSuccess;
         }
         if (g_state.proxyDevice != 0) {
-            // A different device cannot replace the layout Streamline already hooks while the
-            // session is live: the SL runtime accepts one device per process, and the caller
-            // must not be silently re-hooking around it. The path to a fresh device is close,
-            // which shuts Streamline down while the old device is still alive and resets the
-            // proxy tuple, after which a new bootstrap and activation record the new tuple.
             return kInvalidParameter;
         }
         sl::VulkanInfo info{};
         info.device = from_uint64<VkDevice>(vk_device);
         info.instance = from_uint64<VkInstance>(vk_instance);
         info.physicalDevice = from_uint64<VkPhysicalDevice>(vk_physical_device);
-        // Streamline's queue indices are the indices at which its own queues start, so the
-        // host passes its queue COUNT in each family - the number of queues the host created
-        // for itself, after which Streamline's extra queues follow. No optical-flow family is
-        // recorded because the host creates none of its own (DLSS-G then runs in interop mode).
         info.graphicsQueueFamily = graphics_queue_family;
         info.graphicsQueueIndex = graphics_queue_index;
         info.computeQueueFamily = compute_queue_family;
@@ -258,7 +212,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_instance_extension(
     const uint32_t index, char* name, const uint32_t name_capacity,
     uint32_t* extension_count) {
     try {
-        // Fails before bootstrap: Streamline is the only source.
         return collect_streamline_extensions(false, index, name, name_capacity,
                                              extension_count);
     } catch (...) { return kFailure; }
@@ -272,6 +225,14 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_device_extension(
         if (vk_instance == 0 || vk_physical_device == 0) return kInvalidParameter;
         return collect_streamline_extensions(true, index, name, name_capacity,
                                              extension_count);
+    } catch (...) { return kFailure; }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_is_feature_supported(
+    const uint32_t feature, const uint64_t vk_physical_device) {
+    try {
+        const std::lock_guard<std::mutex> lock(g_mutex);
+        return is_feature_supported_sl(feature, vk_physical_device);
     } catch (...) { return kFailure; }
 }
 
@@ -311,7 +272,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(const uint64_t vk_instance,
         if (vk_instance == 0 || vk_physical_device == 0 || vk_device == 0) {
             return kInvalidParameter;
         }
-        // Unused: validated as well-formed paths and otherwise ignored.
         std::wstring sdkPath;
         std::wstring dataPath;
         if (!utf8_to_wide(sdk_path, sdkPath) || !utf8_to_wide(data_path, dataPath)) {
@@ -323,19 +283,11 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(const uint64_t vk_instance,
                                    g_state.physicalDeviceValue == vk_physical_device &&
                                    g_state.deviceValue == vk_device;
             if (!sameTuple) {
-                // A different device cannot replace the recorded tuple without close.
                 return kInvalidParameter;
             }
             return kSuccess;
         }
 
-        // The tuple this module records is the live one the mod already handed to
-        // slSetVulkanInfo at proxy activation: the module-owned images and motion pass
-        // allocate against it, and a session that never activated - or one whose recorded
-        // tuple disagrees - must fail rather than record a device Streamline knows nothing
-        // about. The module is pinned for the JVM lifetime, so the bootstrap state and the
-        // proxy tuple recorded by the query and activation bridges survive their closes and
-        // are exactly what this check requires.
         if (!g_state.streamlineInitialized) {
             return kNotInitialized;
         }
@@ -355,13 +307,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_initialize(const uint64_t vk_instance,
         g_state.physicalDevice = from_uint64<VkPhysicalDevice>(vk_physical_device);
         g_state.device = from_uint64<VkDevice>(vk_device);
         g_state.sessionReady = true;
-        // The READY transition's Reflex registration: one slReflexSetOptions with
-        // eLowLatency, the call the pinned Reflex guide requires even without a Reflex UI.
-        // The record's result is deliberately not latched into the transition's answer -
-        // Reflex registration must not gate the SR/FG session, exactly like the marker
-        // surface never latches it - the mc_dlss_query_reflex_options oracle reports
-        // whether it succeeded, and the human live witness reads the DLSS-G status for the
-        // runtime effect.
         record_reflex_options();
         return kSuccess;
     } catch (...) {
@@ -378,6 +323,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions(
         std::lock_guard<std::mutex> lock(g_mutex);
         return query_optimal_dimensions_sl(output_width, output_height, quality_mode,
                                            render_width, render_height);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_optimal_dimensions_rr(
+    const uint32_t output_width, const uint32_t output_height, const uint32_t quality_mode,
+    uint32_t* render_width, uint32_t* render_height) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_optimal_dimensions_rr_sl(output_width, output_height, quality_mode,
+                                              render_width, render_height);
     } catch (...) {
         return kFailure;
     }
@@ -401,18 +358,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
         g_state.renderHeight = render_height;
         g_state.qualityMode = quality_mode;
         g_state.renderPreset = render_preset;
-        // A new stored configuration invalidates the DLSS-G options recorded against the
-        // previous one: the FG tag refuses to run until mc_dlss_configure_fg re-records them
-        // for the new dimensions, so a tag can never name resources the recorded options do
-        // not describe.
         g_state.fgOptions.recorded = false;
-        // The frame eligibility belongs to the configuration too: a tag set recorded under
-        // the replaced configuration - and the retained token of the frame it was tagged
-        // under - must not satisfy a handoff for frames recorded under the new one, so the
-        // records and the token clear with the options.
         g_state.frameEligibility.invalidate();
-        // SL session gate is inside record_sr_options: bootstrap without a recorded device
-        // stores nothing and returns FAIL_NotInitialized.
         return record_sr_options();
     } catch (...) {
         return kFailure;
@@ -422,9 +369,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure(const uint32_t output_width,
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_configure_fg(const uint32_t num_back_buffers) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
-        // The record reads the stored configuration, so the same ready gates as the SR
-        // options hold: a session that never bootstrapped answers FAIL_NotInitialized, and a
-        // configuration that never stored dimensions answers FAIL_InvalidParameter.
         return record_fg_options(num_back_buffers);
     } catch (...) {
         return kFailure;
@@ -491,9 +435,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_release_images(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         release_images();
-        // A handoff reads the frame's tags against the module's images; with the images
-        // gone, those tag records name resources that no longer exist, so the eligibility
-        // they armed clears with them rather than surviving a later re-acquire.
         g_state.frameEligibility.invalidate();
         return kSuccess;
     } catch (...) {
@@ -513,9 +454,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_images(McDlssImage* depth,
         if (depth == nullptr || hudless == nullptr || ui == nullptr || motion == nullptr) {
             return kInvalidParameter;
         }
-        // The copies exist exactly when the module's images exist at the configured size -
-        // acquire_images creates all six together - so the same gate as the recording calls
-        // and the FG tag names what the query reports.
         if (!images_match_configuration()) {
             return kNotInitialized;
         }
@@ -566,8 +504,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_tagged_frame_indexes(
         if (sr_frame_index == nullptr || fg_frame_index == nullptr) {
             return kInvalidParameter;
         }
-        // Equality of two never-recorded slots is meaningless, so the query refuses until
-        // both tag calls have actually recorded an index.
         if (!g_state.frameEligibility.tagIndexes(sr_frame_index, fg_frame_index)) {
             return kNotInitialized;
         }
@@ -600,55 +536,14 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(const McDlssMotionInfo* in
             !valid_image(info->depth)) {
             return kInvalidParameter;
         }
-        // The motion image is the destination, so there is nothing to write into until it
-        // has been acquired for the configuration this call names.
         if (!images_match_configuration()) {
             return kNotInitialized;
         }
 
-        // On the camera-only route the motion pass is the first thing this module records in a
-        // frame, so the frame's timing opens here and everything the chain costs falls inside
-        // it. The velocity route's motion stage is the sentinel fill, which opens the chain at
-        // mc_dlss_fill_velocity instead; this path stays exactly as it is.
         const VkCommandBuffer recordingBuffer =
             from_uint64<VkCommandBuffer>(info->command_buffer);
         begin_frame_timing(recordingBuffer);
         const int32_t result = record_motion(*info);
-        if (result != kSuccess) {
-            return result;
-        }
-        mark_frame_timing(recordingBuffer, 1);
-        return kSuccess;
-    } catch (...) {
-        return kFailure;
-    }
-}
-
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_fill_velocity(const McDlssFillVelocityInfo* info) {
-    try {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_state.sessionReady) {
-            return kNotInitialized;
-        }
-        if (info == nullptr || info->command_buffer == 0 || info->reprojection == nullptr ||
-            !matches_configured_render_size(info->render_width, info->render_height) ||
-            !valid_image(info->depth) || !valid_image(info->velocity)) {
-            return kInvalidParameter;
-        }
-        // The destination is the module's own motion image - the sole Streamline motion
-        // source - so there is nothing to merge into until it has been acquired for the
-        // configuration this call names, exactly like the compute writer.
-        if (!images_match_configuration()) {
-            return kNotInitialized;
-        }
-
-        // On the velocity route the merge is the first thing this module records in a frame,
-        // so the frame's timing opens here and everything the dispatch costs falls inside it:
-        // the motion stage is measured work like the compute writer's, never a skipped stage.
-        const VkCommandBuffer recordingBuffer =
-            from_uint64<VkCommandBuffer>(info->command_buffer);
-        begin_frame_timing(recordingBuffer);
-        const int32_t result = record_velocity_fill(*info);
         if (result != kSuccess) {
             return result;
         }
@@ -671,8 +566,6 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
             !valid_image(info->color) || !valid_image(info->depth)) {
             return kInvalidParameter;
         }
-        // The motion image is read and the output image is written, so both have to exist at
-        // the size this frame is being recorded for.
         if (!images_match_configuration()) {
             return kNotInitialized;
         }
@@ -680,35 +573,114 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_evaluate(const McDlssEvaluateInfo* info
         const VkCommandBuffer recordingBuffer =
             from_uint64<VkCommandBuffer>(info->command_buffer);
 
-        // Inputs into a read state and the output into a storage state, recorded on the
-        // engine's own command buffer immediately before the evaluation reads them.
         const uint64_t motionImage = to_uint64(g_state.motionImage.image);
-        const uint64_t outputImage = to_uint64(g_state.outputImage.image);
+        const uint64_t evaluationOutput = to_uint64(
+            g_state.rrArmed ? g_state.rrOutputImage.image : g_state.outputImage.image);
         const VkImageLayout colorEntryLayout = current_layout_of(info->color.image);
         const VkImageLayout depthEntryLayout = current_layout_of(info->depth.image);
-        record_layout_transition(recordingBuffer, from_uint64<VkImage>(info->color.image),
-                                 image_range_of(false), colorEntryLayout, kDlssInputLayout);
-        record_layout_transition(recordingBuffer, from_uint64<VkImage>(info->depth.image),
-                                 image_range_of(true), depthEntryLayout, kDlssInputLayout);
-        record_layout_transition(recordingBuffer, g_state.motionImage.image, image_range_of(false),
-                                 current_layout_of(motionImage), kDlssInputLayout);
+
+        constexpr VkPipelineStageFlags kEvalStages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        constexpr VkAccessFlags kEvalAccess = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+
+        ImageTransitionDesc preDescs[11]{};
+        uint32_t preCount = 0;
+        auto add_pre_transition = [&](const ImageTransitionDesc& desc) {
+            if (desc.image == VK_NULL_HANDLE) return;
+            for (uint32_t i = 0; i < preCount; ++i) {
+                if (preDescs[i].image == desc.image) return;
+            }
+            preDescs[preCount++] = desc;
+        };
+
+        const VkImage colorImg = from_uint64<VkImage>(info->color.image);
+        const VkImage depthImg = from_uint64<VkImage>(info->depth.image);
+        const VkImage motionImg = g_state.motionImage.image;
+        const VkImage outputImg = g_state.rrArmed ? g_state.rrOutputImage.image : g_state.outputImage.image;
+
+        add_pre_transition({colorImg, image_range_of(false), colorEntryLayout, kDlssInputLayout,
+                            kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+        add_pre_transition({depthImg, depth_range_of(info->depth), depthEntryLayout, kDlssInputLayout,
+                            kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+        add_pre_transition({motionImg, image_range_of(false), current_layout_of(motionImage), kDlssInputLayout,
+                            kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+        add_pre_transition({outputImg, image_range_of(false), current_layout_of(evaluationOutput), kDlssOutputLayout,
+                            kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+
+        VkImageLayout rrAlbedoEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout rrSpecularAlbedoEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout rrNormalEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout rrHitDistanceEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageLayout rrSpecularMotionEntry = VK_IMAGE_LAYOUT_UNDEFINED;
+        const VkImageLayout rrBiasEntry = current_layout_of(g_state.rrBiasCurrentColor.image);
+        if (g_state.rrArmed) {
+            rrAlbedoEntry = current_layout_of(g_state.rrDiffuseAlbedo.image);
+            rrSpecularAlbedoEntry = current_layout_of(g_state.rrSpecularAlbedo.image);
+            rrNormalEntry = current_layout_of(g_state.rrNormalRoughness.image);
+            add_pre_transition({from_uint64<VkImage>(g_state.rrDiffuseAlbedo.image),
+                                image_range_of(false), rrAlbedoEntry, kDlssInputLayout,
+                                kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            add_pre_transition({from_uint64<VkImage>(g_state.rrSpecularAlbedo.image),
+                                image_range_of(false), rrSpecularAlbedoEntry, kDlssInputLayout,
+                                kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            add_pre_transition({from_uint64<VkImage>(g_state.rrNormalRoughness.image),
+                                image_range_of(false), rrNormalEntry, kDlssInputLayout,
+                                kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            if (valid_image(g_state.rrSpecularMotion) && g_state.rrSpecularMotion.image != 0) {
+                rrSpecularMotionEntry = current_layout_of(g_state.rrSpecularMotion.image);
+                add_pre_transition({from_uint64<VkImage>(g_state.rrSpecularMotion.image),
+                                    image_range_of(false), rrSpecularMotionEntry, kDlssInputLayout,
+                                    kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            } else if (valid_image(g_state.rrSpecularHitDistance) && g_state.rrSpecularHitDistance.image != 0) {
+                rrHitDistanceEntry = current_layout_of(g_state.rrSpecularHitDistance.image);
+                add_pre_transition({from_uint64<VkImage>(g_state.rrSpecularHitDistance.image),
+                                    image_range_of(false), rrHitDistanceEntry, kDlssInputLayout,
+                                    kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            }
+        }
+
+        add_pre_transition(rr_bias_current_color_transition(rrBiasEntry, false));
+        record_batched_transitions(recordingBuffer, preDescs, preCount);
         note_layout_after_transition(motionImage, kDlssInputLayout);
-        record_layout_transition(recordingBuffer, g_state.outputImage.image, image_range_of(false),
-                                 current_layout_of(outputImage), kDlssOutputLayout);
-        note_layout_after_transition(outputImage, kDlssOutputLayout);
+        note_layout_after_transition(evaluationOutput, kDlssOutputLayout);
 
         const int32_t evaluateResult = record_sr_evaluation(*info, recordingBuffer);
 
-        // The engine's images go back where Minecraft expects to find them, in the same
-        // recording, whether or not the evaluation succeeded: the transitions above were
-        // recorded either way, and a command buffer that is submitted with them half-undone
-        // hands the renderer an image in a layout its next pass does not expect. The two
-        // native images keep the layouts DLSS restores them to, which is where the next
-        // frame's transitions start from.
-        record_layout_transition(recordingBuffer, from_uint64<VkImage>(info->color.image),
-                                 image_range_of(false), kDlssInputLayout, colorEntryLayout);
-        record_layout_transition(recordingBuffer, from_uint64<VkImage>(info->depth.image),
-                                 image_range_of(true), kDlssInputLayout, depthEntryLayout);
+        ImageTransitionDesc postDescs[9]{};
+        uint32_t postCount = 0;
+        auto add_post_transition = [&](const ImageTransitionDesc& desc) {
+            if (desc.image == VK_NULL_HANDLE) return;
+            for (uint32_t i = 0; i < postCount; ++i) {
+                if (postDescs[i].image == desc.image) return;
+            }
+            postDescs[postCount++] = desc;
+        };
+
+        add_post_transition({colorImg, image_range_of(false), kDlssInputLayout, colorEntryLayout,
+                             kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+        add_post_transition({depthImg, depth_range_of(info->depth), kDlssInputLayout, depthEntryLayout,
+                             kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+        if (g_state.rrArmed) {
+            add_post_transition({from_uint64<VkImage>(g_state.rrDiffuseAlbedo.image),
+                                 image_range_of(false), kDlssInputLayout, rrAlbedoEntry,
+                                 kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            add_post_transition({from_uint64<VkImage>(g_state.rrSpecularAlbedo.image),
+                                 image_range_of(false), kDlssInputLayout, rrSpecularAlbedoEntry,
+                                 kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            add_post_transition({from_uint64<VkImage>(g_state.rrNormalRoughness.image),
+                                 image_range_of(false), kDlssInputLayout, rrNormalEntry,
+                                 kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            if (valid_image(g_state.rrSpecularMotion) && g_state.rrSpecularMotion.image != 0) {
+                add_post_transition({from_uint64<VkImage>(g_state.rrSpecularMotion.image),
+                                     image_range_of(false), kDlssInputLayout, rrSpecularMotionEntry,
+                                     kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            } else if (valid_image(g_state.rrSpecularHitDistance) && g_state.rrSpecularHitDistance.image != 0) {
+                add_post_transition({from_uint64<VkImage>(g_state.rrSpecularHitDistance.image),
+                                     image_range_of(false), kDlssInputLayout, rrHitDistanceEntry,
+                                     kEvalStages, kEvalStages, kEvalAccess, kEvalAccess});
+            }
+        }
+        add_post_transition(rr_bias_current_color_transition(rrBiasEntry, true));
+        record_batched_transitions(recordingBuffer, postDescs, postCount);
         mark_frame_timing(recordingBuffer, 2);
         return evaluateResult;
     } catch (...) {
@@ -723,6 +695,18 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_tag_sr_resources(const McDlssTagInfo* i
             return kInvalidParameter;
         }
         return tag_sr_resources(*info);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_prepare_rr(const McDlssRrPrepareInfo* info) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (info == nullptr) {
+            return kInvalidParameter;
+        }
+        return prepare_rr(*info);
     } catch (...) {
         return kFailure;
     }
@@ -841,6 +825,26 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_options(uint32_t* mode,
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_reflex_mode(const uint32_t mode) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return record_reflex_mode(mode);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_reflex_state(
+    uint32_t* low_latency_available,
+    uint32_t* latency_report_available) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_reflex_state(low_latency_available, latency_report_available);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_camera_constants(McDlssCameraConstants* out) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -893,6 +897,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_state(
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_vsync_support(uint32_t* vsync_supported) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return query_fg_vsync_support(vsync_supported);
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo* info) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -903,45 +916,56 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
             info->width != g_state.outputWidth || info->height != g_state.outputHeight) {
             return kInvalidParameter;
         }
-        // Nothing to present until the output image exists at the size this call names.
-        if (g_state.outputImage.image == VK_NULL_HANDLE ||
+        if (!images_match_configuration() ||
             g_state.imagesOutputWidth != info->width ||
             g_state.imagesOutputHeight != info->height) {
             return kNotInitialized;
         }
-        // Copying an image onto itself would be a caller that passed this module's own
-        // output back as the engine target, and vkCmdCopyImage forbids the overlap.
-        if (info->image == to_uint64(g_state.outputImage.image)) {
+        if (info->image == to_uint64(g_state.outputImage.image) ||
+            info->image == to_uint64(g_state.rrOutputImage.image)) {
             return kInvalidParameter;
         }
 
         const VkCommandBuffer recordingBuffer =
             from_uint64<VkCommandBuffer>(info->command_buffer);
+        if (g_state.rrArmed) {
+            const bool direct = info->image_view != 0 &&
+                info->image_format == static_cast<uint32_t>(VK_FORMAT_R8G8B8A8_UNORM) &&
+                (info->image_usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0 &&
+                info->image != info->reflection.image;
+            const McDlssImage toneMapOutput = direct
+                ? McDlssImage{info->image_view, info->image, info->image_format}
+                : McDlssImage{to_uint64(g_state.outputImage.view), to_uint64(g_state.outputImage.image),
+                              static_cast<uint32_t>(kOutputFormat)};
+            const int32_t toneMapResult = record_tone_map(recordingBuffer, g_state.exposure,
+                                                         info->reflection, toneMapOutput);
+            if (toneMapResult != kSuccess) {
+                return toneMapResult;
+            }
+            if (direct) {
+                mark_frame_timing(recordingBuffer, 3);
+                return kSuccess;
+            }
+        }
         const VkImage destination = from_uint64<VkImage>(info->image);
-        // The destination is the engine's output-sized colour target - a single-level,
-        // single-layer 2D image - so the copy is one mip, one layer, at the same extent, and
-        // the range is the same constant the input transitions use.
         const VkImageSubresourceRange destinationRange = image_range_of(false);
         const VkImageSubresourceRange outputRange = image_range_of(false);
         const VkImageLayout destinationEntryLayout = current_layout_of(info->image);
         const VkImageLayout outputEntryLayout =
             current_layout_of(to_uint64(g_state.outputImage.image));
 
-        // This transition is also what orders the copy behind the evaluation that wrote the
-        // output image: it is a full memory dependency, and it always emits, because the layout
-        // DLSS leaves the output in and TRANSFER_SRC_OPTIMAL cannot be the same layout. The
-        // motion pass, whose entry and exit layouts *can* coincide, owns an explicit barrier
-        // for exactly the case this one cannot reach.
-        record_layout_transition(recordingBuffer, g_state.outputImage.image, outputRange,
-                                 outputEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        const ImageTransitionDesc preCopy[2] = {
+            {g_state.outputImage.image, outputRange, outputEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT},
+            {destination, destinationRange, destinationEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+             VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT}
+        };
+        record_batched_transitions(recordingBuffer, preCopy, 2);
         note_layout_after_transition(to_uint64(g_state.outputImage.image),
                                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        record_layout_transition(recordingBuffer, destination, destinationRange,
-                                 destinationEntryLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-        // One mip, one layer, same extent: the destination is the engine's output-sized target
-        // and the output image was allocated at exactly those dimensions, so this is a copy
-        // rather than a scale. A blit would silently accept a mismatch this call rejects.
         VkImageCopy region{};
         region.srcSubresource = VkImageSubresourceLayers{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         region.dstSubresource = VkImageSubresourceLayers{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -950,13 +974,15 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_present_output(const McDlssPresentInfo*
                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-        // Both images go back where their owners expect them, in the same recording: the
-        // engine's target to the layout it arrived in, and the output image to the layout the
-        // next evaluation's transitions will start from.
-        record_layout_transition(recordingBuffer, destination, destinationRange,
-                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, destinationEntryLayout);
-        record_layout_transition(recordingBuffer, g_state.outputImage.image, outputRange,
-                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, outputEntryLayout);
+        const ImageTransitionDesc postCopy[2] = {
+            {destination, destinationRange, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, destinationEntryLayout,
+             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT},
+            {g_state.outputImage.image, outputRange, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, outputEntryLayout,
+             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+             VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT}
+        };
+        record_batched_transitions(recordingBuffer, postCopy, 2);
         note_layout_after_transition(to_uint64(g_state.outputImage.image), outputEntryLayout);
         mark_frame_timing(recordingBuffer, 3);
         return kSuccess;
@@ -975,20 +1001,50 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_motion_probe(
     }
 }
 
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_exposure(const float exposure) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const float newExposure = exposure > 0.0f ? exposure : 1.0f;
+        if (g_state.exposure != newExposure) {
+            g_state.exposure = newExposure;
+            if (g_state.rrArmed) {
+                record_rr_options();
+            }
+        }
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_tonemap_operator(const int32_t op) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_state.toneMapOperator = op >= 0 ? op : 0;
+        return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void) {
     try {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_state.sessionReady) {
             return kNotInitialized;
         }
-        // The images belong to the configuration, so a reset drops them with it rather than
-        // leaving orphans the next acquire would have to recognise. The retained Streamline
-        // frame token and the SR/FG tag records belong to the same never-presented frame, so
-        // they go with them: the next tag must obtain a fresh token, and a handoff must not
-        // accept a tag set recorded before the reset once the images re-acquire.
         release_images();
         g_state.frameEligibility.invalidate();
         return kSuccess;
+    } catch (...) {
+        return kFailure;
+    }
+}
+
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_shutdown_streamline(void) {
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return shutdown_state();
     } catch (...) {
         return kFailure;
     }

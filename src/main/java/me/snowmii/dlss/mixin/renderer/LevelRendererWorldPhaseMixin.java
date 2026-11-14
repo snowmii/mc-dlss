@@ -1,38 +1,37 @@
 package me.snowmii.dlss.mixin.renderer;
 
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.ProjectionType;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import me.snowmii.dlss.client.ClientRuntime;
-import me.snowmii.dlss.stress.StressRuntime;
 import me.snowmii.dlss.render.WorldPhase;
-import net.minecraft.client.DeltaTracker;
+import me.snowmii.dlss.render.ui.UiPhase;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
-import org.joml.Matrix4fc;
 import org.joml.Vector4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * World phase = {@code LevelRenderer.render}. Hand/item draw after this method, so they stay
- * full-res. Read main at HEAD before the redirect is active.
- */
 @Mixin(LevelRenderer.class)
 public class LevelRendererWorldPhaseMixin {
 	@Inject(method = "render", at = @At("HEAD"))
 	private void mcDlssBeginWorldPhase(
 		final GraphicsResourceAllocator resourceAllocator,
-		final DeltaTracker deltaTracker,
 		final boolean renderOutline,
 		final CameraRenderState cameraState,
-		final Matrix4fc modelViewMatrix,
 		final GpuBufferSlice terrainFog,
 		final Vector4f fogColor,
 		final boolean shouldRenderSky,
+		final boolean unusedTrailingFlag,
 		final CallbackInfo info
 	) {
 		final WorldPhase phase = ClientRuntime.renderLoop().worldPhase();
@@ -44,31 +43,56 @@ public class LevelRendererWorldPhaseMixin {
 		phase.begin(!cameraState.isPanoramicMode, mainTarget);
 	}
 
-	@Inject(method = "render", at = @At("TAIL"))
-	private void mcDlssRenderStressPass(
-		final GraphicsResourceAllocator resourceAllocator,
-		final DeltaTracker deltaTracker,
-		final boolean renderOutline,
-		final CameraRenderState cameraState,
-		final Matrix4fc modelViewMatrix,
-		final GpuBufferSlice terrainFog,
-		final Vector4f fogColor,
-		final boolean shouldRenderSky,
+	@Inject(method = "executeSeeThrough", at = @At("HEAD"), cancellable = true)
+	private void mcDlssExecuteSeeThroughNative(
+		final FeatureRenderDispatcher.PreparedFrame preparedFrame,
+		final RenderTarget target,
 		final CallbackInfo info
 	) {
-		// Still inside the world phase - the low-resolution scene target on a DLSS frame, the real
-		// main target on a vanilla one - so the stress pass pays its cost at whatever resolution
-		// the world was actually rendered at, which is the comparison it exists to make, and DLSS
-		// upscales the finished scene (stress pass included) rather than a pre-effect one. The
-		// phase is handed along only to supply the velocity-MRT write context: null in exactly
-		// the sessions without a phase, so vanilla and camera-only frames keep the one-target
-		// stress pass and the stress pass itself still renders on every frame. The phase closes
-		// here, before GameRenderer submits hand/item features, so they use vanilla's full-size
-		// target and unjittered HUD projection.
-		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
-		StressRuntime.render(Minecraft.getInstance().gameRenderer.mainRenderTarget(), phase);
-		if (phase != null) {
-			phase.end();
+		final WorldPhase worldPhase = ClientRuntime.active().activeWorldPhase();
+		if (worldPhase == null || !worldPhase.isOpen()) {
+			return;
 		}
+		final RenderTarget mainTarget = worldPhase.getDestinationTarget();
+		if (mainTarget == null) {
+			return;
+		}
+		final UiPhase uiPhase = ClientRuntime.renderLoop().uiPhase();
+		if (uiPhase == null) {
+			return;
+		}
+		final RenderTarget uiTarget = uiPhase.beginSeeThrough(mainTarget);
+		if (uiTarget == null) {
+			return;
+		}
+
+		try {
+			final RenderPassDescriptor descriptor = RenderPassDescriptor.builder(() -> "See through features (DLSS Native)")
+				.withColorAttachment(uiTarget.getColorTextureView())
+				.build();
+			final CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+			try (final RenderPass pass = encoder.createRenderPass(descriptor)) {
+				RenderSystem.backupProjectionMatrix();
+				final GpuBufferSlice unjittered = worldPhase.getUnjitteredProjection();
+				if (unjittered != null) {
+					RenderSystem.setProjectionMatrix(unjittered, ProjectionType.PERSPECTIVE);
+				}
+				try {
+					RenderSystem.bindDefaultUniforms(pass);
+					preparedFrame.executeSeeThrough(pass);
+				} finally {
+					RenderSystem.restoreProjectionMatrix();
+				}
+			}
+		} finally {
+			uiPhase.endSeeThrough();
+		}
+		info.cancel();
+	}
+
+	@Inject(method = "render", at = @At("TAIL"))
+	private void mcDlssEndWorldPhase(final CallbackInfo info) {
+		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
+		if (phase != null) phase.end();
 	}
 }

@@ -8,9 +8,6 @@ import net.minecraft.client.gui.components.debug.DebugEntryFps;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
-/**
- * Appends presented FPS next to vanilla's F3 fps line while frame generation is composing.
- */
 @Mixin(DebugEntryFps.class)
 public class DebugEntryFpsMixin {
 	@ModifyExpressionValue(

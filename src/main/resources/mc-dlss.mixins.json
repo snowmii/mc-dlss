@@ -3,36 +3,26 @@
   "package": "me.snowmii.dlss.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "VulkanBackendExtensionMixin",
+    "VulkanDeviceMixin",
     "DebugEntryFpsMixin",
     "DebugScreenEntriesInvoker",
-    "renderer.LevelExtractorCaptureMixin",
     "MinecraftMixin",
-    "renderer.ModelFeatureRendererMotionMixin",
-    "renderer.ModelFeatureSubmitMotionMixin",
-    "renderer.MovingBlockFeatureRendererMotionMixin",
-    "OptionInstanceEnumRgssMixin",
     "OptionInstanceVideoLockMixin",
-    "renderer.PreparedRenderTypeMotionMixin",
     "VideoSettingsScreenMixin",
     "VideoSettingsVsyncLockMixin",
-    "blaze3d.VulkanBackendExtensionMixin",
-    "blaze3d.VulkanChunkSectionsToRenderMixin",
-    "blaze3d.VulkanDeviceMixin",
     "blaze3d.VulkanGpuSurfaceMixin",
+    "blaze3d.VulkanGpuTextureMixin",
     "blaze3d.VulkanInstanceExtensionMixin",
-    "renderer.BlockEntityRenderDispatcherMotionMixin",
-    "renderer.CloudRendererMotionMixin",
-    "renderer.EntityRenderDispatcherMotionMixin",
     "renderer.GameRendererMixin",
     "renderer.GuiRendererMixin",
     "renderer.LevelRendererWorldPhaseMixin",
-    "renderer.RenderTypeFeatureRendererMotionMixin",
-    "renderer.StagedVertexBufferMotionMixin"
+    "renderer.SubmitNodeCollectionMixin"
   ],
   "injectors": {
     "defaultRequire": 1
   },
   "overwrites": {
     "requireAnnotations": true
-	}
+  }
 }

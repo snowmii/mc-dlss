@@ -3,14 +3,18 @@ package me.snowmii.dlss.mixin.blaze3d;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import com.mojang.blaze3d.systems.GpuSurface;
-import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
+import com.mojang.renderpearl.api.device.GpuSurface;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSurface;
 import me.snowmii.dlss.client.ClientRuntime;
 import me.snowmii.dlss.client.RuntimeControls;
 import me.snowmii.dlss.readout.SessionReadout;
 import me.snowmii.dlss.render.WorldPhase;
+import me.snowmii.dlss.streamline.WindowsSurfaceHelper;
 import me.snowmii.streamline.StreamlineVulkanProxies;
+import org.lwjgl.sdl.SDLProperties;
+import org.lwjgl.sdl.SDLVideo;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.system.Platform;
 import org.lwjgl.system.Struct;
 import org.lwjgl.vulkan.*;
 import org.spongepowered.asm.mixin.Mixin;
@@ -22,23 +26,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 
-/**
- * All {@code VulkanGpuSurface} intercepts in one mixin.
- *
- * Acquire/present spans: bracketing injections around {@code acquireNextTexture} and
- * {@code present} so the world phase can track when the surface is blocked on swapchain image
- * availability (FG hold-back stalls here, invisible in FPS).
- *
- * Swapchain image count: raises {@code minImageCount} to the DLSS-G back-buffer requirement
- * while FG is enabled; falls back to vanilla {@code max(3, caps.min)} otherwise.
- *
- * Vulkan proxy routing: wraps {@code vkCreateSwapchainKHR}, {@code vkGetSwapchainImagesKHR},
- * {@code vkAcquireNextImageKHR}, {@code vkQueuePresentKHR}, and {@code vkDestroySwapchainKHR}
- * so every call goes through Streamline's manual-hooking proxies. Streamline is initialized
- * with {@code eUseManualHooking}: no global intercept; the host must forward these calls or
- * {@code presentCommon()} never fires and FG reports {@code presented=0}. Wrappers forward to
- * the driver when the proxy is idle.
- */
 @Mixin(VulkanGpuSurface.class)
 public class VulkanGpuSurfaceMixin {
 	@Inject(method = "acquireNextTexture()V", at = @At("HEAD"))
@@ -66,7 +53,7 @@ public class VulkanGpuSurfaceMixin {
 	}
 
 
-	@Inject(method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V", at = @At("HEAD"))
+	@Inject(method = "configure(Lcom/mojang/renderpearl/api/device/GpuSurface$Configuration;)V", at = @At("HEAD"))
 	private void mcDlssReportConfiguration(final GpuSurface.Configuration config, final CallbackInfo ci) {
 		final RuntimeControls controls = ClientRuntime.active().activeControls();
 		SessionReadout.emit(
@@ -78,7 +65,7 @@ public class VulkanGpuSurfaceMixin {
 	}
 
 	@ModifyExpressionValue(
-		method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V",
+		method = "configure(Lcom/mojang/renderpearl/api/device/GpuSurface$Configuration;)V",
 		at = @At(
 			value = "INVOKE",
 			target = "Ljava/lang/Math;max(II)I"
@@ -94,7 +81,41 @@ public class VulkanGpuSurfaceMixin {
 
 
 	@WrapOperation(
-		method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V",
+		method = "<init>(Lcom/mojang/renderpearl/backend/vulkan/VulkanDevice;J)V",
+		at = @At(
+			value = "INVOKE",
+			target = "Lorg/lwjgl/sdl/SDLVulkan;SDL_Vulkan_CreateSurface(JLorg/lwjgl/vulkan/VkInstance;Lorg/lwjgl/vulkan/VkAllocationCallbacks;Ljava/nio/LongBuffer;)Z"
+		)
+	)
+	private boolean mcDlssCreateSurface(
+		final long windowHandle,
+		final VkInstance instance,
+		final VkAllocationCallbacks pAllocator,
+		final LongBuffer pSurface,
+		final Operation<Boolean> original
+	) {
+		if (!StreamlineVulkanProxies.available() || Platform.get() != Platform.WINDOWS) {
+			return original.call(windowHandle, instance, pAllocator, pSurface);
+		}
+		final int props = SDLVideo.SDL_GetWindowProperties(windowHandle);
+		final long hwnd = SDLProperties.SDL_GetPointerProperty(props, SDLVideo.SDL_PROP_WINDOW_WIN32_HWND_POINTER, 0L);
+		if (hwnd == 0L) {
+			return original.call(windowHandle, instance, pAllocator, pSurface);
+		}
+		final int result = WindowsSurfaceHelper.createSurface(
+			instance.address(),
+			hwnd,
+			address(pAllocator),
+			address(pSurface)
+		);
+		if (result == VK10.VK_SUCCESS) {
+			return true;
+		}
+		return original.call(windowHandle, instance, pAllocator, pSurface);
+	}
+
+	@WrapOperation(
+		method = "configure(Lcom/mojang/renderpearl/api/device/GpuSurface$Configuration;)V",
 		at = @At(
 			value = "INVOKE",
 			target = "Lorg/lwjgl/vulkan/KHRSwapchain;vkCreateSwapchainKHR(Lorg/lwjgl/vulkan/VkDevice;Lorg/lwjgl/vulkan/VkSwapchainCreateInfoKHR;Lorg/lwjgl/vulkan/VkAllocationCallbacks;Ljava/nio/LongBuffer;)I"
@@ -110,13 +131,15 @@ public class VulkanGpuSurfaceMixin {
 		if (!StreamlineVulkanProxies.available()) {
 			return original.call(device, pCreateInfo, pAllocator, pSwapchain);
 		}
+		// Streamline creates views for intercepted swapchain images; transfer-only images cannot have views.
+		pCreateInfo.imageUsage(pCreateInfo.imageUsage() | VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 		return StreamlineVulkanProxies.createSwapchain(
 			device.address(), pCreateInfo.address(), address(pAllocator), address(pSwapchain)
 		);
 	}
 
 	@WrapOperation(
-		method = "configure(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V",
+		method = "configure(Lcom/mojang/renderpearl/api/device/GpuSurface$Configuration;)V",
 		at = @At(
 			value = "INVOKE",
 			target = "Lorg/lwjgl/vulkan/KHRSwapchain;vkGetSwapchainImagesKHR(Lorg/lwjgl/vulkan/VkDevice;JLjava/nio/IntBuffer;Ljava/nio/LongBuffer;)I"
@@ -134,10 +157,6 @@ public class VulkanGpuSurfaceMixin {
 			device.address(), swapchain, address(pSwapchainImageCount), address(pSwapchainImages)
 		)
 			: original.call(device, swapchain, pSwapchainImageCount, pSwapchainImages);
-		// DIAGNOSTIC: the count query (images == null) answers how many images the driver actually
-		// created, which is the number that decides whether the pacer can hold its generated frames
-		// back or the next acquire blocks instead. The declared back-buffer count is only a request:
-		// the surface capabilities can cap it, and nothing else reports what survived.
 		if (pSwapchainImages == null && pSwapchainImageCount != null) {
 			SessionReadout.emit("DLSS swapchain images: created=" + pSwapchainImageCount.get(0));
 		}
@@ -202,6 +221,26 @@ public class VulkanGpuSurfaceMixin {
 			return;
 		}
 		StreamlineVulkanProxies.destroySwapchain(device.address(), swapchain, address(pAllocator));
+	}
+
+	@WrapOperation(
+		method = "close()V",
+		at = @At(
+			value = "INVOKE",
+			target = "Lorg/lwjgl/vulkan/KHRSurface;vkDestroySurfaceKHR(Lorg/lwjgl/vulkan/VkInstance;JLorg/lwjgl/vulkan/VkAllocationCallbacks;)V"
+		)
+	)
+	private void mcDlssDestroySurface(
+		final VkInstance instance,
+		final long surface,
+		final VkAllocationCallbacks pAllocator,
+		final Operation<Void> original
+	) {
+		if (!StreamlineVulkanProxies.available()) {
+			original.call(instance, surface, pAllocator);
+			return;
+		}
+		StreamlineVulkanProxies.destroySurface(instance.address(), surface, address(pAllocator));
 	}
 
 	@Unique

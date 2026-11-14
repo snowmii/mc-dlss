@@ -4,7 +4,7 @@ import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.SRMode
 import me.snowmii.streamline.Dimensions
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -125,8 +125,6 @@ class WorldPhaseTest {
 		val offset = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget)
 
 		assertFalse(phase.isOpen)
-		// The world target override must stay off until begin, or the hand, item, and screen
-		// effects that render after the world would see the low-resolution target too.
 		assertNull(phase.worldTargetOverride)
 		assertEquals(render, offset!!.renderDimensions)
 	}
@@ -141,7 +139,6 @@ class WorldPhaseTest {
 
 		assertTrue(phase.isOpen)
 		assertSame(worldTarget, phase.worldTargetOverride)
-		// A second route would have advanced the jitter sequence past the prepared phase.
 		assertEquals(prepared, runtime.activeJitter)
 	}
 
@@ -169,7 +166,6 @@ class WorldPhaseTest {
 		val phase = phase(runtime)
 
 		val abandoned = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget)
-		// No begin: renderLevel threw between the projection upload and LevelRenderer.render.
 		val second = phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget)
 		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 
@@ -184,7 +180,6 @@ class WorldPhaseTest {
 		val phase = phase(readyRuntime())
 
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
-		// No end(): LevelRenderer.render threw, so its tail never ran.
 		val worldTarget = phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
 
@@ -206,11 +201,7 @@ class WorldPhaseTest {
 		assertSame(worldTarget, evaluatedTarget)
 		assertEquals(jitter, evaluatedJitter)
 		assertTrue(evaluatedMotion.reset, "the first frame of a session has no history to reproject against")
-		// The camera travels as the evaluation callback's own parameter: the phase snapshots the
-		// seam's matrices when prepare stores the sample, and the evaluation reads the snapshot,
-		// never the phase's field, which close clears before the evaluation runs.
 		assertEquals(preparedCamera, evaluatedCameras.single())
-		// DLSS reads the scene the world rendered; presenting first would hand it the frame after.
 		assertEquals(0, presentedWhenEvaluated)
 		assertEquals(1, presented.size)
 	}
@@ -224,8 +215,6 @@ class WorldPhaseTest {
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
 
-		// The upscaled frame is already in the main target; the low-resolution blit would paint
-		// over it with exactly what DLSS was there to replace.
 		assertSame(mainTarget, evaluatedDestinations.single())
 		assertTrue(presented.isEmpty())
 	}
@@ -251,9 +240,6 @@ class WorldPhaseTest {
 
 		phase.prepare(normalInWorldFrame = true, mainTarget = mainTarget, camera = preparedCamera)
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
-		// Minecraft reuses the sample's matrices across frames: the seam's originals are
-		// rewritten in place once the renderer moves on. The snapshot taken by prepare is what
-		// the evaluation must read, not these live values.
 		preparedCamera.projection.m30(99f).m31(99f).m32(99f)
 		preparedCamera.viewRotation.m10(9f).m11(9f).m12(9f)
 		phase.end()
@@ -276,7 +262,6 @@ class WorldPhaseTest {
 	fun `an eligible frame the projection seam never sampled is not evaluated`() {
 		val phase = phase(readyRuntime())
 
-		// No camera means no motion, and a frame DLSS cannot reproject is worse than one it skips.
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
 
@@ -297,7 +282,7 @@ class WorldPhaseTest {
 		runtime = runtime,
 		present = { scene, main -> presented += scene to main },
 		onWorldTargetChanged = { targetChanges++ },
-		evaluateFrame = { rendered, destination, jitter, motion, _, _, camera ->
+		evaluateFrame = { rendered, destination, jitter, motion, camera ->
 			presentedWhenEvaluated = presented.size
 			evaluated += Triple(rendered, jitter, motion)
 			evaluatedCameras += camera
@@ -335,7 +320,7 @@ class WorldPhaseTest {
 		),
 	)
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		var releases = 0
 
 		init {

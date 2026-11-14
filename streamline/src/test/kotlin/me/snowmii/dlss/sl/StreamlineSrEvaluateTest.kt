@@ -2,7 +2,7 @@ package me.snowmii.dlss.sl
 
 import java.nio.file.Path
 import me.snowmii.dlss.NativeBridge
-import me.snowmii.streamline.ImageBinding
+import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.SrTagRequest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -12,21 +12,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
-/**
- * DLSS SR evaluates through Streamline on the caller's command buffer.
- *
- * The live frame drives the whole SL path on a headless device: bootstrap, proxy activation,
- * initialize, optimal-dimension query, configure, module-image acquisition, then per frame
- * engine colour/depth tag (slGetNewFrameToken + slSetTagForFrame) and evaluation
- * (slSetConstants + slEvaluateFeature) on one allocated command buffer that must submit
- * clean under the Khronos validation layer. The plugin transitions tagged resources from the
- * declared states; a stale declaration surfaces there.
- *
- * The live scenario lives in [SrLiveSession], shared with [SrOnStreamlineTest]. This class
- * asserts the evaluate seam and the frame ordering around it. One test method (one fork):
- * close-path slShutdown makes the fork's exit clean; an unclean exit leaves the plugin
- * manager initialized, so the next fork's slSetVulkanInfo answers eErrorInvalidIntegration.
- */
 @NativeBridge
 class StreamlineSrEvaluateTest {
 
@@ -38,8 +23,6 @@ class StreamlineSrEvaluateTest {
 
 			val outputWidth = 2560
 			val outputHeight = 1440
-			// MaxQuality = 2 (NVSDK_NGX_PerfQuality_Value), which the bridge maps onto
-			// sl::DLSSMode::eMaxQuality; preset K = 11 lands on the qualityPreset field.
 			val dimensions = bridge.queryOptimalDimensions(outputWidth, outputHeight, 2)
 			assertTrue(
 				dimensions.width in 1..outputWidth,
@@ -62,15 +45,10 @@ class StreamlineSrEvaluateTest {
 				"configure must record the SL options for the stored configuration",
 			)
 
-			// The evaluation reads the module's motion image and writes the output image, so
-			// both have to exist at the configured sizes before the first evaluate.
 			val images = bridge.acquireImages()
 
 			assertNotNull(images, "module images must be acquired before the evaluation")
 
-			// The engine's render-sized colour and depth, standing in for Minecraft's main
-			// target and depth texture; the fixture leaves them in VK_IMAGE_LAYOUT_GENERAL,
-			// which is where Minecraft rests its own textures.
 			val color = fixture.createEngineImage(
 				dimensions.width,
 				dimensions.height,
@@ -91,9 +69,6 @@ class StreamlineSrEvaluateTest {
 				ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
 			)
 
-			// Frame one: the frame's resources tag and then evaluate on ONE buffer, the way
-			// FrameEvaluation records them. The evaluation must succeed and the buffer must
-			// submit clean.
 			val frame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
 				StreamlineSession.SUCCESS_RESULT,
@@ -110,8 +85,6 @@ class StreamlineSrEvaluateTest {
 			bridge.presentStart()
 			bridge.presentEnd()
 
-			// Frame two: the same images with accumulated history rather than a reset, starting
-			// from the layouts the first frame left behind.
 			val secondFrame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
 				StreamlineSession.SUCCESS_RESULT,

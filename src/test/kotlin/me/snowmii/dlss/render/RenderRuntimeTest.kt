@@ -9,7 +9,7 @@ import me.snowmii.dlss.DlssFrameRoute
 import me.snowmii.dlss.DlssNativeStage
 import me.snowmii.dlss.DlssNativeFailure
 
-import com.mojang.blaze3d.GpuFormat
+import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -18,13 +18,34 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class RenderRuntimeTest {
+	@Test
+	fun `reference accumulation bypasses DLSS without changing the user mode and resumes cleanly`() {
+		val previous = me.snowmii.dlss.api.RayReconstruction.referenceMode
+		val session = session(enabled = true)
+		val runtime = runtime(session) { markReady(session); render }
+		try {
+			me.snowmii.dlss.api.RayReconstruction.referenceMode = false
+			assertTrue(runtime.beginWorldPhase(true, output) != null)
+			runtime.endWorldPhase()
+			me.snowmii.dlss.api.RayReconstruction.referenceMode = true
+			assertNull(runtime.beginWorldPhase(true, output))
+			assertNull(runtime.activeJitter)
+			assertNull(runtime.worldRenderTarget)
+			assertTrue(runtime.dlssEnabled)
+			me.snowmii.dlss.api.RayReconstruction.referenceMode = false
+			assertTrue(runtime.beginWorldPhase(true, output) != null)
+			assertEquals(1, startupCalls)
+		} finally {
+			me.snowmii.dlss.api.RayReconstruction.referenceMode = previous
+		}
+	}
+
 	private val output = Dimensions(2560, 1440)
 	private val render = Dimensions(1707, 960)
 
 	private val allocated = mutableListOf<HeadlessRenderTarget>()
 	private val released = mutableListOf<HeadlessRenderTarget>()
 
-	/** Ordered record of every device stall and every GPU-object free: "quiesce" then "free:target". */
 	private val freeLog = mutableListOf<String>()
 	private var startupCalls = 0
 
@@ -180,8 +201,6 @@ class RenderRuntimeTest {
 
 		runtime.close()
 
-		// The teardown wait plus the primitive's guarded wait, then the free: the ordering the
-		// in-flight-frame invariant requires, and the wait cannot be skipped by close's guard.
 		assertEquals(listOf("quiesce", "quiesce", "free:target"), freeLog)
 		assertEquals(DlssSessionState.CLOSED, session.state)
 	}
@@ -237,7 +256,7 @@ class RenderRuntimeTest {
 		),
 	)
 
-	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", true, GpuFormat.RGBA8_UNORM) {
+	private class HeadlessRenderTarget(width: Int, height: Int) : RenderTarget("fake", GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT) {
 		init {
 			this.width = width
 			this.height = height
