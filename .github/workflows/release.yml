@@ -1,0 +1,213 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release (e.g. v2.0.0)
+        required: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  VULKAN_SDK_VERSION: 1.4.357.0
+  VULKAN_SDK: C:\VulkanSDK\1.4.357.0
+
+jobs:
+  build:
+    name: Build Release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Locate Visual Studio Build Tools
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
+          if (-not $vsPath) { throw "Visual Studio C++ Build Tools not found" }
+          $vsDevCmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
+          if (-not (Test-Path $vsDevCmd)) { throw "VsDevCmd.bat not found at $vsDevCmd" }
+          "VSDEVCMD=$vsDevCmd" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Cache Vulkan SDK
+        id: vulkan-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VULKAN_SDK }}
+          key: windows-vulkan-sdk-${{ env.VULKAN_SDK_VERSION }}
+
+      - name: Install Vulkan SDK
+        if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $url = "https://sdk.lunarg.com/sdk/download/${{ env.VULKAN_SDK_VERSION }}/windows/vulkansdk-windows-X64-${{ env.VULKAN_SDK_VERSION }}.exe"
+          $installer = Join-Path $env:RUNNER_TEMP "vulkansdk.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $proc = Start-Process -FilePath $installer -Wait -PassThru -ArgumentList @(
+            "--root", $env:VULKAN_SDK,
+            "--accept-licenses",
+            "--default-answer",
+            "--confirm-command",
+            "install"
+          )
+          Remove-Item $installer -Force
+          if ($proc.ExitCode -ne 0) { throw "Vulkan SDK installer exited with $($proc.ExitCode)" }
+          if (-not (Test-Path (Join-Path $env:VULKAN_SDK "Bin\glslc.exe"))) {
+            throw "glslc.exe missing after Vulkan SDK install"
+          }
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+
+      - name: Build & Verify
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $releaseVersion = $env:TAG -replace '^v', ''
+          .\gradlew.bat check build "-Pmod_version=$releaseVersion" --stacktrace
+
+      - name: Collect jars
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Get-ChildItem build\libs\*.jar |
+            Where-Object { $_.Name -notmatch '-(sources|dev|sources-dev)\.jar$' } |
+            Copy-Item -Destination dist\
+          Get-ChildItem dist
+          if (-not (Get-ChildItem dist\*.jar)) { throw "No release jar found" }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: mc-dlss
+          path: dist/*.jar
+          if-no-files-found: error
+
+  github-release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Build changelog from commits
+        id: changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          prev=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            range="$prev..$TAG"
+            echo "Previous tag: $prev"
+          else
+            range="$TAG"
+            echo "No previous tag, using full history"
+          fi
+
+          commits=$(git log --no-merges --pretty=format:'%h|%an|%ae|%s' "$range" | awk -F'|' '
+            NF < 4 { next }
+            {
+              sha = $1
+              who = tolower($2 " " $3)
+              subject = $4
+              for (i = 5; i <= NF; i++) subject = subject "|" $i
+              if (who ~ /\[bot\]/) next
+              if (who ~ /(^|[^a-z])(dependabot|renovate|github-actions|actions-user|codefactor|imgbot|allcontributors|pre-commit(-ci)?|snyk|mergify|weblate|crowdin|semantic-release|release-please)([^a-z]|$)/) next
+              if (who ~ /(noreply@github\.com|users\.noreply\.github\.com)$/ && who ~ /bot/) next
+              key = tolower(subject)
+              if (seen[key]++) next
+              print subject "\t" sha
+            }
+          ')
+
+          body=''
+
+          section() {
+            matched=$(printf '%s\n' "$commits" | grep -E "^($1)(\([^)]*\))?!?: " || true)
+            [ -z "$matched" ] && return
+            body="$body### $2"$'\n\n'
+            while IFS=$'\t' read -r subject sha; do
+              body="$body- ${subject#*: } ($sha)"$'\n'
+            done <<< "$matched"
+            body="$body"$'\n'
+          }
+
+          section 'feat|feature' 'Features'
+          section 'fix|bugfix'    'Bug Fixes'
+          section 'perf'          'Performance'
+          section 'refactor'      'Refactoring'
+          section 'docs'          'Documentation'
+          section 'test'          'Tests'
+          section 'build|ci'      'Build & CI'
+          section 'style|chore'   'Chores'
+
+          other=$(printf '%s\n' "$commits" \
+            | grep -vE '^(feat|feature|fix|bugfix|perf|refactor|docs|test|build|ci|style|chore)(\([^)]*\))?!?: ' || true)
+          if [ -n "$other" ]; then
+            body="$body### Other"$'\n\n'
+            while IFS=$'\t' read -r subject sha; do
+              body="$body- $subject ($sha)"$'\n'
+            done <<< "$other"
+            body="$body"$'\n'
+          fi
+
+          if [ -n "$prev" ]; then
+            body="$body**Full Changelog**: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$prev...$TAG"$'\n'
+          fi
+
+          printf '%s' "$body"
+          {
+            echo 'body<<CHANGELOG_EOF'
+            printf '%s' "$body"
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download jars
+        uses: actions/download-artifact@v8
+        with:
+          name: mc-dlss
+          path: dist
+
+      - name: Checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum *.jar > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.TAG }}
+          files: |
+            dist/*.jar
+            dist/SHA256SUMS.txt
+          body: ${{ steps.changelog.outputs.body }}
+          generate_release_notes: false
+          fail_on_unmatched_files: true

@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, '26.3' ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  VULKAN_SDK_VERSION: 1.4.357.0
+  VULKAN_SDK: C:\VulkanSDK\1.4.357.0
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Locate Visual Studio Build Tools
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
+          if (-not $vsPath) { throw "Visual Studio C++ Build Tools not found" }
+          $vsDevCmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
+          if (-not (Test-Path $vsDevCmd)) { throw "VsDevCmd.bat not found at $vsDevCmd" }
+          "VSDEVCMD=$vsDevCmd" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Cache Vulkan SDK
+        id: vulkan-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VULKAN_SDK }}
+          key: windows-vulkan-sdk-${{ env.VULKAN_SDK_VERSION }}
+
+      - name: Install Vulkan SDK
+        if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $url = "https://sdk.lunarg.com/sdk/download/${{ env.VULKAN_SDK_VERSION }}/windows/vulkansdk-windows-X64-${{ env.VULKAN_SDK_VERSION }}.exe"
+          $installer = Join-Path $env:RUNNER_TEMP "vulkansdk.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $proc = Start-Process -FilePath $installer -Wait -PassThru -ArgumentList @(
+            "--root", $env:VULKAN_SDK,
+            "--accept-licenses",
+            "--default-answer",
+            "--confirm-command",
+            "install"
+          )
+          Remove-Item $installer -Force
+          if ($proc.ExitCode -ne 0) { throw "Vulkan SDK installer exited with $($proc.ExitCode)" }
+          if (-not (Test-Path (Join-Path $env:VULKAN_SDK "Bin\glslc.exe"))) {
+            throw "glslc.exe missing after Vulkan SDK install"
+          }
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Build & Verify
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .\gradlew.bat check build --stacktrace
+
+      - name: Collect jars
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Get-ChildItem build\libs\*.jar |
+            Where-Object { $_.Name -notmatch '-(sources|dev|sources-dev)\.jar$' } |
+            Copy-Item -Destination dist\
+          Get-ChildItem dist
+          if (-not (Get-ChildItem dist\*.jar)) { throw "No output jar found" }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: mc-dlss
+          path: dist/*.jar
+          if-no-files-found: error
+          retention-days: 14
