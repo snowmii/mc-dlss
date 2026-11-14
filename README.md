@@ -11,6 +11,12 @@ that don't yet exist, etc.).
 
 All settings are configured in-game via **Options → Video Settings → DLSS Settings…** (or through Sodium's Video Settings if installed).
 
+## What's new in 2.0.0
+
+- Updated for Minecraft 26.3 (Vulkan backend) and NVIDIA Streamline SDK 2.14.16.
+- Added the `me.snowmii.dlss.api` Ray Reconstruction (`kFeatureDLSS_RR`) interface, DLSS 4.5 model presets (`D`, `E`, `F`), HDR tone-map operators, optional reflection layer, and disocclusion hint (`biasCurrentColor`).
+- Switched to camera-only motion vectors for 26.3 and removed legacy MRT velocity writers and keybinds.
+
 ## Build from source
 
 Windows only. Install these first:
@@ -30,56 +36,39 @@ And run:
 
 ## Ray Reconstruction API
 
-External renderers and shader mods can drive DLSS Ray Reconstruction (`kFeatureDLSS_RR`) through the public `me.snowmii.dlss.api` package.
+External renderers drive DLSS Ray Reconstruction (`kFeatureDLSS_RR`) through `me.snowmii.dlss.api`.
 
-### Lifecycle & Frame Hook
+- Register on `BeforeDlssEvaluation.EVENT` (runs at `WorldPhase.end` before DLSS evaluation).
+- Set `RayReconstruction.enabled = true` and assign `RayReconstruction.guides` (`Supplier<RayReconstructionGuides?>`). If disabled or returning `null`, `mc-dlss` falls back to Super Resolution.
+- RR queries `slDLSSDGetOptimalSettings` and extends Halton jitter to at least 32 phases.
 
-1. Register a listener on `BeforeDlssEvaluation.EVENT` (`net.fabricmc.fabric.api.event.Event<Runnable>`). It fires at the end of the world phase (`WorldPhase.end`), after world geometry finishes and immediately before DLSS evaluates the frame.
-2. When `RayReconstruction.enabled` is `true` and the frame has a valid camera sample, `mc-dlss` invokes `RayReconstruction.guides.get()`.
-   - When guides are supplied, `mc-dlss` runs `kFeatureDLSS_RR` against `noisyColor` (linear HDR) and tone-maps the RR `R16G16B16A16_SFLOAT` output into the `R8G8B8A8_UNORM` destination.
-   - If `RayReconstruction.enabled` is `false`, `guides` returns `null`, `camera` is `null`, or RR preparation/tagging fails, `mc-dlss` falls back to Super Resolution on the engine's scene color and depth without latching vanilla fallback. Switching between SR and RR automatically resets DLSS history.
-   - While `RayReconstruction.enabled` is `true`, the Halton jitter sequence uses at least 32 phases and optimal render dimensions are queried via `slDLSSDGetOptimalSettings`.
+Controls on `RayReconstruction`:
 
-### `RayReconstruction` Controls
+- `modelPreset`: `DEFAULT`, `D`, `E`, `F` (applied on next prepare).
+- `referenceMode`: runs native resolution without touching user settings.
+- `exposure`: linear scale applied before RR and tone mapping.
+- `tonemapOperator`: `0` ACES (default), `1` Reinhard-Jodie, `2` Extended Reinhard, `3` Uncharted 2, `4` Heji, `5` Khronos PBR Neutral, `6` AgX, `7` linear clamp.
+- `requestHistoryReset()`: one-shot history reset on the next frame.
 
-- `enabled: Boolean` (`false` by default) — Master toggle (also exposed in **DLSS Settings…** and persisted in `config/mc-dlss/config.json`).
-- `guides: Supplier<RayReconstructionGuides?>?` (`null` by default) — Per-frame guide provider polled on the render thread during `evaluateFrame`.
-- `modelPreset: RRModelPreset` (`DEFAULT`, `D`, `E`, `F`) — RR model preset (`sl::DLSSDPreset`), applied on the next armed prepare.
-- `referenceMode: Boolean` (`false` by default) — Requests native-resolution vanilla routing without modifying user settings.
-- `exposure: Float` (`1.0f` by default) — Linear exposure scale (`> 0`) passed to `sl::DLSSDOptions.exposureScale` and the HDR→SDR tone-map pass.
-- `tonemapOperator: Int` (`0` by default) — Compute tone-mapping operator applied to the RR HDR output before sRGB conversion and 8-bit dither:
-  - `0`: Highlight-compressed ACES (default)
-  - `1`: Reinhard-Jodie
-  - `2`: Extended Reinhard (white point `3.5`)
-  - `3`: Uncharted 2 / Hable
-  - `4`: Heji / Hable ALU
-  - `5`: Khronos PBR Neutral
-  - `6`: AgX
-  - `7`: Linear clamp
-- `requestHistoryReset()` — Requests a one-shot DLSS history reset on the next evaluated frame.
+`RayReconstructionGuides` binds raw handles via `ImageBinding(view, image, format)` (helpers: `imageBindingOf`, `rayReconstructionGuidesOf`; set `biasCurrentColor` directly on the data class):
 
-### `RayReconstructionGuides` & Image Contract
+| Field | Extent | Format / Notes |
+| --- | --- | --- |
+| `noisyColor` | Render | Required. Linear HDR `ScalingInputColor`. |
+| `diffuseAlbedo` | Render | Required. Diffuse albedo. |
+| `specularAlbedo` | Render | Required. Specular albedo. |
+| `normalRoughness` | Render | Required. Packed normal + roughness. |
+| `specularHitDistance` | Render | Optional. Ignored if `specularMotion` is set. |
+| `resetHistory` | — | Optional. One-frame history reset. |
+| `depth` | Render | Optional. Reversed-Z (`1.0` near, `0.0` far) override for RR camera motion & `Depth`. |
+| `specularMotion` | Render | Optional. `R16G16_SFLOAT` / `R32G32_SFLOAT` reflection NDC motion. |
+| `reflection` | Output | Optional. Linear HDR layer composited before tone mapping. |
+| `biasCurrentColor` | Render | Optional. `R8_UNORM` / `R16_SFLOAT` / `R8G8B8A8_UNORM` binary history-rejection hint. |
 
-`ImageBinding(view, image, format)` carries raw Vulkan `VkImageView`, `VkImage`, and `VkFormat` handles. Kotlin helpers `imageBindingOf(GpuTextureView?)` and `rayReconstructionGuidesOf(...)` are available in `me.snowmii.dlss.api` (note: `biasCurrentColor` is currently set on `RayReconstructionGuides` directly).
+Invariants:
 
-| Field | Required | Extent | Format / Encoding | Notes |
-| --- | --- | --- | --- | --- |
-| `noisyColor` | Yes | Render | Linear HDR color | Tagged as `ScalingInputColor`. |
-| `diffuseAlbedo` | Yes | Render | Color | Tagged as `Albedo`. |
-| `specularAlbedo` | Yes | Render | Color | Tagged as `SpecularAlbedo`. |
-| `normalRoughness` | Yes | Render | Packed normal + roughness | Tagged as `NormalRoughness` (`ePacked`). |
-| `specularHitDistance` | No | Render | Color | Tagged as `SpecularHitDistance` when `specularMotion` is omitted. |
-| `resetHistory` | No | — | `Boolean` | Per-frame history reset (`false` by default). |
-| `depth` | No | Render | Reversed-Z (`1.0` near, `0.0` far) | Replaces scene depth for RR camera motion and `Depth` tag (e.g., virtual mirror depth); `VK_FORMAT_R32_SFLOAT` uses color aspect, depth formats use depth aspect. DLSS-G still uses physical scene depth. |
-| `specularMotion` | No | Render | `R16G16_SFLOAT` or `R32G32_SFLOAT` | Reflection motion in the same NDC units as the main motion field (`mvecScale = (0.5, 0.5)`). Takes precedence over `specularHitDistance`. |
-| `reflection` | No | Output | Linear HDR color | Fresnel-weighted reflection layer sampled and added after RR and before tone mapping (only on frames that evaluated with RR). |
-| `biasCurrentColor` | No | Render | `R8_UNORM`, `R16_SFLOAT`, or `R8G8B8A8_UNORM` | Binary R history-rejection hint (`0` retains history, `1` biases current color), tagged as `BiasCurrentColorHint` and `DisocclusionMask` (not `ResponsivityMask`). `null` clears the hint without a whole-frame reset; SDK support is model-dependent. |
-
-**Ownership & Layout Invariants**
-
-- Every image must be a single-level, single-layer 2D Vulkan image resting in `VK_IMAGE_LAYOUT_GENERAL`. `mc-dlss` transitions inputs to `SHADER_READ_ONLY_OPTIMAL` for evaluation/tone mapping and restores them to `VK_IMAGE_LAYOUT_GENERAL` on the same command buffer.
-- The producer owns image contents, dimensions, and lifetime through present (`eValidUntilPresent`).
-- `mc-dlss` supplies `worldToCameraView` and `cameraViewToWorld` (row-major `sl::float4x4`), camera motion vectors, and Halton jitter automatically from the active camera sample.
+- Images must be single-level, single-layer 2D textures resting in `VK_IMAGE_LAYOUT_GENERAL` and remain valid through present (`eValidUntilPresent`). `mc-dlss` restores `VK_IMAGE_LAYOUT_GENERAL` on the same command buffer.
+- `mc-dlss` supplies camera matrices, camera motion vectors, and Halton jitter automatically.
 
 ## License
 
