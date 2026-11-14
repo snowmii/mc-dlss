@@ -13,9 +13,9 @@ All settings are configured in-game via **Options → Video Settings → DLSS Se
 
 ## What's new in 2.0.0
 
-- Updated for Minecraft 26.3 (Vulkan backend) and NVIDIA Streamline SDK 2.14.16.
-- Added the `me.snowmii.dlss.api` Ray Reconstruction (`kFeatureDLSS_RR`) interface, DLSS 4.5 model presets (`D`, `E`, `F`), HDR tone-map operators, optional reflection layer, and disocclusion hint (`biasCurrentColor`).
-- Switched to camera-only motion vectors for 26.3 and removed legacy MRT velocity writers and keybinds.
+- Updated for Minecraft 26.3.
+- Added DLSS 4.5 Ray Reconstruction, selectable model presets (`D`, `E`, `F`), and HDR tone mapping for compatible rendering mods.
+- Streamlined the **DLSS Settings…** menu and debug readout, and removed keybinds.
 
 ## Build from source
 
