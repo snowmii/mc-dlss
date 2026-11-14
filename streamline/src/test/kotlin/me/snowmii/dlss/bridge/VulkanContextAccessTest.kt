@@ -9,15 +9,6 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * Proves [VulkanContext] captures a real, non-zero Vulkan instance,
- * device, and graphics-queue from live handles and produces a non-zero recording
- * [org.lwjgl.vulkan.VkCommandBuffer] through its injected command-buffer source.
- *
- * The test drives the exact production seams ([VulkanContext.fromNativeHandles],
- * [VulkanContext.allocateRecordingCommandBuffer], [VulkanContextRegistry]) against a headless
- * Vulkan context it builds itself - no Minecraft instance, device, or window needed.
- */
 @NativeBridge
 class VulkanContextAccessTest {
 

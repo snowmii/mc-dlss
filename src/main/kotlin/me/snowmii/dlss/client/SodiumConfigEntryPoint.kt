@@ -5,7 +5,6 @@ import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder
 import net.minecraft.client.Minecraft
 import net.minecraft.network.chat.Component
 
-/** Native Sodium page linking to the shared DLSS settings screen. */
 class SodiumConfigEntryPoint : ConfigEntryPoint {
 	override fun registerConfigLate(builder: ConfigBuilder) {
 		builder.registerOwnModOptions().addPage(

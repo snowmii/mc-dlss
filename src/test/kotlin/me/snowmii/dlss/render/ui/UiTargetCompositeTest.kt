@@ -36,11 +36,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.lwjgl.PointerBuffer
 
-/**
- * Transparent full-resolution RGBA8 UI target with depth, and a premultiplied UI-over-hudless
- * composite that writes its destination. Lifetime and both passes are driven off the render
- * thread.
- */
 class UiTargetCompositeTest {
 	private val outputWidth = 2560
 	private val outputHeight = 1440
@@ -173,7 +168,6 @@ class UiTargetCompositeTest {
 		assertTrue(recording.pipelines.isEmpty(), "no pass is recorded when a source has no color view")
 	}
 
-	/** Render target with fake GPU textures and views, so lifetime and passes are testable off the render thread. */
 	private class HeadlessRenderTarget(
 		width: Int,
 		height: Int,
@@ -198,7 +192,6 @@ class UiTargetCompositeTest {
 		override fun destroyBuffers() = Unit
 	}
 
-	/** 26.3: [GpuTexture]/[GpuTextureView]/[GpuSampler] are plain interfaces; fakes implement them directly. */
 	private class FakeTexture(private val format: GpuFormat, private val fakeWidth: Int, private val fakeHeight: Int) : GpuTexture {
 		override fun getWidth(mipLevel: Int) = fakeWidth
 		override fun getHeight(mipLevel: Int) = fakeHeight
@@ -245,11 +238,6 @@ class UiTargetCompositeTest {
 		fun encoder() = RecordingEncoder(this)
 	}
 
-	/**
-	 * 26.3: [CommandEncoder] and [RenderPass] are plain interfaces (no concrete class left to
-	 * wrap with a backend), so the recording encoder and pass implement those interfaces
-	 * directly instead of driving a real `RenderPass` through a backend split.
-	 */
 	private class RecordingEncoder(private val recording: Recording) : CommandEncoder {
 		override fun submit() = Unit
 
@@ -303,7 +291,6 @@ class UiTargetCompositeTest {
 		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
 	}
 
-	/** Records the pass-body calls the UI composite makes: the bound pipeline, uniforms, and draws. */
 	private class RecordingPass(private val recording: Recording) : RenderPass {
 		override fun close() {
 			recording.passCloses++

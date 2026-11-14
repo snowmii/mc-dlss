@@ -8,7 +8,6 @@ import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.FgMultiplier
-import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.StreamlineSession
 import me.snowmii.streamline.PresentTarget
@@ -29,11 +28,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * The cycle walks from 2x to the device ceiling and wraps. Each accepted change records one
- * native multiplier and invalidates the surface once; refusals leave multiplier, reconfigure
- * count, and readout unchanged.
- */
 class FgMultiplierToggleTest {
 
 	@Test
@@ -83,7 +77,6 @@ class FgMultiplierToggleTest {
 		assertEquals(0, invalidations, "a refused record must invalidate nothing")
 		assertTrue(announced.last().contains("at 2x"), "the readout must report the multiplier still in effect: ${announced.last()}")
 
-		// The refused value is not retained as a change to repeat: the next cycle asks again.
 		controls.cycleFgMultiplier()
 		assertEquals(1, harness.runtime.fgMultiplier, "a refused value must never stick")
 		assertEquals(0, invalidations, "no refusal invalidates anything")
@@ -141,8 +134,6 @@ class FgMultiplierToggleTest {
 		assertTrue(adapter.setFgMultiplier(2), "a READY session records the multiplier")
 		assertEquals(listOf(2), native.setValues, "the record passes numFramesToGenerate through to the bridge")
 
-		// A refused record is invisible to the session: the cycle is a live control, not a
-		// session stage, so the SR session must stay READY for the next cycle to try again.
 		native.setResult = REFUSED
 		assertFalse(adapter.setFgMultiplier(3), "a refused record must answer false")
 		assertEquals(DlssSessionState.READY, session.state, "a refused record must not latch the SR session")
@@ -188,12 +179,6 @@ class FgMultiplierToggleTest {
 
 	private val announced = mutableListOf<String>()
 
-	/**
-	 * The fake bridge half of the cycle: answers the stored multiplier and the device
-	 * ceiling, and records every multiplier set call - succeeding by default and storing
-	 * the value like the native record does, so consecutive cycles walk against the truth
-	 * rather than a frozen answer.
-	 */
 	private class MultiplierNative(
 		private var current: Int = 1,
 		private val max: Int = 3,
@@ -240,7 +225,6 @@ class FgMultiplierToggleTest {
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
 		override fun frameTimings(): FrameTimings = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
-		override fun fillVelocity(request: FillVelocityRequest): Int = error("unexpected fillVelocity")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int = error("unexpected evaluate")
 		override fun tagSrResources(request: SrTagRequest): Int = error("unexpected tagSrResources")
@@ -282,7 +266,6 @@ class FgMultiplierToggleTest {
 		override fun waitDeviceIdle(): Int = error("unexpected waitDeviceIdle")
 		override fun frameTimings(): FrameTimings = error("unexpected frameTimings")
 		override fun writeMotion(request: MotionRequest): Int = error("unexpected writeMotion")
-		override fun fillVelocity(request: FillVelocityRequest): Int = error("unexpected fillVelocity")
 		override fun presentOutput(target: PresentTarget): Int = error("unexpected presentOutput")
 		override fun evaluateSuperResolution(request: EvaluationRequest): Int = error("unexpected evaluate")
 		override fun tagSrResources(request: SrTagRequest): Int = error("unexpected tagSrResources")
@@ -303,7 +286,6 @@ class FgMultiplierToggleTest {
 	}
 
 	private companion object {
-		/** Any non-success native result: the record refused without naming which refusal. */
 		const val REFUSED = StreamlineSession.SUCCESS_RESULT + 1
 	}
 }

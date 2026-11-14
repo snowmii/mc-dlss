@@ -10,15 +10,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * Pre-creation Streamline extension requirements through the real compiled DLL and Java 25 FFM.
- *
- * Queries the exact Streamline-required Vulkan instance and device extension names before the
- * application's instance/device are created, so the bootstrap mixins can enable them. Instance
- * query needs no Vulkan objects; device query needs a live instance + physical device. The
- * bridge bootstraps Streamline first, as the production seams do: a query before bootstrap is
- * refused.
- */
 @NativeBridge
 class DlssExtensionRequirementsTest {
 	@Test

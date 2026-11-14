@@ -2,7 +2,6 @@
 
 using namespace mc_dlss;
 
-// Test-only DLL linked with the production state, common, and tone-map object files.
 extern "C" __declspec(dllexport) void tone_map_setup(uint64_t device, uint64_t hdrView,
                                                      uint64_t hdrImage, uint32_t width, uint32_t height) {
     g_state.device = from_uint64<VkDevice>(device);

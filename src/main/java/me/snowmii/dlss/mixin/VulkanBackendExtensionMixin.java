@@ -20,7 +20,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import java.util.HashSet;
 import java.util.Set;
 
-/** Streamline's extensions depend on the selected GPU and live Vulkan instance. */
 @Mixin(VulkanBackend.class)
 public abstract class VulkanBackendExtensionMixin {
     @WrapOperation(
@@ -46,7 +45,6 @@ public abstract class VulkanBackendExtensionMixin {
         return original.call(DeviceExtensionRules.normalize(merged), physicalDevice);
     }
 
-	/** Streamline needs extra graphics/compute queues; Minecraft only creates its own. */
 	@WrapOperation(
 		method = "createDevice(Lcom/mojang/renderpearl/backend/vulkan/init/FeatureSet;Lcom/mojang/renderpearl/backend/vulkan/VulkanPhysicalDevice;)Lorg/lwjgl/vulkan/VkDevice;",
 		at = @At(

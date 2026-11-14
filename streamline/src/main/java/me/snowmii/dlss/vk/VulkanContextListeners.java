@@ -29,7 +29,6 @@ public final class VulkanContextListeners {
 		}
 	}
 
-	/** Test seam. */
 	public static synchronized void clear() {
 		LISTENERS.clear();
 	}

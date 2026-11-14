@@ -21,7 +21,7 @@ bool find_memory_type(const uint32_t typeBits, const VkMemoryPropertyFlags prope
     return false;
 }
 
-} // namespace
+}
 
 void destroy_owned_image(DlssOwnedImage& owned) noexcept {
     if (g_state.device != VK_NULL_HANDLE) {
@@ -53,9 +53,6 @@ int32_t create_owned_image(const uint32_t width, const uint32_t height, const Vk
     imageInfo.usage = usage;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    // Every handle is created into a local and published to `owned` only once the call
-    // succeeded: Vulkan leaves the output undefined on failure, and a half-written
-    // struct would hand the destroy path a garbage handle to free.
     VkImage image = VK_NULL_HANDLE;
     if (vkCreateImage(g_state.device, &imageInfo, nullptr, &image) != VK_SUCCESS) {
         return kFailure;
@@ -102,8 +99,6 @@ int32_t create_owned_image(const uint32_t width, const uint32_t height, const Vk
 }
 
 int32_t acquire_images() noexcept {
-    // Dimensions come from the last configure and nowhere else, so there is no
-    // second source of truth to disagree with the feature's own size.
     if (!valid_dimensions(g_state.outputWidth, g_state.outputHeight, g_state.renderWidth,
                           g_state.renderHeight)) {
         return kInvalidParameter;
@@ -121,12 +116,6 @@ int32_t acquire_images() noexcept {
     }
 
     release_images();
-    // Motion is written by the engine and read by DLSS; output is written by
-    // DLSS and copied into Minecraft's target. The FG copies are written by
-    // the y-inverting blits (depth, HUD-less, UI) and the motion dispatches'
-    // flipped write, and read only by the DLSS-G tag/plugin: transfer in plus
-    // sample out, with storage on the motion copy for the compute flip and
-    // transfer-out everywhere so the orientation test can stage the content back.
     int32_t result = create_owned_image(
         g_state.renderWidth, g_state.renderHeight, kMotionFormat,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -148,8 +137,6 @@ int32_t acquire_images() noexcept {
         release_images();
         return result;
     }
-    // RR requires an HDR output while Minecraft's existing output scratch remains RGBA8 for
-    // the final copy. This image is sampled by the native ACES/sRGB compute pass.
     result = create_owned_image(
         g_state.outputWidth, g_state.outputHeight, kRrOutputFormat,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -224,9 +211,6 @@ void release_images() noexcept {
     destroy_owned_image(g_state.fgUiImage);
     destroy_owned_image(g_state.fgMotionImage);
     invalidate_tone_map_bindings();
-    // A destroyed view's handle value can be handed back out by the next creation, so the
-    // motion pass must forget what its descriptors describe rather than compare handles
-    // against a view that no longer exists.
     invalidate_motion_bindings();
     g_state.imagesRenderWidth = 0;
     g_state.imagesRenderHeight = 0;
@@ -234,4 +218,4 @@ void release_images() noexcept {
     g_state.imagesOutputHeight = 0;
 }
 
-} // namespace mc_dlss
+}

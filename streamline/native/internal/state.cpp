@@ -46,7 +46,6 @@ sl::ResourceTag make_rr_bias_current_color_tag(sl::Resource& resource) noexcept 
         range.layerCount = 1;
         resource.next = &range;
     }
-    // SDK Resource::flags has no default initializer, including on the empty clear path.
     resource.flags = 0;
     const sl::Extent extent{0, 0, g_state.renderWidth, g_state.renderHeight};
     return sl::ResourceTag(&resource, sl::kBufferTypeBiasCurrentColorHint,
@@ -156,19 +155,10 @@ void FrameEligibility::recordCopies(const uint32_t frameIndex) noexcept {
 }
 
 void FrameEligibility::invalidate() noexcept {
-    // The retained token belongs to a frame whose records are being dropped with it: the next
-    // tag must obtain a fresh token rather than advance the frame under a stale one. Both tag
-    // records and their indexes clear together - a handoff reads the two sides as one set, so
-    // one side can never outlive the other's invalidation - and the copy record clears with
-    // the token it was recorded under, so the next frame's first FG tag rebuilds the copies
-    // rather than skipping them as the stale frame's second call.
     *this = FrameEligibility{};
 }
 
 void MarkerLog::record(const uint32_t type, const sl::FrameToken* frameToken) noexcept {
-    // The type indexes the count array, so a value outside the log's vocabulary would write
-    // past it. Every caller passes one of its own enum values; the guard is here because
-    // nothing else stands between an enum widened without its capacity and a stray write.
     if (type >= kMarkerTypeCapacity) {
         return;
     }
@@ -184,10 +174,6 @@ int32_t MarkerLog::read(uint32_t* outTypeCounts, const uint32_t typeCount,
     if (outTypeCounts == nullptr || outEventCount == nullptr || outEvents == nullptr) {
         return kInvalidParameter;
     }
-    // The oracle answers only once this session actually emitted a marker: before that there
-    // is no event any marker was emitted under, and the refusal is exactly what makes
-    // "refused or pre-ready calls emit no markers" observable to the test - a call that leaked
-    // markers would populate the log before the test expects it to.
     if (eventCount == 0) {
         return kNotInitialized;
     }
@@ -195,9 +181,6 @@ int32_t MarkerLog::read(uint32_t* outTypeCounts, const uint32_t typeCount,
         outTypeCounts[i] = typeCounts[i];
     }
     *outEventCount = eventCount;
-    // The ring holds the most recent min(eventCount, kMarkerLogSize) events, oldest first:
-    // the slot at eventCount % kMarkerLogSize holds the oldest kept event (it is the next to
-    // be overwritten), and the kept events follow it around the ring.
     const uint32_t kept = eventCount < kMarkerLogSize ? eventCount : kMarkerLogSize;
     const uint32_t copied = eventsCapacity < kept ? eventsCapacity : kept;
     const uint32_t oldest = (eventCount - kept) % kMarkerLogSize;
@@ -220,8 +203,6 @@ bool images_match_configuration() noexcept {
 
 void wait_device_idle() noexcept {
     if (g_state.device != VK_NULL_HANDLE) {
-        // Result deliberately ignored: on a device already lost there is nothing left to
-        // wait for and nothing left to salvage, and the destroys still have to happen.
         vkDeviceWaitIdle(g_state.device);
     }
 }
@@ -256,10 +237,6 @@ void record_batched_transitions(const VkCommandBuffer commandBuffer,
         const bool hasMemoryDependency = (desc.srcAccess != 0 || desc.dstAccess != 0);
         const bool hasExecutionDependency = (desc.srcStage != 0 && desc.dstStage != 0);
 
-        // A barrier is a true no-op only when layout does not change, no memory visibility
-        // is requested, and no execution dependency is declared.
-        // Zero access masks with non-zero execution stages express execution-only dependencies
-        // (such as write-after-read ordering) and are preserved.
         if (!hasLayoutChange && !hasMemoryDependency && !hasExecutionDependency) {
             continue;
         }
@@ -338,4 +315,4 @@ void note_layout_after_transition(const uint64_t image, const VkImageLayout layo
     }
 }
 
-} // namespace mc_dlss
+}

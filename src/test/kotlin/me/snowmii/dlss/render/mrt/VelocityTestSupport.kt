@@ -7,7 +7,6 @@ import com.mojang.blaze3d.pipeline.RenderTarget
 import com.mojang.renderpearl.api.textures.GpuTexture
 import com.mojang.renderpearl.api.textures.GpuTextureView
 import java.nio.file.Path
-import kotlin.io.path.readText
 import me.snowmii.streamline.Dimensions
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.RenderRuntime
@@ -17,20 +16,6 @@ import me.snowmii.dlss.DlssSession
 import me.snowmii.dlss.DlssStartupConfig
 import me.snowmii.dlss.SRMode
 import org.joml.Matrix4f
-
-/**
- * Shared fixtures for the velocity-MRT suites: the headless Blaze3D doubles, the world-phase
- * builders every writer drives its seams through, and the Shaderc + spirv-cross path Minecraft
- * itself compiles fragment shaders with.
- *
- * The test JVM applies no Fabric transformation and owns no live device, so a writer suite
- * reaches descriptors against the mapped 26.2 classes, seams at the same entry points the
- * mixin calls, and shaders compiled through the real toolchain.
- */
-
-internal val repositoryRoot: Path = Path.of("").toAbsolutePath()
-
-internal fun repositorySource(path: String): String = repositoryRoot.resolve(path).readText()
 
 internal val OUTPUT_DIMENSIONS = Dimensions(2560, 1440)
 internal val RENDER_DIMENSIONS = Dimensions(1707, 960)
@@ -61,12 +46,7 @@ internal fun cameraSample() = DlssCameraSample(
 	cameraZ = 0.0,
 )
 
-/**
- * A DLSS runtime whose scene target carries the RG16_FLOAT velocity companion, so an open phase
- * latches the velocity-MRT route and offers `terrainVelocityView`. Without the companion
- * ([withVelocity] false) the same runtime stays on the vanilla one-attachment route.
- */
-internal fun velocityRuntime(withVelocity: Boolean = true, enabled: Boolean = true): RenderRuntime {
+internal fun velocityRuntime(enabled: Boolean = true): RenderRuntime {
 	val session = DlssSession(startupConfig(enabled))
 		.also { if (enabled) check(it.markReadyAfterNativeStartup()) }
 	return RenderRuntime(
@@ -74,11 +54,6 @@ internal fun velocityRuntime(withVelocity: Boolean = true, enabled: Boolean = tr
 		sceneTarget = SceneTarget(
 			allocate = { width, height -> HeadlessRenderTarget(width, height, withDepthView = true) },
 			release = { (it as HeadlessRenderTarget).releases++ },
-			allocateVelocity = if (withVelocity) {
-				{ width, height -> HeadlessRenderTarget(width, height, GpuFormat.RG16_FLOAT, withView = true) }
-			} else {
-				{ _, _ -> null }
-			},
 		),
 		startup = { if (enabled) RENDER_DIMENSIONS else null },
 	)
@@ -88,10 +63,9 @@ internal fun velocityWorldPhase(runtime: RenderRuntime, evaluate: Boolean = true
 	runtime = runtime,
 	present = { _, _ -> },
 	onWorldTargetChanged = {},
-	evaluateFrame = { _, _, _, _, _, _, _ -> evaluate },
+	evaluateFrame = { _, _, _, _, _ -> evaluate },
 )
 
-/** Runs one complete phase so the frame boundary advances: prepare, begin, end. */
 internal fun renderFrame(phase: WorldPhase, target: RenderTarget) {
 	phase.prepare(true, target, cameraSample())
 	phase.begin(true, target)
@@ -129,7 +103,6 @@ internal class HeadlessRenderTarget(
 	}
 }
 
-/** [GpuTexture] and [GpuTextureView] are plain interfaces in 26.3, so fakes implement them directly. */
 internal open class FakeTexture(
 	private val format: GpuFormat,
 	private val fakeWidth: Int = 16,

@@ -1,4 +1,3 @@
-// Native output-format contract, exercised without a Vulkan device.
 #include "internal/common.h"
 
 #include "doctest.h"

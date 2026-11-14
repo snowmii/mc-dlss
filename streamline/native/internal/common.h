@@ -11,12 +11,6 @@
 #include <string>
 #include <type_traits>
 
-/*
- * Bottom of the internal module graph: the result codes every unit returns, the handle
- * conversions every unit performs, and the validity rules shared by more than one of them.
- * Depends on nothing but the public header and the SDKs, which is what keeps the graph
- * acyclic - everything else in this directory is free to include it.
- */
 namespace mc_dlss {
 
 constexpr int32_t kSuccess = static_cast<int32_t>(NVSDK_NGX_Result_Success);
@@ -24,20 +18,10 @@ constexpr int32_t kFailure = static_cast<int32_t>(NVSDK_NGX_Result_Fail);
 constexpr int32_t kInvalidParameter = static_cast<int32_t>(NVSDK_NGX_Result_FAIL_InvalidParameter);
 constexpr int32_t kNotInitialized = static_cast<int32_t>(NVSDK_NGX_Result_FAIL_NotInitialized);
 
-// R16G16_SFLOAT and R8G8B8A8_UNORM are both mandatory storage-image formats in
-// Vulkan, so neither needs a runtime capability probe. Two half-float channels
-// carry a screen-space motion vector at full precision, and the output matches
-// Minecraft's RGBA8_UNORM main target so the copy back into it is a plain image
-// copy rather than a conversion.
 constexpr VkFormat kMotionFormat = VK_FORMAT_R16G16_SFLOAT;
 constexpr VkFormat kOutputFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat kRrOutputFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
-// Minecraft 26.2 rests every GpuTexture in VK_IMAGE_LAYOUT_GENERAL: VulkanGpuTexture
-// transitions the freshly created image straight to it, VulkanCommandEncoder binds colour
-// and depth attachments at it, and VulkanRenderPass binds sampled images at it. Nothing in
-// the backend ever moves a texture anywhere else, so this is the layout the engine's colour
-// and depth images arrive in and the one they must be handed back in.
 constexpr VkImageLayout kEngineRestingLayout = VK_IMAGE_LAYOUT_GENERAL;
 // DLSS requires its inputs in a read state ("Sample Image") and its output in a storage
 // state, per the 310.7.0 programming guide's Resource States section, and restores both
@@ -68,22 +52,13 @@ bool utf8_to_wide(const char* input, std::wstring& output) noexcept;
 bool valid_dimensions(uint32_t outputWidth, uint32_t outputHeight, uint32_t renderWidth,
                       uint32_t renderHeight) noexcept;
 
-// An image the caller carried across the ABI is usable only with all three fields present:
-// a zero handle or an undefined format is a caller that did not fill the struct. The check
-// here is structural only - the DLSS-G tag, whose roles fix the format against the recorded
-// options, enforces those formats at its own call site.
 bool valid_image(const McDlssImage& image) noexcept;
 
-// Optional RR current-color bias: absent only when both handles are zero. The producer
-// supplies input-sized binary pixels; CPU can validate only handles and SDK-named formats.
 bool valid_rr_bias_current_color(const McDlssImage& image) noexcept;
 
-// Engine images are single-level, single-layer 2D; module images are full-range. Every
-// subresource range is {0, 1, 0, 1}. Aspect follows role: colour/motion/output vs depth.
 VkImageSubresourceRange image_range_of(bool isDepth) noexcept;
-// RR virtual device depth is an R32 colour image; raster depth has a depth aspect.
 VkImageSubresourceRange depth_range_of(const McDlssImage& image) noexcept;
 
-} // namespace mc_dlss
+}
 
 #endif

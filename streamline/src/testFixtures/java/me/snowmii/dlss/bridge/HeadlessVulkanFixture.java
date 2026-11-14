@@ -53,14 +53,6 @@ import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkQueueFamilyProperties;
 import org.lwjgl.vulkan.VkSubmitInfo;
 
-/**
- * Test-only helper building a real, headless Vulkan instance + device with one graphics
- * queue plus a command pool the test can allocate recording command buffers from.
- *
- * Mirrors what Minecraft's VulkanDevice exposes to the mod: a live VkInstance, VkDevice,
- * VkQueue, and a command-buffer source (Minecraft's is the shared VulkanCommandEncoder;
- * here it is a self-owned pool).
- */
 public final class HeadlessVulkanFixture implements AutoCloseable {
 	private final VkInstance instance;
 	private final VkDevice device;
@@ -79,13 +71,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		this(List.of(), (ignoredInstance, ignoredDevice) -> List.of());
 	}
 
-	/**
-	 * Builds a real headless Vulkan instance and device injecting the supplied Streamline-required
-	 * extensions at creation, mirroring the production bootstrap mixins. Instance extensions are
-	 * known before instance creation; device extensions are queried against the live instance and
-	 * physical device (the same order Minecraft 26.2 uses), supplied by the provider before device
-	 * creation.
-	 */
 	public HeadlessVulkanFixture(
 		final List<String> instanceExtensions,
 		final BiFunction<Long, Long, List<String>> deviceExtensionProvider
@@ -93,15 +78,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		this(instanceExtensions, deviceExtensionProvider, false);
 	}
 
-	/**
-	 * As above, additionally enabling the Khronos validation layer when {@code validated} is set
-	 * and the layer plus VK_EXT_debug_utils are installed on this workstation.
-	 *
-	 * Validation is the only oracle for image layouts: a wrong {@code oldLayout} is undefined
-	 * behaviour to the driver and silent without it. Every error-severity message is collected
-	 * for the test to assert on, and {@link #validationEnabled()} reports whether the layer was
-	 * actually there, so a test can say what its evidence was worth.
-	 */
 	public HeadlessVulkanFixture(
 		final List<String> instanceExtensions,
 		final BiFunction<Long, Long, List<String>> deviceExtensionProvider,
@@ -110,18 +86,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		this(instanceExtensions, deviceExtensionProvider, validated, Map.of());
 	}
 
-	/**
-	 * As {@link #HeadlessVulkanFixture(List, BiFunction, boolean)}, additionally creating
-	 * {@code additionalQueuesPerFamily} extra queues in each named queue family, on top of the
-	 * fixture's base single graphics queue.
-	 *
-	 * The production merge starts from Minecraft's {@code {graphicsFamily: 1}} queue map and
-	 * adds Streamline's required extra graphics/compute queues to it; this overload is what lets
-	 * a test build the device whose queue layout that merge produces. Each family gets one
-	 * {@code VkDeviceQueueCreateInfo} with {@code queueCount = base + additional} and its own
-	 * queue-priorities buffer of that many floats, mirroring how Minecraft's createDevice loop
-	 * builds queue creation infos from its family map.
-	 */
 	public HeadlessVulkanFixture(
 		final List<String> instanceExtensions,
 		final BiFunction<Long, Long, List<String>> deviceExtensionProvider,
@@ -138,9 +102,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				.applicationVersion(1)
 				.pEngineName(stack.UTF8("mc-dlss"))
 				.engineVersion(1)
-				// Minecraft 26.2 asks for Vulkan 1.2 and refuses any device below it, and DLSS
-				// internals lean on 1.2 features (buffer device address, storage-image writes
-				// without a format) that a 1.0 device silently cannot serve.
 				.apiVersion(VK12.VK_API_VERSION_1_2);
 
 			List<String> requestedExtensions = new ArrayList<>(instanceExtensions);
@@ -231,9 +192,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 
 			List<String> deviceExtensions = deviceExtensionProvider.apply(instance.address(), physicalDevice.address());
 
-			// The merged queue layout: the base single graphics queue plus the caller's extra
-			// queues per family, one create info per family - the same shape Minecraft's
-			// createDevice loop builds from its queue-family map.
 			Int2IntMap queuesToCreate = new Int2IntArrayMap();
 			queuesToCreate.put(queueFamilyIndex, 1);
 			for (Map.Entry<Integer, Integer> extra : additionalQueuesPerFamily.entrySet()) {
@@ -244,7 +202,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 			VkDeviceQueueCreateInfo.Buffer queueCreateInfo = VkDeviceQueueCreateInfo.calloc(queuesToCreate.size(), stack);
 			int createInfoIndex = 0;
 			for (Int2IntMap.Entry familyQueues : queuesToCreate.int2IntEntrySet()) {
-				// queueCount derives from pQueuePriorities.remaining(); do NOT flip().
 				queueCreateInfo.get(createInfoIndex).sType$Default();
 				queueCreateInfo.get(createInfoIndex).queueFamilyIndex(familyQueues.getIntKey());
 				queueCreateInfo.get(createInfoIndex).pQueuePriorities(stack.callocFloat(familyQueues.getIntValue()));
@@ -260,11 +217,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				deviceExts.flip();
 			}
 
-			// Enable every feature this physical device reports, the way a real client enables the
-			// set its renderer needs: DLSS shaders and allocations require 1.1/1.2 features
-			// (buffer device address, storage-image writes without a format) that an extension
-			// name alone does not turn on, and without them the plugin records work the driver
-			// cannot run.
 			VkPhysicalDeviceVulkan11Features supported11 = VkPhysicalDeviceVulkan11Features.calloc(stack).sType$Default();
 			VkPhysicalDeviceVulkan12Features supported12 = VkPhysicalDeviceVulkan12Features.calloc(stack).sType$Default();
 			supported11.pNext(supported12.address());
@@ -300,35 +252,26 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		}
 	}
 
-	/** Raw address of the live instance, as Minecraft's VulkanInstance.vkInstance().address() is. */
 	public long instanceAddress() {
 		return instance.address();
 	}
 
-	/** Raw address of the live device, as Minecraft's VulkanDevice.vkDevice().address() is. */
 	public long deviceAddress() {
 		return device.address();
 	}
 
-	/** Raw address of the live physical device, as Minecraft's VulkanDevice.physicalDevice().address() is. */
 	public long physicalDeviceAddress() {
 		return physicalDevice.address();
 	}
 
-	/** Raw address of the live graphics queue, as Minecraft's VulkanDevice.graphicsQueue().vkQueue().address() is. */
 	public long queueAddress() {
 		return queue.address();
 	}
 
-	/** The queue family the fixture's graphics queue was created in. */
 	public int graphicsQueueFamilyIndex() {
 		return queueFamilyIndex;
 	}
 
-	/**
-	 * Allocates and begins a fresh recording command buffer, standing in for Minecraft's
-	 * shared VulkanCommandEncoder.allocateAndBeginTransientCommandBuffer().
-	 */
 	public VkCommandBuffer allocateAndBeginCommandBuffer() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkCommandBufferAllocateInfo allocInfo = VkCommandBufferAllocateInfo.calloc(stack)
@@ -350,25 +293,16 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		}
 	}
 
-	/** Whether the Khronos validation layer is actually running behind this instance. */
 	public boolean validationEnabled() {
 		return validationEnabled;
 	}
 
-	/** Error-severity validation messages seen so far, in arrival order. */
 	public List<String> validationErrors() {
 		synchronized (validationErrors) {
 			return List.copyOf(validationErrors);
 		}
 	}
 
-	/**
-	 * Validation messages naming one of the supplied Vulkan handles.
-	 *
-	 * Validation reports every handle it complains about in hexadecimal, which is what makes it
-	 * possible to separate errors about resources under test from errors about resources some
-	 * library allocated privately and manages itself.
-	 */
 	public List<String> validationErrorsAbout(final long... handles) {
 		List<String> matching = new ArrayList<>();
 		for (String message : validationErrors()) {
@@ -382,18 +316,9 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		return matching;
 	}
 
-	/**
-	 * A device-local image with a full view, standing in for one of Minecraft's GpuTextures.
-	 *
-	 * Handles are raw, in the units the flat native ABI takes them.
-	 */
 	public record EngineImage(long image, long memory, long view, int format, int aspectMask) {
 	}
 
-	/**
-	 * Creates an image the way Minecraft's VulkanGpuTexture does and leaves it in the same place:
-	 * VK_IMAGE_LAYOUT_GENERAL, transitioned once at creation and never moved again by the engine.
-	 */
 	public EngineImage createEngineImage(
 		final int width,
 		final int height,
@@ -410,10 +335,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 				.arrayLayers(1)
 				.samples(VK10.VK_SAMPLE_COUNT_1_BIT)
 				.tiling(VK10.VK_IMAGE_TILING_OPTIMAL)
-				// Minecraft's MainTarget/TextureTarget create colour and depth with usage 15
-				// (COPY_SRC included), and the FG orientation blits read the engine images as
-				// transfer sources, so the standing-ins carry TRANSFER_SRC too - without it the
-				// validation layer reports the blit's source-usage violation.
 				.usage(usage | VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
 				.sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE)
 				.initialLayout(VK10.VK_IMAGE_LAYOUT_UNDEFINED);
@@ -472,12 +393,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		}
 	}
 
-	/**
-	 * Records a barrier claiming the image is currently in VK_IMAGE_LAYOUT_GENERAL.
-	 *
-	 * Only legal if whoever touched the image last put it back there, which is what makes this
-	 * the assertion for layout restoration when the validation layer is watching.
-	 */
 	public void recordGeneralLayoutBarrier(final VkCommandBuffer commandBuffer, final EngineImage image) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack)
@@ -502,13 +417,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		}
 	}
 
-	/**
-	 * Clears a depth image to a uniform value, so a test can state exactly what depth the
-	 * shader under test reads.
-	 *
-	 * Recorded on the caller's command buffer, and legal in VK_IMAGE_LAYOUT_GENERAL, which is
-	 * where {@link #createEngineImage} leaves every image and where Minecraft rests its own.
-	 */
 	public void recordDepthClear(final VkCommandBuffer commandBuffer, final EngineImage image, final float depth) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkClearDepthStencilValue value = VkClearDepthStencilValue.calloc(stack).depth(depth).stencil(0);
@@ -524,13 +432,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		}
 	}
 
-	/**
-	 * Clears a colour image to a uniform value, so a test can state exactly what an image held
-	 * before the code under test touched it.
-	 *
-	 * Recorded on the caller's command buffer, and legal in VK_IMAGE_LAYOUT_GENERAL, which is
-	 * where both {@link #createEngineImage} and the native bridge rest their colour images.
-	 */
 	public void recordColorClear(
 		final VkCommandBuffer commandBuffer,
 		final long image,
@@ -548,13 +449,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		}
 	}
 
-	/**
-	 * Reads back an 8-bit RGBA colour image as normalized floats, four per pixel, in row-major
-	 * order.
-	 *
-	 * The same staging-buffer round trip as {@link #readRg16fImage}, and the same layout
-	 * discipline: taken from VK_IMAGE_LAYOUT_GENERAL and handed straight back to it.
-	 */
 	public float[] readRgba8Image(final long image, final int width, final int height) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			final long byteCount = (long)width * height * 4L;
@@ -605,15 +499,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		}
 	}
 
-	/**
-	 * Reads back a two-channel half-float colour image as interleaved floats, x then y per
-	 * pixel, in row-major order.
-	 *
-	 * This is the only way to see what a compute dispatch actually wrote: the image is
-	 * device-local, so the contents have to travel through a host-visible staging buffer. The
-	 * image is taken from VK_IMAGE_LAYOUT_GENERAL and handed straight back to it, so whoever
-	 * tracks its layout stays right.
-	 */
 	public float[] readRg16fImage(final long image, final int width, final int height) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			final long byteCount = (long)width * height * 2L * Short.BYTES;
@@ -708,10 +593,6 @@ public final class HeadlessVulkanFixture implements AutoCloseable {
 		throw new IllegalStateException("No host-visible coherent memory type for typeBits " + typeBits);
 	}
 
-	/**
-	 * Ends the recording and submits it on the graphics queue, waiting on a fence rather than
-	 * idling the device, which is the wait the production path is forbidden from using.
-	 */
 	public void endSubmitAndWait(final VkCommandBuffer commandBuffer) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			checkVk(VK10.vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");

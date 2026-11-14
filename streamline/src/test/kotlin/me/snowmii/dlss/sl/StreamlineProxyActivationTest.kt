@@ -19,18 +19,6 @@ import org.lwjgl.vulkan.VkInstanceCreateInfo
 import org.lwjgl.vulkan.VkPhysicalDevice
 import org.lwjgl.vulkan.VkQueueFamilyProperties
 
-/**
- * Streamline's manual-hook Vulkan integration activates against a live device.
- *
- * Two halves: (1) native activation - mc_dlss_activate_vulkan_proxies hands the live instance
- * / physical device / device / graphics queue layout of a headless Vulkan context to
- * slSetVulkanInfo and repeats success on the same layout; (2) the redirect seam -
- * org.lwjgl.vulkan.libname is pointed at the staged sl.interposer.dll, which is how
- * Minecraft's Vulkan loading routes through SL's proxies.
- *
- * After the activation assertions the test records the activated tuple through
- * mc_dlss_initialize so close runs slShutdown while the device is still alive.
- */
 @NativeBridge
 class StreamlineProxyActivationTest {
 	@Test
@@ -55,8 +43,6 @@ class StreamlineProxyActivationTest {
 	fun `activation returns success against live headless device and repeats success`(
 		@TempDir dataPath: Path,
 	) {
-		// Runs slInit through the real bridge (idempotent, survives bridge close), the same
-		// pre-Vulkan bootstrap Minecraft's instance seam performs.
 		val instanceExtensions = ExtensionBootstrap.queryInstanceExtensions()
 		HeadlessVulkanFixture(instanceExtensions) { instance, physicalDevice ->
 			val extensions = mutableListOf<String>()
@@ -70,10 +56,6 @@ class StreamlineProxyActivationTest {
 				)
 
 				val graphicsFamily = graphicsQueueFamilyOf(fixture)
-				// The fixture creates exactly one queue in the graphics family, so Streamline's
-				// own queues start at index 1 - right after the host's. The graphics family is
-				// compute-capable on this workstation, so the compute queue layout is the same
-				// family with the same host count.
 				val hostQueueCount = 1
 				val layout = {
 					bridge.activateVulkanProxies(
@@ -87,11 +69,8 @@ class StreamlineProxyActivationTest {
 					)
 				}
 				assertEquals(StreamlineSession.SUCCESS_RESULT, layout(), "first activation must succeed")
-				// Idempotent: the same seven values must not re-call slSetVulkanInfo.
 				assertEquals(StreamlineSession.SUCCESS_RESULT, layout(), "repeated activation must succeed")
 
-				// Record the activated tuple so close runs slShutdown while the device is
-				// still alive. The bridge closes inside the fixture's scope.
 				SrLiveSession.recordActivatedSession(bridge, fixture, dataPath)
 			}
 		}
@@ -118,16 +97,10 @@ class StreamlineProxyActivationTest {
 				"LWJGL must be pointed at the absolute interposer path",
 			)
 		} finally {
-			// Shared test JVM: Vulkan may not be loaded yet, and a stale property would redirect
-			// every later test's Vulkan loading into the interposer.
 			System.clearProperty("org.lwjgl.vulkan.libname")
 		}
 	}
 
-	/**
-	 * The first queue family with the graphics bit - exactly the family [HeadlessVulkanFixture]
-	 * creates its single queue in (it exposes no accessor for it).
-	 */
 	private fun graphicsQueueFamilyOf(fixture: HeadlessVulkanFixture): Int {
 		MemoryStack.stackPush().use { stack ->
 			val instance = VkInstance(fixture.instanceAddress(), VkInstanceCreateInfo.calloc(stack))

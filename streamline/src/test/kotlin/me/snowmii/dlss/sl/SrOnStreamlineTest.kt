@@ -20,28 +20,6 @@ import org.junit.jupiter.api.TestMethodOrder
 import org.junit.jupiter.api.io.TempDir
 import org.lwjgl.vulkan.VK10
 
-/**
- * Canonical live Streamline SR path: DLSS Super Resolution runs on the signed Streamline 2.14.1
- * stack, with no direct-NGX fallback.
- *
- * The live frame drives the whole SL path on a headless device: bootstrap, proxy activation,
- * initialize, optimal-dimension query, configure, module-image acquisition, then per frame
- * engine colour/depth tag (slGetNewFrameToken + slSetTagForFrame) and evaluation
- * (slSetConstants + slEvaluateFeature) on one allocated command buffer that must submit
- * clean under the Khronos validation layer — two consecutive frames, the second building on
- * the first frame's history.
- *
- * Source assertions pin the native surface: no NVSDK_NGX_VULKAN init/query/create/evaluate/
- * release/shutdown call, no capability-parameter surface, buildNativeDlss does not link
- * nvsdk_ngx_s.lib, and mc_dlss_initialize only validates and records the Vulkan tuple already
- * activated through slSetVulkanInfo.
- *
- * Methods are ordered because the fork is one process and the live session's close shuts
- * Streamline down (slShutdown, while the fixture device is still alive). On SL 2.14.1 a
- * bootstrap after that shutdown re-runs slInit but cannot serve the DLSS feature again in the
- * same process (slGetFeatureRequirements answers eErrorFeatureMissing), so bootstrap-
- * dependent methods must run before the live session, and nothing bootstraps after it.
- */
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 @NativeBridge
 class SrOnStreamlineTest {
@@ -55,8 +33,6 @@ class SrOnStreamlineTest {
 
 			val outputWidth = 2560
 			val outputHeight = 1440
-			// MaxQuality = 2 (NVSDK_NGX_PerfQuality_Value), which the bridge maps onto
-			// sl::DLSSMode::eMaxQuality; preset K = 11 lands on the qualityPreset field.
 			val dimensions = bridge.queryOptimalDimensions(outputWidth, outputHeight, 2)
 			assertTrue(
 				dimensions.width in 1..outputWidth,
@@ -79,15 +55,10 @@ class SrOnStreamlineTest {
 				"configure must record the SL options for the stored configuration",
 			)
 
-			// The evaluation reads the module's motion image and writes the output image, so
-			// both have to exist at the configured sizes before the first evaluate.
 			val images = bridge.acquireImages()
 
 			assertNotNull(images, "module images must be acquired before the evaluation")
 
-			// The engine's render-sized colour and depth, standing in for Minecraft's main
-			// target and depth texture; the fixture leaves them in VK_IMAGE_LAYOUT_GENERAL,
-			// which is where Minecraft rests its own textures.
 			val color = fixture.createEngineImage(
 				dimensions.width,
 				dimensions.height,
@@ -108,9 +79,6 @@ class SrOnStreamlineTest {
 				ImageBinding(depth.view(), depth.image(), VK10.VK_FORMAT_D32_SFLOAT),
 			)
 
-			// Frame one: the frame's resources tag and then evaluate on ONE buffer, the way
-			// FrameEvaluation records them. The evaluation must succeed and the buffer must
-			// submit clean.
 			val frame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
 				StreamlineSession.SUCCESS_RESULT,
@@ -129,8 +97,6 @@ class SrOnStreamlineTest {
 			bridge.presentStart()
 			bridge.presentEnd()
 
-			// Frame two: the same images with accumulated history rather than a reset, starting
-			// from the layouts the first frame left behind.
 			val secondFrame = fixture.allocateAndBeginCommandBuffer()
 			assertEquals(
 				StreamlineSession.SUCCESS_RESULT,
@@ -155,11 +121,6 @@ class SrOnStreamlineTest {
 		val sessionSource = Files.readString(Path.of("native", "internal", "session.cpp"))
 		val slSource = Files.readString(Path.of("native", "internal", "sl_dlss.cpp"))
 
-		// The teardown order is the lifecycle contract: the module's own GPU objects die
-		// first, the Streamline runtime shuts down while the caller's device is still alive,
-		// and the state reset comes last so the bootstrap/proxy/session bookkeeping is
-		// coherent: a later bootstrap re-runs slInit instead of treating the shutdown runtime
-		// as already up.
 		val shutdown = sessionSource.substringAfter("shutdown_state").substringBefore("kSuccess")
 		val timing = shutdown.indexOf("destroy_timing()")
 		val motion = shutdown.indexOf("destroy_motion_pass()")
@@ -174,8 +135,6 @@ class SrOnStreamlineTest {
 			"module resources must release before the Streamline shutdown, and reset must come last",
 		)
 
-		// The sl:: runtime call stays inside the Streamline unit; the ordering unit only names
-		// it, and the shutdown runs only when the runtime is actually up.
 		assertTrue(!sessionSource.contains("slShutdown("), "the sl:: call belongs in the SL unit")
 		assertTrue(slSource.contains("slShutdown()"), "shutdown_streamline must call slShutdown")
 		assertTrue(
@@ -187,17 +146,11 @@ class SrOnStreamlineTest {
 	@Order(2)
 	@Test
 	fun `native code contains no direct NGX runtime calls and the build links no NGX library`() {
-		// Walk every native translation unit and header so a new file cannot reintroduce the
-		// direct-NGX runtime surface.
 		val nativeFiles = Files.walk(Path.of("native"))
 			.filter { Files.isRegularFile(it) }
 			.filter { it.toString().endsWith(".cpp") || it.toString().endsWith(".h") }
 			.toList()
 
-		// The blanket prefixes: NVSDK_NGX_VULKAN_ is the init/query/create/evaluate/release/
-		// shutdown surface, NVSDK_NGX_Parameter_ the capability-parameter surface. The
-		// reference-vocabulary constants (results, PerfQuality values, presets) live in
-		// nvsdk_ngx.h, not under either prefix.
 		listOf("NVSDK_NGX_VULKAN_", "NVSDK_NGX_Parameter_").forEach { prefix ->
 			val offenders = nativeFiles.filter { Files.readString(it).contains(prefix) }
 			assertTrue(
@@ -206,9 +159,6 @@ class SrOnStreamlineTest {
 			)
 		}
 
-		// The build links Streamline and the Vulkan loader and nothing from the NGX SDK: the
-		// reference-only 310.9.1 headers stay on the include path, the library never reaches
-		// the link line.
 		val buildScript = Files.readString(Path.of("build.gradle.kts"))
 		assertTrue(
 			!buildScript.contains("nvsdk_ngx_s.lib"),
@@ -228,32 +178,17 @@ class SrOnStreamlineTest {
 		val library = ExtensionBootstrap.nativeLibrary()
 		val runtime = ExtensionBootstrap.streamlineRuntimeDirectory()
 
-		// Runs before the live session (Order 4 of 5): the live session's close shuts the
-		// Streamline runtime down, and this method's bootstrap and queries need the runtime
-		// up. The close here is a no-op while no session is ready (mc_dlss_close returns
-		// success without tearing anything down), which is exactly what this method pins.
-
-		// Bridge one bootstraps the shared module and then closes. The close is a no-op while
-		// no session is ready (mc_dlss_close returns success without tearing anything down),
-		// and the pinned lookup keeps the module loaded: the Streamline bootstrap state lives
-		// in the module's globals, not in the bridge's arena.
 		NativeTestAccess.open(library).use { bridge ->
 			assertEquals(StreamlineSession.SUCCESS_RESULT, bridge.bootstrapStreamline(runtime))
 			assertTrue(bridge.queryQueueRequirements().graphicsQueues >= 0)
 		}
 
-		// Bridge two opens WITHOUT bootstrapping: the requirements query still answers only if
-		// the module globals survived bridge one's close. A lookup tied to the bridge's arena
-		// would have unloaded the module and the query would fail with kNotInitialized.
 		NativeTestAccess.open(library).use { bridge ->
 			assertTrue(
 				bridge.queryQueueRequirements().graphicsQueues >= 0,
 				"the pinned module must keep its Streamline bootstrap state across a bridge close",
 			)
 
-			// The activation gate: initialize before proxy activation fails, and the failed
-			// call records nothing - a second identical initialize fails the same way (a
-			// recorded sessionReady would answer success on the repeat).
 			val first = bridge.initialize(1L, 2L, 3L, dataPath, dataPath)
 			assertTrue(
 				first != StreamlineSession.SUCCESS_RESULT,

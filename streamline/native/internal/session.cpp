@@ -11,14 +11,9 @@ namespace mc_dlss {
 
 int32_t shutdown_state() noexcept {
     g_state.sessionReady = false;
-    // Diagnostic and device-owned, so it goes before anything that could fail and leave the
-    // shutdown half-done.
     destroy_timing();
-    // Pipeline, descriptors, and sampler belong to the device Minecraft is about to destroy,
-    // and none of them is known to Streamline, so they go first and independently of it.
     destroy_tone_map_pass();
     destroy_motion_pass();
-    // Images belong to the device Minecraft is about to destroy, so they die first.
     release_images();
     // Streamline's plugins keep their worker threads (CUDA/NGX) running until slShutdown, and
     // those threads reach into the live Vulkan device: shutting the runtime down here - after
@@ -31,4 +26,4 @@ int32_t shutdown_state() noexcept {
     return kSuccess;
 }
 
-} // namespace mc_dlss
+}

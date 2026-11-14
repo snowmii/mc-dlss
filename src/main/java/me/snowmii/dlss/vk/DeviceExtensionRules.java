@@ -4,12 +4,10 @@ import com.mojang.renderpearl.backend.vulkan.init.FeatureSet;
 import java.util.HashSet;
 import java.util.Set;
 
-/** Normalizes contributed extensions before vkCreateDevice. */
 public final class DeviceExtensionRules {
 	private DeviceExtensionRules() {
 	}
 
-	/** Normalize the complete chain, including extensions supplied by earlier wrappers. */
 	public static FeatureSet normalize(final FeatureSet featureSet) {
 		final Set<String> extensions = new HashSet<>(featureSet.extensions());
 		normalize(extensions);

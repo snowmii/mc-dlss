@@ -23,15 +23,6 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * Hand window: while `GameRenderer.renderItemInHand` is bracketed (HEAD→TAIL), draw-time
- * `OutputTarget.MAIN_TARGET` answers the transparent full-resolution UI target; screen
- * effects and the 3D crosshair after in `renderLevel` stay on vanilla main.
- *
- * Hand always clears (first UI window); GUI clears only if hand did not, and consumes the
- * handoff so the next frame clears again. A window whose vanilla draw gate closed is an
- * empty clear.
- */
 class UiHandOverlayTest {
 	private val outputWidth = 2560
 	private val outputHeight = 1440
@@ -103,7 +94,6 @@ class UiHandOverlayTest {
 		val harness = Harness()
 		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 		harness.phase.beginHand(mainTarget)
-		// No end(): renderItemInHand threw between head and tail, so the window never closed.
 		harness.phase.beginHand(mainTarget)
 
 		assertTrue(harness.phase.isOpen)
@@ -116,7 +106,6 @@ class UiHandOverlayTest {
 		val harness = Harness()
 		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 		harness.phase.beginHand(mainTarget)
-		// No end(): a leaked hand window must not answer the UI target for the GUI or later callers.
 		harness.phase.begin(mainTarget)
 
 		assertTrue(harness.phase.isOpen)
@@ -159,7 +148,6 @@ class UiHandOverlayTest {
 		)
 	}
 
-	/** Render target with fake GPU textures and views, so lifetime and clears are testable off the render thread. */
 	private class HeadlessRenderTarget(
 		width: Int,
 		height: Int,
@@ -181,7 +169,6 @@ class UiHandOverlayTest {
 		override fun destroyBuffers() = Unit
 	}
 
-	/** 26.3: [GpuTexture]/[GpuTextureView] are plain interfaces; the fakes implement them directly. */
 	private class FakeTexture(private val format: GpuFormat, private val fakeWidth: Int, private val fakeHeight: Int) : GpuTexture {
 		override fun getWidth(mipLevel: Int) = fakeWidth
 		override fun getHeight(mipLevel: Int) = fakeHeight
@@ -212,7 +199,6 @@ class UiHandOverlayTest {
 		fun encoder() = RecordingEncoder(this)
 	}
 
-	/** 26.3: [CommandEncoder] is a plain interface; the fake implements it directly and only ever clears. */
 	private class RecordingEncoder(private val recording: Recording) : CommandEncoder {
 		override fun submit() = Unit
 

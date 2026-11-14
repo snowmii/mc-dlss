@@ -31,11 +31,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
-/**
- * Controls, runtime, lifecycle adapter, session, and world phase change configuration without
- * restarting the session: dependent resources update, refused changes are atomic, and the
- * readout reports the state actually in use.
- */
 class RuntimeControlsTest {
 	private val output = Dimensions(2560, 1440)
 	private val mainTarget = HeadlessRenderTarget(output.width, output.height)
@@ -76,7 +71,6 @@ class RuntimeControlsTest {
 		fixture.frame()
 		fixture.events.clear()
 
-		// The three controls, each of which releases the scene target the frames just drawn into.
 		fixture.controls.cycleQualityMode()
 		fixture.frame()
 		fixture.controls.toggleEnabled()
@@ -208,12 +202,11 @@ class RuntimeControlsTest {
 
 	private fun fixture() = Fixture()
 
-	/** Wired the way `RenderRuntime.forMinecraft` wires it. */
 	private inner class Fixture {
 		val diagnostics = mutableListOf<String>()
 		val announced = mutableListOf<String>()
 		val events = mutableListOf<String>()
-		val native = FakeNative().apply { log = events::add }
+		val native = ModeScalingFakeNative().apply { log = events::add }
 		var released = 0
 		var motion: DlssFrameMotion? = null
 		private var now = 0L
@@ -290,18 +283,13 @@ class RuntimeControlsTest {
 		override fun destroyBuffers() = Unit
 	}
 
-	/**
-	 * The render size answers per mode the way NGX does, because a mode change that returned the
-	 * same size would let a runtime that rebuilt nothing pass.
-	 */
-	private class FakeNative : StreamlineSessionTestDouble() {
+	private class ModeScalingFakeNative : StreamlineSessionTestDouble() {
 		var reflexResult = StreamlineSession.SUCCESS_RESULT
 		override fun setReflexMode(mode: Int): Int = reflexResult
 		var initializeCalls = 0
 		var releaseImageCalls = 0
 		var waitDeviceIdleCalls = 0
 
-		/** Records the calls whose *order* is the invariant, not just their count. */
 		var log: ((String) -> Unit)? = null
 		var configureResult = StreamlineSession.SUCCESS_RESULT
 		var lastConfiguredRender: Dimensions? = null

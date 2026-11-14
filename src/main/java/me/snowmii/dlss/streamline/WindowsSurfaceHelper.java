@@ -5,12 +5,6 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.windows.WindowsLibrary;
 import org.lwjgl.vulkan.VkWin32SurfaceCreateInfoKHR;
 
-/**
- * Windows-specific Vulkan surface helper that creates the {@code VkWin32SurfaceCreateInfoKHR}
- * and routes through {@link StreamlineVulkanProxies#createWin32Surface}.
- *
- * <p>Isolated in its own class to avoid loading Windows-only LWJGL classes on non-Windows platforms.
- */
 public final class WindowsSurfaceHelper {
 	private WindowsSurfaceHelper() {
 	}

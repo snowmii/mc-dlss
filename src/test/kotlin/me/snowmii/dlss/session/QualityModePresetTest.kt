@@ -5,7 +5,6 @@ import me.snowmii.dlss.RRModelPreset
 import me.snowmii.dlss.SRMode
 import me.snowmii.dlss.SRModelPreset
 import me.snowmii.dlss.streamline.LifecycleAdapter
-import me.snowmii.dlss.readNativeSource
 import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.streamline.EvaluationRequest
 import me.snowmii.streamline.PresentTarget
@@ -23,10 +22,6 @@ import org.junit.jupiter.api.Test
 import java.nio.file.Path
 import java.util.Properties
 
-/**
- * Ultra Performance and DLAA are selectable. Unset SR/RR presets follow NVIDIA App / OTA;
- * naming K/L/M or D/E/F locks the model.
- */
 class QualityModePresetTest {
 	private val output = Dimensions(2560, 1440)
 
@@ -150,30 +145,12 @@ class QualityModePresetTest {
 		assertEquals(SRModelPreset.K.sdkValue, native.configuredRenderPreset)
 	}
 
-	@Test
-	fun `DLAA renders at output resolution without asking the optimal-settings query`() {
-		// DLAA is 1:1, so slDLSSGetOptimalSettings is not asked; the bridge answers the output
-		// dimensions directly.
-		val query = readNativeSource("internal/sl_dlss.cpp")
-			.substringAfter("int32_t query_optimal_dimensions_sl(")
-			.substringBefore("int32_t record_sr_options(")
-		assertTrue(
-			query.contains("NVSDK_NGX_PerfQuality_Value_DLAA"),
-			"DLAA is 1:1 by definition, so it must not depend on the optimal-settings query",
-		)
-		assertTrue(
-			query.contains("*renderWidth = outputWidth") && query.contains("*renderHeight = outputHeight"),
-			"DLAA's render dimensions are its output dimensions",
-		)
-	}
-
 	private fun configFrom(vararg entries: Pair<String, String>): DlssStartupConfig {
 		val properties = Properties()
 		entries.forEach { (name, value) -> properties.setProperty(name, value) }
 		return ModConfig.from(properties).startupConfig
 	}
 
-	/** Records what the adapter passed down, and nothing else; every later stage is unreachable. */
 	private class RecordingNativeApi : StreamlineSessionTestDouble() {
 		var queriedQualityMode: Int? = null
 		var configuredQualityMode: Int? = null

@@ -3,21 +3,6 @@
 
 #include "internal/state.h"
 
-/*
- * GPU-side timing of the three stages this module records.
- *
- * Frame rate cannot answer where the time goes: a client whose frame length is set by the CPU
- * shows the same rate whether the DLSS chain costs 0.2ms or 2ms, and the GPU utilization that
- * does move is a ratio against a wall clock the renderer chose. Timestamps are the only thing
- * that separates NGX's own cost from the copy and the barriers around it.
- *
- * Four stamps per frame - one before the motion stage, one after it, one after the
- * evaluation, one after the copy - into a ring of slots, so results are read for a frame the
- * GPU finished several frames ago and no read ever waits. A frame whose stages did not all
- * run leaves its slot incomplete and is dropped rather than reported as a fast one. The
- * motion stage is a real measured stage on both routes: the camera-only route opens the
- * chain in the compute writer, and the velocity route opens it in the sentinel fill.
- */
 namespace mc_dlss {
 
 constexpr uint32_t kTimingSlotCount = 4;
@@ -29,7 +14,6 @@ struct DlssFrameTiming {
     float timestampPeriod = 0.0f;
     uint32_t recordingSlot = 0;
     uint32_t nextSlot = 0;
-    /** Stamps written into the recording slot so far, which is also the next stamp's index. */
     uint32_t writtenStamps = 0;
     uint32_t recordedStamps[kTimingSlotCount] = {};
     uint64_t sequences[kTimingSlotCount] = {};
@@ -44,17 +28,12 @@ struct DlssFrameTiming {
 
 extern DlssFrameTiming g_timing;
 
-// Opens a slot for the frame about to be recorded, collecting whatever the same slot's frame
-// left behind on its way past.
 void begin_frame_timing(VkCommandBuffer commandBuffer) noexcept;
 
-// Closes one stage. [index] is checked against what the slot already holds, so a frame whose
-// stages did not all run - a failed evaluation, a frame with no destination to copy into -
-// abandons its slot instead of reporting a gap as a duration.
 void mark_frame_timing(VkCommandBuffer commandBuffer, uint32_t index) noexcept;
 
 void destroy_timing() noexcept;
 
-} // namespace mc_dlss
+}
 
 #endif

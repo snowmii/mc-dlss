@@ -33,6 +33,10 @@ object RayReconstruction {
 	@Volatile
 	var exposure: Float = 1.0f
 
+	@JvmField
+	@Volatile
+	var tonemapOperator: Int = 0
+
 	@Volatile
 	private var resetRequested: Boolean = false
 

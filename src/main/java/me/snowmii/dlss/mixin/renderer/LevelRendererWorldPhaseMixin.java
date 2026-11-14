@@ -21,13 +21,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * World phase = {@code LevelRenderer.render}. Hand/item draw after this method, so they stay
- * full-res. Read main at HEAD before the redirect is active.
- *
- * Minecraft 26.3 dropped {@code DeltaTracker} and the model-view matrix from this signature and
- * added a second trailing boolean.
- */
 @Mixin(LevelRenderer.class)
 public class LevelRendererWorldPhaseMixin {
 	@Inject(method = "render", at = @At("HEAD"))

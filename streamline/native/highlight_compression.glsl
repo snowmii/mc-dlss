@@ -1,5 +1,3 @@
-// Keep identical in Lumina's preview and mc-dlss's HDR output path.
-// Compress luminance after exposure, before ACES, without consulting neighboring pixels.
 vec3 compressHighlights(vec3 radiance, float exposure) {
     if (any(isnan(radiance)) || any(isinf(radiance))) return vec3(0.0);
     vec3 color = max(radiance, vec3(0.0)) * max(exposure, 1.0e-4);
@@ -7,8 +5,6 @@ vec3 compressHighlights(vec3 radiance, float exposure) {
     const float knee = 0.3;
     const float shoulder = 0.15;
     if (luminance <= knee) return color;
-    // Value and slope match the identity at the knee. The logarithmic shoulder
-    // remains monotonic so bright light sources can still exceed the sky.
     float compressed = knee + shoulder * log(1.0 + (luminance - knee) / shoulder);
     return color * (compressed / luminance);
 }

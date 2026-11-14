@@ -2,13 +2,6 @@ package me.snowmii.streamline
 
 import java.nio.file.Path
 
-/**
- * [StreamlineSession] test double: override only the calls the test exercises.
- *
- * The production interface is all-abstract. Unoverridden calls throw
- * `UnsupportedOperationException` naming the call, so a forgotten stub fails instead of
- * silently no-oping.
- */
 open class StreamlineSessionTestDouble : StreamlineSession {
 	override fun close() = Unit
 
@@ -56,12 +49,9 @@ open class StreamlineSessionTestDouble : StreamlineSession {
 
 	override fun waitDeviceIdle(): Int = notStubbed("waitDeviceIdle")
 
-	// Native.frameTimings answers null for "no measurement yet"; that is not a latched failure.
 	override fun frameTimings(): FrameTimings? = notStubbed("frameTimings")
 
 	override fun writeMotion(request: MotionRequest): Int = notStubbed("writeMotion")
-
-	override fun fillVelocity(request: FillVelocityRequest): Int = notStubbed("fillVelocity")
 
 	override fun presentOutput(target: PresentTarget): Int = notStubbed("presentOutput")
 

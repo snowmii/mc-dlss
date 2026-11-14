@@ -9,19 +9,10 @@ import net.minecraft.client.renderer.feature.TextFeatureRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
-/**
- * World-space nametag handling under DLSS.
- *
- * For non-sneaking entities, Minecraft submits both a normal nametag part (to solid/nameTags) and
- * a see-through part (to seeThrough). When DLSS is active, see-through text is redirected to render
- * at full native resolution in the UI target.
- *
- * This mixin:
- * 1. Suppresses the duplicate low-res normal submit inside sceneTarget so the upscaled world remains clean of blurry text.
- * 2. Ensures the native see-through text renders at full opaque white (0xFFFFFFFF) while preserving the translucent background box.
- */
 @Mixin(SubmitNodeCollection.class)
 public class SubmitNodeCollectionMixin {
+	private static final int OPAQUE_WHITE = -1;
+
 	@WrapOperation(
 		method = "submitNameTag",
 		at = @At(
@@ -36,7 +27,6 @@ public class SubmitNodeCollectionMixin {
 	) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
 		if (phase != null && phase.isOpen()) {
-			// Suppress low-res normal nametag in sceneTarget; see-through renders at native resolution in UiTarget
 			return;
 		}
 		original.call(collection, submit);
@@ -55,9 +45,8 @@ public class SubmitNodeCollectionMixin {
 		final Operation<Integer> original
 	) {
 		final WorldPhase phase = ClientRuntime.active().activeWorldPhase();
-		if (phase != null && phase.isOpen() && color == -1) {
-			// Render text at full opaque white in the native see-through pass
-			return -1;
+		if (phase != null && phase.isOpen() && color == OPAQUE_WHITE) {
+			return OPAQUE_WHITE;
 		}
 		return original.call(opacity, color);
 	}

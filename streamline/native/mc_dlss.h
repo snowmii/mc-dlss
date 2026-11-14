@@ -432,56 +432,6 @@ typedef struct McDlssMotionInfo {
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_write_motion(const McDlssMotionInfo* info);
 
 /*
- * Post-scene velocity merge for the velocity-MRT route, recorded on the caller's command
- * buffer.
- *
- * The engine's render-sized RG16_FLOAT velocity companion carries genuine object motion from
- * the scene writers and the invalid sentinel everywhere else. One compute dispatch samples
- * that companion (a render-attachment and sampled input, never a storage image) and the
- * engine's depth image, copies every non-sentinel object vector unchanged into the module's
- * own motion image, and reconstructs jitter-stripped camera reprojection for every pixel
- * whose payload is still the sentinel - including newly observed dynamic geometry without
- * object history. The complete merged field lands in the motion image
- * mc_dlss_acquire_images returned, which is the sole Streamline motion source on every
- * route.
- *
- * `reset` marks a frame with no valid predecessor, whose reprojection is the identity. Such
- * a frame must not read the identity as a still camera, and the destination still holds the
- * previous frame's merged field, so the dispatch writes the invalid sentinel everywhere
- * instead of reconstructing anything. The flipped motion copy receives the same field,
- * mirrored vertically with its y component negated - the sentinel's y included - so the FG
- * tag's motion source agrees with the engine-space field on every route.
- *
- * `reprojection` is 16 floats in column-major order, the same layout as McDlssMotionInfo.
- * `render_width` and `render_height` must be the configured render dimensions, a check that
- * the caller and the configuration still agree.
- *
- * The companion stays in GENERAL, the layout the engine rests it in: the fill owns an
- * explicit barrier from the scene's color-attachment writes to its sampled reads, because
- * layout equality alone is not synchronization. The motion image is left in GENERAL like the
- * camera-only writer leaves it, and the depth image is handed back in the layout it arrived
- * in.
- *
- * Records and never submits: like the other recording calls, the work is ordered by
- * Minecraft's own graphics submission. Must precede mc_dlss_tag_sr_resources for the same
- * frame on the same command buffer: the tag names the module's motion image as the
- * motion-vector buffer, and the evaluation reads it. Calling before initialize, before
- * configure, or before the images are acquired records nothing and fails.
- */
-typedef struct McDlssFillVelocityInfo {
-    uint64_t command_buffer;
-    McDlssImage depth;
-    McDlssImage velocity;
-    const float* reprojection;
-    uint32_t render_width;
-    uint32_t render_height;
-    int32_t reset;
-    uint32_t fg_consuming_frame;
-} McDlssFillVelocityInfo;
-
-MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_fill_velocity(const McDlssFillVelocityInfo* info);
-
-/*
  * Copies the upscaled DLSS output into an engine image, recorded on the caller's command
  * buffer.
  *
@@ -656,8 +606,7 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_fg_camera_constants(McDlssCameraC
  *
  * `color` and `depth` are the engine's render-sized colour and depth images, tagged as the
  * scaling-input colour and the depth. The motion source is always the module's own motion
- * image - filled by mc_dlss_write_motion on the camera-only route and by
- * mc_dlss_fill_velocity on the velocity-MRT route - so no engine velocity companion is
+ * image - filled by mc_dlss_write_motion on the camera-only route - so no engine velocity companion is
  * carried or tagged. When the module's own output image
  * has been acquired for the configured dimensions (mc_dlss_acquire_images), it is tagged as
  * the scaling-output colour as well; until then the call still succeeds with just the
@@ -744,9 +693,8 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_prepare_rr(const McDlssRrPrepareInfo* i
  * its own flipped copies (depth at render size, the two colours at output size) and tags the copies;
  * the engine images are read as transfer sources, never written or relabeled, and handed
  * back in the layout they arrived in. The motion source is always the module's own flipped
- * motion copy - filled by mc_dlss_write_motion on the camera-only route and by
- * mc_dlss_fill_velocity on the velocity-MRT route, both of which mirror the field and negate
- * its y component into that copy - so no engine velocity companion is carried or tagged.
+ * motion copy - filled by mc_dlss_write_motion on the camera-only route, which mirrors the field
+ * and negates its y component into that copy - so no engine velocity companion is carried or tagged.
  * The backbuffer/output chain is present interception rather than a tag, so no output image
  * is carried or tagged here.
  *
@@ -1018,16 +966,10 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_present_markers(
 
 /*
  * Blocks until Streamline's DLSS-G input processing for the previously presented frame has
- * completed, on the caller's (present/render) thread and through the Vulkan device.
- *
- * The DLSS-G options record eBlockNoClientQueues, under which the DLSS-G plugin reads the
- * tagged inputs of a presented frame on its own queues after Present; the programming guide
- * requires the host to wait on DLSSGState::inputsProcessingCompletionFence - a Vulkan
- * timeline semaphore on this API, read together with its value
- * DLSSGState::lastPresentInputsProcessingCompletionFenceValue via slDLSSGGetState - before it
- * modifies or destroys those inputs in a later frame. This is the call the mod makes at the
- * start of an FG-active frame, before the world phase rewrites the tagged depth, motion,
- * HUD-less, and UI inputs.
+ * completed, on the caller's (present/render) thread and through the Vulkan device, waiting
+ * on DLSSGState::inputsProcessingCompletionFence at
+ * DLSSGState::lastPresentInputsProcessingCompletionFenceValue via slDLSSGGetState when
+ * non-null.
  *
  * Refuses FAIL_NotInitialized while the Streamline session is not ready (bootstrap and proxy
  * activation not both complete, or the Vulkan device tuple never recorded) and
@@ -1090,22 +1032,12 @@ MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_query_motion_probe(float* motion_x, flo
                                                              float* depth, int32_t* slot);
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_exposure(const float exposure);
+MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_set_tonemap_operator(const int32_t op);
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_reset(void);
 /* Explicit host teardown, even before initialize. Caller must quiesce the live device first. */
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_shutdown_streamline(void);
 
 MC_DLSS_API int32_t MC_DLSS_CALL mc_dlss_close(void);
-
-/*
- * mc_dlss_reset releases the module-owned images and drops the retained Streamline frame
- * token and the SR/FG tag records, so the next tag obtains a fresh token and a handoff
- * cannot accept a tag set recorded before the reset; the session stays ready for the next
- * acquire. mc_dlss_close releases the module-owned Vulkan resources (timing, motion pass,
- * images) and the retained frame token, shuts the process-wide Streamline runtime down
- * (while the caller's device is still alive), and forgets the bootstrap, proxy, and session
- * bookkeeping - a later mc_dlss_bootstrap_streamline then reinitializes the runtime.
- * Neither releases direct-NGX ownership, because there is none.
- */
 
 #ifdef __cplusplus
 }

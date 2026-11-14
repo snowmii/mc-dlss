@@ -1,12 +1,3 @@
-// timing.cpp's no-pool, no-device no-op paths.
-//
-// doctest v2.4.11 (MIT) vendored as native/test/doctest.h
-// https://github.com/doctest/doctest/releases/tag/v2.4.11
-// https://raw.githubusercontent.com/doctest/doctest/v2.4.11/doctest/doctest.h
-//
-// The harness runs with no device and no query pool, so only the paths that must no-op
-// without either are reachable; every case starts from a clean g_state/g_timing because
-// the binary runs all cases in one process.
 #include "internal/timing.h"
 
 #include "doctest.h"
@@ -21,13 +12,12 @@ VkDevice fake_device() {
 	return reinterpret_cast<VkDevice>(std::uintptr_t{1});
 }
 
-} // namespace
+}
 
 TEST_CASE("begin_frame_timing no-ops without a device") {
 	reset_state();
 	g_timing = DlssFrameTiming{};
 	begin_frame_timing(VK_NULL_HANDLE);
-	// The no-op must not silently disable timing: supported stays, nothing is written.
 	CHECK(g_timing.supported);
 	CHECK(g_timing.pool == VK_NULL_HANDLE);
 	CHECK(g_timing.writtenStamps == 0);
@@ -41,8 +31,6 @@ TEST_CASE("begin_frame_timing no-ops without a device") {
 TEST_CASE("begin_frame_timing no-ops before the device tuple is complete") {
 	reset_state();
 	g_timing = DlssFrameTiming{};
-	// A device without its physical device cannot probe timestamp support, so the pool is
-	// never created and the frame is not opened - and no driver call is made.
 	g_state.device = fake_device();
 	begin_frame_timing(VK_NULL_HANDLE);
 	CHECK(g_timing.supported);
@@ -56,7 +44,6 @@ TEST_CASE("mark_frame_timing no-ops without a pool") {
 	g_timing = DlssFrameTiming{};
 	mark_frame_timing(VK_NULL_HANDLE, 0);
 	CHECK(g_timing.writtenStamps == 0);
-	// A stage index that does not match the recording slot's progress is refused too.
 	mark_frame_timing(VK_NULL_HANDLE, 3);
 	CHECK(g_timing.writtenStamps == 0);
 }

@@ -8,7 +8,6 @@
     "DebugEntryFpsMixin",
     "DebugScreenEntriesInvoker",
     "MinecraftMixin",
-    "OptionInstanceEnumRgssMixin",
     "OptionInstanceVideoLockMixin",
     "VideoSettingsScreenMixin",
     "VideoSettingsVsyncLockMixin",

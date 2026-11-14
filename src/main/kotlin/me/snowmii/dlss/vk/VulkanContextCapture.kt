@@ -5,11 +5,6 @@ import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice
 import org.lwjgl.vulkan.VK12
 import me.snowmii.dlss.streamline.VulkanBootstrap
 
-/**
- * Builds [VulkanContext] from a live Minecraft [VulkanDevice].
- * Invoked from ctor-TAIL in [me.snowmii.dlss.mixin.VulkanDeviceMixin].
- * Lives outside the mixin package (Mixin forbids referencing classes there).
- */
 object VulkanContextCapture {
 	@JvmStatic
 	fun capture(device: VulkanDevice, physicalDevice: VulkanPhysicalDevice): VulkanContext? {
@@ -32,7 +27,6 @@ object VulkanContextCapture {
 			device.vkDevice(),
 			queueHandle,
 			graphicsPair.leftInt(),
-			// Extra queues start after the host-created count in the family.
 			queues.graphicsStart(),
 			computePair?.leftInt() ?: 0,
 			queues.computeStart(),

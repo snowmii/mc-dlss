@@ -5,7 +5,6 @@ import me.snowmii.streamline.CameraConstants
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
 import me.snowmii.streamline.NativeTestAccess
@@ -27,10 +26,6 @@ class DlssNativeStructAbiTest {
 		val request = request().renderDimensions(Dimensions(1280, 720)).build()
 		assertTrue(Files.isRegularFile(Path.of("build", "native", "mc_dlss.dll")))
 
-		// The probe is compiled against native/mc_dlss.h itself, so it reads every field at the
-		// offset the real C compiler placed it. A Java StructLayout that disagreed - a missing
-		// padding declaration, a transposed pair, a field of the wrong width - reads back as a
-		// value the probe rejects rather than as a silently wrong frame.
 		NativeTestAccess.open(compileAbiProbe()).use { native ->
 			val rr = RrPrepareRequest(
 				enabled = true,
@@ -45,21 +40,15 @@ class DlssNativeStructAbiTest {
 				biasCurrentColor = ImageBinding(951L, 952L, 9),
 			)
 			assertEquals(StreamlineSession.SUCCESS_RESULT, native.prepareRayReconstruction(rr))
-			// Reused FFM scratch must overwrite a populated hint with absence, including on disable.
 			assertEquals(StreamlineSession.SUCCESS_RESULT, native.prepareRayReconstruction(rr.copy(biasCurrentColor = ImageBinding(0L, 0L, 0))))
 			assertEquals(StreamlineSession.SUCCESS_RESULT, native.prepareRayReconstruction(rr))
 			assertEquals(StreamlineSession.SUCCESS_RESULT, native.prepareRayReconstruction(RrPrepareRequest(enabled = false)))
 			assertEquals(StreamlineSession.SUCCESS_RESULT, native.evaluateSuperResolution(request))
-			// The camera's six arrays are fixed-length ABI fields: a malformed array is a
-			// caller bug the boundary must refuse before any byte of the reused scratch is
-			// written - a shorter array would leave the field's tail holding the previous
-			// frame's floats, and a longer one would write past the field.
 			malformedCameras().forEach { malformed ->
 				assertThrows(IllegalArgumentException::class.java) {
 					native.evaluateSuperResolution(request().renderDimensions(Dimensions(1280, 720)).camera(malformed).build())
 				}
 			}
-			// The refusals left the scratch intact: a valid camera still crosses unchanged.
 			assertEquals(StreamlineSession.SUCCESS_RESULT, native.evaluateSuperResolution(request))
 			assertEquals(
 				StreamlineSession.SUCCESS_RESULT,
@@ -73,24 +62,6 @@ class DlssNativeStructAbiTest {
 					),
 				),
 			)
-			// The velocity fill crosses the same boundary in the opposite shape: every field of
-			// McDlssFillVelocityInfo read back at the offset the real C compiler placed it.
-			assertEquals(
-				StreamlineSession.SUCCESS_RESULT,
-				native.fillVelocity(
-					FillVelocityRequest(
-						101L,
-						ImageBinding(301L, 302L, 303),
-						ImageBinding(701L, 702L, 124),
-						FloatArray(16) { it.toFloat() },
-						true,
-						true,
-						Dimensions(1280, 720),
-					),
-				),
-			)
-			// Direct metadata and a subsequent handle-only call share the same FFM scratch.
-			// The latter must clear the former's storage permission and destination view.
 			assertEquals(StreamlineSession.SUCCESS_RESULT, native.presentOutput(PresentTarget(
 				101L, ImageBinding(602L, 601L, 37), Dimensions(2560, 1440),
 				ImageBinding(801L, 802L, 97), 8,
@@ -98,8 +69,6 @@ class DlssNativeStructAbiTest {
 			assertEquals(StreamlineSession.SUCCESS_RESULT, native.presentOutput(PresentTarget(
 				101L, 601L, Dimensions(2560, 1440), ImageBinding(801L, 802L, 97),
 			)))
-			// The out-parameter direction of the same struct: the bridge fills two McDlssImage
-			// values and the binding has to read back exactly what was written.
 			assertEquals(
 				EvaluationImages(
 					ImageBinding(401L, 402L, 403),
@@ -185,17 +154,6 @@ class DlssNativeStructAbiTest {
 				return info->command_buffer == 101 &&
 					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
 					info->render_width == 1280 && info->render_height == 720 &&
-					info->fg_consuming_frame == 1;
-			}
-			__declspec(dllexport) int __cdecl mc_dlss_fill_velocity(const McDlssFillVelocityInfo* info) {
-				if (info == nullptr || info->reprojection == nullptr) return 0;
-				for (int i = 0; i < 16; ++i) {
-					if (info->reprojection[i] != static_cast<float>(i)) return 0;
-				}
-				return info->command_buffer == 101 &&
-					info->depth.view == 301 && info->depth.image == 302 && info->depth.format == 303 &&
-					info->velocity.view == 701 && info->velocity.image == 702 && info->velocity.format == 124 &&
-					info->render_width == 1280 && info->render_height == 720 && info->reset == 1 &&
 					info->fg_consuming_frame == 1;
 			}
 			__declspec(dllexport) int __cdecl mc_dlss_present_output(const McDlssPresentInfo* info) {
@@ -286,10 +244,6 @@ class DlssNativeStructAbiTest {
 		.resetHistory(true)
 		.camera(CAMERA)
 
-	/**
-	 * One malformed variant per camera array: each is a length the ABI field cannot hold, so
-	 * the boundary must refuse it before the struct is written.
-	 */
 	private fun malformedCameras(): List<CameraConstants> = listOf(
 		CameraConstants(FloatArray(15), CAMERA.clipToView, CAMERA.pos, CAMERA.right, CAMERA.up, CAMERA.fwd),
 		CameraConstants(CAMERA.viewToClip, FloatArray(17), CAMERA.pos, CAMERA.right, CAMERA.up, CAMERA.fwd),
@@ -300,7 +254,6 @@ class DlssNativeStructAbiTest {
 	)
 
 	private companion object {
-		/** The standing-in camera whose floats the ABI probe verifies field by field. */
 		private val CAMERA = CameraConstants(
 			FloatArray(16) { (it + 1).toFloat() },
 			FloatArray(16) { (101 + it).toFloat() },

@@ -1,39 +1,12 @@
 package me.snowmii.dlss.readout
 
-/**
- * Render-thread wall-time spans for the calls an app frame can stall in.
- *
- * [Span.QUEUE_PRESENT] is also the frame clock: its end is last, so the gap between consecutive
- * ends is the app-frame interval DLSS-G subdivides. Mean is rate; max/mean >> 1 is stutter.
- *
- * Render thread only, allocation-free per frame. A span whose start was never recorded
- * contributes nothing, so FG-only seams report over the frames they ran on.
- */
 class FramePacingProbe {
 	enum class Span {
-		/** `waitFgInputsIdle`: the DLSS-G input-processing completion fence, FG-active frames only. */
 		FG_INPUT_WAIT,
-
-		/** `queryFgState`: the per-frame `slDLSSGGetState` status read. */
 		FG_STATUS_POLL,
-
-		/**
-		 * `reflexInputSample`: the input marker, which runs `slReflexSleep` before it emits. This
-		 * is where Reflex enforces `frameLimitUs` and where the DLSS-G pacer holds the app back,
-		 * so it is the one blocking call left in the frame outside the render seams.
-		 */
 		REFLEX_SLEEP,
-
-		/** `VulkanGpuSurface.acquireNextTexture`: blocks while the pacer holds every image. */
 		SWAPCHAIN_ACQUIRE,
-
-		/**
-		 * `CommandEncoder.submit()` at the tail of `renderFrame`: where the frame's work reaches
-		 * the queue DLSS-G blocks while it interpolates.
-		 */
 		RENDER_SUBMIT,
-
-		/** `VulkanGpuSurface.present`: the interposed `vkQueuePresentKHR`, and the frame clock. */
 		QUEUE_PRESENT,
 	}
 
@@ -54,9 +27,6 @@ class FramePacingProbe {
 	fun end(span: Span) {
 		val start = started[span.ordinal]
 		if (start == 0L) {
-			// No begin for this end: the seam fired outside a measured frame, or the frame threw
-			// between the two. Either way there is no duration, and inventing one from a stale
-			// start would report the gap between frames as the call's cost.
 			return
 		}
 		val now = System.nanoTime()
@@ -87,18 +57,8 @@ class FramePacingProbe {
 		lastPresentEnd = presentEnd
 	}
 
-	/**
-	 * The window's line - `mean/max` milliseconds per span, frame interval first - and a reset.
-	 *
-	 * Null when no frame completed a present in the window, which is a session that is not
-	 * presenting through the measured seams at all rather than one with nothing to report.
-	 */
 	fun sampleAndReset(): String? = format()?.also { reset() }
 
-	/**
-	 * Same format as [sampleAndReset] but does not reset the window. Safe to call every F3
-	 * tick; the next [sampleAndReset] still gets the full accumulated window.
-	 */
 	fun peek(): String? = format()
 
 	private fun format(): String? {

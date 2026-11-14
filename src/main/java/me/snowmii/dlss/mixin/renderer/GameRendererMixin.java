@@ -33,39 +33,13 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * All {@code GameRenderer} intercepts in one mixin. {@code priority = 1500} so the projection
- * wrap is outermost relative to Sodium ({@code GameRendererMixin.sodium$setProjection}): equal
- * priority orders by classpath, which on some launches gave Sodium the unjittered matrix while
- * DLSS was told the terrain moved, ragging standing-still texel edges.
- *
- * Projection jitter: wraps the first {@code ProjectionMatrixBuffer.getBuffer} call inside
- * {@code renderLevel} to apply the per-frame sub-pixel offset before the world is drawn.
- * The projection at that point already carries view bob and portal/nausea skew — camera motion
- * the reprojection must see. Route is decided before {@code LevelRenderer.render} opens the
- * world phase ({@link WorldPhase#prepare} without opening) so hand/screen-effects rendering
- * still sees the vanilla main target.
- *
- * Main-target override: overrides the {@code mainRenderTarget()} getter so the world phase's
- * low-res scene target and UI window targets are served to callers. The field read is used by
- * GameRenderer itself, bypassing the getter and avoiding a feedback loop. World phase wins over
- * UI windows; real frames never overlap, so precedence is defensive.
- *
- * Hand UI window: wraps {@code renderItemInHand} with guaranteed closure to redirect hand rendering into
- * its own UI window. The private main target is read before opening the window. Drawing
- * is gated inside vanilla; a closed gate produces an empty clear with no visible effect.
- */
 @Mixin(value = GameRenderer.class, priority = 1500)
 public class GameRendererMixin {
 
-	// Field read bypasses the overridden getter; avoids seeing the low-res override during jitter.
 	@Shadow @Final private RenderTarget mainRenderTarget;
 
-	/** Reused across frames; the render loop is single-threaded and this runs once per frame. */
 	@Unique
 	private final Matrix4f mcDlssJitteredProjection = new Matrix4f();
-
-	// --- projection jitter ---
 
 	@WrapOperation(
 		method = "renderLevel",
@@ -105,8 +79,6 @@ public class GameRendererMixin {
 		return original.call(buffer, DlssProjectionJitter.apply(projectionMatrix, offset, this.mcDlssJitteredProjection));
 	}
 
-	// --- main-target override ---
-
 	@Inject(method = "mainRenderTarget", at = @At("HEAD"), cancellable = true)
 	private void mcDlssRedirectWorldTarget(final CallbackInfoReturnable<RenderTarget> info) {
 		final ActiveView active = ClientRuntime.active();
@@ -120,8 +92,6 @@ public class GameRendererMixin {
 			info.setReturnValue(override);
 		}
 	}
-
-	// --- hand UI window ---
 
 	@WrapMethod(method = "renderItemInHand")
 	private void mcDlssBeginHandPhase(
@@ -138,7 +108,6 @@ public class GameRendererMixin {
 		phase.renderHand(this.mainRenderTarget, () -> original.call(camera, player, depth));
 	}
 
-	// 26.3 reads the private target field for this pass, bypassing the getter override.
 	@WrapOperation(method = "renderItemInHand", at = @At(value = "INVOKE",
 		target = "Lcom/mojang/renderpearl/api/commands/CommandEncoder;createRenderPass(Ljava/util/function/Supplier;Lcom/mojang/renderpearl/api/textures/GpuTextureView;Ljava/util/Optional;Lcom/mojang/renderpearl/api/textures/GpuTextureView;Ljava/util/OptionalDouble;)Lcom/mojang/renderpearl/api/commands/RenderPass;"))
 	private RenderPass mcDlssHandTarget(

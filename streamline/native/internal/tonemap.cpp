@@ -15,8 +15,9 @@ struct ToneMapPushConstants {
     int32_t outputHeight;
     float exposure;
     int32_t hasReflection;
+    int32_t tonemapOperator;
 };
-static_assert(sizeof(ToneMapPushConstants) == 16);
+static_assert(sizeof(ToneMapPushConstants) == 20);
 
 struct ToneMapPass {
     VkShaderModule shader = VK_NULL_HANDLE;
@@ -177,7 +178,7 @@ VkDescriptorSet bind_descriptors(const McDlssImage& reflection, const McDlssImag
     return g_toneMap.sets[slot];
 }
 
-} // namespace
+}
 
 void destroy_tone_map_pass() noexcept {
     if (g_state.device != VK_NULL_HANDLE && g_toneMap.pipeline != VK_NULL_HANDLE) {
@@ -203,8 +204,6 @@ int32_t record_tone_map(const VkCommandBuffer commandBuffer, float exposure,
     const bool hasReflection = reflection.image != 0 && reflection.view != 0;
     const VkImageLayout reflectionEntry = hasReflection ? current_layout_of(reflection.image) : VK_IMAGE_LAYOUT_UNDEFINED;
     const bool separateReflection = hasReflection && reflection.image != to_uint64(g_state.rrOutputImage.image);
-    // NGX owns the HDR producer; keep its boundary conservative. The destination may
-    // already be GENERAL, but prior engine reads/writes must still finish before overwrite.
     const ImageTransitionDesc before[] = {
         {g_state.rrOutputImage.image, range, inputEntry, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -224,6 +223,7 @@ int32_t record_tone_map(const VkCommandBuffer commandBuffer, float exposure,
         static_cast<int32_t>(g_state.outputHeight),
         exposure > 0.0f ? exposure : 1.0f,
         hasReflection ? 1 : 0,
+        g_state.toneMapOperator,
     };
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_toneMap.pipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -249,4 +249,4 @@ int32_t record_tone_map(const VkCommandBuffer commandBuffer, float exposure,
     return kSuccess;
 }
 
-} // namespace mc_dlss
+}

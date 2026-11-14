@@ -17,8 +17,6 @@ object ModEntry : ClientModInitializer {
 	val session: DlssSession = DlssSession(startupConfig) { message -> LOGGER.warn(message) }
 
 	override fun onInitializeClient() {
-		// This runs before Vulkan construction mixins, so Streamline is configured before any
-		// native graphics seam can ask for it.
 		Streamline.configure(startupConfig.nativeLibraryPath)
 		me.snowmii.dlss.streamline.VulkanBootstrap.install()
 		startupConfig.warnings.forEach { warning -> LOGGER.warn("DLSS startup configuration: {}", warning) }

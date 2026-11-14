@@ -26,23 +26,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 
-/**
- * All {@code VulkanGpuSurface} intercepts in one mixin.
- *
- * Acquire/present spans: bracketing injections around {@code acquireNextTexture} and
- * {@code present} so the world phase can track when the surface is blocked on swapchain image
- * availability (FG hold-back stalls here, invisible in FPS).
- *
- * Swapchain image count: raises {@code minImageCount} to the DLSS-G back-buffer requirement
- * while FG is enabled; falls back to vanilla {@code max(3, caps.min)} otherwise.
- *
- * Vulkan proxy routing: wraps {@code vkCreateWin32SurfaceKHR}, {@code vkDestroySurfaceKHR},
- * {@code vkCreateSwapchainKHR}, {@code vkGetSwapchainImagesKHR}, {@code vkAcquireNextImageKHR},
- * {@code vkQueuePresentKHR}, and {@code vkDestroySwapchainKHR} so every call goes through
- * Streamline's manual-hooking proxies. Streamline is initialized with {@code eUseManualHooking}:
- * no global intercept; the host must forward these calls or {@code presentCommon()} never fires
- * and FG reports {@code presented=0}. Wrappers forward to the driver when the proxy is idle.
- */
 @Mixin(VulkanGpuSurface.class)
 public class VulkanGpuSurfaceMixin {
 	@Inject(method = "acquireNextTexture()V", at = @At("HEAD"))
@@ -174,10 +157,6 @@ public class VulkanGpuSurfaceMixin {
 			device.address(), swapchain, address(pSwapchainImageCount), address(pSwapchainImages)
 		)
 			: original.call(device, swapchain, pSwapchainImageCount, pSwapchainImages);
-		// DIAGNOSTIC: the count query (images == null) answers how many images the driver actually
-		// created, which is the number that decides whether the pacer can hold its generated frames
-		// back or the next acquire blocks instead. The declared back-buffer count is only a request:
-		// the surface capabilities can cap it, and nothing else reports what survived.
 		if (pSwapchainImages == null && pSwapchainImageCount != null) {
 			SessionReadout.emit("DLSS swapchain images: created=" + pSwapchainImageCount.get(0));
 		}

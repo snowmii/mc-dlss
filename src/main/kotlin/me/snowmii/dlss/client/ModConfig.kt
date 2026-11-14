@@ -16,30 +16,11 @@ import java.nio.file.StandardCopyOption
 import java.util.Locale
 import java.util.Properties
 
-/**
- * The mod's one configuration handle: every `-Dmc.dlss.*` knob is named here, parsed here in one
- * pass, and surfaced here as the values the rest of the mod consumes.
- *
- * The raw property namespace and its parsing live nowhere else. [startupConfig] is the DLSS contract derived from this parse.
- *
- * File-backed user choices live on [user]. They share this type's mode and preset parsing, and
- * [fromSystemProperties] fills those two knobs from the file only when the command line left them
- * unnamed. [UserSettings.enabled] and [UserSettings.frameGeneration] apply after the session is
- * built, so a settings-screen toggle cannot suppress construction the way `-Dmc.dlss.enabled=false`
- * can.
- *
- * Parsing is pure: [from] re-reads the properties on every call, so the early Java bootstrap
- * seam can call [fromSystemProperties] before the mod entrypoint exists and agree with the
- * config the session later builds. Every invalid value is collected into [warnings], which the
- * entrypoint logs, so a mistyped knob names itself instead of failing or defaulting silently.
- */
 class ModConfig(
 	val enabled: Boolean,
 	val qualityMode: SRMode,
-	/** Preset this session runs; [SRModelPreset.DEFAULT] follows NVIDIA App unless locked. */
 	val renderPreset: SRModelPreset,
 	val outputDimensions: Dimensions,
-	/** Whether either output knob was named, which pins the session to [outputDimensions]. */
 	val outputPinned: Boolean,
 	val sdkPath: Path?,
 	val nativeLibraryPath: Path?,
@@ -47,7 +28,6 @@ class ModConfig(
 	val debugLog: Boolean = false,
 	val warnings: List<String>,
 ) {
-	/** The session's DLSS contract config, derived from this one parse. */
 	val startupConfig: DlssStartupConfig
 		get() = DlssStartupConfig(
 			enabled,
@@ -79,14 +59,8 @@ class ModConfig(
 		private const val DEFAULT_OUTPUT_WIDTH = 2560
 		private const val DEFAULT_OUTPUT_HEIGHT = 1440
 
-		/** File-backed user settings. JVM properties remain explicit overrides. */
 		val user: UserSettings = UserSettings(configFile())
 
-		/**
-		 * The same parse as [from], callable from Java before the mod entrypoint has run. The
-		 * Vulkan bootstrap seams need the native-library knob before [from] can be reached
-		 * through a Kotlin object.
-		 */
 		@JvmStatic
 		fun fromSystemProperties(): ModConfig = from(user.withSystemOverrides(System.getProperties()))
 
@@ -103,8 +77,6 @@ class ModConfig(
 				qualityMode = qualityMode,
 				renderPreset = renderPreset,
 				outputDimensions = Dimensions(width, height),
-				// Naming either knob pins the session to that size; naming neither lets the output
-				// size follow whatever main target the client actually renders into.
 				outputPinned = properties.getProperty(OUTPUT_WIDTH_PROPERTY) != null ||
 					properties.getProperty(OUTPUT_HEIGHT_PROPERTY) != null,
 				sdkPath = readPath(properties, SDK_PATH_PROPERTY, warnings),
@@ -126,9 +98,6 @@ class ModConfig(
 			}
 		}
 
-		/**
-		 * Reads the SR preset. Unset or "default" follows NVIDIA App / OTA ([SRModelPreset.DEFAULT]).
-		 */
 		private fun readPreset(
 			properties: Properties,
 			warnings: MutableList<String>,
@@ -186,18 +155,11 @@ class ModConfig(
 		private fun configFile(): Path? = try {
 			FabricLoader.getInstance().configDir.resolve("mc-dlss").resolve("config.json")
 		} catch (_: RuntimeException) {
-			// Plain unit tests have no Fabric game directory; persistence is unavailable there.
 			null
 		}
 	}
 }
 
-/**
- * File-backed user settings. JVM properties remain explicit overrides.
- *
- * [enabled] and [frameGeneration] apply after the session is built. [qualityMode] and
- * [renderPreset] fill in only when those knobs were not named on the command line.
- */
 class UserSettings internal constructor(private val file: Path?) {
 	private var _enabled = true
 	private var _qualityMode = SRMode.QUALITY
@@ -268,7 +230,6 @@ class UserSettings internal constructor(private val file: Path?) {
 		load()
 	}
 
-	/** Adds file-backed startup mode/preset without replacing launch-time overrides. */
 	fun withSystemOverrides(overrides: Properties): Properties {
 		val merged = Properties()
 		merged.putAll(overrides)
@@ -294,9 +255,7 @@ class UserSettings internal constructor(private val file: Path?) {
 			_reflexMode = fields["reflexMode"]?.let(::parseReflexMode) ?: ReflexMode.ON
 			_debugLog = jsonBoolean(fields["debugLog"]) == true
 		} catch (_: IOException) {
-			// Keep safe defaults when an older or manually edited file is invalid.
 		} catch (_: RuntimeException) {
-			// Keep safe defaults when an older or manually edited file is invalid.
 		}
 	}
 
@@ -314,7 +273,6 @@ class UserSettings internal constructor(private val file: Path?) {
 			)
 			Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING)
 		} catch (_: IOException) {
-			// Values remain effective for this session if persistence fails.
 		} finally {
 			try {
 				Files.deleteIfExists(temporary)

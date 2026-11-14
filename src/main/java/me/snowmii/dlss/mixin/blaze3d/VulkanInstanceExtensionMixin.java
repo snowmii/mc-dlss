@@ -11,7 +11,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.Set;
 
-/** Adds Streamline instance extensions after GLFW's, before vkCreateInstance. */
 @Mixin(VulkanInstance.class)
 public class VulkanInstanceExtensionMixin {
 	@Shadow @Final private Set<String> enabledExtensions;

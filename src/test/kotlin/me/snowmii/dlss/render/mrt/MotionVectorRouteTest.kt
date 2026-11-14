@@ -1,9 +1,6 @@
 package me.snowmii.dlss.render.mrt
 
-import com.mojang.renderpearl.api.GpuFormat
 import com.mojang.blaze3d.pipeline.RenderTarget
-import com.mojang.renderpearl.api.textures.GpuTextureView
-import me.snowmii.dlss.readNativeSource
 import me.snowmii.dlss.render.DlssCameraSample
 import me.snowmii.dlss.render.DlssFrameMotion
 import me.snowmii.dlss.render.DlssJitter
@@ -17,7 +14,6 @@ import me.snowmii.dlss.streamline.LifecycleAdapter
 import me.snowmii.streamline.Dimensions
 import me.snowmii.streamline.EvaluationImages
 import me.snowmii.streamline.EvaluationRequest
-import me.snowmii.streamline.FillVelocityRequest
 import me.snowmii.streamline.FrameTimings
 import me.snowmii.dlss.api.ImageBinding
 import me.snowmii.streamline.MotionRequest
@@ -28,54 +24,14 @@ import me.snowmii.streamline.StreamlineSessionTestDouble
 import me.snowmii.dlss.vk.VulkanContext
 import org.joml.Matrix4f
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.lwjgl.vulkan.VkCommandBuffer
 import java.nio.file.Path
-import kotlin.io.path.readText
 
-/**
- * Velocity-route gate: the velocity-MRT frame merges the scene's RG16_FLOAT velocity companion
- * into the native motion image through the sentinel fill, then tags; the camera-only frame
- * keeps the compute writer and the native motion image path.
- *
- * On VELOCITY_MRT the frame's motion source is the native motion image. [FrameEvaluation]
- * records the post-scene fill with the velocity view before the tag. The tag request carries
- * only engine colour and depth; McDlssTagInfo does not carry the engine's velocity image, so
- * the tag is route-independent. The native tag call always selects the module's motion image
- * as the motion-vector buffer.
- */
 class MotionVectorRouteTest {
 	private val mainTarget = fakeMainTarget()
-
-
-	@Test
-	fun `the velocity route fills before tagging and tags only the native motion image`() {
-		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
-		val evaluation = evaluation(calls)
-		val velocity = ImageBinding(11L, 12L, 124)
-
-		assertTrue(
-			evaluation.evaluateFrame(
-				scene(),
-				jitter(),
-				motion(),
-				route = MotionVectorRoute.VELOCITY_MRT,
-				velocity = velocity,
-			),
-			"the velocity-route frame must record through to the evaluation",
-		)
-		assertEquals(velocity, calls.fills.single().velocity, "the fill must sample the frame's velocity companion")
-		assertTrue(calls.writeMotion.isEmpty(), "the velocity route must not record the compute camera-motion writer")
-		// The tag is route-independent: it carries the engine colour and depth only, and the
-		// native side always tags the module's motion image as the motion source.
-		assertEquals(scene().color, calls.tags.single().color)
-		assertEquals(scene().depth, calls.tags.single().depth)
-		assertEquals(1, calls.evaluations.size, "the frame must still evaluate")
-	}
 
 	@Test
 	fun `the camera-only route keeps the compute writer and the native motion image path`() {
@@ -84,54 +40,22 @@ class MotionVectorRouteTest {
 
 		assertTrue(evaluation.evaluateFrame(scene(), jitter(), motion()))
 		assertEquals(1, calls.writeMotion.size, "the camera-only route must keep the compute writer")
-		assertTrue(calls.fills.isEmpty(), "the camera-only route must record no fill")
 		assertEquals(scene().color, calls.tags.single().color)
 		assertEquals(scene().depth, calls.tags.single().depth)
 		assertEquals(1, calls.evaluations.size)
 	}
 
 	@Test
-	fun `a stray velocity on the camera-only route cannot trigger the fill`() {
-		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
-		val evaluation = evaluation(calls)
-
-		// WorldPhase never produces this shape, but a caller that does must not move the
-		// camera-only route onto a fill the compute writer never needed: the fill belongs to
-		// the velocity route alone.
-		assertTrue(
-			evaluation.evaluateFrame(
-				scene(),
-				jitter(),
-				motion(),
-				route = MotionVectorRoute.CAMERA_ONLY,
-				velocity = ImageBinding(11L, 12L, 124),
-			),
-		)
-		assertEquals(1, calls.writeMotion.size)
-		assertTrue(calls.fills.isEmpty(), "the camera-only route must never record the fill")
-	}
-
-	@Test
-	fun `the velocity route without a velocity companion is not evaluated`() {
-		val calls = RecordingNativeApi(RENDER_DIMENSIONS)
-		val evaluation = evaluation(calls)
-
-		// A velocity-route frame with no motion source at all must skip rather than hand DLSS
-		// an image the fill never merged into.
-		assertFalse(evaluation.evaluateFrame(scene(), jitter(), motion(), route = MotionVectorRoute.VELOCITY_MRT))
-		assertTrue(calls.fills.isEmpty())
-		assertTrue(calls.writeMotion.isEmpty())
-		assertTrue(calls.tags.isEmpty())
-		assertTrue(calls.evaluations.isEmpty())
-	}
-
-	@Test
-	fun `the world phase hands camera-only route and no velocity view into the evaluation`() {
+	fun `the world phase hands scene targets and camera sample into the evaluation`() {
 		val runtime = velocityRuntime()
-		assertEquals(MotionVectorRoute.CAMERA_ONLY, runtime.motionVectorRoute)
-		var handed: Pair<MotionVectorRoute, GpuTextureView?>? = null
-		val phase = worldPhase(runtime) { _, _, _, _, route, velocity, _ ->
-			handed = route to velocity
+		var evaluated = false
+		val phase = worldPhase(runtime) { rendered, destination, jitter, motion, camera ->
+			assertNotNull(rendered)
+			assertEquals(mainTarget, destination)
+			assertNotNull(jitter)
+			assertNotNull(motion)
+			assertNotNull(camera)
+			evaluated = true
 			true
 		}
 
@@ -139,34 +63,7 @@ class MotionVectorRouteTest {
 		phase.begin(normalInWorldFrame = true, mainTarget = mainTarget)
 		phase.end()
 
-		val (route, view) = checkNotNull(handed) { "a camera-only frame still reaches the evaluation" }
-		assertEquals(MotionVectorRoute.CAMERA_ONLY, route)
-		assertNull(view, "the camera-only route must hand no velocity view")
-	}
-
-	@Test
-	fun `the tag ABI carries no velocity and the native tag call always selects the module motion image`() {
-		val header = readNativeSource("mc_dlss.h")
-		val tagStruct = header.substringAfter("typedef struct McDlssTagInfo {")
-			.substringBefore("} McDlssTagInfo;")
-		assertFalse(
-			tagStruct.contains("velocity"),
-			"McDlssTagInfo must no longer carry the engine's velocity image - direct companion tagging is retired",
-		)
-
-		val java = Path.of("")
-			.toAbsolutePath()
-			.resolve("streamline/src/main/java/me/snowmii/streamline/Native.java")
-			.readText()
-		assertTrue(java.contains("IMAGE_LAYOUT.withName(\"depth\")"), "the FFM tag layout must mirror the tag struct")
-		assertFalse(java.contains("TAG_VELOCITY_VIEW"), "the FFM tag layout must carry no velocity field")
-
-		val sl = readNativeSource("internal/sl_dlss.cpp")
-		// The motion source is unconditional: the module's motion image is tagged as the
-		// motion-vector buffer on every route, and no companion resource is ever described.
-		assertTrue(sl.contains("kBufferTypeMotionVectors"))
-		assertFalse(sl.contains("velocityResource"), "the tag must not describe a companion resource")
-		assertFalse(sl.contains("hasVelocity"), "the tag must not branch on a companion field")
+		assertTrue(evaluated, "a frame reaches the evaluation")
 	}
 
 	@Test
@@ -185,9 +82,6 @@ class MotionVectorRouteTest {
 	private fun evaluation(calls: RecordingNativeApi): FrameEvaluation {
 		val session = DlssSession(startupConfig())
 		val adapter = LifecycleAdapter(session, calls)
-		// The adapter stamps the configured render dimensions onto every request from its own
-		// initialize, so the frame path has to run through initialize exactly like production
-		// (which also moves the session from WAITING_FOR_VULKAN to READY).
 		adapter.initialize(1L, 2L, 3L, Path.of("sdk"), Path.of("data"))
 		val context = VulkanContext.fromNativeHandles(
 			1L,
@@ -204,10 +98,6 @@ class MotionVectorRouteTest {
 		return FrameEvaluation(adapter, { context })
 	}
 
-	/**
-	 * A [VkCommandBuffer] whose `address()` answers without a Vulkan device. The constructor
-	 * dereferences a live device; the frame path only reads `address()`.
-	 */
 	private fun fakeCommandBuffer(): VkCommandBuffer {
 		val unsafeField = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe")
 		unsafeField.isAccessible = true
@@ -222,8 +112,6 @@ class MotionVectorRouteTest {
 			RenderTarget,
 			DlssJitterOffset,
 			DlssFrameMotion,
-			MotionVectorRoute,
-			GpuTextureView?,
 			DlssCameraSample?,
 		) -> Boolean,
 	) = WorldPhase(
@@ -245,11 +133,9 @@ class MotionVectorRouteTest {
 	private class RecordingNativeApi(
 		private val renderDimensions: Dimensions,
 	) : StreamlineSessionTestDouble() {
-		val fills = mutableListOf<FillVelocityRequest>()
 		val writeMotion = mutableListOf<MotionRequest>()
 		val tags = mutableListOf<SrTagRequest>()
 		val evaluations = mutableListOf<EvaluationRequest>()
-		/** The per-frame recording calls in submission order, so the timing-chain seam is assertable. */
 		val order = mutableListOf<String>()
 
 		override fun initialize(
@@ -282,12 +168,6 @@ class MotionVectorRouteTest {
 		override fun waitDeviceIdle(): Int = StreamlineSession.SUCCESS_RESULT
 
 		override fun frameTimings(): FrameTimings? = null
-
-		override fun fillVelocity(request: FillVelocityRequest): Int {
-			fills += request
-			order += "fill"
-			return StreamlineSession.SUCCESS_RESULT
-		}
 
 		override fun writeMotion(request: MotionRequest): Int {
 			writeMotion += request

@@ -67,4 +67,4 @@ VkImageSubresourceRange depth_range_of(const McDlssImage& image) noexcept {
     return image_range_of(image.format != static_cast<uint32_t>(VK_FORMAT_R32_SFLOAT));
 }
 
-} // namespace mc_dlss
+}

@@ -24,11 +24,6 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * GUI window: `GameRenderer.mainRenderTarget()` answers the transparent full-resolution UI
- * target while [me.snowmii.dlss.render.ui.UiPhase] is open and the vanilla target otherwise. World-over-UI wins at
- * [ClientRuntime.resolveActiveTarget]. One held target, allocated at main-target size.
- */
 class UiPhaseTest {
 	private val outputWidth = 2560
 	private val outputHeight = 1440
@@ -120,7 +115,6 @@ class UiPhaseTest {
 		val harness = Harness()
 		val mainTarget = HeadlessRenderTarget(outputWidth, outputHeight)
 		harness.phase.begin(mainTarget)
-		// No end(): GuiRenderer.render threw between head and tail, so the window never closed.
 		harness.phase.begin(mainTarget)
 
 		assertTrue(harness.phase.isOpen)
@@ -162,7 +156,6 @@ class UiPhaseTest {
 		)
 	}
 
-	/** Render target with fake GPU textures and views, so lifetime and clears are testable off the render thread. */
 	private class HeadlessRenderTarget(
 		width: Int,
 		height: Int,
@@ -184,7 +177,6 @@ class UiPhaseTest {
 		override fun destroyBuffers() = Unit
 	}
 
-	/** 26.3: [GpuTexture]/[GpuTextureView] are plain interfaces; the fakes implement them directly. */
 	private class FakeTexture(private val format: GpuFormat, private val fakeWidth: Int, private val fakeHeight: Int) : GpuTexture {
 		override fun getWidth(mipLevel: Int) = fakeWidth
 		override fun getHeight(mipLevel: Int) = fakeHeight
@@ -215,7 +207,6 @@ class UiPhaseTest {
 		fun encoder() = RecordingEncoder(this)
 	}
 
-	/** 26.3: [CommandEncoder] is a plain interface; the fake implements it directly and only ever clears. */
 	private class RecordingEncoder(private val recording: Recording) : CommandEncoder {
 		override fun submit() = Unit
 

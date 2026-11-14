@@ -96,14 +96,10 @@ public final class StreamlineVulkanProxies {
 		}
 	}
 
-	/** A raw Vulkan pointer as a segment; zero is Vulkan's null (an absent allocator or out-buffer). */
 	private static MemorySegment segment(final long address) {
 		return address == 0L ? MemorySegment.NULL : MemorySegment.ofAddress(address);
 	}
 
-	/* Keep each call site's static types identical to its FunctionDescriptor. The generic
-	 * invokeWithArguments path boxes primitive handles and constructs an Object[] per call.
-	 */
 	static int invokeCreateSwapchain(
 			final MethodHandle function, final long device, final long createInfo,
 			final long allocator, final long swapchain
@@ -171,10 +167,6 @@ public final class StreamlineVulkanProxies {
 		function.invokeExact(instance, surface, segment(allocator));
 	}
 
-	/**
-	 * Lazily bound so a session that never renders - and never stages the runtime - does not pay
-	 * for the lookup or fail on it. Binding failure is recorded once as {@link #BOUND} false.
-	 */
 	private static final class Handles {
 		private static final MethodHandle CREATE_SWAPCHAIN;
 		private static final MethodHandle GET_SWAPCHAIN_IMAGES;
@@ -200,57 +192,55 @@ public final class StreamlineVulkanProxies {
 				final SymbolLookup lookup = SymbolLookup.libraryLookup(interposer, Arena.global());
 				createSwapchain = bind(lookup, "vkCreateSwapchainKHR", FunctionDescriptor.of(
 					ValueLayout.JAVA_INT,
-					ValueLayout.JAVA_LONG, // device
-					ValueLayout.ADDRESS, // pCreateInfo
-					ValueLayout.ADDRESS, // pAllocator
-					ValueLayout.ADDRESS // pSwapchain
+					ValueLayout.JAVA_LONG,
+					ValueLayout.ADDRESS,
+					ValueLayout.ADDRESS,
+					ValueLayout.ADDRESS
 				), MethodType.methodType(int.class, long.class,
 						MemorySegment.class, MemorySegment.class, MemorySegment.class));
 				getSwapchainImages = bind(lookup, "vkGetSwapchainImagesKHR", FunctionDescriptor.of(
 					ValueLayout.JAVA_INT,
-					ValueLayout.JAVA_LONG, // device
-					ValueLayout.JAVA_LONG, // swapchain
-					ValueLayout.ADDRESS, // pSwapchainImageCount
-					ValueLayout.ADDRESS // pSwapchainImages
+					ValueLayout.JAVA_LONG,
+					ValueLayout.JAVA_LONG,
+					ValueLayout.ADDRESS,
+					ValueLayout.ADDRESS
 				), MethodType.methodType(int.class, long.class, long.class,
 						MemorySegment.class, MemorySegment.class));
 				acquireNextImage = bind(lookup, "vkAcquireNextImageKHR", FunctionDescriptor.of(
 					ValueLayout.JAVA_INT,
-					ValueLayout.JAVA_LONG, // device
-					ValueLayout.JAVA_LONG, // swapchain
-					ValueLayout.JAVA_LONG, // timeout
-					ValueLayout.JAVA_LONG, // semaphore
-					ValueLayout.JAVA_LONG, // fence
-					ValueLayout.ADDRESS // pImageIndex
+					ValueLayout.JAVA_LONG,
+					ValueLayout.JAVA_LONG,
+					ValueLayout.JAVA_LONG,
+					ValueLayout.JAVA_LONG,
+					ValueLayout.JAVA_LONG,
+					ValueLayout.ADDRESS
 				), MethodType.methodType(int.class, long.class, long.class, long.class,
 						long.class, long.class, MemorySegment.class));
 				queuePresent = bind(lookup, "vkQueuePresentKHR", FunctionDescriptor.of(
 					ValueLayout.JAVA_INT,
-					ValueLayout.JAVA_LONG, // queue
-					ValueLayout.ADDRESS // pPresentInfo
+					ValueLayout.JAVA_LONG,
+					ValueLayout.ADDRESS
 				), MethodType.methodType(int.class, long.class, MemorySegment.class));
 				destroySwapchain = bind(lookup, "vkDestroySwapchainKHR", FunctionDescriptor.ofVoid(
-					ValueLayout.JAVA_LONG, // device
-					ValueLayout.JAVA_LONG, // swapchain
-					ValueLayout.ADDRESS // pAllocator
+					ValueLayout.JAVA_LONG,
+					ValueLayout.JAVA_LONG,
+					ValueLayout.ADDRESS
 				), MethodType.methodType(void.class, long.class, long.class, MemorySegment.class));
 				createWin32Surface = bind(lookup, "vkCreateWin32SurfaceKHR", FunctionDescriptor.of(
 					ValueLayout.JAVA_INT,
-					ValueLayout.JAVA_LONG, // instance
-					ValueLayout.ADDRESS, // pCreateInfo
-					ValueLayout.ADDRESS, // pAllocator
-					ValueLayout.ADDRESS // pSurface
+					ValueLayout.JAVA_LONG,
+					ValueLayout.ADDRESS,
+					ValueLayout.ADDRESS,
+					ValueLayout.ADDRESS
 				), MethodType.methodType(int.class, long.class,
 						MemorySegment.class, MemorySegment.class, MemorySegment.class));
 				destroySurface = bind(lookup, "vkDestroySurfaceKHR", FunctionDescriptor.ofVoid(
-					ValueLayout.JAVA_LONG, // instance
-					ValueLayout.JAVA_LONG, // surface
-					ValueLayout.ADDRESS // pAllocator
+					ValueLayout.JAVA_LONG,
+					ValueLayout.JAVA_LONG,
+					ValueLayout.ADDRESS
 				), MethodType.methodType(void.class, long.class, long.class, MemorySegment.class));
 				bound = true;
 			} catch (Throwable ignored) {
-				// A missing or unloadable staged runtime is not fatal: the callers keep their
-				// vanilla path and the session runs without frame generation.
 			}
 			CREATE_SWAPCHAIN = createSwapchain;
 			GET_SWAPCHAIN_IMAGES = getSwapchainImages;

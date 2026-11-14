@@ -169,13 +169,12 @@ public record CameraConstants(
 				return false;
 			}
 		}
-		// Kotlin compares the scalar fields with numeric == (list equality on Float), so
-		// -0.0f equals 0.0f and NaN never equals itself; boxed-Float Arrays.equals would
-		// flip both. Keep the exact Kotlin semantics.
-		float[] m = scalars();
-		float[] t = camera.scalars();
-		for (int i = 0; i < m.length; i++) {
-			if (m[i] != t[i]) {
+		return numericFloatArrayEquals(scalars(), camera.scalars());
+	}
+
+	private static boolean numericFloatArrayEquals(float[] a, float[] b) {
+		for (int i = 0; i < a.length; i++) {
+			if (a[i] != b[i]) {
 				return false;
 			}
 		}

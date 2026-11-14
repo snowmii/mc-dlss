@@ -111,11 +111,6 @@ class DlssSessionTest {
 		assertEquals(0, native.initializeCalls)
 	}
 
-	/**
-	 * Every native stage latches the same way: the exact stage and result code reach the session,
-	 * the route falls back to vanilla, and the failed stage is never called a second time. The
-	 * stage before the failing one still ran (initialize before query, query before configure).
-	 */
 	@ParameterizedTest
 	@MethodSource("failureCases")
 	fun aFailedNativeStageLatchesItsExactStageAndIsNeverRetried(case: FailureCase) {
@@ -157,8 +152,6 @@ class DlssSessionTest {
 			.build()
 
 		assertTrue(adapter.evaluate(request))
-		// The adapter stamps the configured render size on the way through; everything the caller
-		// described crosses untouched.
 		assertEquals(
 			EvaluationRequest.builder()
 				.commandBuffer(10L)
@@ -238,8 +231,6 @@ class DlssSessionTest {
 
 		override fun frameTimings(): FrameTimings? = null
 
-		// The session lifecycle never records GPU work, so the motion pass only has to exist
-		// here for the interface to be implemented.
 		override fun writeMotion(request: MotionRequest): Int {
 			writeMotionCalls++
 			return StreamlineSession.SUCCESS_RESULT
@@ -267,7 +258,6 @@ class DlssSessionTest {
 		warnings = emptyList(),
 	)
 
-	/** One native stage rigged to fail, with the way the adapter reaches it. */
 	data class FailureCase(
 		private val name: String,
 		val native: () -> FakeNative,
@@ -313,8 +303,6 @@ class DlssSessionTest {
 				"evaluate",
 				{ FakeNative(evaluateResult = 41) },
 				{
-					// The evaluate stage is only reachable through a session that started; the
-					// second drive's initialize is refused by the latch, as the retry must be.
 					it.initialize(1L, 2L, 3L, SDK, DATA)
 					it.evaluate(EvaluationRequest())
 				},

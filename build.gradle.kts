@@ -63,7 +63,6 @@ dependencies {
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher:$junitPlatformVersion")
 
 	runtimeMod("modmenu_version") { "maven.modrinth:modmenu:$it" }
-	// Compile against the same optional integration API shipped in the dev client.
 	compileOnly("maven.modrinth:sodium:${providers.gradleProperty("sodium_version").get()}") { isTransitive = false }
 	runtimeMod("sodium_version") { "maven.modrinth:sodium:$it" }
 	runtimeMod("devauth_version") { "me.djtheredstoner:DevAuth-fabric:$it" }

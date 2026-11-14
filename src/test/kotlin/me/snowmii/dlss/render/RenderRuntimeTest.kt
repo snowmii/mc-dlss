@@ -46,7 +46,6 @@ class RenderRuntimeTest {
 	private val allocated = mutableListOf<HeadlessRenderTarget>()
 	private val released = mutableListOf<HeadlessRenderTarget>()
 
-	/** Ordered record of every device stall and every GPU-object free: "quiesce" then "free:target". */
 	private val freeLog = mutableListOf<String>()
 	private var startupCalls = 0
 
@@ -202,8 +201,6 @@ class RenderRuntimeTest {
 
 		runtime.close()
 
-		// The teardown wait plus the primitive's guarded wait, then the free: the ordering the
-		// in-flight-frame invariant requires, and the wait cannot be skipped by close's guard.
 		assertEquals(listOf("quiesce", "quiesce", "free:target"), freeLog)
 		assertEquals(DlssSessionState.CLOSED, session.state)
 	}

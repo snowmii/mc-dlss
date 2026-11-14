@@ -4,7 +4,6 @@ import it.unimi.dsi.fastutil.ints.Int2IntArrayMap;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import me.snowmii.streamline.SlQueueRequirements;
 
-/** Reserves distinct Streamline queue ranges after the host's queues in each family. */
 public final class DeviceQueueRules {
 	private DeviceQueueRules() {}
 
@@ -15,15 +14,18 @@ public final class DeviceQueueRules {
 		final SlQueueRequirements requirements
 	) {
 		final Int2IntMap counts = new Int2IntArrayMap(hostCounts);
-		final int graphicsStart = counts.get(graphicsFamily);
-		if (requirements != null) {
-			counts.put(graphicsFamily, graphicsStart + requirements.graphicsQueues());
-		}
-		// A shared graphics/compute family must not give both consumers the same range.
-		final int computeStart = computeFamily < 0 ? 0 : counts.get(computeFamily);
-		if (requirements != null && computeFamily >= 0) {
-			counts.put(computeFamily, computeStart + requirements.computeQueues());
-		}
+		final int graphicsStart = allocateRange(counts, graphicsFamily, requirements == null ? 0 : requirements.graphicsQueues());
+		final int computeStart = computeFamily < 0
+			? 0
+			: allocateRange(counts, computeFamily, requirements == null ? 0 : requirements.computeQueues());
 		return new Layout(counts, graphicsStart, computeStart);
+	}
+
+	private static int allocateRange(final Int2IntMap counts, final int family, final int queueCount) {
+		final int start = counts.get(family);
+		if (queueCount > 0) {
+			counts.put(family, start + queueCount);
+		}
+		return start;
 	}
 }

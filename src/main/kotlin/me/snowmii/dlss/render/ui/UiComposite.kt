@@ -15,21 +15,12 @@ import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline
 import net.minecraft.client.renderer.BindGroupLayouts
 import net.minecraft.resources.Identifier
 
-/**
- * UI over HUD-less world. Aliased hudless/destination skips the unblended base copy
- * (sampling a target a pass writes is invalid). Distinct inputs run both passes.
- * Premultiplied: {@code ui.rgb + hudless.rgb * (1 - ui.a)}.
- */
 class UiComposite(
-	/** Injectable; production uses the render-loop sampler cache. */
 	private val sampler: () -> GpuSampler = { RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST) },
 	private val pipelineResolver: (RenderPipeline) -> CompiledRenderPipeline = { pipeline ->
 		RenderSystem.getCompiledPipeline(pipeline)
 	},
 ) {
-	/**
-	 * Missing color view on any input: write nothing. Aliased hudless/destination: overlay only.
-	 */
 	fun render(encoder: CommandEncoder, ui: RenderTarget, hudless: RenderTarget, destination: RenderTarget) {
 		val uiColor = ui.colorTextureView ?: return
 		val hudlessColor = hudless.colorTextureView ?: return
@@ -52,7 +43,6 @@ class UiComposite(
 	}
 
 	companion object {
-		/** Unblended copy. Aliased wiring skips this; destination already holds the world. */
 		internal val HUDLESS_COPY_PIPELINE: RenderPipeline = RenderPipeline.builder()
 			.withLocation(Identifier.fromNamespaceAndPath("mc-dlss", "pipeline/ui_composite_copy"))
 			.withVertexShader("core/screenquad")
@@ -62,7 +52,6 @@ class UiComposite(
 			.withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
 			.build()
 
-		/** Premultiplied overlay: {@code BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA}. */
 		internal val UI_OVERLAY_PIPELINE: RenderPipeline = RenderPipeline.builder()
 			.withLocation(Identifier.fromNamespaceAndPath("mc-dlss", "pipeline/ui_composite_overlay"))
 			.withVertexShader("core/screenquad")

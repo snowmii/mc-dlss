@@ -34,10 +34,6 @@ public record MotionRequest(
 		this(commandBuffer, depth, reprojection, false, renderDimensions);
 	}
 
-	/**
-	 * Compares the reprojection payload, not array identity — two requests holding the same
-	 * step in different arrays must be equal.
-	 */
 	@Override
 	public boolean equals(Object other) {
 		return other instanceof MotionRequest(long buffer, ImageBinding depth1, float[] reprojection1, boolean fgConsuming1, Dimensions dimensions)

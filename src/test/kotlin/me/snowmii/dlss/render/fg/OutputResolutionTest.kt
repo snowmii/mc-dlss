@@ -33,15 +33,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
-/**
- * Output size follows the client's main render target: the first world frame adopts the size
- * the client is rendering into; a later change reconfigures; a drag-resize does not reconfigure
- * per intermediate size; FG suspends across the change and resumes; an explicitly configured
- * size still pins.
- *
- * A maximized windowed client is typically a few pixels short of the monitor, so a startup pin
- * would route those frames vanilla.
- */
 class OutputResolutionTest {
 	private val configured = Dimensions(2560, 1440)
 	private val windowed = Dimensions(1920, 1080)
@@ -99,7 +90,6 @@ class OutputResolutionTest {
 		fixture.frame(HeadlessRenderTarget(windowed))
 		val configuresBefore = fixture.native.configureCalls
 
-		// Every frame of a drag reports a size the one before it did not.
 		listOf(1930, 1940, 1950, 1960).forEach { width ->
 			fixture.frame(HeadlessRenderTarget(Dimensions(width, 1080)))
 			assertEquals("unsupported-output-size", fixture.route?.frame?.reason)
@@ -135,8 +125,6 @@ class OutputResolutionTest {
 
 	@Test
 	fun `a refused reconfigure leaves the session running at the size it was already configured for`() {
-		// A bridge that answers nothing is the refusal shape: no native size to move to, so the
-		// session must not claim one.
 		val fixture = fixture(bridge = TestSessionBridge())
 
 		fixture.frame(HeadlessRenderTarget(windowed))
@@ -153,7 +141,7 @@ class OutputResolutionTest {
 
 	private inner class Fixture(outputPinned: Boolean, overrideBridge: SessionBridge?) {
 		val diagnostics = mutableListOf<String>()
-		val native = FakeNative()
+		val native = HalfResolutionFakeNative()
 		var route: WorldTargetRoute? = null
 
 		val session = DlssSession(
@@ -227,12 +215,7 @@ class OutputResolutionTest {
 		override fun destroyBuffers() = Unit
 	}
 
-	/**
-	 * The native side as sizes: half the output in each axis, which is no real quality mode's
-	 * ratio and is exactly why it is used - a render size that moved can only have come from the
-	 * output size the reconfigure was given.
-	 */
-	private class FakeNative : StreamlineSessionTestDouble() {
+	private class HalfResolutionFakeNative : StreamlineSessionTestDouble() {
 		var configureCalls = 0
 		var configuredOutput: Dimensions? = null
 
@@ -277,7 +260,6 @@ class OutputResolutionTest {
 
 		override fun evaluateSuperResolution(request: EvaluationRequest) = StreamlineSession.SUCCESS_RESULT
 
-		/** Healthy status, so the FG status latch never suspends composition for its own reason. */
 		override fun queryFgState() = FgState(0, 2, 0L, 0L)
 	}
 }

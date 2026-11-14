@@ -56,9 +56,6 @@ class EnablementFallbackTest {
 		assertEquals("unsupported-frame", fixture.route?.frame?.reason)
 	}
 
-	// A size the session is not configured against renders full-resolution *for that frame*. This
-	// runtime has no bridge, so there is no native side to reconfigure and the refusal is the
-	// whole story.
 	@Test
 	fun `a window the session is not configured against renders full-resolution`() {
 		val fixture = fixture()
@@ -191,7 +188,6 @@ class EnablementFallbackTest {
 
 		private var now = 0L
 
-		/** One world frame through both seams: the projection upload, then the phase itself. */
 		fun frame(
 			normalInWorldFrame: Boolean,
 			target: RenderTarget = mainTarget,
@@ -199,15 +195,12 @@ class EnablementFallbackTest {
 		): RenderTarget {
 			phase.prepare(normalInWorldFrame, target, camera(cameraX))
 			val resolved = phase.begin(normalInWorldFrame, target)
-			// Read inside the phase: closing it drops the route, the jitter, and the motion, which
-			// is exactly the window the renderer itself sees them in.
 			route = runtime.worldTargetRoute
 			motion = runtime.activeMotion
 			phase.end()
 			return resolved
 		}
 
-		/** The fallback diagnostics alone; the phase reports its first decision on the same sink. */
 		fun latchDiagnostics() = diagnostics.filter { it.startsWith("DLSS fallback latched") }
 
 		fun evaluate(): Boolean = adapter.evaluate(EvaluationRequest.builder()

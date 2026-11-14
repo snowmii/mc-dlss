@@ -33,13 +33,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.lwjgl.PointerBuffer
 
-/**
- * At GUI completion the window closes and one composite bakes the held UI over the HUD-less
- * world already in the main target. The phase passes the main target as both HUD-less source
- * and destination; the composite skips the base copy — it must never sample the target it
- * renders into — so the vanilla main target is the presentation source before present,
- * screenshots, and Tracy.
- */
 class UiCompositeFrameWiringTest {
 	private val outputWidth = 2560
 	private val outputHeight = 1440
@@ -154,7 +147,6 @@ class UiCompositeFrameWiringTest {
 		}
 	}
 
-	/** Render target with fake GPU textures and views, so lifetime and passes are testable off the render thread. */
 	private class HeadlessRenderTarget(
 		width: Int,
 		height: Int,
@@ -176,7 +168,6 @@ class UiCompositeFrameWiringTest {
 		override fun destroyBuffers() = Unit
 	}
 
-	/** 26.3: [GpuTexture]/[GpuTextureView]/[GpuSampler] are plain interfaces; fakes implement them directly. */
 	private class FakeTexture(private val format: GpuFormat, private val fakeWidth: Int, private val fakeHeight: Int) : GpuTexture {
 		override fun getWidth(mipLevel: Int) = fakeWidth
 		override fun getHeight(mipLevel: Int) = fakeHeight
@@ -221,11 +212,6 @@ class UiCompositeFrameWiringTest {
 		fun encoder() = RecordingEncoder(this)
 	}
 
-	/**
-	 * 26.3: [CommandEncoder] and [RenderPass] are plain interfaces (no concrete class left to
-	 * wrap with a backend), so the recording encoder and pass implement those interfaces
-	 * directly instead of driving a real `RenderPass` through a backend split.
-	 */
 	private class RecordingEncoder(private val recording: Recording) : CommandEncoder {
 		override fun submit() = Unit
 
@@ -279,7 +265,6 @@ class UiCompositeFrameWiringTest {
 		override fun writeTimestamp(pool: GpuQueryPool, index: Int) = Unit
 	}
 
-	/** Records the pass-body calls the UI composite makes: the bound pipeline, uniforms, and draws. */
 	private class RecordingPass(private val recording: Recording) : RenderPass {
 		override fun close() = Unit
 

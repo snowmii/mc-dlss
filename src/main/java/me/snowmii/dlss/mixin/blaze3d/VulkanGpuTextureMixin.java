@@ -14,7 +14,6 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 
-/** Enables the existing compute tone mapper to write supported RGBA8 render targets. */
 @Mixin(VulkanGpuTexture.class)
 public abstract class VulkanGpuTextureMixin implements StoragePresentationImage {
     @Shadow @Final private VulkanDevice device;

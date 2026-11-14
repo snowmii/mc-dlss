@@ -12,17 +12,6 @@ import me.snowmii.dlss.ModEntry
 import net.minecraft.client.Minecraft
 import org.slf4j.LoggerFactory
 
-/**
- * Formats and emits the session's world-phase, frame-rate, environment, and evaluation lines.
- *
- * The world phase and evaluation own when events happen; this module owns formatting and output.
- * It carries no target, window, or composition state.
- *
- * The frame-rate sampling counts the world frames themselves, not Minecraft's own FPS counter,
- * so the same number is comparable between a DLSS session and a `mc.dlss.enabled=false`
- * session. Without it, "frame rate feels bad" cannot be separated from a dev client simply
- * being slow.
- */
 class SessionReadout(
 	private val emitLine: (String) -> Unit,
 	private val resolveReportedTarget: (() -> RenderTarget?)? = null,
@@ -32,22 +21,12 @@ class SessionReadout(
 	private var sampleStartedAt = 0L
 	private var sampledWorldFrames = 0
 
-	// The temporal-accumulation half of the sample window. A DLSS image that stays aliased while
-	// the camera holds still means the accumulation never converged, and only two inputs can
-	// cause that from this side: a jitter sequence that stopped varying (every frame samples the
-	// same sub-pixel point, so there is no new information to accumulate) or a history reset
-	// arriving every frame (each frame is upscaled alone). Both are invisible in the frame rate
-	// and neither is observable from the image alone, so the sample window counts them.
 	private val sampledJitterPhases = HashSet<Int>()
 	private var sampledJitterFrames = 0
 	private var sampledHistoryResets = 0
 	private var lastJitterPixelX = 0f
 	private var lastJitterPixelY = 0f
 
-	/**
-	 * Records one evaluated frame's jitter phase and history-reset flag into the current sample
-	 * window. Called per DLSS evaluation; frames that never evaluate contribute nothing.
-	 */
 	fun recordFrameJitter(index: Int, pixelX: Float, pixelY: Float, reset: Boolean) {
 		sampledJitterPhases.add(index)
 		sampledJitterFrames++
@@ -58,12 +37,6 @@ class SessionReadout(
 		lastJitterPixelY = pixelY
 	}
 
-	/**
-	 * The accumulation suffix for the sampled line, or empty when no frame evaluated in the
-	 * window. `phases` is how many distinct jitter offsets the window used: a healthy window
-	 * walks the whole sequence, and `phases=1` is a frozen sequence. `resets` should be zero for
-	 * a window with no teleport, dimension change, or vanilla frame in it.
-	 */
 	private fun accumulationSuffix(): String {
 		if (sampledJitterFrames == 0) {
 			return ""
@@ -78,16 +51,6 @@ class SessionReadout(
 		)
 	}
 
-	/**
-	 * One world phase finished rendering: the first-phase line on the first call, the frame-rate
-	 * line on the sampling boundary after that.
-	 *
-	 * [scene] is the target the world actually drew into (the low-resolution scene target on an
-	 * eligible DLSS frame, the main target otherwise); [frame] the route the runtime decided;
-	 * [facts] the runtime's mode, preset, and state the acceptance record names; and
-	 * [frameTimings] the GPU-timings read, called only when the frame-rate line is about to
-	 * report, because the answer crosses the ABI.
-	 */
 	fun reportWorldPhase(
 		mainTarget: RenderTarget,
 		scene: RenderTarget?,
@@ -101,13 +64,6 @@ class SessionReadout(
 		sampleWorldFrameRate(scene, frame, frameTimings, fgState, pacing)
 	}
 
-	/**
-	 * The session's first evaluation, recorded or not, exactly once.
-	 *
-	 * A recorded evaluation and a session that silently never reached one look identical from
-	 * outside - the frame renders either way. The line names which stage the frame actually got
-	 * through and the images it wrote into, which is enough to tell them apart from the log alone.
-	 */
 	fun reportFirstEvaluation(
 		recorded: Boolean,
 		colorImage: Long,
@@ -129,14 +85,6 @@ class SessionReadout(
 		)
 	}
 
-	/**
-	 * Reports the first world phase exactly once.
-	 *
-	 * Without this, an engaged DLSS route and a session that never started look identical from
-	 * outside: both render a normal-looking frame and log nothing. The line names the measured
-	 * main target, the route actually taken, the session's own reason for it, and the render
-	 * dimensions, which is enough to tell those two apart from the log alone.
-	 */
 	private fun reportFirstPhase(
 		mainTarget: RenderTarget,
 		scene: RenderTarget?,
@@ -148,8 +96,6 @@ class SessionReadout(
 		}
 
 		firstPhaseReported = true
-		// What the renderer actually resolves mid-phase. If this is not the scene target, the
-		// route decided correctly but the redirect never reached the frame graph.
 		val resolved = resolveReportedTarget?.invoke()
 		emitLine(
 			"DLSS first world phase: main=${mainTarget.width}x${mainTarget.height}" +
@@ -162,9 +108,6 @@ class SessionReadout(
 		)
 		}
 
-	/**
-	 * Counts world phases and reports the rate every few seconds.
-	 */
 	private fun sampleWorldFrameRate(
 		scene: RenderTarget?,
 		frame: DlssFrameDecision?,
@@ -185,10 +128,6 @@ class SessionReadout(
 		}
 
 		val fps = sampledWorldFrames * 1_000_000_000.0 / elapsed
-		// The GPU cost of the chain belongs on the same line as the frame rate: separately they
-		// are two numbers that move for unrelated reasons, and together they are the comparison -
-		// a frame rate that did not change while the chain costs a millisecond is a client whose
-		// frames are bounded by something other than the GPU.
 		emitLine(
 			"DLSS world frame rate: %.1f fps over %d frames, route=%s, world=%s, gpu=%s%s%s".format(
 				fps,
@@ -211,10 +150,6 @@ class SessionReadout(
 	companion object {
 		private const val SAMPLE_INTERVAL_NANOS = 5_000_000_000L
 
-		/**
-		 * The DLSS-G monitor suffix for the frame-rate line: status word and input-processing
-		 * completion fence. Presented FPS lives on vanilla's F3 fps line instead.
-		 */
 		fun fgMonitorSuffix(fg: FgState?): String = if (fg == null) {
 			""
 		} else {
@@ -224,11 +159,9 @@ class SessionReadout(
 			)
 		}
 
-		/** Presented FPS next to vanilla's F3 fps line while generation is actually composing. */
 		fun fgPresentedFpsSuffix(appFps: Int, fg: FgState): String =
 			if (fg.numFramesPresented <= 1) "" else " fg ${appFps * fg.numFramesPresented}"
 
-		/** The F3 status line: session state, FG, mode, preset, and resolutions. */
 		fun statusLine(
 			state: String,
 			fg: String,
@@ -257,17 +190,10 @@ class SessionReadout(
 			else -> "on (suspended)"
 		}
 
-		/** Formats and drops, for tests that assert on the phase's own behavior. */
 		val NOOP: SessionReadout = SessionReadout({})
 
 		private val LOGGER = LoggerFactory.getLogger(ModEntry.MOD_ID)
 
-		/**
-		 * Console + F3 snapshot sink.
-		 *
-		 * Log emission is gated on [me.snowmii.dlss.client.ModConfig.UserSettings.debugLog]; the
-		 * F3 snapshot always updates so the overlay stays live regardless of the log setting.
-		 */
 		@JvmStatic
 		fun emit(message: String) {
 			if (me.snowmii.dlss.client.ModConfig.user.debugLog) {
@@ -276,7 +202,6 @@ class SessionReadout(
 			DlssDebugSnapshot.record(message)
 		}
 
-		/** Production wiring: log/snapshot sink and a real resolution probe behind the lines. */
 		@JvmStatic
 		fun forMinecraft(diagnostics: (String) -> Unit = ::emit): SessionReadout = SessionReadout(
 			emitLine = diagnostics,
@@ -285,9 +210,6 @@ class SessionReadout(
 	}
 }
 
-/**
- * Runtime facts supplied by the phase so the readout stays decoupled from the runtime module.
- */
 class SessionFacts(
 	val enabled: Boolean,
 	val state: DlssSessionState,

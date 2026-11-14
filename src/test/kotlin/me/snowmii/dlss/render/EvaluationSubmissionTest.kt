@@ -230,7 +230,6 @@ class EvaluationSubmissionTest {
 		RayReconstruction.enabled = true
 		RayReconstruction.guides = java.util.function.Supplier { guides }
 		try {
-			// Case 1: camera == null -> selects scene.color and disables RR
 			assertTrue(
 				evaluation.evaluateFrame(
 					SceneResources(sceneColor, sceneDepth),
@@ -249,7 +248,6 @@ class EvaluationSubmissionTest {
 			assertEquals(sceneDepth, native.taggedSrRequests.last().depth)
 			assertEquals(listOf(sceneDepth), native.motionRequests.map { it.depth })
 
-			// Case 2: camera != null -> selects noisyColor and arms RR
 			val camera = DlssCameraSample(Matrix4f(), Matrix4f(), 10.0, 64.0, -20.0)
 			assertTrue(
 				evaluation.evaluateFrame(
@@ -271,7 +269,6 @@ class EvaluationSubmissionTest {
 			assertEquals(virtualDepth, native.evaluatedRequests.last().depth)
 			assertEquals(listOf(sceneDepth, virtualDepth), native.motionRequests.map { it.depth })
 
-			// Reflection-only motion must not replace the main depth of a mixed material.
 			RayReconstruction.guides = java.util.function.Supplier { guides.copy(depth = null) }
 			assertTrue(evaluation.evaluateFrame(
 				SceneResources(sceneColor, sceneDepth), DlssJitter(renderSize, output).advance(),
@@ -282,7 +279,6 @@ class EvaluationSubmissionTest {
 			assertEquals(sceneDepth, native.taggedSrRequests.last().depth)
 			assertEquals(specularMotion, native.rrRequests.last().specularMotion)
 
-			// An absent optional hint clears the previous frame's binding without resetting RR.
 			RayReconstruction.guides = java.util.function.Supplier { guides.copy(biasCurrentColor = null) }
 			assertTrue(evaluation.evaluateFrame(
 				SceneResources(sceneColor, sceneDepth), DlssJitter(renderSize, output).advance(),
@@ -293,7 +289,6 @@ class EvaluationSubmissionTest {
 			assertEquals(ImageBinding(0L, 0L, 0), native.rrRequests.last().biasCurrentColor)
 			assertFalse(native.evaluatedRequests.last().resetHistory, "removing hint preserves whole-frame history")
 
-			// A GI dropout switches to SR. On resuming RR, its old history is non-adjacent.
 			val sequence = listOf(true to false, false to true, false to false, true to true, true to false)
 			for ((hasGuides, expectedReset) in sequence) {
 				RayReconstruction.guides = java.util.function.Supplier { if (hasGuides) guides else null }
@@ -313,7 +308,6 @@ class EvaluationSubmissionTest {
                 assertEquals(if (hasGuides) reflection else null, native.presentTargets.last().reflection)
 			}
 
-			// Guides with resetHistory = true forces reset
 			val resettingGuides = guides.copy(resetHistory = true)
 			RayReconstruction.guides = java.util.function.Supplier { resettingGuides }
 			assertTrue(
@@ -327,7 +321,6 @@ class EvaluationSubmissionTest {
 			)
 			assertTrue(native.evaluatedRequests.last().resetHistory, "guides.resetHistory forces reset")
 
-			// Returning to normal guides accumulates normally
 			RayReconstruction.guides = java.util.function.Supplier { guides }
 			assertTrue(
 				evaluation.evaluateFrame(
@@ -340,7 +333,6 @@ class EvaluationSubmissionTest {
 			)
 			assertFalse(native.evaluatedRequests.last().resetHistory, "normal frame accumulates")
 
-			// RayReconstruction.requestHistoryReset() forces reset on next frame
 			RayReconstruction.requestHistoryReset()
 			assertTrue(
 				evaluation.evaluateFrame(
@@ -353,7 +345,6 @@ class EvaluationSubmissionTest {
 			)
 			assertTrue(native.evaluatedRequests.last().resetHistory, "requestHistoryReset forces reset")
 
-			// Following frame has consumed the reset and accumulates normally
 			assertTrue(
 				evaluation.evaluateFrame(
 					SceneResources(sceneColor, sceneDepth),
@@ -366,7 +357,6 @@ class EvaluationSubmissionTest {
 			assertFalse(native.evaluatedRequests.last().resetHistory, "consumed reset returns to normal accumulation")
 			assertEquals(biasCurrentColor, native.rrRequests.last().biasCurrentColor)
 
-			// Disabling RR clears a populated mask even while its producer still publishes guides.
 			RayReconstruction.enabled = false
 			assertTrue(evaluation.evaluateFrame(
 				SceneResources(sceneColor, sceneDepth), DlssJitter(renderSize, output).advance(),
@@ -432,7 +422,6 @@ class EvaluationSubmissionTest {
 		assertEquals(0, submitted)
 	}
 
-	/** Fails every call: a session that never reached READY must not reach the native side at all. */
 	private class UnusableNative : StreamlineSessionTestDouble() {
 		override fun initialize(
 			vkInstance: Long,

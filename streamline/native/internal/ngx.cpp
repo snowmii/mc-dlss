@@ -2,10 +2,6 @@
 
 #include <nvsdk_ngx.h>
 
-/*
- * Quality-mode and render-preset vocabulary the ABI speaks in. Streamline maps these onto
- * sl:: types.
- */
 namespace mc_dlss {
 
 bool valid_quality_mode(const uint32_t qualityMode) noexcept {
@@ -16,7 +12,6 @@ bool valid_quality_mode(const uint32_t qualityMode) noexcept {
         case NVSDK_NGX_PerfQuality_Value_UltraPerformance:
         case NVSDK_NGX_PerfQuality_Value_DLAA:
             return true;
-        // UltraQuality sits between the two the SDK defines and never shipped a model.
         default:
             return false;
     }
@@ -36,7 +31,6 @@ bool valid_render_preset(const uint32_t renderPreset) noexcept {
 }
 
 bool valid_rr_preset(const uint32_t rrPreset) noexcept {
-    // sl::DLSSDPreset: eDefault=0, D=4, E=5, F=6 (see sl_dlss_d.h).
     switch (rrPreset) {
         case 0:
         case 4:
@@ -48,4 +42,4 @@ bool valid_rr_preset(const uint32_t rrPreset) noexcept {
     }
 }
 
-} // namespace mc_dlss
+}

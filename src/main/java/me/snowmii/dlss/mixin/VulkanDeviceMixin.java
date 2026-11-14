@@ -15,9 +15,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Captures live Vulkan handles after {@link VulkanDevice} construction.
- */
 @Mixin(VulkanDevice.class)
 public class VulkanDeviceMixin {
 	@Inject(at = @At("TAIL"), method = "<init>")

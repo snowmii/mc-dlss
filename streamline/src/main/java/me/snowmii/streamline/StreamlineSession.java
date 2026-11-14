@@ -194,20 +194,6 @@ public interface StreamlineSession extends AutoCloseable {
 	int writeMotion(MotionRequest request);
 
 	/**
-	 * Records the post-scene velocity merge on the caller's command buffer: one dispatch samples
-	 * the engine's depth image and its sparse RG16_FLOAT velocity companion, copies every
-	 * non-sentinel object vector unchanged and reconstructs jitter-stripped camera motion for
-	 * every sentinel pixel, and writes the complete merged field into the native motion image.
-	 * On a reset frame the dispatch writes the invalid sentinel everywhere instead. The
-	 * companion is a sampled input only and is never bound as storage.
-	 *
-	 * <p>This has to precede {@link #tagSrResources} on the same buffer on the velocity-MRT
-	 * route: the native motion image is the sole Streamline motion source, and the evaluation
-	 * reads it.
-	 */
-	int fillVelocity(FillVelocityRequest request);
-
-	/**
 	 * Records the copy of the upscaled output image into an engine target, on the caller's
 	 * command buffer.
 	 *
@@ -231,11 +217,10 @@ public interface StreamlineSession extends AutoCloseable {
 	 * frame-based resource tagging ({@code slGetNewFrameToken} + {@code slSetTagForFrame}).
 	 *
 	 * <p>The request carries the engine's colour and depth. The motion source is always the
-	 * bridge's own motion image - filled by {@link #writeMotion} on the camera-only route and
-	 * by {@link #fillVelocity} on the velocity-MRT route - so no engine velocity companion
-	 * crosses on the tag. The bridge's own motion and output images are tagged from native
-	 * state when they have been acquired for the configured dimensions; until then the call
-	 * still succeeds with just the engine's inputs.
+	 * bridge's own motion image - filled by {@link #writeMotion} on the camera-only route -
+	 * so no engine velocity companion crosses on the tag. The bridge's own motion and output
+	 * images are tagged from native state when they have been acquired for the configured
+	 * dimensions; until then the call still succeeds with just the engine's inputs.
 	 */
 	int tagSrResources(SrTagRequest request);
 
@@ -252,6 +237,11 @@ public interface StreamlineSession extends AutoCloseable {
 	default int setExposure(float exposure) { return 0; }
 
 	/**
+	 * Sets the tone mapping operator applied during HDR-to-SDR conversion.
+	 */
+	default int setTonemapOperator(int op) { return 0; }
+
+	/**
 	 * Tags one frame's DLSS-G resources on the caller's command buffer, through Streamline's
 	 * frame-based resource tagging ({@code slGetNewFrameToken} + {@code slSetTagForFrame}).
 	 *
@@ -259,12 +249,11 @@ public interface StreamlineSession extends AutoCloseable {
 	 * HUD-less colour and UI colour+alpha targets (both R8G8B8A8_UNORM); the formats must match
 	 * the ones {@link #configureFg} recorded, and anything else is refused. The motion source
 	 * is always the bridge's own motion image - filled by {@link #writeMotion} on the
-	 * camera-only route and by {@link #fillVelocity} on the velocity-MRT route - so no engine
-	 * velocity companion crosses on the tag. The call is refused until {@link #configureFg}
-	 * recorded the DLSS-G options and the bridge's own motion image was acquired for the
-	 * configured dimensions: the frame's four tags always record together, never as a partial
-	 * set. The backbuffer/output chain is present interception rather than a tag, so no output
-	 * image is carried.
+	 * camera-only route - so no engine velocity companion crosses on the tag. The call is
+	 * refused until {@link #configureFg} recorded the DLSS-G options and the bridge's own
+	 * motion image was acquired for the configured dimensions: the frame's four tags always
+	 * record together, never as a partial set. The backbuffer/output chain is present
+	 * interception rather than a tag, so no output image is carried.
 	 *
 	 * <p>The frame token this call obtains and retains is shared with {@link #tagSrResources}
 	 * for the same frame: a repeated tag reuses the token rather than advancing the frame, and

@@ -1,4 +1,3 @@
-// Device-free RR guide state/tag/barrier contracts. No SDK runtime or GPU handles used.
 #include "internal/state.h"
 #include "doctest.h"
 
@@ -20,11 +19,10 @@ McDlssRrPrepareInfo rr_with_bias() {
     return info;
 }
 
-} // namespace
+}
 
 TEST_CASE("RR bias validates optional handles and pinned SDK named formats") {
     CHECK(valid_rr_bias_current_color({}));
-    // Format metadata alone does not make an absent image present.
     CHECK(valid_rr_bias_current_color({0, 0, VK_FORMAT_R8_UNORM}));
     for (const VkFormat format : {VK_FORMAT_R8_UNORM, VK_FORMAT_R16_SFLOAT,
                                  VK_FORMAT_R8G8B8A8_UNORM}) {
@@ -50,14 +48,14 @@ TEST_CASE("RR preparation copies borrowed bias and absence disable reset drop bi
     CHECK(g_state.rrWorldToCameraView[0] == 2.0f);
     CHECK(g_state.rrCameraViewToWorld[0] == 0.5f);
     info.bias_current_color = {};
-    CHECK(g_state.rrBiasCurrentColor.image == 10); // Copied, not retained ABI pointer.
+    CHECK(g_state.rrBiasCurrentColor.image == 10);
     store_rr_guides(info);
     CHECK(g_state.rrArmed);
     CHECK(g_state.rrBiasCurrentColor.image == 0);
 
     info = rr_with_bias();
     store_rr_guides(info);
-    info.enabled = 0; // Populated disabled request must not retain any guide.
+    info.enabled = 0;
     store_rr_guides(info);
     CHECK_FALSE(g_state.rrArmed);
     CHECK(g_state.rrBiasCurrentColor.image == 0);
@@ -116,12 +114,11 @@ TEST_CASE("RR bias tags current guide and emits SDK-safe empty resource for SR o
     CHECK(disocclusionResource.nativeFormat == VK_FORMAT_R8_UNORM);
     CHECK(disocclusionResource.state == kDlssInputLayout);
 
-    // Reuse resource storage: empty tag must overwrite all previous binding data.
     info.bias_current_color = {};
     store_rr_guides(info);
     tag = make_rr_bias_current_color_tag(resource);
     CHECK(tag.type == sl::kBufferTypeBiasCurrentColorHint);
-    CHECK(tag.resource == &resource); // Not a null Resource pointer that local lookup dereferences.
+    CHECK(tag.resource == &resource);
     CHECK(resource.native == nullptr);
     CHECK(resource.view == nullptr);
     CHECK(resource.next == nullptr);
@@ -136,7 +133,7 @@ TEST_CASE("RR bias tags current guide and emits SDK-safe empty resource for SR o
     CHECK(disocclusionResource.flags == 0);
 
     store_rr_guides(rr_with_bias());
-    g_state.rrArmed = false; // SR fallback must clear even if borrowed state still exists.
+    g_state.rrArmed = false;
     tag = make_rr_bias_current_color_tag(resource);
     CHECK(tag.resource == &resource);
     CHECK(resource.native == nullptr);
@@ -159,7 +156,7 @@ TEST_CASE("RR does not alias bias or disocclusion as signed responsivity") {
         info.bias_current_color.format = format;
         store_rr_guides(info);
         sl::Resource resource{};
-        make_rr_bias_current_color_tag(resource); // Reused storage must also be cleared.
+        make_rr_bias_current_color_tag(resource);
         REQUIRE(resource.native != nullptr);
         const auto tag = make_rr_responsivity_mask_tag(resource);
         CHECK(tag.type == sl::kBufferTypeResponsivityMask);
