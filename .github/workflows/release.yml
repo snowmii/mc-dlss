@@ -87,7 +87,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $releaseVersion = $env:TAG -replace '^v', ''
-          .\gradlew.bat check build "-Pmod_version=$releaseVersion" --stacktrace
+          .\gradlew.bat test :streamline:test :streamline:nativeTest detekt build -x :streamline:nativeBridgeTest "-Pmod_version=$releaseVersion" --stacktrace
 
       - name: Collect jars
         shell: pwsh

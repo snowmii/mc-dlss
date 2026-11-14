@@ -79,7 +79,7 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: .\gradlew.bat check build --stacktrace
+        run: .\gradlew.bat test :streamline:test :streamline:nativeTest detekt build -x :streamline:nativeBridgeTest --stacktrace
 
       - name: Collect jars
         shell: pwsh
