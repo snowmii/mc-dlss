@@ -5,7 +5,7 @@ and the licenses under which those components are received are set forth below.
 
 ---------------------------------------------------------
 
-NVIDIA Streamline SDK 2.14.1
+NVIDIA Streamline SDK 2.14.16
 https://github.com/NVIDIA-RTX/Streamline
 
 sl.interposer.dll, sl.common.dll, sl.dlss.dll, sl.dlss_d.dll, sl.dlss_g.dll, sl.reflex.dll,
@@ -35,7 +35,7 @@ SOFTWARE.
 ---------------------------------------------------------
 
 NVIDIA DLSS
-Distributed with NVIDIA Streamline SDK 2.14.1
+Distributed with NVIDIA Streamline SDK 2.14.166
 
 nvngx_dlss.dll, nvngx_dlssd.dll, nvngx_dlssg.dll
 
@@ -149,7 +149,7 @@ This supplement is an exhibit to the Agreement and is incorporated as an integra
 ---------------------------------------------------------
 
 NVIDIA Reflex Low Latency
-Distributed with NVIDIA Streamline SDK 2.14.1
+Distributed with NVIDIA Streamline SDK 2.14.166
 
 NvLowLatencyVk.dll
 

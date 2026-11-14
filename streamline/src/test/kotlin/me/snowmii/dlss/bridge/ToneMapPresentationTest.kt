@@ -44,7 +44,6 @@ class ToneMapPresentationTest {
                         val legacy = fixture.createEngineImage(width, height, VK10.VK_FORMAT_R8G8B8A8_UNORM, sampled, colorAspect)
                         val direct = fixture.createEngineImage(width, height, VK10.VK_FORMAT_R8G8B8A8_UNORM, sampled or storage, colorAspect)
                         setup.invokeWithArguments(fixture.deviceAddress(), hdr.view(), hdr.image(), width, height)
-                        // Alternate descriptors, reflection presence, exposure, and HDR highlights.
                         for (frame in 0..7) {
                             val command = fixture.allocateAndBeginCommandBuffer()
                             fixture.recordColorClear(command, hdr.image(), if (frame < 4) 0.002f else 2048f, 0.18f, 4f, 1f)
@@ -80,8 +79,9 @@ class ToneMapPresentationTest {
         val objects = Path.of("build", "native", "obj").toAbsolutePath()
         val source = Path.of("src", "test", "native", "tonemap_probe.cpp").toAbsolutePath()
         val vulkan = Path.of(requireNotNull(System.getenv("VULKAN_SDK")))
+        val sdkVersion = System.getProperty("mc.dlss.streamline-sdk-version") ?: "2.14.16"
         val sdk = System.getenv("STREAMLINE_SDK")?.let(Path::of)
-            ?: Path.of(System.getProperty("user.home"), ".gradle", "caches", "streamline", "2.14.1")
+            ?: Path.of(System.getProperty("user.home"), ".gradle", "caches", "streamline", sdkVersion)
         val vs = System.getenv("VSDEVCMD")?.let(Path::of) ?: Path.of(
             requireNotNull(System.getenv("ProgramFiles(x86)")), "Microsoft Visual Studio", "2022",
             "BuildTools", "Common7", "Tools", "VsDevCmd.bat",

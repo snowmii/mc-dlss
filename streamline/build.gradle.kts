@@ -128,10 +128,9 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 	val nativeSources = nativeDirectory.asFileTree.matching { include("**/*.cpp"); exclude("test/**") }
 	val nativeHeaders = nativeDirectory.asFileTree.matching { include("**/*.h"); exclude("test/**") }
 	val motionShader = nativeDirectory.file("mc_dlss_motion.comp")
-	val velocityFillShader = nativeDirectory.file("mc_dlss_velocity_fill.comp")
 	val toneMapShader = nativeDirectory.file("mc_dlss_tonemap.comp")
 	val outputDirectory = layout.buildDirectory.dir("native")
-	inputs.files(nativeSources, nativeHeaders, motionShader, velocityFillShader, toneMapShader)
+	inputs.files(nativeSources, nativeHeaders, motionShader, toneMapShader)
 	inputs.property("streamlineSdkVersion", streamlineSdkVersion)
 	inputs.dir(toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk).map { it.resolve("include") })
 	inputs.dir(toolchainRoot("mc.dlss.streamline-sdk", "STREAMLINE_SDK", provisionedStreamlineSdk).map { it.resolve("external/ngx-sdk/include") })
@@ -166,7 +165,6 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 		val outputDir = outputDirectory.get().asFile.apply { mkdirs() }
 		val output = outputDir.resolve("mc_dlss.dll")
 		val motionSpirV = outputDir.resolve("mc_dlss_motion.spv.h")
-		val velocityFillSpirV = outputDir.resolve("mc_dlss_velocity_fill.spv.h")
 		val toneMapSpirV = outputDir.resolve("mc_dlss_tonemap.spv.h")
 		val objectDir = outputDir.resolve("obj").apply { mkdirs() }
 		val objectDirArgument = objectDir.absolutePath.replace('\\', '/') + "/"
@@ -176,8 +174,6 @@ val buildNativeDlss = tasks.register<Exec>("buildNativeDlss") {
 			"call \"${vsDevCmd.absolutePath}\" -arch=x64 -host_arch=x64 && " +
 				"\"${glslc.absolutePath}\" -O --target-env=vulkan1.2 -mfmt=c " +
 				"-o \"${motionSpirV.absolutePath}\" \"${motionShader.asFile.absolutePath}\" && " +
-				"\"${glslc.absolutePath}\" -O --target-env=vulkan1.2 -mfmt=c " +
-				"-o \"${velocityFillSpirV.absolutePath}\" \"${velocityFillShader.asFile.absolutePath}\" && " +
 				"\"${glslc.absolutePath}\" -O --target-env=vulkan1.2 -mfmt=c " +
 				"-o \"${toneMapSpirV.absolutePath}\" \"${toneMapShader.asFile.absolutePath}\" && " +
 				"cl.exe /nologo /std:c++17 /EHsc /LD /O2 /DNOMINMAX /Fo\"${objectDirArgument}\" " +
@@ -272,14 +268,12 @@ tasks.test {
 val nativeBridgeTest = tasks.register<Test>("nativeBridgeTest") {
 	group = "verification"
 	testClassesDirs = sourceSets.test.get().output.classesDirs
-	// Prepend the loose processResources output so the native DLLs are found as plain
-	// file:// resources rather than inside a jar — ExtensionBootstrap loads them in place
-	// instead of extracting to a temp directory, avoiding temp-dir accumulation.
 	classpath = files(sourceSets.main.get().output.resourcesDir!!) +
 		sourceSets.test.get().runtimeClasspath
 	useJUnitPlatform { includeTags(nativeBridgeTag) }
 	forkEvery = 1
 	jvmArgs("--enable-native-access=ALL-UNNAMED")
+	systemProperty("mc.dlss.streamline-sdk-version", streamlineSdkVersion)
 }
 
 tasks.named("check") {
